@@ -1,0 +1,13 @@
+[package]
+name = "geop-ops-extrude-revolve"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-core-part.workspace = true
+
+[dev-dependencies]
+geop-ops-rasterize.workspace = true

@@ -1,0 +1,6 @@
+[package]
+name = "geop-core-math"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

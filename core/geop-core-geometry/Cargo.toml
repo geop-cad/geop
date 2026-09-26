@@ -1,0 +1,7 @@
+[package]
+name = "geop-core-geometry"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true

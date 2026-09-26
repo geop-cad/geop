@@ -1,0 +1,671 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import "./App.css";
+import {
+  examplePrograms,
+  currentProgram,
+  entities,
+  entityLabel,
+  loadGeop,
+  operationSchemas,
+  pickRay,
+  previewProgram,
+  runProgram,
+  sketchPlane,
+  updateProgram,
+  sameEntity,
+  type Args,
+  type ArgKind,
+  type ArgSchema,
+  type EntityRef,
+  type Frame,
+  type Highlight,
+  type OperationSchema,
+  type PickFilter,
+  type Program,
+  type ProgramEdit,
+  type RunResult,
+  type Sketch,
+  type StepHandle,
+  type Vec3,
+} from "./geop";
+import { DEFAULT_POSE, headOnPose, poseForSketchView, type CameraPose, type Projection, type SketchView } from "./camera";
+import { OperationForm } from "./OperationForm";
+import {
+  acceptedDatums,
+  argsSummary,
+  defaultArgs,
+  isComplete,
+  pickedValue,
+  withArg,
+  withPath,
+} from "./operationArgs";
+import type { HandleEdit } from "./handles3d";
+import { SceneViewer, type Marker, type ViewRay } from "./SceneViewer";
+import { SketchEditor } from "./SketchEditor";
+import { Timeline, type TimelineStep } from "./Timeline";
+import { toSketch } from "./sketchGeometry";
+
+const MARKER_COLOR = 0xffa040;
+
+/** A step being written: a new one to insert at `index`, or the existing step `stepId` there. */
+interface FormState {
+  schema: OperationSchema;
+  args: Args;
+  index: number;
+  stepId: string | null;
+  /** The arguments the user set themselves, which no other argument's change may overrule. */
+  touched: string[];
+}
+
+/** A drawing argument of the open form, being drawn in the sketch editor. */
+interface SketchSession {
+  arg: string;
+  plane: EntityRef;
+  frame: Frame;
+  sketch: Sketch;
+  /** What the 3-D view showed when the camera landed facing the plane: where the editor opens. */
+  view: SketchView | null;
+}
+
+/** The edit that writes `form` into the program. */
+function formEdit(form: FormState): ProgramEdit {
+  const operation = { operation: form.schema.kind, args: form.args };
+  return form.stepId == null
+    ? { edit: "insert", index: form.index, ...operation }
+    : { edit: "update", id: form.stepId, ...operation };
+}
+
+/**
+ * The editor: a tool for writing part programs. The program lives in the
+ * kernel and changes only through `updateProgram` — every button here just
+ * composes one `ProgramEdit` — so editing works the same as in any other
+ * editor of these programs.
+ */
+function App() {
+  const [wasmReady, setWasmReady] = useState(false);
+  const [wasmError, setWasmError] = useState<string | null>(null);
+  const [schemas, setSchemas] = useState<OperationSchema[]>([]);
+
+  const [program, setProgram] = useState<Program>({ steps: [] });
+  /** Earlier programs, for undo — restored through `updateProgram` like any edit. */
+  const [history, setHistory] = useState<Program[]>([]);
+  /** Programs undone, most recent last, for redo — gone with the next edit. */
+  const [future, setFuture] = useState<Program[]>([]);
+  /** Rolled back: only the first `marker` steps run, and new steps go there. `null`: the end. */
+  const [marker, setMarker] = useState<number | null>(null);
+  const [committed, setCommitted] = useState<RunResult | null>(null);
+  const [committedError, setCommittedError] = useState<string | null>(null);
+
+  const [form, setForm] = useState<FormState | null>(null);
+  const [pickArg, setPickArg] = useState<string | null>(null);
+  const [pickPoints, setPickPoints] = useState<Record<string, Vec3>>({});
+  /** What a click would pick right now, drawn highlighted. */
+  const [hover, setHover] = useState<Highlight | null>(null);
+  const [preview, setPreview] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const [session, setSession] = useState<SketchSession | null>(null);
+  // Entering a sketch: the camera glides to face its plane first, and the
+  // editor, drawn over the 3-D view, takes over once it lands — from then
+  // on it holds the camera where its view is.
+  const [arriving, setArriving] = useState<SketchSession | null>(null);
+  const [focus, setFocus] = useState<CameraPose | null>(null);
+  const [heldPose, setHeldPose] = useState<CameraPose | null>(null);
+  const [projection, setProjection] = useState<Projection>("perspective");
+  const poseRef = useRef<CameraPose>(DEFAULT_POSE);
+  /** Where the camera was before sketching, to come back to. */
+  const beforeSketchRef = useRef<CameraPose>(DEFAULT_POSE);
+
+  useEffect(() => {
+    loadGeop()
+      .then(() => {
+        setSchemas(operationSchemas());
+        setProgram(currentProgram());
+        setWasmReady(true);
+      })
+      .catch((e) => setWasmError(String(e)));
+  }, []);
+
+  // While a step is being written, the program runs only up to it: what it
+  // can refer to is what the steps before it built, and the steps after it
+  // needn't run on every change.
+  const runStop = form ? form.index : marker;
+  useEffect(() => {
+    if (!wasmReady) return;
+    try {
+      setCommitted(runProgram(runStop));
+      setCommittedError(null);
+    } catch (e) {
+      setCommittedError(String(e));
+    }
+  }, [wasmReady, program, runStop]);
+
+  const complete = form != null && isComplete(form.schema, form.args);
+  const pendingEdit = form && complete ? formEdit(form) : null;
+  const pendingKey = JSON.stringify(pendingEdit);
+
+  const [previewResult, setPreviewResult] = useState<RunResult | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wasmReady || !form || !preview || !pendingEdit) {
+      setPreviewResult(null);
+      setPreviewError(null);
+      return;
+    }
+    try {
+      // Up to and including the step being written.
+      const result = previewProgram(pendingEdit, form.index + 1);
+      setPreviewResult(result);
+      setPreviewError(result.results.find((r) => r.error)?.error ?? null);
+    } catch (e) {
+      setPreviewResult(null);
+      setPreviewError(String(e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wasmReady, preview, pendingKey, program]);
+
+  // ── handles ────────────────────────────────────────────────────────────
+
+  /**
+   * A drag of one of the form's handles (only its step's are shown): it
+   * sets the arguments like typing would, top-level ones through `withArg`
+   * so what follows them follows. It does not make them the user's: a
+   * dragged distance may still flip an untouched combine between join and
+   * cut.
+   */
+  function handleDragged(_handle: StepHandle, edits: HandleEdit[]) {
+    if (!form) return;
+    let args = form.args;
+    for (const e of edits) {
+      args = e.path.length === 1 ? withArg(form.schema, args, e.path[0], e.value, committed, form.touched) : withPath(args, e.path, e.value);
+    }
+    setForm({ ...form, args });
+  }
+
+  /**
+   * The handles to offer: only while a step is being created or edited,
+   * only that step's (as previewed), and a feature's, never a sketch's —
+   * sketches are edited in the sketcher.
+   */
+  function shownHandles(): StepHandle[] {
+    if (!form || session || arriving) return [];
+    return (previewResult?.handles ?? []).filter((h) => h.group === "feature" && h.step === pendingId);
+  }
+
+  /** The id of the step the open form writes, as the preview runs it. */
+  const pendingId = form ? (form.stepId ?? previewResult?.results[form.index]?.id ?? null) : null;
+
+  // While sketching, the model as the steps before the sketch built it: a
+  // preview would draw the drawing being edited a second time.
+  const displayResult = session || arriving ? committed : (previewResult ?? committed);
+  const schemaOf = (kind: string) => schemas.find((s) => s.kind === kind);
+
+  /**
+   * The sketches and datums a shown step has used — extruded a sketch,
+   * sketched on a datum plane, built a datum from another: the viewer hides
+   * them, since what was made from them shows them now. A step that failed
+   * used nothing. None of a kind while an argument that takes that kind is
+   * being picked: then any can be chosen, used or not.
+   */
+  function usedReferences(): string[] {
+    if (!displayResult) return [];
+    const pickingSketch = pickSchema?.kind.type === "sketch";
+    const pickingDatum = pickSchema != null && acceptedDatums(pickSchema.kind).length > 0;
+    const datumNames = (value: unknown) =>
+      entities(value).flatMap((e) => (e.type === "Datum" ? [e.name] : []));
+    const used = (arg: ArgSchema, value: unknown): string[] => {
+      switch (arg.kind.type) {
+        case "sketch":
+          return pickingSketch ? [] : [value as string];
+        case "plane":
+          return pickingDatum ? [] : datumNames([value]);
+        case "selection":
+          return pickingDatum ? [] : datumNames(value);
+        default:
+          return [];
+      }
+    };
+    return displayResult.results.flatMap((r) => {
+      if (r.error) return [];
+      const step =
+        form && r.id === pendingId ? { operation: form.schema.kind, args: form.args } : program.steps.find((s) => s.id === r.id);
+      const schema = step && schemaOf(step.operation);
+      if (!step || !schema) return [];
+      return schema.args.flatMap((a) => used(a, step.args[a.name]));
+    });
+  }
+
+  /** Apply `edit` to the program, remembering the program before it for undo. Throws if it is rejected. */
+  function edit(e: ProgramEdit): string | null {
+    const before = program;
+    const id = updateProgram(e);
+    setHistory((h) => [...h, before]);
+    setFuture([]);
+    setProgram(currentProgram());
+    return id;
+  }
+
+  function undo() {
+    const previous = history[history.length - 1];
+    if (!previous) return;
+    updateProgram({ edit: "replace", program: previous });
+    setHistory(history.slice(0, -1));
+    setFuture([...future, program]);
+    setProgram(currentProgram());
+    setMarker(null);
+  }
+
+  function redo() {
+    const next = future[future.length - 1];
+    if (!next) return;
+    updateProgram({ edit: "replace", program: next });
+    setFuture(future.slice(0, -1));
+    setHistory([...history, program]);
+    setProgram(currentProgram());
+    setMarker(null);
+  }
+
+  function openForm(next: FormState) {
+    setForm(next);
+    setFormError(null);
+    setPickPoints({});
+    // A new step's plane or selection is picked more often than not: arm
+    // that pick right away.
+    const first = next.schema.args.find((a) => a.kind.type === "plane" || a.kind.type === "selection");
+    setPickArg(next.stepId == null ? (first?.name ?? null) : null);
+  }
+
+  function newStep(schema: OperationSchema) {
+    if (form?.schema === schema) {
+      closeForm();
+      return;
+    }
+    const index = marker ?? program.steps.length;
+    // Defaults come from what the steps before the new one built.
+    openForm({ schema, args: defaultArgs(schema, runProgram(index)), index, stepId: null, touched: [] });
+  }
+
+  function editStep(index: number) {
+    const step = program.steps[index];
+    const schema = schemaOf(step.operation);
+    if (!schema) return;
+    // An existing step's arguments were all chosen already.
+    const next: FormState = { schema, args: step.args, index, stepId: step.id, touched: schema.args.map((a) => a.name) };
+    openForm(next);
+    // A drawing is what is edited in such a step: straight to it. Its
+    // form, e.g. to change the plane, is one button away in the editor.
+    const drawing = schema.args.find((a) => a.kind.type === "drawing");
+    if (drawing) draw(next, drawing.name);
+  }
+
+  function closeForm() {
+    setForm(null);
+    setPickArg(null);
+    setPickPoints({});
+    setFormError(null);
+  }
+
+  function commit(f: FormState) {
+    try {
+      edit(formEdit(f));
+      if (f.stepId == null && marker != null) setMarker(marker + 1);
+      closeForm();
+    } catch (e) {
+      setFormError(String(e));
+    }
+  }
+
+  /**
+   * The user set `name` to `value`: it is theirs now, unless `touch` is
+   * false — picking a combine's target is not choosing its mode.
+   */
+  function setArg(name: string, value: unknown, touch = true) {
+    if (!form) return;
+    const touched = touch && !form.touched.includes(name) ? [...form.touched, name] : form.touched;
+    setForm({ ...form, args: withArg(form.schema, form.args, name, value, committed, touched), touched });
+  }
+
+  function tryEdit(e: ProgramEdit) {
+    try {
+      edit(e);
+      setCommittedError(null);
+    } catch (err) {
+      setCommittedError(String(err));
+    }
+  }
+
+  function removeStep(index: number) {
+    tryEdit({ edit: "remove", id: program.steps[index].id });
+    if (marker != null && index < marker) setMarker(marker - 1);
+  }
+
+  function moveStep(index: number, to: number) {
+    tryEdit({ edit: "move", id: program.steps[index].id, index: to });
+  }
+
+  function loadProgram(p: Program) {
+    tryEdit({ edit: "replace", program: p });
+    closeForm();
+    setSession(null);
+    setMarker(null);
+  }
+
+  function saveProgram() {
+    const json = JSON.stringify(program, null, 2);
+    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "part.program.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function loadFile(file: File) {
+    file
+      .text()
+      .then((text) => loadProgram(JSON.parse(text) as Program))
+      .catch((e) => setCommittedError(String(e)));
+  }
+
+  // ── picking ────────────────────────────────────────────────────────────
+
+  /** The argument waiting for a pick, if any. */
+  const pickSchema = form?.schema.args.find((a) => a.name === pickArg);
+
+  /**
+   * What a click along `ray` picks for an argument of `kind`: the nearest
+   * of what the kernel hits and the datum the ray hits, if any.
+   */
+  function pickAt(kind: ArgKind, ray: ViewRay): { hit: Highlight; point: Vec3 } | null {
+    const filter: PickFilter =
+      kind.type === "solid" || kind.type === "combine"
+        ? "solid"
+        : kind.type === "sketch"
+          ? "sketch"
+          : kind.type === "selection"
+            ? "any"
+            : "face";
+    // A sketch is hit inside its regions anyway; the tolerance is for
+    // clicking on its curves, e.g. an open profile's — and on a vertex or
+    // an edge, a few pixels.
+    const tolerance = filter === "sketch" ? 0.03 : filter === "any" ? ray.pixel * 6 : 0.001;
+    const found = pickRay(ray.origin, ray.dir, filter, tolerance);
+    const datum = ray.datum;
+    if (datum && (!found || datum.distance <= found.t)) return { hit: datum.entity, point: datum.point };
+    if (!found) return null;
+    const type = ({ vertex: "Vertex", edge: "Edge", face: "Face", solid: "Solid", sketch: "Sketch" } as const)[found.kind];
+    return { hit: { type, name: found.name }, point: found.point };
+  }
+
+  /** The pointer moved: highlight what a click there would pick. */
+  function handleHover(ray: ViewRay | null) {
+    const next = ray && pickSchema ? (pickAt(pickSchema.kind, ray)?.hit ?? null) : null;
+    setHover((current) => (current === next || (current && next && sameEntity(current, next)) ? current : next));
+  }
+
+  // A pick armed, made or dropped: whatever was lit no longer applies.
+  useEffect(() => setHover(null), [pickArg]);
+
+  /**
+   * `hit` was picked, at `point`, for the argument waiting for a pick. A
+   * selection goes on picking; any other argument has its value.
+   */
+  function picked(hit: Highlight | null, point: Vec3 | null) {
+    if (!form || !pickArg) return;
+    const arg = form.schema.args.find((a) => a.name === pickArg);
+    if (!arg) return;
+    const selecting = arg.kind.type === "selection";
+    if (!selecting) setPickArg(null);
+    const value = hit && pickedValue(arg.kind, form.args[arg.name], hit);
+    if (value == null) return;
+    setArg(arg.name, value, arg.kind.type !== "combine");
+    if (!selecting && point) setPickPoints((points) => ({ ...points, [arg.name]: point }));
+  }
+
+  function handlePick(ray: ViewRay) {
+    const found = pickSchema ? pickAt(pickSchema.kind, ray) : null;
+    picked(found?.hit ?? null, found?.point ?? null);
+  }
+
+  /** A click on the origin gizmo: its origin, axis or base plane. */
+  function handleEntity(entity: EntityRef, point: Vec3) {
+    picked(entity, point);
+  }
+
+  const pickable = pickSchema ? acceptedDatums(pickSchema.kind) : [];
+
+  /** What to draw lit: what a click would pick, and what the open form has selected. */
+  const highlights: Highlight[] = [
+    ...(hover ? [hover] : []),
+    ...(form ? form.schema.args.flatMap((a) => (a.kind.type === "selection" ? entities(form.args[a.name]) : [])) : []),
+  ];
+
+  const markers: Marker[] = Object.values(pickPoints).map((point) => ({ point, color: MARKER_COLOR }));
+
+  // ── sketching ──────────────────────────────────────────────────────────
+
+  /** Draw the drawing argument `arg` of the form `f`, on the plane its schema names. */
+  function draw(f: FormState, arg: string) {
+    const kind = f.schema.args.find((a) => a.name === arg)?.kind;
+    if (kind?.type !== "drawing") return;
+    const plane = f.args[kind.plane] as EntityRef;
+    try {
+      const frame = sketchPlane(plane);
+      beforeSketchRef.current = poseRef.current;
+      setArriving({ arg, plane, frame, sketch: f.args[arg] as Sketch, view: null });
+      setFocus(headOnPose(frame, poseRef.current));
+    } catch (e) {
+      setFormError(String(e));
+    }
+  }
+
+  /** The camera landed: open the editor on exactly the view it shows. */
+  function onFocusReached({ pose, pixelsPerUnit, height }: { pose: CameraPose; pixelsPerUnit: number; height: number }) {
+    poseRef.current = pose;
+    setFocus(null);
+    if (!arriving) return;
+    setSession({ ...arriving, view: { center: toSketch(arriving.frame, pose.target).xy, scale: pixelsPerUnit, height } });
+    setArriving(null);
+  }
+
+  /** Leave the editor: the camera, let go, glides back to where it was before. */
+  function leaveSketch() {
+    setSession(null);
+    setHeldPose(null);
+    setFocus({ ...beforeSketchRef.current });
+  }
+
+  /** The form with the drawing in progress written in. */
+  function withDrawing(sketch: Sketch): FormState | null {
+    if (!session || !form) return null;
+    return { ...form, args: withArg(form.schema, form.args, session.arg, sketch, committed, form.touched) };
+  }
+
+  /** The drawing is done: into the form — and, if that completes it, into the program. */
+  function finishSketch(sketch: Sketch) {
+    const next = withDrawing(sketch);
+    if (!next) return;
+    leaveSketch();
+    if (isComplete(next.schema, next.args)) commit(next);
+    else setForm(next);
+  }
+
+  /** Back to the form, drawing kept: its other arguments — the plane — can change, and Draw comes back here. */
+  function sketchSetup(sketch: Sketch) {
+    const next = withDrawing(sketch);
+    if (!next) return;
+    leaveSketch();
+    setForm(next);
+  }
+
+  /** Drop the drawing, and with it the step being written. */
+  function cancelSketch() {
+    leaveSketch();
+    closeForm();
+  }
+
+  const busy = !wasmReady || session != null || arriving != null;
+  const examples = useMemo(() => (wasmReady ? examplePrograms() : []), [wasmReady]);
+  const ran = committed?.results.length ?? 0;
+
+  const stepCount = program.steps.length;
+  /** Move the seeker to just after the first `n` steps — the end means "all of them". */
+  const seek = (n: number) => setMarker(n >= stepCount ? null : n);
+  const timelineSteps: TimelineStep[] = program.steps.map((step, i) => {
+    const schema = schemaOf(step.operation);
+    const editing = form?.stepId === step.id;
+    return {
+      id: step.id,
+      title: `${schema?.label ?? step.operation}: ${argsSummary(schema, step.args)}`,
+      error: (i < ran ? committed?.results[i]?.error : null) ?? null,
+      dim: !editing && runStop != null && i >= runStop,
+      editing,
+    };
+  });
+
+  return (
+    <div className="app">
+      <header className="toolbar">
+        <h1>Geop</h1>
+        <div className="tools">
+          <button disabled={busy || program.steps.length === 0} onClick={saveProgram}>
+            Save
+          </button>
+          <label className={`file-button${busy ? " disabled" : ""}`}>
+            Load
+            <input
+              type="file"
+              accept=".json,application/json"
+              disabled={busy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) loadFile(file);
+              }}
+            />
+          </label>
+          <select
+            value=""
+            disabled={busy}
+            onChange={(e) => {
+              const example = examples.find((x) => x.name === e.target.value);
+              if (example) loadProgram(example.program);
+            }}
+          >
+            <option value="">Examples…</option>
+            {examples.map((x) => (
+              <option key={x.name} value={x.name}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+          <button disabled={busy || history.length === 0 || form != null} onClick={undo}>
+            Undo
+          </button>
+          <button disabled={busy || future.length === 0 || form != null} onClick={redo}>
+            Redo
+          </button>
+        </div>
+        <div className="tools">
+          {schemas.map((schema) => (
+            <button
+              key={schema.kind}
+              title={schema.doc}
+              className={form?.schema === schema && form.stepId == null ? "active" : ""}
+              disabled={busy || (form != null && form.schema !== schema)}
+              onClick={() => newStep(schema)}
+            >
+              {schema.label}
+            </button>
+          ))}
+        </div>
+        {(session ?? arriving) && <span className="mode-badge">Sketching on {entityLabel((session ?? arriving)!.plane)}</span>}
+        {committed && (
+          <span className="stats">
+            {program.steps.length} step{program.steps.length === 1 ? "" : "s"} · {displayResult?.scene.triangles.length ?? 0} tris
+          </span>
+        )}
+      </header>
+      <div className="body">
+        <aside className="sidebar">
+          <section className="panel timeline">
+            <h2>Program</h2>
+            <Timeline
+              steps={timelineSteps}
+              seeker={marker ?? stepCount}
+              enabled={!busy && form == null}
+              onEdit={editStep}
+              onRemove={removeStep}
+              onMove={moveStep}
+              onSeek={seek}
+            />
+          </section>
+        </aside>
+        <main className="viewport">
+          {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
+          {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
+          {committedError && <p className="error">{committedError}</p>}
+          {wasmReady && displayResult && (
+              <SceneViewer
+                scene={displayResult.scene}
+                markers={markers}
+                onPick={handlePick}
+                pickable={pickable}
+                onPickEntity={handleEntity}
+                onHover={handleHover}
+                highlights={highlights}
+                datums={displayResult.datums}
+                hidden={usedReferences()}
+                handles={shownHandles()}
+                onHandleDrag={handleDragged}
+                projection={projection}
+                heldPose={heldPose}
+                focus={focus}
+                onFocusReached={onFocusReached}
+                onPose={(pose) => (poseRef.current = pose)}
+              />
+          )}
+          {session?.view && (
+            <SketchEditor
+              key={`${form?.stepId ?? "new"}-${session.arg}`}
+              initial={session.sketch}
+              initialView={session.view}
+              onView={(view) => setHeldPose(poseForSketchView(session.frame, view))}
+              onFinish={finishSketch}
+              onSetup={sketchSetup}
+              onCancel={cancelSketch}
+            />
+          )}
+          <button
+            className="projection-toggle"
+            title="Switch between a perspective and an orthographic view"
+            onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
+          >
+            {projection === "perspective" ? "Perspective" : "Orthographic"}
+          </button>
+          {form && !session && !arriving && (
+            <OperationForm
+              schema={form.schema}
+              args={form.args}
+              setArg={setArg}
+              stepId={form.stepId}
+              before={committed}
+              pickArg={pickArg}
+              setPickArg={setPickArg}
+              onDraw={(arg) => draw(form, arg)}
+              preview={preview}
+              setPreview={setPreview}
+              previewError={previewError}
+              error={formError}
+              complete={complete}
+              onCommit={() => commit(form)}
+              onCancel={closeForm}
+            />
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default App;

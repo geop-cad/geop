@@ -1,0 +1,364 @@
+//! Fat line clipping of a spline function against zero — "Clip B" of
+//! `contains/curve.md`, shared by the curve (`contains::curve`) and surface
+//! (`contains::surface`) searches, and the intersection searches.
+
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector};
+
+/// Greville abscissae `ξ_i = (u_{i+1} + … + u_{i+p}) / p` of the `count`
+/// control points of degree `p` on knot vector `u`: the first coordinates
+/// that make `(ξ_i, d_i)` the control polygon of the graph
+/// `(t, Σ d_i N_i(t))` (linear precision, `Σ ξ_i N_i(t) = t`). `None` for
+/// degree 0, which has no such polygon.
+pub(crate) fn greville_abscissae<S: Scalar>(
+    u: &[S],
+    p: usize,
+    count: usize,
+) -> GeopResult<Option<Vec<S>>> {
+    if p == 0 {
+        return Ok(None);
+    }
+    let p_s = S::from_i64(p as i64);
+    let mut xi = Vec::with_capacity(count);
+    for i in 0..count {
+        let sum = u[i + 1..=i + p].iter().fold(S::ZERO, |acc, &k| acc.add(k));
+        xi.push(sum.div(p_s)?);
+    }
+    Ok(Some(xi))
+}
+
+/// Enclosure of the zeros of the spline whose graph has control polygon
+/// `(xi[i], d[i])`, or `None` if it definitely has none.
+///
+/// Fat line: the chord `ℓ` from the first to the last graph control point,
+/// fattened by `Δ`, the union of every control point's *signed vertical*
+/// offset from it. The whole graph lies in the band `ℓ(t) + Δ` (convex hull
+/// property), so a zero needs `ℓ(t) ∈ -Δ`, i.e.
+/// `t ∈ ξ_0 - (d_0 + Δ) / s` for the chord's slope `s`. Evaluated in
+/// interval arithmetic, that expression encloses every real instantiation
+/// of the (interval) inputs — losing the correlation between `d_0`, `s` and
+/// `Δ` only widens it.
+pub(crate) fn fat_line_zeros<S: Scalar>(xi: &[S], d: &[S]) -> Option<S> {
+    let n = d.len() - 1;
+    let (xi0, d0) = (xi[0], d[0]);
+
+    let Ok(slope) = d[n].sub(d0).div(xi[n].sub(xi0)) else {
+        // Chord of zero parametric length (all knots coincide): no line to
+        // clip with, only the plain range test is left.
+        let range = d.iter().skip(1).fold(d0, |acc, &di| acc.union(di));
+        return range.could_be_equal(S::ZERO).then_some(S::ENTIRE);
+    };
+
+    let band = xi
+        .iter()
+        .zip(d)
+        .map(|(&xi_i, &d_i)| d_i.sub(d0.add(slope.mul(xi_i.sub(xi0)))))
+        .reduce(|acc, off| acc.union(off))
+        .unwrap_or(S::ZERO);
+
+    // Over the domain `ℓ` stays between `d_0` and `d_n`, so the band there
+    // is covered by `hull(d_0, d_n) + Δ`. Missing zero proves there is no
+    // root — and this also decides the case the division below can't: a
+    // chord that could be horizontal.
+    if !d0.union(d[n]).add(band).could_be_equal(S::ZERO) {
+        return None;
+    }
+    match d0.add(band).div(slope) {
+        Ok(q) => Some(xi0.sub(q)),
+        // `s` could be zero: the band does reach the axis, but a horizontal
+        // band does so everywhere — no information from this axis.
+        Err(_) => Some(S::ENTIRE),
+    }
+}
+
+/// Clip the zeros of a tensor-product spline in `dims.len()` parameters
+/// (`surface.md` §2): `d` holds its coefficients row-major over `dims`
+/// (last index fastest), `greville[dir]` the abscissae of direction `dir`
+/// (`None` for degree 0), and `hats[dir]` the current enclosure of that
+/// parameter, narrowed in place. `false` if the spline definitely has no
+/// zero in the box.
+///
+/// Each direction's coefficients are collapsed by union over every other
+/// index: with the other parameters fixed, the spline's coefficients along
+/// `dir` are convex combinations of those, so the union envelope encloses
+/// every slice and its fat line clip ([`fat_line_zeros`]) keeps every zero.
+/// Intersecting per-row clips instead would be wrong — a zero of the
+/// tensor need not be a zero of any row.
+pub(crate) fn clip_tensor<S: Scalar>(
+    d: &[S],
+    dims: &[usize],
+    greville: &[Option<Vec<S>>],
+    hats: &mut [S],
+) -> bool {
+    // Range test: the whole graph lies within the coefficients' hull. Implied
+    // by any clip below, but a direction of degree 0 has none.
+    let Some(range) = d.iter().copied().reduce(|a, x| a.union(x)) else {
+        return true;
+    };
+    if !range.could_be_equal(S::ZERO) {
+        return false;
+    }
+
+    let mut envelopes: Vec<Vec<Option<S>>> = dims.iter().map(|&n| vec![None; n]).collect();
+    let mut idx = vec![0usize; dims.len()];
+    for &x in d {
+        for (env, &i) in envelopes.iter_mut().zip(&idx) {
+            env[i] = Some(env[i].map_or(x, |a| a.union(x)));
+        }
+        for dir in (0..dims.len()).rev() {
+            idx[dir] += 1;
+            if idx[dir] < dims[dir] {
+                break;
+            }
+            idx[dir] = 0;
+        }
+    }
+
+    for ((env, xi), hat) in envelopes.iter().zip(greville).zip(hats.iter_mut()) {
+        let Some(xi) = xi else { continue };
+        let env: Vec<S> = env.iter().map(|e| e.unwrap_or(S::ZERO)).collect();
+        // Both constraints hold at once, so they intersect — but `intersect`
+        // of disjoint enclosures returns an input rather than an empty set,
+        // so disjointness is checked first.
+        match fat_line_zeros(xi, &env) {
+            Some(z) if z.could_be_equal(*hat) => *hat = hat.intersect(z),
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// What a clipping search does next with a box that was clipped but has not
+/// converged.
+pub(crate) enum Plan<S> {
+    /// Restrict to these per-direction bounds. A direction that isn't cut
+    /// gets its own domain ends, which cut nothing.
+    Restrict(Vec<(S, S)>),
+    /// Bisect, trying directions in this order.
+    Bisect(Vec<usize>),
+}
+
+/// The shared schedule of the clipping searches (`surface.md` §4).
+///
+/// A direction is cut when its clip `hats[dir]` removed at least 20% of its
+/// domain `ranges[dir]` (the usual Bézier clipping rule) *and* one of the
+/// clip's sharp outer bounds lies strictly inside the domain. If any
+/// direction is cut, all such cuts are made at once. Otherwise the box is
+/// bisected, preferring the direction with the largest *spatial* extent
+/// `sizes[dir]` (see [`extent`]): parameter widths from differently scaled
+/// domains aren't comparable (`curve_surface.md` §3), and a direction with no
+/// extent at all — `u` along a pole row — gains nothing from a split, while
+/// every piece of it survives, so it is skipped, as is one whose domain is
+/// no wider than `min_subdivision_size`. An empty bisection order means
+/// nothing is left to split.
+pub(crate) fn plan<S: Scalar>(
+    hats: &[S],
+    ranges: &[(S, S)],
+    sizes: &[f64],
+    min_subdivision_size: S,
+) -> GeopResult<Plan<S>> {
+    let min_progress = S::from_ratio(4, 5)?;
+    let inside = |t: S, (a, b): (S, S)| t.definitely_greater(a) && t.definitely_less(b);
+    let widths: Vec<S> = ranges.iter().map(|&(a, b)| a.union(b).width()).collect();
+
+    let cut: Vec<bool> = (0..hats.len())
+        .map(|dir| {
+            let hat = hats[dir];
+            hat.width().definitely_less(widths[dir].mul(min_progress))
+                && (inside(hat.lower(), ranges[dir]) || inside(hat.upper(), ranges[dir]))
+        })
+        .collect();
+    if cut.iter().any(|&c| c) {
+        return Ok(Plan::Restrict(
+            (0..hats.len())
+                .map(|dir| {
+                    if cut[dir] {
+                        (hats[dir].lower(), hats[dir].upper())
+                    } else {
+                        ranges[dir]
+                    }
+                })
+                .collect(),
+        ));
+    }
+
+    let mut order: Vec<usize> = (0..hats.len())
+        .filter(|&dir| sizes[dir] > 0.0 && widths[dir].definitely_greater(min_subdivision_size))
+        .collect();
+    order.sort_by(|&a, &b| sizes[b].total_cmp(&sizes[a]));
+    Ok(Plan::Bisect(order))
+}
+
+/// Whether a piece has converged: each spatial [`extent`] in `sizes` is no
+/// longer definitely greater than `min_subdivision_size` — or than
+/// `carried`, the interval width the geometry being compared carries (see
+/// [`carried_width`]), whichever is larger. `carried` is the widest of *all*
+/// objects in the comparison: resolving one object finer than another's
+/// width answers nothing new — every piece within that width stays a
+/// candidate — and only multiplies them.
+///
+/// Measured on the extents — the part of a piece that splitting shrinks —
+/// and not on its bounding box, which also holds that carried width. An
+/// interpolated curve honestly widened by its drift
+/// (`NurbCurve::interpolate_enclosing`) has a box no split can bring under
+/// that width; and once its extent is under it, splitting further cannot
+/// sharpen the answer either — every sub-piece still carries the full width —
+/// it only multiplies the pieces that survive. So subdivision stops at the
+/// resolution the data actually has. Only effort depends on this, never what
+/// a converged answer claims.
+pub(crate) fn converged<S: Scalar>(sizes: &[f64], carried: f64, min_subdivision_size: S) -> bool {
+    let resolution = S::from_f64(carried).union(min_subdivision_size).upper();
+    sizes
+        .iter()
+        .all(|&e| !S::from_f64(e).definitely_greater(resolution))
+}
+
+/// The interval width `points` carry: the widest Cartesian coordinate of any
+/// of them. What no subdivision of the object they define can shrink.
+pub(crate) fn carried_width<S: Scalar, const D: usize>(points: &[Vector<S, D>]) -> f64 {
+    points
+        .iter()
+        .flat_map(|q| {
+            let w = q[D - 1].to_f64();
+            (0..D - 1).map(move |k| q[k].width().to_f64() / w)
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Spatial extent of an object along one parameter direction, for choosing
+/// which direction to bisect: the largest control-polygon length over the
+/// `rows` running along it. By the convex hull property this bounds how far
+/// the object reaches in that direction (corner chords don't: a closed or
+/// folded row has a zero chord), and it is exactly zero along a collapsed
+/// row. A free choice, so plain `f64`.
+pub(crate) fn extent<S: Scalar, const D: usize>(
+    rows: impl IntoIterator<Item = impl IntoIterator<Item = Vector<S, D>>>,
+) -> f64 {
+    rows.into_iter()
+        .map(|row| {
+            let pts: Vec<[f64; 3]> = row
+                .into_iter()
+                .map(|q| {
+                    let w = q[D - 1].to_f64();
+                    std::array::from_fn(|k| if k < D - 1 { q[k].to_f64() / w } else { 0.0 })
+                })
+                .collect();
+            pts.windows(2)
+                .map(|p| {
+                    (0..3)
+                        .map(|k| (p[1][k] - p[0][k]).powi(2))
+                        .sum::<f64>()
+                        .sqrt()
+                })
+                .sum::<f64>()
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Directions for *combining* the per-axis equations. For any fixed `n`,
+/// `g_n = Σ_k n_k g_k` vanishes wherever every `g_k` does, so clipping it is
+/// exactly as sound as clipping the axes — and `n` is a free choice, so it
+/// is computed in plain `f64` and used sharp. Choosing `n` perpendicular to
+/// how the *other* object varies (its chord) makes `g_n` nearly independent
+/// of that object's parameters, so collapsing them by union loses little:
+/// the classic Bézier clipping choice. It recovers exactly the coupling the
+/// axis projections lose (`intersection/curve_curve.md` §3's diagonal
+/// example gives `2s - 1` and `2t - 1`).
+pub(crate) mod directions {
+    use geop_core_math::{scalars::Scalar, vector::Vector};
+
+    pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    }
+
+    /// `v / |v|`, or `None` for a zero (or non-finite) `v` — no direction.
+    pub(crate) fn unit<const C: usize>(v: [f64; C]) -> Option<[f64; C]> {
+        let n = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        (n > 0.0 && n.is_finite()).then(|| v.map(|x| x / n))
+    }
+
+    /// `C - 1` orthonormal directions perpendicular to `v` (Gram–Schmidt on
+    /// the coordinate axes least aligned with `v`), or none for a zero `v`.
+    pub(crate) fn complement<const C: usize>(v: [f64; C]) -> Vec<[f64; C]> {
+        let Some(v) = unit(v) else { return vec![] };
+        let mut axes: Vec<usize> = (0..C).collect();
+        axes.sort_by(|&a, &b| v[a].abs().total_cmp(&v[b].abs()));
+        let mut basis = vec![v];
+        for &k in &axes[..C - 1] {
+            let mut e = [0.0; C];
+            e[k] = 1.0;
+            for b in &basis {
+                let dot: f64 = (0..C).map(|i| e[i] * b[i]).sum();
+                (0..C).for_each(|i| e[i] -= dot * b[i]);
+            }
+            basis.extend(unit(e));
+        }
+        basis.split_off(1)
+    }
+
+    /// `dirs`, plus the coordinate axes if `dirs` don't span space well:
+    /// the equations along them must together pin down every coordinate, or
+    /// a configuration where they all coincide — a curve lying in a
+    /// patch's plane makes the normal and both `c × e` parallel — clips
+    /// nothing at all. Conditioning is a free choice here (it affects only
+    /// how well the equations clip, never what they prove), so a
+    /// well-conditioned residual of ½ in Gram–Schmidt is simply required.
+    pub(crate) fn spanning<const C: usize>(mut dirs: Vec<[f64; C]>) -> Vec<[f64; C]> {
+        let mut basis: Vec<[f64; C]> = Vec::new();
+        for d in &dirs {
+            let mut e = *d;
+            for b in &basis {
+                let dot: f64 = (0..C).map(|i| e[i] * b[i]).sum();
+                (0..C).for_each(|i| e[i] -= dot * b[i]);
+            }
+            let n = e.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if n > 0.5 {
+                basis.push(e.map(|x| x / n));
+            }
+        }
+        if basis.len() < C {
+            dirs.extend(axes::<C>());
+        }
+        dirs
+    }
+
+    /// The coordinate axes: the fallback when an object has no usable chord.
+    pub(crate) fn axes<const C: usize>() -> Vec<[f64; C]> {
+        (0..C)
+            .map(|k| {
+                let mut e = [0.0; C];
+                e[k] = 1.0;
+                e
+            })
+            .collect()
+    }
+
+    /// Cartesian position of a homogeneous control point, in `f64` — only
+    /// ever used to *choose* a direction.
+    pub(crate) fn cartesian<S: Scalar, const D: usize, const C: usize>(
+        q: &Vector<S, D>,
+    ) -> [f64; C] {
+        let w = q[D - 1].to_f64();
+        std::array::from_fn(|k| q[k].to_f64() / w)
+    }
+
+    pub(crate) fn sub<const C: usize>(a: [f64; C], b: [f64; C]) -> [f64; C] {
+        std::array::from_fn(|k| a[k] - b[k])
+    }
+
+    /// `n · q` over the Cartesian part of a homogeneous point (the weight
+    /// is left out: `Σ n_k H_k`), with `n` sharp.
+    pub(crate) fn dot<S: Scalar, const D: usize, const C: usize>(
+        n: &[S; C],
+        q: &Vector<S, D>,
+    ) -> S {
+        (0..C).fold(S::ZERO, |acc, k| acc.add(n[k].mul(q[k])))
+    }
+
+    pub(crate) fn sharp<S: Scalar, const C: usize>(n: [f64; C]) -> [S; C] {
+        n.map(S::from_f64)
+    }
+}

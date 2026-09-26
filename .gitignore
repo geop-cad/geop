@@ -1,0 +1,20 @@
+target
+outputs/
+intersection_viz.html
+curve_surface_intersection_viz.html
+curve_surface_intersection_coplanar.html
+curve_surface_intersection_angled.html
+curve_surface_intersection_sphere_circle.html
+curve_surface_intersection_bent.html
+curve_surface_intersection_partial_overlap.html
+curve_surface_intersection_oversized.html
+curve_surface_intersection_same_size.html
+curve_curve_intersection_single.html
+curve_curve_intersection_two_crossings.html
+curve_curve_intersection_coincident.html
+curve_curve_intersection_gnk_linear.html
+curve_curve_intersection_gnk_tangent_arcs.html
+
+# generated wasm bindings (rebuild with `npm run build:wasm` in web/)
+web/src/wasm/pkg/
+pkg/

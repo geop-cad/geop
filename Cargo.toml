@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "core/geop-core-math",
+    "core/geop-core-geometry",
+    "core/geop-core-topology",
+    "core/geop-core-sketch",
+    "core/geop-core-part",
+    "ops/geop-ops-extrude-revolve",
+    "ops/geop-ops-booleans",
+    "ops/geop-ops-rasterize",
+    "ops/geop-ops-parts",
+    "ops/geop-ops-parts-derive",
+    "cad/geop-cad-base",
+    "cad/geop-cad-web",
+    "cad/geop-cad-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+geop-core-math = { path = "core/geop-core-math" }
+geop-core-geometry = { path = "core/geop-core-geometry" }
+geop-core-topology = { path = "core/geop-core-topology" }
+geop-core-sketch = { path = "core/geop-core-sketch" }
+geop-core-part = { path = "core/geop-core-part" }
+geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
+geop-ops-booleans = { path = "ops/geop-ops-booleans" }
+geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
+geop-ops-parts = { path = "ops/geop-ops-parts" }
+geop-ops-parts-derive = { path = "ops/geop-ops-parts-derive" }
+geop-cad-base = { path = "cad/geop-cad-base" }
+rayon = "1"
+
+# `cargo test` otherwise builds these crates unoptimized, which is fine for
+# cheap unit tests but disastrous for the render-test suites in
+# geop-ops-booleans: they run a full remesh/boolean/rasterize per scene,
+# ~175 scenes per test, and that numeric geometry code is 10-20x slower
+# without optimizations. Only `cargo test` picks this up — `cargo build`/
+# `cargo run` still use the unoptimized `dev` profile, so the normal
+# edit-compile-debug loop is untouched.
+[profile.test]
+opt-level = 3

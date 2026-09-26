@@ -1,0 +1,8 @@
+[package]
+name = "geop-core-topology"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true

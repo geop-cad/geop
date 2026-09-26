@@ -1,0 +1,15 @@
+[package]
+name = "geop-core-sketch"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+# `Sketch` is plain `f64` design data, which makes it its own natural wire
+# format: a part program stores it verbatim, and the wasm boundary sends it
+# as-is instead of mirroring every entity and constraint in parallel structs.
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

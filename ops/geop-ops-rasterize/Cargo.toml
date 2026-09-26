@@ -1,0 +1,13 @@
+[package]
+name = "geop-ops-rasterize"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+
+[dev-dependencies]
+geop-ops-extrude-revolve.workspace = true
+geop-core-part.workspace = true

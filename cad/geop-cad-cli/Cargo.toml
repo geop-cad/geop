@@ -1,0 +1,16 @@
+[package]
+name = "geop-cad-cli"
+version.workspace = true
+edition.workspace = true
+
+# `geop compile part.program.json` — named for the project, not the crate.
+[[bin]]
+name = "geop"
+path = "src/main.rs"
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-part.workspace = true
+geop-ops-parts.workspace = true
+geop-ops-rasterize.workspace = true
+clap = { version = "4", features = ["derive"] }

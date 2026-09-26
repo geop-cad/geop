@@ -1,0 +1,16 @@
+[package]
+name = "geop-ops-booleans"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-core-part.workspace = true
+geop-ops-extrude-revolve.workspace = true
+rayon.workspace = true
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+geop-ops-rasterize.workspace = true
