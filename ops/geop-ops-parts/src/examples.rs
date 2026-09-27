@@ -485,7 +485,7 @@ pub fn luggage_tag() -> Program {
         "tag",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 1.0,
+            distance: 1.0 / 3.0,
             symmetric: true,
             combine: Combine::NewBody,
         },

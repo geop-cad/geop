@@ -253,14 +253,23 @@ export function SketchEditor({ initial, initialView, onView, onFinish, onSetup, 
         setSelectedConstraint(null);
         const point = pointAt(sketch, p);
         const curve = point == null ? curveAt(sketch, p) : null;
-        if (point == null && curve == null) {
-          if (!shift) setSelection(EMPTY_SELECTION);
+        if (point != null || curve != null) {
+          setSelection((sel) => {
+            const toggle = (xs: Id[], x: Id) => (xs.includes(x) ? xs.filter((y) => y !== x) : [...xs, x]);
+            return point != null ? { ...sel, points: toggle(sel.points, point) } : { ...sel, curves: toggle(sel.curves, curve!) };
+          });
           return;
         }
-        setSelection((sel) => {
-          const toggle = (xs: Id[], x: Id) => (xs.includes(x) ? xs.filter((y) => y !== x) : [...xs, x]);
-          return point != null ? { ...sel, points: toggle(sel.points, point) } : { ...sel, curves: toggle(sel.curves, curve!) };
-        });
+        // Nothing there yet — but the origin is always selectable, to
+        // make other entities coincident with it: place (or find) its
+        // point, fixed there, the same way a drawing tool would.
+        if (dist(p, [0, 0]) < tolerance) {
+          const [next, id] = placePoint(sketch, p);
+          commit(next);
+          setSelection((sel) => ({ ...sel, points: shift ? [...sel.points, id] : [id] }));
+          return;
+        }
+        if (!shift) setSelection(EMPTY_SELECTION);
         return;
       }
       case "point": {

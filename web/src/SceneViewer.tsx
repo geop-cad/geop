@@ -80,6 +80,20 @@ const arr = (v: THREE.Vector3): Vec3 => [v.x, v.y, v.z];
 /** Smoothstep: starts and ends at rest, so the move has no visible kick. */
 const ease = (t: number) => t * t * (3 - 2 * t);
 
+/**
+ * A pose's orientation, as a single rotation — so a focus move can slerp
+ * position, target and up together (below) instead of lerping `up` on its
+ * own. Lerping `up` independently, then normalizing, does not take the
+ * shortest rotation from one orientation to the other: near antiparallel
+ * `up`s it passes close to the zero vector, where normalizing amplifies
+ * whatever direction floating-point noise happens to leave it pointing —
+ * the camera visibly spins around its own view axis while gliding in.
+ */
+function cameraOrientation(pose: CameraPose): THREE.Quaternion {
+  const m = new THREE.Matrix4().lookAt(vec(pose.position), vec(pose.target), vec(pose.up));
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+}
+
 /** The color a highlighted entity is drawn in. */
 const HIGHLIGHT = new THREE.Color(0xffc94a);
 
@@ -314,7 +328,13 @@ export function SceneViewer({
   const cameraRef = useRef<THREE.Camera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   // The move in progress, if any: where it started, where it is going, when.
-  const moveRef = useRef<{ from: CameraPose; to: CameraPose; start: number } | null>(null);
+  const moveRef = useRef<{
+    from: CameraPose;
+    to: CameraPose;
+    fromQuat: THREE.Quaternion;
+    toQuat: THREE.Quaternion;
+    start: number;
+  } | null>(null);
   const onFocusReachedRef = useRef(onFocusReached);
   onFocusReachedRef.current = onFocusReached;
   const onPoseRef = useRef(onPose);
@@ -543,7 +563,8 @@ export function SceneViewer({
         const k = ease(t);
         camera.position.lerpVectors(vec(move.from.position), vec(move.to.position), k);
         controls.target.lerpVectors(vec(move.from.target), vec(move.to.target), k);
-        camera.up.lerpVectors(vec(move.from.up), vec(move.to.up), k).normalize();
+        const qK = move.fromQuat.clone().slerp(move.toQuat, k);
+        camera.up.set(0, 1, 0).applyQuaternion(qK).normalize();
         camera.lookAt(controls.target);
         if (t >= 1) {
           moveRef.current = null;
@@ -643,9 +664,12 @@ export function SceneViewer({
     const controls = controlsRef.current;
     if (!focus || !camera || !controls) return;
     controls.enabled = false;
+    const from: CameraPose = { position: arr(camera.position), target: arr(controls.target), up: arr(camera.up) };
     moveRef.current = {
-      from: { position: arr(camera.position), target: arr(controls.target), up: arr(camera.up) },
+      from,
       to: focus,
+      fromQuat: cameraOrientation(from),
+      toQuat: cameraOrientation(focus),
       start: performance.now(),
     };
   }, [focus]);
