@@ -99,7 +99,8 @@ space: a `Handle` has a position, a motion (along a line or in a plane) and
 the path of the argument it rewrites. An editor draws the handles it wants
 and turns a drag into new argument values, so dragging edits the program
 exactly as typing into a form does, and the editor needs to know nothing
-about the operation.
+about the operation. How the 3-D viewer draws and drags them is
+described under [geop-cad-web](../cad/geop-cad-web.md#handles-in-the-3-d-viewer).
 
 ## Schemas and the derive crate
 

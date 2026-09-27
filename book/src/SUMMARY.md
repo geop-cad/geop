@@ -12,10 +12,10 @@
 
 # Ops
 
+- [geop-ops-parts](./ops/geop-ops-parts.md)
 - [geop-ops-extrude-revolve](./ops/geop-ops-extrude-revolve.md)
 - [geop-ops-booleans](./ops/geop-ops-booleans.md)
 - [geop-ops-rasterize](./ops/geop-ops-rasterize.md)
-- [geop-ops-parts](./ops/geop-ops-parts.md)
 
 # CAD
 
