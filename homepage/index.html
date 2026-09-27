@@ -259,23 +259,58 @@ header.site {
 /* ---------------------------------------------------------------
    Examples carousel
 --------------------------------------------------------------- */
-.example-carousel {
+.example-carousel-wrap {
+  position: relative;
   margin-top: 1.1rem;
+}
+.example-carousel {
   display: flex;
-  gap: 1rem;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
-  padding-bottom: 0.5rem;
+  scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
+  /* one card, edge to edge — swipe still works, but it's not the point */
+  scrollbar-width: none;
+}
+.example-carousel::-webkit-scrollbar {
+  display: none;
 }
 .example-card {
-  flex: 0 0 auto;
-  width: min(230px, 78vw);
+  flex: 0 0 100%;
+  width: 100%;
   scroll-snap-align: start;
   border: 1px solid var(--line);
   background: var(--ground);
   display: flex;
   flex-direction: column;
+}
+.carousel-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--ink);
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.carousel-nav:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.carousel-nav.prev {
+  left: -0.9rem;
+}
+.carousel-nav.next {
+  right: -0.9rem;
 }
 .example-canvas {
   width: 100%;
@@ -604,35 +639,39 @@ footer.site {
 
       <div class="hero-figure corner-ticks">
         <p class="eyebrow">live examples</p>
-        <div class="example-carousel" id="example-carousel">
-          <div class="example-card" data-example="box_with_drill_hole">
-            <div class="example-canvas"></div>
-            <div class="example-card-footer">
-              <span class="example-name">Box with drill hole</span>
-              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Open in app ↗</a>
+        <div class="example-carousel-wrap">
+          <button class="carousel-nav prev" type="button" aria-label="Previous example">‹</button>
+          <div class="example-carousel" id="example-carousel">
+            <div class="example-card" data-example="cross_drilled_shaft">
+              <div class="example-canvas"></div>
+              <div class="example-card-footer">
+                <span class="example-name">Cross-drilled shaft</span>
+                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Open in app ↗</a>
+              </div>
+            </div>
+            <div class="example-card" data-example="box_with_drill_hole">
+              <div class="example-canvas"></div>
+              <div class="example-card-footer">
+                <span class="example-name">Box with drill hole</span>
+                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Open in app ↗</a>
+              </div>
+            </div>
+            <div class="example-card" data-example="two_plates">
+              <div class="example-canvas"></div>
+              <div class="example-card-footer">
+                <span class="example-name">Two plates</span>
+                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Open in app ↗</a>
+              </div>
+            </div>
+            <div class="example-card" data-example="boss_on_reference_plane">
+              <div class="example-canvas"></div>
+              <div class="example-card-footer">
+                <span class="example-name">Boss on reference plane</span>
+                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=boss_on_reference_plane" target="_blank" rel="noopener">Open in app ↗</a>
+              </div>
             </div>
           </div>
-          <div class="example-card" data-example="cross_drilled_shaft">
-            <div class="example-canvas"></div>
-            <div class="example-card-footer">
-              <span class="example-name">Cross-drilled shaft</span>
-              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Open in app ↗</a>
-            </div>
-          </div>
-          <div class="example-card" data-example="two_plates">
-            <div class="example-canvas"></div>
-            <div class="example-card-footer">
-              <span class="example-name">Two plates</span>
-              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Open in app ↗</a>
-            </div>
-          </div>
-          <div class="example-card" data-example="boss_on_reference_plane">
-            <div class="example-canvas"></div>
-            <div class="example-card-footer">
-              <span class="example-name">Boss on reference plane</span>
-              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=boss_on_reference_plane" target="_blank" rel="noopener">Open in app ↗</a>
-            </div>
-          </div>
+          <button class="carousel-nav next" type="button" aria-label="Next example">›</button>
         </div>
       </div>
     </div>
@@ -884,6 +923,14 @@ footer.site {
     { rootMargin: "200px" },
   );
   cards.forEach((card) => lazy.observe(card));
+
+  const carousel = document.getElementById("example-carousel");
+  document.querySelector(".carousel-nav.prev").addEventListener("click", () => {
+    carousel.scrollBy({ left: -carousel.clientWidth, behavior: "smooth" });
+  });
+  document.querySelector(".carousel-nav.next").addEventListener("click", () => {
+    carousel.scrollBy({ left: carousel.clientWidth, behavior: "smooth" });
+  });
 </script>
 
 </body>
