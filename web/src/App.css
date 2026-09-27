@@ -236,6 +236,10 @@ button.small {
 .popup-backdrop {
   position: absolute;
   inset: 0;
+  /* Rendered from wherever the trigger sits in the tree (e.g. BugReport
+     in the header, before .viewport in DOM) — without this it can paint
+     underneath later, also-positioned siblings like .viewport. */
+  z-index: 1000;
   display: flex;
   justify-content: flex-end;
   align-items: flex-start;

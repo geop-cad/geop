@@ -1,23 +1,34 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import type { Program } from "./geop";
 
 interface Props {
   program: Program;
   committedError: string | null;
+  /** Where to put the form instead of floating it over the viewport — the mobile layout's "Bug" tab pane. */
+  panelHost?: HTMLElement | null;
+  onOpen?: () => void;
+  onClose?: () => void;
 }
 
 type Status = "idle" | "sending" | "sent" | { error: string };
 
 /** A button that opens a small form and posts it, with the current program attached, to /api/bug-report. */
-export function BugReport({ program, committedError }: Props) {
+export function BugReport({ program, committedError, panelHost, onOpen, onClose }: Props) {
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<Status>("idle");
+
+  function openDialog() {
+    setOpen(true);
+    onOpen?.();
+  }
 
   function close() {
     setOpen(false);
     setDescription("");
     setStatus("idle");
+    onClose?.();
   }
 
   async function send() {
@@ -45,10 +56,10 @@ export function BugReport({ program, committedError }: Props) {
   }
 
   if (!open) {
-    return <button onClick={() => setOpen(true)}>Report bug</button>;
+    return <button onClick={openDialog}>Report bug</button>;
   }
 
-  return (
+  const content = (
     <div className="popup-backdrop">
       <div className="popup">
         <div className="button-row">
@@ -84,4 +95,6 @@ export function BugReport({ program, committedError }: Props) {
       </div>
     </div>
   );
+
+  return panelHost ? createPortal(content, panelHost) : content;
 }

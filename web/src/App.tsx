@@ -80,6 +80,9 @@ function App() {
   const isMobile = useIsMobile();
   /** The mobile "Draw" tab's pane, once mounted — where the sketch editor's Draw/Constrain/Status panel portals to. */
   const [sketchPanelHost, setSketchPanelHost] = useState<HTMLDivElement | null>(null);
+  /** The mobile "Bug" tab's pane, once mounted — where the bug-report form portals to when open. */
+  const [bugReportHost, setBugReportHost] = useState<HTMLDivElement | null>(null);
+  const [bugReportOpen, setBugReportOpen] = useState(false);
 
   const [session, setSession] = useState<SketchSession | null>(null);
   // Entering a sketch: the camera glides to face its plane first, and the
@@ -589,6 +592,15 @@ function App() {
         program={program}
         stepCount={program.steps.length}
         triangleCount={displayResult?.scene.triangles.length ?? 0}
+        bugReportHost={isMobile ? bugReportHost : null}
+        onBugReportOpen={() => {
+          setBugReportOpen(true);
+          setMobileTab("bug");
+        }}
+        onBugReportClose={() => {
+          setBugReportOpen(false);
+          setMobileTab((tab) => (tab === "bug" ? "buttons" : tab));
+        }}
       />
       <div className="body">
         <aside className="sidebar desktop-only">{programPanel}</aside>
@@ -632,10 +644,12 @@ function App() {
         onTab={setMobileTab}
         detailAvailable={detailAvailable}
         sketchAvailable={session?.view != null}
+        bugReportOpen={bugReportOpen}
         operationButtons={operationButtonsRow}
         programPanel={programPanel}
         detailPanel={detailPanel}
         onSketchPanelHost={setSketchPanelHost}
+        onBugReportHost={setBugReportHost}
       />
     </div>
   );

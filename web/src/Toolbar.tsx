@@ -22,6 +22,10 @@ interface Props {
   program: Program;
   stepCount: number;
   triangleCount: number;
+  /** Where the bug-report form goes instead of floating over the viewport — the mobile "Bug" tab, when on mobile. */
+  bugReportHost: HTMLElement | null;
+  onBugReportOpen: () => void;
+  onBugReportClose: () => void;
 }
 
 /** The app's top bar: file actions, undo/redo, the operation buttons (desktop only), and status. */
@@ -43,6 +47,9 @@ export function Toolbar({
   program,
   stepCount,
   triangleCount,
+  bugReportHost,
+  onBugReportOpen,
+  onBugReportClose,
 }: Props) {
   return (
     <header className="toolbar">
@@ -87,7 +94,13 @@ export function Toolbar({
       </div>
       <div className="tools desktop-only">{operationButtons}</div>
       {sketchingOn && <span className="mode-badge">Sketching on {entityLabel(sketchingOn)}</span>}
-      <BugReport program={program} committedError={committedError} />
+      <BugReport
+        program={program}
+        committedError={committedError}
+        panelHost={bugReportHost}
+        onOpen={onBugReportOpen}
+        onClose={onBugReportClose}
+      />
       {committed && (
         <span className="stats">
           {stepCount} step{stepCount === 1 ? "" : "s"} · {triangleCount} tris

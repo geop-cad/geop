@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 
-export type MobileTab = "buttons" | "program" | "detail" | "draw";
+export type MobileTab = "buttons" | "program" | "detail" | "draw" | "bug";
 
 interface Props {
   tab: MobileTab;
   onTab: (tab: MobileTab) => void;
   detailAvailable: boolean;
   sketchAvailable: boolean;
+  bugReportOpen: boolean;
   operationButtons: ReactNode;
   programPanel: ReactNode;
   detailPanel: ReactNode;
@@ -19,25 +20,29 @@ interface Props {
    * switches — only hidden, via the `hidden` attribute, when inactive.
    */
   onSketchPanelHost: (el: HTMLDivElement | null) => void;
+  /** Same idea as onSketchPanelHost, for the bug-report form (opened from the toolbar's "Report bug" button). */
+  onBugReportHost: (el: HTMLDivElement | null) => void;
 }
 
 /**
  * The bottom half of the mobile layout: a tab bar switching between the
- * operation buttons, the program timeline, the open step's detail form and
- * (while sketching) the sketch editor's control panel — the drawing
- * surface itself stays in the 3-D view up top; only its buttons move down
- * here. Hidden entirely above the mobile breakpoint (see .mobile-bottom in
- * App.css).
+ * operation buttons, the program timeline, the open step's detail form,
+ * (while sketching) the sketch editor's control panel, and (while open)
+ * the bug-report form — the drawing surface itself stays in the 3-D view
+ * up top; only these panels move down here. Hidden entirely above the
+ * mobile breakpoint (see .mobile-bottom in App.css).
  */
 export function MobileBottom({
   tab,
   onTab,
   detailAvailable,
   sketchAvailable,
+  bugReportOpen,
   operationButtons,
   programPanel,
   detailPanel,
   onSketchPanelHost,
+  onBugReportHost,
 }: Props) {
   return (
     <div className="mobile-bottom">
@@ -58,12 +63,18 @@ export function MobileBottom({
             Draw
           </button>
         )}
+        {bugReportOpen && (
+          <button className={tab === "bug" ? "active" : ""} onClick={() => onTab("bug")}>
+            Bug
+          </button>
+        )}
       </nav>
       <div className="mobile-tab-content">
         {tab === "buttons" && operationButtons}
         {tab === "program" && programPanel}
         {tab === "detail" && detailPanel}
         {sketchAvailable && <div className="sketch-panel-host" hidden={tab !== "draw"} ref={onSketchPanelHost} />}
+        {bugReportOpen && <div className="sketch-panel-host" hidden={tab !== "bug"} ref={onBugReportHost} />}
       </div>
     </div>
   );

@@ -256,42 +256,13 @@ header.site {
   padding: clamp(1.5rem, 3vw, 2rem);
   background: var(--surface);
 }
-.examples-list {
-  list-style: none;
-  margin: 1.1rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.examples-list li + li { border-top: 1px solid var(--line); }
-.examples-list a {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.85rem 0.15rem;
-  text-decoration: none;
-  color: var(--ink);
-  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
-  font-size: 0.92rem;
-}
-.examples-list a:hover { color: var(--accent); }
-.examples-note {
-  margin-top: 1.25rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--line);
-  color: var(--ink-faint);
-  font-size: 0.82rem;
-}
-
 /* ---------------------------------------------------------------
    Examples carousel
 --------------------------------------------------------------- */
 .example-carousel {
-  margin-top: 2.25rem;
+  margin-top: 1.1rem;
   display: flex;
-  gap: 1.25rem;
+  gap: 1rem;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
   padding-bottom: 0.5rem;
@@ -299,10 +270,10 @@ header.site {
 }
 .example-card {
   flex: 0 0 auto;
-  width: min(320px, 80vw);
+  width: min(230px, 78vw);
   scroll-snap-align: start;
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--ground);
   display: flex;
   flex-direction: column;
 }
@@ -633,52 +604,34 @@ footer.site {
 
       <div class="hero-figure corner-ticks">
         <p class="eyebrow">live examples</p>
-        <ul class="examples-list">
-          <li><a href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Box with drill hole ↗</a></li>
-          <li><a href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Cross-drilled shaft ↗</a></li>
-          <li><a href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Two plates ↗</a></li>
-        </ul>
-        <p class="examples-note">Opens the example directly in the app — see them rendered below first ↓</p>
-      </div>
-    </div>
-  </section>
-
-  <hr class="rule" />
-
-  <!-- ============================= EXAMPLES CAROUSEL ============================= -->
-  <section id="examples">
-    <div class="sheet">
-      <div class="section-head">
-        <p class="eyebrow">try one</p>
-        <h2>A few parts built with geop, rendered right here.</h2>
-      </div>
-      <div class="example-carousel" id="example-carousel">
-        <div class="example-card" data-example="box_with_drill_hole">
-          <div class="example-canvas"></div>
-          <div class="example-card-footer">
-            <span class="example-name">Box with drill hole</span>
-            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Open in app ↗</a>
+        <div class="example-carousel" id="example-carousel">
+          <div class="example-card" data-example="box_with_drill_hole">
+            <div class="example-canvas"></div>
+            <div class="example-card-footer">
+              <span class="example-name">Box with drill hole</span>
+              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Open in app ↗</a>
+            </div>
           </div>
-        </div>
-        <div class="example-card" data-example="cross_drilled_shaft">
-          <div class="example-canvas"></div>
-          <div class="example-card-footer">
-            <span class="example-name">Cross-drilled shaft</span>
-            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Open in app ↗</a>
+          <div class="example-card" data-example="cross_drilled_shaft">
+            <div class="example-canvas"></div>
+            <div class="example-card-footer">
+              <span class="example-name">Cross-drilled shaft</span>
+              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Open in app ↗</a>
+            </div>
           </div>
-        </div>
-        <div class="example-card" data-example="two_plates">
-          <div class="example-canvas"></div>
-          <div class="example-card-footer">
-            <span class="example-name">Two plates</span>
-            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Open in app ↗</a>
+          <div class="example-card" data-example="two_plates">
+            <div class="example-canvas"></div>
+            <div class="example-card-footer">
+              <span class="example-name">Two plates</span>
+              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Open in app ↗</a>
+            </div>
           </div>
-        </div>
-        <div class="example-card" data-example="boss_on_reference_plane">
-          <div class="example-canvas"></div>
-          <div class="example-card-footer">
-            <span class="example-name">Boss on reference plane</span>
-            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=boss_on_reference_plane" target="_blank" rel="noopener">Open in app ↗</a>
+          <div class="example-card" data-example="boss_on_reference_plane">
+            <div class="example-canvas"></div>
+            <div class="example-card-footer">
+              <span class="example-name">Boss on reference plane</span>
+              <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=boss_on_reference_plane" target="_blank" rel="noopener">Open in app ↗</a>
+            </div>
           </div>
         </div>
       </div>
@@ -825,8 +778,17 @@ footer.site {
   </div>
 </footer>
 
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js"
+  }
+}
+</script>
 <script type="module">
-  import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js";
+  // STLLoader imports "three" as a bare specifier — the import map above
+  // is what lets that resolve outside a bundler.
+  import * as THREE from "three";
   import { STLLoader } from "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/STLLoader.js";
 
   // Renders each example carousel card's STL — generated at build time by
