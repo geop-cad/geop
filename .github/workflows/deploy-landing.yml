@@ -28,9 +28,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # The examples carousel's STL previews (see homepage/index.html) —
-      # generated fresh each deploy, not committed.
+      # generated fresh each deploy, not committed. Only the 3 examples the
+      # carousel actually shows — see the --only names against the
+      # data-example attributes in homepage/index.html.
       - name: Export example STLs
-        run: cargo run -p geop-cad-cli --release -- examples --out-dir homepage/examples
+        run: |
+          cargo run -p geop-cad-cli --release -- examples --out-dir homepage/examples \
+            --only cross_drilled_shaft \
+            --only handle_with_hole \
+            --only luggage_tag
 
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3
@@ -40,9 +46,14 @@ jobs:
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
           command: pages project create geop-cad-landing --production-branch main
 
+      # Run from homepage/ so Wrangler finds homepage/functions/ (Pages
+      # Functions are discovered relative to the working directory, not the
+      # deployed directory) and picks up its bindings — see
+      # functions/api/contact.ts.
       - name: Deploy to geop-cad.dev
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
-          command: pages deploy homepage --project-name=geop-cad-landing --branch=main --commit-dirty=true
+          workingDirectory: homepage
+          command: pages deploy . --project-name=geop-cad-landing --branch=main --commit-dirty=true

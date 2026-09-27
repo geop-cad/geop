@@ -418,6 +418,81 @@ pub fn handle_with_hole() -> Program {
     program
 }
 
+/// A rounded-top luggage tag: two vertical sides and a horizontal bottom,
+/// closed by a semicircular top tangent to both sides, with a hang-hole
+/// through the top (concentric with it) and a rectangular window in the
+/// body, inset 0.15 from each of the two sides and the bottom.
+pub fn luggage_tag() -> Program {
+    let mut program = Program::new();
+
+    let mut outline = Sketch::new();
+    let p0 = outline.add_point(-0.7051397478635735, 0.7809633733011653);
+    let p1 = outline.add_point(-0.7051397478646341, -0.6729821470985564);
+    let p4 = outline.add_point(0.695311597099524, -0.6729821470973941);
+    let p7 = outline.add_point(0.695311597101934, 0.7809633732995341);
+    let left = outline.add_line(p0, p1);
+    let bottom = outline.add_line(p1, p4);
+    let right = outline.add_line(p4, p7);
+    let top = outline.add_arc_with_sweep(p7, p0, std::f64::consts::PI);
+    outline.constrain(Constraint::Vertical { line: left });
+    outline.constrain(Constraint::Horizontal { line: bottom });
+    outline.constrain(Constraint::Vertical { line: right });
+    outline.constrain(Constraint::Tangent { a: top, b: right });
+    outline.constrain(Constraint::Tangent { a: top, b: left });
+
+    let hole_center = outline.add_point(-0.004914075380876311, 0.7809633733016882);
+    let hole = outline.add_circle(hole_center, 0.30711303824557856);
+    outline.constrain(Constraint::Concentric { a: hole, b: top });
+
+    let w_tl = outline.add_point(-0.5551397478558091, 0.08482972707824256);
+    let w_tr = outline.add_point(0.5453115971039223, 0.08482972707824256);
+    let w_br = outline.add_point(0.5453115971014348, -0.5229821471055477);
+    let w_bl = outline.add_point(-0.5551397478598076, -0.5229821471049918);
+    let w_top = outline.add_line(w_tl, w_tr);
+    let w_right = outline.add_line(w_tr, w_br);
+    let w_bottom = outline.add_line(w_br, w_bl);
+    let w_left = outline.add_line(w_bl, w_tl);
+    outline.constrain(Constraint::Horizontal { line: w_top });
+    outline.constrain(Constraint::Vertical { line: w_right });
+    outline.constrain(Constraint::Horizontal { line: w_bottom });
+    outline.constrain(Constraint::Vertical { line: w_left });
+    outline.constrain(Constraint::PointLineDistance {
+        point: w_br,
+        line: right,
+        value: 0.15,
+    });
+    outline.constrain(Constraint::PointLineDistance {
+        point: w_bl,
+        line: left,
+        value: 0.15,
+    });
+    outline.constrain(Constraint::PointLineDistance {
+        point: w_br,
+        line: bottom,
+        value: 0.15,
+    });
+
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: EntityRef::Plane {
+                normal: WorldAxis::Z,
+            },
+            sketch: solved(outline),
+        },
+    );
+    program.push(
+        "tag",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            distance: 1.0,
+            symmetric: true,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
 /// Every example, by name.
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
@@ -426,6 +501,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("two_plates", two_plates()),
         ("boss_on_reference_plane", boss_on_reference_plane()),
         ("handle_with_hole", handle_with_hole()),
+        ("luggage_tag", luggage_tag()),
     ]
 }
 
@@ -719,5 +795,10 @@ mod tests {
     #[test]
     fn handle_with_hole_round_trips() {
         build_and_round_trip("handle_with_hole", &handle_with_hole());
+    }
+
+    #[test]
+    fn luggage_tag_round_trips() {
+        build_and_round_trip("luggage_tag", &luggage_tag());
     }
 }

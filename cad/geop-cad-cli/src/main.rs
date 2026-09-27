@@ -76,6 +76,10 @@ struct ExamplesArgs {
     /// Where to write `<name>.program.json` and `<name>.stl` for each example.
     #[arg(short, long, default_value = "examples")]
     out_dir: PathBuf,
+    /// Only this example, by name (e.g. `handle_with_hole`); repeat for
+    /// several. Every built-in example, if not given.
+    #[arg(long = "only", value_name = "NAME")]
+    only: Vec<String>,
     /// Write ASCII STL instead of binary.
     #[arg(long)]
     ascii: bool,
@@ -180,7 +184,27 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
 fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     std::fs::create_dir_all(&args.out_dir)
         .map_err(|e| GeopError::new(format!("creating {}: {e}", args.out_dir.display())))?;
-    geop_ops_parts::examples::all()
+    let all = geop_ops_parts::examples::all();
+    let selected: Vec<_> = if args.only.is_empty() {
+        all
+    } else {
+        args.only
+            .iter()
+            .map(|name| {
+                all.iter()
+                    .find(|(n, _)| n == name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        let known: Vec<_> = all.iter().map(|(n, _)| *n).collect();
+                        GeopError::new(format!(
+                            "no example named {name:?}; the built-in examples are: {}",
+                            known.join(", ")
+                        ))
+                    })
+            })
+            .collect::<GeopResult<_>>()?
+    };
+    selected
         .into_iter()
         .map(|(name, program)| {
             let json_path = args.out_dir.join(format!("{name}.program.json"));
@@ -282,6 +306,7 @@ mod tests {
         let dir = scratch("export-examples");
         let compiled = export_examples(&ExamplesArgs {
             out_dir: dir.clone(),
+            only: Vec::new(),
             ascii: false,
             quality: DEFAULT_QUALITY,
         })
@@ -291,6 +316,35 @@ mod tests {
             assert!(dir.join(format!("{name}.program.json")).is_file(), "{name}");
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
+    }
+
+    #[test]
+    fn export_examples_only_writes_the_named_ones() {
+        let dir = scratch("export-examples-only");
+        let compiled = export_examples(&ExamplesArgs {
+            out_dir: dir.clone(),
+            only: vec!["cross_drilled_shaft".into(), "luggage_tag".into()],
+            ascii: false,
+            quality: DEFAULT_QUALITY,
+        })
+        .unwrap();
+        assert_eq!(compiled.len(), 2);
+        assert!(dir.join("cross_drilled_shaft.stl").is_file());
+        assert!(dir.join("luggage_tag.stl").is_file());
+        assert!(!dir.join("box_with_drill_hole.stl").exists());
+    }
+
+    #[test]
+    fn export_examples_only_names_the_known_ones_when_unknown() {
+        let dir = scratch("export-examples-unknown");
+        let err = export_examples(&ExamplesArgs {
+            out_dir: dir,
+            only: vec!["not_a_real_example".into()],
+            ascii: false,
+            quality: DEFAULT_QUALITY,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("luggage_tag"), "{err}");
     }
 
     #[test]

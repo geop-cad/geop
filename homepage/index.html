@@ -677,6 +677,68 @@ section { padding: clamp(3.25rem, 7vw, 5.5rem) 0; }
 .ask .btn-ghost:hover { border-color: var(--ground); }
 
 /* ---------------------------------------------------------------
+   Contact form
+--------------------------------------------------------------- */
+.contact-form {
+  margin-top: 2.25rem;
+  max-width: 40rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.contact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+.contact-field input,
+.contact-field textarea {
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0.55rem 0.7rem;
+  resize: vertical;
+}
+.contact-field input:focus,
+.contact-field textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Off-screen, not display:none — a real screen reader user tabbing through
+   still skips it via tabindex="-1", but a bot's DOM scan still finds it. */
+.contact-honeypot {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.contact-form-footer {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.contact-form-footer button {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.contact-status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+}
+.contact-status.contact-ok { color: var(--accent); }
+.contact-status.contact-error { color: #c0392b; }
+
+/* ---------------------------------------------------------------
    Footer
 --------------------------------------------------------------- */
 footer.site {
@@ -742,7 +804,7 @@ footer.site {
         <div class="hero-ctas">
           <a class="btn btn-primary" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">View source on GitHub ↗</a>
           <a class="btn btn-primary" href="https://app.geop-cad.dev" target="_blank" rel="noopener">Try in your browser ↗</a>
-          <a class="btn btn-ghost" href="mailto:tobi.jacob@gmx.net">Get in touch →</a>
+          <a class="btn btn-ghost" href="#contact">Get in touch →</a>
         </div>
       </div>
 
@@ -758,32 +820,18 @@ footer.site {
                 <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Open in app ↗</a>
               </div>
             </div>
-            <div class="example-card" data-example="box_with_drill_hole">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Box with drill hole</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
-            <div class="example-card" data-example="two_plates">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Two plates</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
-            <div class="example-card" data-example="boss_on_reference_plane">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Boss on reference plane</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=boss_on_reference_plane" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
             <div class="example-card" data-example="handle_with_hole">
               <div class="example-canvas"></div>
               <div class="example-card-footer">
                 <span class="example-name">Handle with hole</span>
                 <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=handle_with_hole" target="_blank" rel="noopener">Open in app ↗</a>
+              </div>
+            </div>
+            <div class="example-card" data-example="luggage_tag">
+              <div class="example-canvas"></div>
+              <div class="example-card-footer">
+                <span class="example-name">Luggage tag</span>
+                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=luggage_tag" target="_blank" rel="noopener">Open in app ↗</a>
               </div>
             </div>
           </div>
@@ -947,9 +995,43 @@ footer.site {
       </div>
       <div class="hero-ctas">
         <a class="btn btn-primary" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Become a sponsor ↗</a>
-        <a class="btn btn-ghost" href="mailto:tobi.jacob@gmx.net">Get in touch →</a>
+        <a class="btn btn-ghost" href="#contact">Get in touch →</a>
         <a class="btn btn-ghost" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">Explore the code ↗</a>
       </div>
+    </div>
+  </section>
+
+  <!-- ============================= CONTACT ============================= -->
+  <section id="contact">
+    <div class="sheet">
+      <div class="section-head">
+        <p class="eyebrow">get in touch</p>
+        <h2>Questions, bug reports, partnership ideas — send them here.</h2>
+      </div>
+      <form class="contact-form" id="contact-form">
+        <label class="contact-field">
+          <span>Name</span>
+          <input type="text" name="name" required maxlength="200" autocomplete="name" />
+        </label>
+        <label class="contact-field">
+          <span>Email</span>
+          <input type="email" name="email" required maxlength="320" autocomplete="email" />
+        </label>
+        <label class="contact-field">
+          <span>Message</span>
+          <textarea name="message" required maxlength="5000" rows="5"></textarea>
+        </label>
+        <!-- Honeypot: hidden from real visitors via CSS, but a bot filling
+             every field it can see will fill this one too. -->
+        <label class="contact-honeypot" aria-hidden="true">
+          <span>Leave this field empty</span>
+          <input type="text" name="company" tabindex="-1" autocomplete="off" />
+        </label>
+        <div class="contact-form-footer">
+          <button class="btn btn-primary" type="submit">Send message →</button>
+          <p class="contact-status" id="contact-status"></p>
+        </div>
+      </form>
     </div>
   </section>
 
@@ -1173,6 +1255,49 @@ footer.site {
       },
       { threshold: 0.3 },
     ).observe(agentBody);
+  }
+
+  // ── contact form ─────────────────────────────────────────────────────
+  const contactForm = document.getElementById("contact-form");
+  if (contactForm) {
+    contactForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const status = document.getElementById("contact-status");
+      const submitButton = contactForm.querySelector("button[type=submit]");
+      const data = new FormData(contactForm);
+      // The honeypot: a bot fills every visible-in-DOM field, a human never
+      // sees this one. Say nothing is wrong either way — don't tip it off.
+      if (data.get("company")) {
+        status.textContent = "Thanks — I'll get back to you soon.";
+        status.className = "contact-status contact-ok";
+        contactForm.reset();
+        return;
+      }
+
+      submitButton.disabled = true;
+      status.textContent = "Sending…";
+      status.className = "contact-status";
+      try {
+        const res = await fetch("/api/contact", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: data.get("name"),
+            email: data.get("email"),
+            message: data.get("message"),
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        status.textContent = "Thanks — I'll get back to you soon.";
+        status.className = "contact-status contact-ok";
+        contactForm.reset();
+      } catch (err) {
+        status.textContent = `Couldn't send that: ${err.message || err}`;
+        status.className = "contact-status contact-error";
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
   }
 </script>
 
