@@ -92,9 +92,10 @@
     <ul>
       <li>The CAD app runs entirely in your browser. Your parts are not uploaded anywhere unless you send a bug report.
       </li>
-      <li>The app counts anonymous usage statistics, without cookies and without storing anything on your device. You
-        can switch them off in the app (<em>Privacy</em> button), and they are off automatically if your browser sends
-        Do Not Track or Global Privacy Control.</li>
+      <li>The app and this website count anonymous usage statistics, without cookies and without storing anything on
+        your device. You can switch them off in the app (<em>Privacy</em> button) and for this website
+        <a href="#website-opt-out">below</a>, and they are off automatically if your browser sends Do Not Track or
+        Global Privacy Control.</li>
       <li>No advertising, no tracking across sites, no session recordings, no selling of data.</li>
     </ul>
 
@@ -163,6 +164,31 @@
       into the description if you do not want us to have it.
     </p>
 
+    <h2>This website</h2>
+    <h3>Anonymous usage statistics</h3>
+    <p>
+      To learn which parts of this page are read and which links are followed, geop-cad.dev sends the following events
+      to PostHog, set up exactly as for the app above (EU cloud, cookieless mode, nothing stored on your device, no
+      profiles, no recordings):
+    </p>
+    <ul>
+      <li>that the page was opened (the same technical details as for the app);</li>
+      <li>which sections of the page were on screen long enough to be read;</li>
+      <li>which examples were shown in the carousel, and whether its arrows were used;</li>
+      <li>which link or button was followed, and in which section: the app or one of its examples, sponsoring, GitHub,
+        the book, the documentation, the contact email or this privacy page. Not what you write in an email — the
+        contact link only opens your own mail program.</li>
+    </ul>
+    <p>
+      The legal basis, your right to object and the retention period are the same as for the app's statistics. Your
+      choice for this website is kept separately from the app's, since your browser keeps the two sites' storage
+      apart:
+    </p>
+    <p id="website-opt-out">
+      <label><input type="checkbox" id="website-stats" /> Count my visits to geop-cad.dev</label>
+      <span id="website-stats-note" class="dim"></span>
+    </p>
+
     <h2>Email</h2>
     <p>
       If you email us, we use your address and message only to answer you, and delete them when the conversation is
@@ -186,6 +212,33 @@
     </p>
   </main>
   <script>
+    // The website's opt-out switch — the same flag homepage/analytics.js checks.
+    (() => {
+      const KEY = "geop-analytics-opt-out";
+      const box = document.getElementById("website-stats");
+      const note = document.getElementById("website-stats-note");
+      if (navigator.doNotTrack === "1" || navigator.globalPrivacyControl === true) {
+        box.checked = false;
+        box.disabled = true;
+        note.textContent = " — off: your browser asks sites not to track it.";
+        return;
+      }
+      let optedOut = false;
+      try {
+        optedOut = localStorage.getItem(KEY) === "1";
+      } catch {}
+      box.checked = !optedOut;
+      box.addEventListener("change", () => {
+        try {
+          if (box.checked) localStorage.removeItem(KEY);
+          else localStorage.setItem(KEY, "1");
+          note.textContent = " — saved.";
+        } catch {
+          note.textContent = " — your browser blocks storage, so this choice cannot be remembered.";
+        }
+      });
+    })();
+
     // Built at runtime rather than written as a literal mailto:, like on the
     // main page, so a plain scrape of the source doesn't harvest the address.
     const EMAIL_USER = "tobi.jacob";

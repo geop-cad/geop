@@ -52,6 +52,22 @@ jobs:
           cp "$RUNNER_TEMP"/package/build/three.module.min.js "$RUNNER_TEMP"/package/build/three.core.min.js homepage/vendor/three/build/
           cp "$RUNNER_TEMP"/package/examples/jsm/loaders/STLLoader.js homepage/vendor/three/examples/jsm/loaders/
 
+      # PostHog's browser bundle, served from the site itself like three.js,
+      # and the project key substituted into analytics.js. Without the
+      # variable the placeholder stays and the page sends nothing. Keep the
+      # version in step with web/package-lock.json.
+      - name: Vendor PostHog and set its key
+        env:
+          POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
+        run: |
+          npm pack posthog-js@1.434.15 --pack-destination "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP"/posthog homepage/vendor/posthog
+          tar -xzf "$RUNNER_TEMP"/posthog-js-1.434.15.tgz -C "$RUNNER_TEMP"/posthog
+          cp "$RUNNER_TEMP"/posthog/package/dist/array.no-external.js homepage/vendor/posthog/
+          if [ -n "$POSTHOG_KEY" ]; then
+            sed -i "s/__POSTHOG_KEY__/$(printf '%s' "$POSTHOG_KEY" | tr -d '[:space:]')/" homepage/analytics.js
+          fi
+
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3
         continue-on-error: true
