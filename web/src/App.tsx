@@ -366,6 +366,10 @@ function App() {
   /**
    * `hit` was picked, at `point`, for the argument waiting for a pick. A
    * selection goes on picking; any other argument has its value.
+   *
+   * Picking the plane a drawing argument draws on goes straight into the
+   * sketch editor — the same jump `editStep` makes for an existing step —
+   * rather than leaving the user to find and click "Draw sketch…" next.
    */
   function picked(hit: Highlight | null, point: Vec3 | null) {
     if (!form || !pickArg) return;
@@ -375,8 +379,15 @@ function App() {
     if (!selecting) setPickArg(null);
     const value = hit && pickedValue(arg.kind, form.args[arg.name], hit);
     if (value == null) return;
-    setArg(arg.name, value, arg.kind.type !== "combine");
+    const touch = arg.kind.type !== "combine";
+    const touched = touch && !form.touched.includes(arg.name) ? [...form.touched, arg.name] : form.touched;
+    const args = withArg(form.schema, form.args, arg.name, value, committed, touched);
+    const next = { ...form, args, touched };
+    setForm(next);
     if (!selecting && point) setPickPoints((points) => ({ ...points, [arg.name]: point }));
+
+    const drawing = form.schema.args.find((a) => a.kind.type === "drawing" && a.kind.plane === arg.name);
+    if (drawing) draw(next, drawing.name);
   }
 
   function handlePick(ray: ViewRay) {
