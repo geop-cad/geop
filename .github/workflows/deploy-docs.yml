@@ -1,0 +1,42 @@
+name: Deploy rustdoc
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "core/**"
+      - "ops/**"
+      - "cad/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rustdoc-template/**"
+      - ".github/workflows/deploy-docs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: pages-docs
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build docs
+        run: cargo doc --workspace --no-deps
+
+      - name: Install landing index page
+        run: cp rustdoc-template/index.html target/doc/index.html
+
+      - name: Deploy to docs.geop-cad.dev
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
+          accountId: 9f1c6a47335dac47c8e580e269b0ae8d
+          command: pages deploy target/doc --project-name=geop-cad-docs --branch=main

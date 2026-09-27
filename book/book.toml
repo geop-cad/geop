@@ -1,0 +1,9 @@
+[book]
+title = "Geop CAD Kernel"
+authors = ["Tobias Jacob"]
+description = "A crate-by-crate tour of the Geop CAD kernel."
+src = "src"
+language = "en"
+
+[build]
+build-dir = "dist"
