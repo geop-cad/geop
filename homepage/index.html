@@ -1085,7 +1085,7 @@ footer.site {
     { type: "result", text: '✓ added step "outline"' },
     { type: "tool", text: 'add_step({ op: "extrude", sketch: "outline", distance: 10 })' },
     { type: "result", text: '✓ added step "block"' },
-    { type: "tool", text: 'add_step({ op: "add_sketch", plane: "extrude(block,end)", sketch: circle(radius: 3) })' },
+    { type: "tool", text: 'add_step({ op: "add_sketch", plane: "extrude(block,end)", sketch: circle(center: [20, 20], radius: 3) })' },
     { type: "result", text: '✓ added step "hole_sketch"' },
     {
       type: "tool",
@@ -1093,7 +1093,7 @@ footer.site {
     },
     { type: "result", text: '✓ added step "hole"' },
     { type: "shell", text: "geop compile part.program.json -o part.stl" },
-    { type: "output", text: "4 steps, 1 solid, 748 triangles -> part.stl" },
+    { type: "output", text: "4 steps, 1 solid, 496 triangles -> part.stl" },
     { type: "success", text: "✓ Done." },
   ];
 
@@ -1145,7 +1145,7 @@ footer.site {
       }
     }
     const canvas = document.getElementById("agent-demo-canvas");
-    renderStl("box_with_drill_hole", canvas, () => canvas.classList.add("ready"));
+    renderStl("bracket", canvas, () => canvas.classList.add("ready"));
   }
 
   const agentBody = document.getElementById("agent-terminal-body");

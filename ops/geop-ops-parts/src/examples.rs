@@ -132,6 +132,62 @@ pub fn box_with_drill_hole() -> Program {
     program
 }
 
+/// A 40 x 40 x 10 mm bracket with a 6 mm hole through its middle: a
+/// rectangle sketched on the Z plane and extruded up (`block`), and a
+/// circle sketched on the block's end cap and extruded back through its
+/// full thickness, cutting it out of the block (`hole`). Unlike
+/// `box_with_drill_hole`, the cut ends exactly on the bottom face, so the
+/// hole goes all the way through. The program the landing page's agent demo
+/// transcript writes, step for step.
+pub fn bracket() -> Program {
+    let mut program = Program::new();
+
+    let mut outline = Sketch::new();
+    rectangle(&mut outline, [0.0, 0.0], 40.0, 40.0);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: EntityRef::Plane {
+                normal: WorldAxis::Z,
+            },
+            sketch: solved(outline),
+        },
+    );
+    program.push(
+        "block",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            distance: 10.0,
+            symmetric: false,
+            combine: Combine::NewBody,
+        },
+    );
+
+    let mut hole = Sketch::new();
+    circle(&mut hole, [20.0, 20.0], 3.0);
+    program.push(
+        "hole_sketch",
+        AddSketchArgs {
+            plane: EntityRef::Face {
+                name: "extrude(block,end)".into(),
+            },
+            sketch: solved(hole),
+        },
+    );
+    program.push(
+        "hole",
+        ExtrudeArgs {
+            sketch: "hole_sketch".into(),
+            distance: -10.0,
+            symmetric: false,
+            combine: Combine::Difference {
+                target: "extrude(block)".into(),
+            },
+        },
+    );
+    program
+}
+
 /// A stepped shaft revolved around the world z-axis, cross-drilled through
 /// its thinner end: a half section sketched on the X plane, closed by the
 /// axis itself (`shaft`), and a circle on the Y plane extruded through both
@@ -497,6 +553,7 @@ pub fn luggage_tag() -> Program {
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
+        ("bracket", bracket()),
         ("cross_drilled_shaft", cross_drilled_shaft()),
         ("two_plates", two_plates()),
         ("boss_on_reference_plane", boss_on_reference_plane()),
@@ -727,6 +784,36 @@ mod tests {
 
     /// The names of a program's entities don't depend on its numbers: a
     /// taller box with a wider hole has the very same names.
+    /// The hole goes all the way through: both the top and the bottom face
+    /// carry it as a hole, it has no bottom of its own, and its axis is
+    /// outside the solid at every height.
+    #[test]
+    fn bracket_round_trips() {
+        let part = build_and_round_trip("bracket", &bracket());
+        let description = PartDescription::of(&part).unwrap();
+
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["extrude(hole)"]
+        );
+        for cap in ["extrude(block,start)", "extrude(block,end)"] {
+            let face = &description.faces[cap];
+            assert_eq!(face.holes.len(), 1, "{cap}: {face:?}");
+        }
+        assert!(!description.faces.contains_key("extrude(hole,end)"));
+        for z in [1.0, 5.0, 9.0] {
+            assert_eq!(
+                inside(&part, "extrude(hole)", [20.0, 20.0, z]),
+                PointClassification::Outside,
+                "z = {z}"
+            );
+        }
+        assert_eq!(
+            inside(&part, "extrude(hole)", [5.0, 5.0, 5.0]),
+            PointClassification::Inside
+        );
+    }
+
     #[test]
     fn names_survive_a_change_of_dimensions() {
         let names = |program: &Program| {

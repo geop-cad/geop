@@ -27,16 +27,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # The examples carousel's STL previews (see homepage/index.html) —
-      # generated fresh each deploy, not committed. Only the 3 examples the
-      # carousel actually shows — see the --only names against the
-      # data-example attributes in homepage/index.html.
+      # The STL previews (see homepage/index.html) — generated fresh each
+      # deploy, not committed. Only the examples the page actually shows:
+      # the carousel's data-example attributes, plus the agent demo's
+      # bracket.
       - name: Export example STLs
         run: |
           cargo run -p geop-cad-cli --release -- examples --out-dir homepage/examples \
             --only cross_drilled_shaft \
             --only handle_with_hole \
-            --only luggage_tag
+            --only luggage_tag \
+            --only bracket
 
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3
