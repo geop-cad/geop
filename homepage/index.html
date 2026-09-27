@@ -347,6 +347,103 @@ header.site {
 }
 
 /* ---------------------------------------------------------------
+   Agent demo
+--------------------------------------------------------------- */
+.agent-demo-grid {
+  margin-top: 2.25rem;
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 1.5rem;
+  align-items: stretch;
+}
+@media (max-width: 860px) {
+  .agent-demo-grid { grid-template-columns: 1fr; }
+}
+
+.terminal {
+  background: #0d0d0e;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  background: #17171a;
+  border-bottom: 1px solid #2e2e30;
+}
+.terminal-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #3a3a3d;
+}
+.terminal-title {
+  margin-left: 0.35rem;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.72rem;
+  color: #8b8b92;
+}
+.terminal-body {
+  margin: 0;
+  padding: 1rem 1.1rem 1.2rem;
+  min-height: 320px;
+  flex: 1;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: #d6d6db;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.terminal-body .tl-prompt { color: #6fd68a; }
+.terminal-body .tl-agent { color: #8b8b92; }
+.terminal-body .tl-tool { color: #7ec9ff; }
+.terminal-body .tl-result { color: #8b8b92; }
+.terminal-body .tl-shell { color: #6fd68a; }
+.terminal-body .tl-output { color: #d6d6db; }
+.terminal-body .tl-success { color: #6fd68a; font-weight: 600; }
+.terminal-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  background: #d6d6db;
+  vertical-align: text-bottom;
+  animation: terminal-blink 1s step-end infinite;
+}
+@keyframes terminal-blink {
+  50% { opacity: 0; }
+}
+
+.agent-demo-preview {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+}
+.agent-demo-preview .example-canvas {
+  flex: 1;
+  aspect-ratio: auto;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.agent-demo-preview .example-canvas.ready {
+  opacity: 1;
+}
+.agent-demo-caption {
+  padding: 0.65rem 1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+/* ---------------------------------------------------------------
    Section rhythm
 --------------------------------------------------------------- */
 section { padding: clamp(3.25rem, 7vw, 5.5rem) 0; }
@@ -368,6 +465,15 @@ section { padding: clamp(3.25rem, 7vw, 5.5rem) 0; }
 }
 .prose { color: var(--ink-dim); font-size: 1rem; max-width: 62ch; }
 .prose + .prose { margin-top: 1rem; }
+.prose code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.92em;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.05em 0.35em;
+  color: var(--ink);
+}
 
 /* ---------------------------------------------------------------
    Compare block
@@ -689,6 +795,40 @@ footer.site {
 
   <hr class="rule" />
 
+  <!-- ============================= AGENT DEMO ============================= -->
+  <section id="agent-demo">
+    <div class="sheet">
+      <div class="section-head">
+        <p class="eyebrow">built for the agentic era</p>
+        <h2>An agent can drive geop directly — no GUI required.</h2>
+      </div>
+      <p class="prose">
+        A part is a plain JSON program: an ordered list of steps, each one operation with its
+        arguments, referring to what earlier steps built only by name. An agent like Claude Code or
+        Codex can write one step by step, compile it with the <code>geop</code> CLI, and see exactly
+        what it built.
+      </p>
+
+      <div class="agent-demo-grid">
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="terminal-dot"></span>
+            <span class="terminal-dot"></span>
+            <span class="terminal-dot"></span>
+            <span class="terminal-title">agent — geop</span>
+          </div>
+          <pre class="terminal-body" id="agent-terminal-body"></pre>
+        </div>
+        <div class="agent-demo-preview">
+          <div class="example-canvas" id="agent-demo-canvas"></div>
+          <p class="agent-demo-caption mono">part.stl</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule" />
+
   <!-- ============================= KERNEL / CAPABILITIES ============================= -->
   <section id="kernel">
     <div class="sheet">
@@ -847,9 +987,13 @@ footer.site {
   const loader = new STLLoader();
   const modelColor = 0x2d6ca6;
 
-  function renderExample(card) {
-    const name = card.dataset.example;
-    const host = card.querySelector(".example-canvas");
+  /**
+   * Loads `examples/<name>.stl` into `host`, sized to it, slowly rotating.
+   * Shared by the example carousel and the agent demo. `onReady`, if given,
+   * fires once the mesh is actually in the scene — not on call, since the
+   * load is async.
+   */
+  function renderStl(name, host, onReady) {
     const status = document.createElement("div");
     status.className = "example-status";
     status.textContent = "Loading…";
@@ -898,6 +1042,7 @@ footer.site {
           renderer.render(scene, camera);
         }
         animate();
+        onReady?.();
 
         // Stop rendering once scrolled far away, resume when it's back —
         // four idle WebGL loops is fine, forty wouldn't be.
@@ -926,7 +1071,7 @@ footer.site {
     (entries, obs) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        renderExample(entry.target);
+        renderStl(entry.target.dataset.example, entry.target.querySelector(".example-canvas"));
         obs.unobserve(entry.target);
       }
     },
@@ -941,6 +1086,94 @@ footer.site {
   document.querySelector(".carousel-nav.next").addEventListener("click", () => {
     carousel.scrollBy({ left: carousel.clientWidth, behavior: "smooth" });
   });
+
+  // ── agent demo ───────────────────────────────────────────────────────
+  // A scripted transcript of an agent writing a part.program.json step by
+  // step and compiling it — "tool calls" print at once (that's how a real
+  // agent CLI renders them), the $ prompts type out character by character.
+  const AGENT_SCRIPT = [
+    { type: "prompt", text: 'claude "Build a 40mm bracket with a 6mm hole through the middle"' },
+    { type: "agent", text: "Writing part.program.json…" },
+    { type: "tool", text: 'add_step({ op: "add_sketch", plane: "XY", sketch: rectangle(40, 40) })' },
+    { type: "result", text: '✓ added step "outline"' },
+    { type: "tool", text: 'add_step({ op: "extrude", sketch: "outline", distance: 10 })' },
+    { type: "result", text: '✓ added step "block"' },
+    { type: "tool", text: 'add_step({ op: "add_sketch", plane: "extrude(block,end)", sketch: circle(radius: 3) })' },
+    { type: "result", text: '✓ added step "hole_sketch"' },
+    {
+      type: "tool",
+      text: 'add_step({ op: "extrude", sketch: "hole_sketch", distance: -10, combine: difference("extrude(block)") })',
+    },
+    { type: "result", text: '✓ added step "hole"' },
+    { type: "shell", text: "geop compile part.program.json -o part.stl" },
+    { type: "output", text: "4 steps, 1 solid, 748 triangles -> part.stl" },
+    { type: "success", text: "✓ Done." },
+  ];
+
+  function typeLine(container, text, className, charDelay) {
+    return new Promise((resolve) => {
+      const line = document.createElement("div");
+      line.className = className;
+      const cursor = document.createElement("span");
+      cursor.className = "terminal-cursor";
+      container.appendChild(line);
+      let i = 0;
+      (function step() {
+        line.textContent = text.slice(0, i);
+        line.appendChild(cursor);
+        if (i++ <= text.length) setTimeout(step, charDelay);
+        else {
+          cursor.remove();
+          resolve();
+        }
+      })();
+    });
+  }
+
+  function printLine(container, text, className, holdMs) {
+    return new Promise((resolve) => {
+      const line = document.createElement("div");
+      line.className = className;
+      line.textContent = text;
+      container.appendChild(line);
+      setTimeout(resolve, holdMs);
+    });
+  }
+
+  const AGENT_LINE_DELAY = { prompt: 380, shell: 260, tool: 140, result: 260, agent: 320, output: 320, success: 0 };
+
+  async function playAgentDemo() {
+    const body = document.getElementById("agent-terminal-body");
+    for (const step of AGENT_SCRIPT) {
+      const hold = AGENT_LINE_DELAY[step.type];
+      if (step.type === "prompt" || step.type === "shell") {
+        await typeLine(body, "$ " + step.text, `tl-${step.type}`, 16);
+        await new Promise((r) => setTimeout(r, hold));
+      } else if (step.type === "tool") {
+        await printLine(body, "→ " + step.text, "tl-tool", hold);
+      } else if (step.type === "result") {
+        await printLine(body, "  " + step.text, "tl-result", hold);
+      } else {
+        await printLine(body, step.text, `tl-${step.type}`, hold);
+      }
+    }
+    const canvas = document.getElementById("agent-demo-canvas");
+    renderStl("box_with_drill_hole", canvas, () => canvas.classList.add("ready"));
+  }
+
+  const agentBody = document.getElementById("agent-terminal-body");
+  if (agentBody) {
+    new IntersectionObserver(
+      (entries, obs) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          playAgentDemo();
+          obs.disconnect();
+        }
+      },
+      { threshold: 0.3 },
+    ).observe(agentBody);
+  }
 </script>
 
 </body>
