@@ -46,6 +46,8 @@ struct Cli {
 enum Command {
     /// Build a program (the JSON the web editor saves) and write its part as an STL mesh.
     Compile(CompileArgs),
+    /// Write every built-in example (see `geop_ops_parts::examples`) as a program and an STL mesh.
+    Examples(ExamplesArgs),
 }
 
 #[derive(clap::Args)]
@@ -65,6 +67,19 @@ struct CompileArgs {
     ascii: bool,
     /// How finely curved faces are meshed: higher is smoother, and bigger.
     /// Flat faces are meshed exactly whatever this is.
+    #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
+    quality: u16,
+}
+
+#[derive(clap::Args)]
+struct ExamplesArgs {
+    /// Where to write `<name>.program.json` and `<name>.stl` for each example.
+    #[arg(short, long, default_value = "examples")]
+    out_dir: PathBuf,
+    /// Write ASCII STL instead of binary.
+    #[arg(long)]
+    ascii: bool,
+    /// How finely curved faces are meshed: higher is smoother, and bigger.
     #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
     quality: u16,
 }
@@ -159,26 +174,56 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     })
 }
 
+/// Write every built-in example as `<out_dir>/<name>.program.json` and
+/// `<out_dir>/<name>.stl`, via [`compile`] — so an example's mesh is
+/// generated exactly the way any other program's would be.
+fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
+    std::fs::create_dir_all(&args.out_dir)
+        .map_err(|e| GeopError::new(format!("creating {}: {e}", args.out_dir.display())))?;
+    geop_ops_parts::examples::all()
+        .into_iter()
+        .map(|(name, program)| {
+            let json_path = args.out_dir.join(format!("{name}.program.json"));
+            std::fs::write(&json_path, program.to_json()?)
+                .map_err(|e| GeopError::new(format!("writing {}: {e}", json_path.display())))?;
+            compile(&CompileArgs {
+                program: json_path,
+                output: Some(args.out_dir.join(format!("{name}.stl"))),
+                solids: Vec::new(),
+                ascii: args.ascii,
+                quality: args.quality,
+            })
+            .map_err(|e| e.with_context(format!("export_examples(name={name})")))
+        })
+        .collect()
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match cli.command {
-        Command::Compile(args) => match compile(&args) {
-            Ok(c) => {
-                eprintln!(
-                    "{} steps, {} solid{}, {} triangles -> {}",
-                    c.steps,
-                    c.solids,
-                    if c.solids == 1 { "" } else { "s" },
-                    c.triangles,
-                    c.output.display()
-                );
-                ExitCode::SUCCESS
+    let result = match cli.command {
+        Command::Compile(args) => compile(&args).map(|c| {
+            eprintln!(
+                "{} steps, {} solid{}, {} triangles -> {}",
+                c.steps,
+                c.solids,
+                if c.solids == 1 { "" } else { "s" },
+                c.triangles,
+                c.output.display()
+            );
+        }),
+        Command::Examples(args) => export_examples(&args).map(|compiled| {
+            for c in &compiled {
+                eprintln!("{} triangles -> {}", c.triangles, c.output.display());
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                ExitCode::FAILURE
-            }
-        },
+            eprintln!("{} example(s) -> {}", compiled.len(), args.out_dir.display());
+        }),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -229,6 +274,22 @@ mod tests {
             assert!(compiled.triangles > 0, "{name}: no triangles");
             let bytes = std::fs::read(&compiled.output).unwrap();
             assert_eq!(bytes.len(), 84 + 50 * compiled.triangles, "{name}");
+        }
+    }
+
+    #[test]
+    fn export_examples_writes_every_example_as_json_and_stl() {
+        let dir = scratch("export-examples");
+        let compiled = export_examples(&ExamplesArgs {
+            out_dir: dir.clone(),
+            ascii: false,
+            quality: DEFAULT_QUALITY,
+        })
+        .unwrap();
+        assert_eq!(compiled.len(), examples::all().len());
+        for (name, _) in examples::all() {
+            assert!(dir.join(format!("{name}.program.json")).is_file(), "{name}");
+            assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
     }
 

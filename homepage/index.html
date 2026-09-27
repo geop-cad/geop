@@ -37,6 +37,7 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
+  overflow-x: hidden;
   background: var(--ground);
   color: var(--ink);
   font-family: "IBM Plex Sans", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -150,9 +151,10 @@ header.site {
 }
 .nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
+  gap: 0.75rem 1.5rem;
   padding: 0.9rem 0;
 }
 .brand {
@@ -281,6 +283,59 @@ header.site {
   border-top: 1px solid var(--line);
   color: var(--ink-faint);
   font-size: 0.82rem;
+}
+
+/* ---------------------------------------------------------------
+   Examples carousel
+--------------------------------------------------------------- */
+.example-carousel {
+  margin-top: 2.25rem;
+  display: flex;
+  gap: 1.25rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+.example-card {
+  flex: 0 0 auto;
+  width: min(320px, 80vw);
+  scroll-snap-align: start;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+.example-canvas {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.example-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.example-canvas .example-status {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-faint);
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+}
+.example-card-footer {
+  padding: 0.85rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.example-name {
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 
 /* ---------------------------------------------------------------
@@ -549,7 +604,7 @@ footer.site {
       <a href="https://app.geop-cad.dev">App</a>
       <a href="https://book.geop-cad.dev">Book</a>
       <a href="https://docs.geop-cad.dev">Docs</a>
-      <a class="btn btn-ghost" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">Source ↗</a>
+      <a class="btn btn-ghost" href="https://app.geop-cad.dev" target="_blank" rel="noopener">Try it ↗</a>
       <a class="btn btn-primary" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Sponsor ↗</a>
     </nav>
   </div>
@@ -579,12 +634,53 @@ footer.site {
       <div class="hero-figure corner-ticks">
         <p class="eyebrow">live examples</p>
         <ul class="examples-list">
-          <!-- placeholder links until designs can be shared directly -->
-          <li><a href="https://app.geop-cad.dev" target="_blank" rel="noopener">Bracket assembly ↗</a></li>
-          <li><a href="https://app.geop-cad.dev" target="_blank" rel="noopener">Filleted enclosure ↗</a></li>
-          <li><a href="https://app.geop-cad.dev" target="_blank" rel="noopener">Threaded standoff ↗</a></li>
+          <li><a href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Box with drill hole ↗</a></li>
+          <li><a href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Cross-drilled shaft ↗</a></li>
+          <li><a href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Two plates ↗</a></li>
         </ul>
-        <p class="examples-note">Shareable example links are coming soon — for now, these open the app itself.</p>
+        <p class="examples-note">Opens the example directly in the app — see them rendered below first ↓</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule" />
+
+  <!-- ============================= EXAMPLES CAROUSEL ============================= -->
+  <section id="examples">
+    <div class="sheet">
+      <div class="section-head">
+        <p class="eyebrow">try one</p>
+        <h2>A few parts built with geop, rendered right here.</h2>
+      </div>
+      <div class="example-carousel" id="example-carousel">
+        <div class="example-card" data-example="box_with_drill_hole">
+          <div class="example-canvas"></div>
+          <div class="example-card-footer">
+            <span class="example-name">Box with drill hole</span>
+            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=box_with_drill_hole" target="_blank" rel="noopener">Open in app ↗</a>
+          </div>
+        </div>
+        <div class="example-card" data-example="cross_drilled_shaft">
+          <div class="example-canvas"></div>
+          <div class="example-card-footer">
+            <span class="example-name">Cross-drilled shaft</span>
+            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cross_drilled_shaft" target="_blank" rel="noopener">Open in app ↗</a>
+          </div>
+        </div>
+        <div class="example-card" data-example="two_plates">
+          <div class="example-canvas"></div>
+          <div class="example-card-footer">
+            <span class="example-name">Two plates</span>
+            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=two_plates" target="_blank" rel="noopener">Open in app ↗</a>
+          </div>
+        </div>
+        <div class="example-card" data-example="boss_on_reference_plane">
+          <div class="example-canvas"></div>
+          <div class="example-card-footer">
+            <span class="example-name">Boss on reference plane</span>
+            <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=boss_on_reference_plane" target="_blank" rel="noopener">Open in app ↗</a>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -728,6 +824,105 @@ footer.site {
     <a href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">github.com/geop-cad/geop</a>
   </div>
 </footer>
+
+<script type="module">
+  import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js";
+  import { STLLoader } from "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/STLLoader.js";
+
+  // Renders each example carousel card's STL — generated at build time by
+  // `geop examples` (see cad/geop-cad-cli) into homepage/examples/ — as a
+  // small, slowly-rotating preview. Off-screen cards start rendering only
+  // once scrolled near, so a page with many examples stays cheap to load.
+  const loader = new STLLoader();
+  const modelColor = 0x2d6ca6;
+
+  function renderExample(card) {
+    const name = card.dataset.example;
+    const host = card.querySelector(".example-canvas");
+    const status = document.createElement("div");
+    status.className = "example-status";
+    status.textContent = "Loading…";
+    host.appendChild(status);
+
+    loader.load(
+      `examples/${name}.stl`,
+      (geometry) => {
+        status.remove();
+
+        const width = host.clientWidth || 320;
+        const height = host.clientHeight || 240;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(width, height);
+        host.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x555566, 2.2));
+        const key = new THREE.DirectionalLight(0xffffff, 1.6);
+        key.position.set(4, 6, 5);
+        scene.add(key);
+
+        geometry.computeBoundingBox();
+        geometry.computeVertexNormals();
+        const center = geometry.boundingBox.getCenter(new THREE.Vector3());
+        const size = geometry.boundingBox.getSize(new THREE.Vector3());
+        geometry.translate(-center.x, -center.y, -center.z);
+        const radius = Math.max(size.x, size.y, size.z, 1e-6) / 2;
+
+        const mesh = new THREE.Mesh(
+          geometry,
+          new THREE.MeshStandardMaterial({ color: modelColor, metalness: 0.15, roughness: 0.55 }),
+        );
+        scene.add(mesh);
+
+        const camera = new THREE.PerspectiveCamera(35, width / height, radius / 100, radius * 100);
+        const dist = radius / Math.sin((camera.fov * Math.PI) / 360);
+        camera.position.set(dist * 0.7, dist * 0.55, dist * 0.7);
+        camera.lookAt(0, 0, 0);
+
+        let frame = 0;
+        function animate() {
+          frame = requestAnimationFrame(animate);
+          mesh.rotation.z += 0.006;
+          renderer.render(scene, camera);
+        }
+        animate();
+
+        // Stop rendering once scrolled far away, resume when it's back —
+        // four idle WebGL loops is fine, forty wouldn't be.
+        new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting && frame == null) animate();
+              else if (!entry.isIntersecting && frame != null) {
+                cancelAnimationFrame(frame);
+                frame = null;
+              }
+            }
+          },
+          { threshold: 0.05 },
+        ).observe(host);
+      },
+      undefined,
+      () => {
+        status.textContent = "Preview unavailable";
+      },
+    );
+  }
+
+  const cards = document.querySelectorAll(".example-card");
+  const lazy = new IntersectionObserver(
+    (entries, obs) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        renderExample(entry.target);
+        obs.unobserve(entry.target);
+      }
+    },
+    { rootMargin: "200px" },
+  );
+  cards.forEach((card) => lazy.observe(card));
+</script>
 
 </body>
 </html>

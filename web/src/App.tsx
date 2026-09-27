@@ -4,23 +4,17 @@ import {
   examplePrograms,
   currentProgram,
   entities,
-  entityLabel,
   loadGeop,
   operationSchemas,
-  pickRay,
   previewProgram,
   runProgram,
   sketchPlane,
   updateProgram,
   sameEntity,
-  type Args,
-  type ArgKind,
   type ArgSchema,
   type EntityRef,
-  type Frame,
   type Highlight,
   type OperationSchema,
-  type PickFilter,
   type Program,
   type ProgramEdit,
   type RunResult,
@@ -28,7 +22,7 @@ import {
   type StepHandle,
   type Vec3,
 } from "./geop";
-import { DEFAULT_POSE, headOnPose, poseForSketchView, type CameraPose, type Projection, type SketchView } from "./camera";
+import { DEFAULT_POSE, headOnPose, poseForSketchView, type CameraPose, type Projection } from "./camera";
 import { OperationForm } from "./OperationForm";
 import {
   acceptedDatums,
@@ -44,36 +38,13 @@ import { SceneViewer, type Marker, type ViewRay } from "./SceneViewer";
 import { SketchEditor } from "./SketchEditor";
 import { Timeline, type TimelineStep } from "./Timeline";
 import { toSketch } from "./sketchGeometry";
+import { formEdit, type FormState, type SketchSession } from "./editorState";
+import { pickAt } from "./picking";
+import { Toolbar } from "./Toolbar";
+import { MobileBottom, type MobileTab } from "./MobileBottom";
+import { useIsMobile } from "./useIsMobile";
 
 const MARKER_COLOR = 0xffa040;
-
-/** A step being written: a new one to insert at `index`, or the existing step `stepId` there. */
-interface FormState {
-  schema: OperationSchema;
-  args: Args;
-  index: number;
-  stepId: string | null;
-  /** The arguments the user set themselves, which no other argument's change may overrule. */
-  touched: string[];
-}
-
-/** A drawing argument of the open form, being drawn in the sketch editor. */
-interface SketchSession {
-  arg: string;
-  plane: EntityRef;
-  frame: Frame;
-  sketch: Sketch;
-  /** What the 3-D view showed when the camera landed facing the plane: where the editor opens. */
-  view: SketchView | null;
-}
-
-/** The edit that writes `form` into the program. */
-function formEdit(form: FormState): ProgramEdit {
-  const operation = { operation: form.schema.kind, args: form.args };
-  return form.stepId == null
-    ? { edit: "insert", index: form.index, ...operation }
-    : { edit: "update", id: form.stepId, ...operation };
-}
 
 /**
  * The editor: a tool for writing part programs. The program lives in the
@@ -103,6 +74,12 @@ function App() {
   const [hover, setHover] = useState<Highlight | null>(null);
   const [preview, setPreview] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
+
+  /** Which panel the bottom half shows on a narrow (mobile) screen — irrelevant on desktop, where all three show at once. */
+  const [mobileTab, setMobileTab] = useState<MobileTab>("buttons");
+  const isMobile = useIsMobile();
+  /** The mobile "Draw" tab's pane, once mounted — where the sketch editor's Draw/Constrain/Status panel portals to. */
+  const [sketchPanelHost, setSketchPanelHost] = useState<HTMLDivElement | null>(null);
 
   const [session, setSession] = useState<SketchSession | null>(null);
   // Entering a sketch: the camera glides to face its plane first, and the
@@ -273,6 +250,7 @@ function App() {
     // that pick right away.
     const first = next.schema.args.find((a) => a.kind.type === "plane" || a.kind.type === "selection");
     setPickArg(next.stepId == null ? (first?.name ?? null) : null);
+    setMobileTab("detail");
   }
 
   function newStep(schema: OperationSchema) {
@@ -303,6 +281,7 @@ function App() {
     setPickArg(null);
     setPickPoints({});
     setFormError(null);
+    setMobileTab((tab) => (tab === "detail" ? "buttons" : tab));
   }
 
   function commit(f: FormState) {
@@ -371,31 +350,6 @@ function App() {
 
   /** The argument waiting for a pick, if any. */
   const pickSchema = form?.schema.args.find((a) => a.name === pickArg);
-
-  /**
-   * What a click along `ray` picks for an argument of `kind`: the nearest
-   * of what the kernel hits and the datum the ray hits, if any.
-   */
-  function pickAt(kind: ArgKind, ray: ViewRay): { hit: Highlight; point: Vec3 } | null {
-    const filter: PickFilter =
-      kind.type === "solid" || kind.type === "combine"
-        ? "solid"
-        : kind.type === "sketch"
-          ? "sketch"
-          : kind.type === "selection"
-            ? "any"
-            : "face";
-    // A sketch is hit inside its regions anyway; the tolerance is for
-    // clicking on its curves, e.g. an open profile's — and on a vertex or
-    // an edge, a few pixels.
-    const tolerance = filter === "sketch" ? 0.03 : filter === "any" ? ray.pixel * 6 : 0.001;
-    const found = pickRay(ray.origin, ray.dir, filter, tolerance);
-    const datum = ray.datum;
-    if (datum && (!found || datum.distance <= found.t)) return { hit: datum.entity, point: datum.point };
-    if (!found) return null;
-    const type = ({ vertex: "Vertex", edge: "Edge", face: "Face", solid: "Solid", sketch: "Sketch" } as const)[found.kind];
-    return { hit: { type, name: found.name }, point: found.point };
-  }
 
   /** The pointer moved: highlight what a click there would pick. */
   function handleHover(ray: ViewRay | null) {
@@ -466,6 +420,7 @@ function App() {
     if (!arriving) return;
     setSession({ ...arriving, view: { center: toSketch(arriving.frame, pose.target).xy, scale: pixelsPerUnit, height } });
     setArriving(null);
+    setMobileTab("draw");
   }
 
   /** Leave the editor: the camera, let go, glides back to where it was before. */
@@ -473,6 +428,9 @@ function App() {
     setSession(null);
     setHeldPose(null);
     setFocus({ ...beforeSketchRef.current });
+    // Back to the form that was open (closeForm downgrades this further if
+    // it turns out to have been closed too, e.g. cancelling the sketch).
+    setMobileTab((tab) => (tab === "draw" ? "detail" : tab));
   }
 
   /** The form with the drawing in progress written in. */
@@ -506,6 +464,20 @@ function App() {
 
   const busy = !wasmReady || session != null || arriving != null;
   const examples = useMemo(() => (wasmReady ? examplePrograms() : []), [wasmReady]);
+
+  // A shared link — app.geop-cad.dev/?example=<name> — loads that example
+  // once it's available, in place of the (still-empty) starting program.
+  // Once, not on every re-render: a ref, not state, records it happened.
+  const loadedFromUrl = useRef(false);
+  useEffect(() => {
+    if (loadedFromUrl.current || examples.length === 0) return;
+    loadedFromUrl.current = true;
+    const name = new URLSearchParams(window.location.search).get("example");
+    const example = name && examples.find((x) => x.name === name);
+    if (example) loadProgram(example.program);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examples]);
+
   const ran = committed?.results.length ?? 0;
 
   const stepCount = program.steps.length;
@@ -523,84 +495,103 @@ function App() {
     };
   });
 
+  // The operation-buttons row, the program panel and the step-detail form
+  // are each rendered once here and placed in two spots in the tree below:
+  // inline in the desktop layout, and again in the mobile bottom-tab
+  // region, shown or hidden per breakpoint by CSS alone. They hold no
+  // state of their own (Timeline's drag state lives in its own instance
+  // either way), so reusing the same JSX in two places is safe.
+  const operationButtonsRow = (
+    <div className="tools operation-tools">
+      {schemas.map((schema) => (
+        <button
+          key={schema.kind}
+          title={schema.doc}
+          className={form?.schema === schema && form.stepId == null ? "active" : ""}
+          disabled={busy || (form != null && form.schema !== schema)}
+          onClick={() => newStep(schema)}
+        >
+          {schema.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const programPanel = (
+    <section className="panel timeline">
+      <h2>Program</h2>
+      <Timeline
+        steps={timelineSteps}
+        seeker={marker ?? stepCount}
+        enabled={!busy && form == null}
+        onEdit={editStep}
+        onRemove={removeStep}
+        onMove={moveStep}
+        onSeek={seek}
+      />
+    </section>
+  );
+
+  const sketchEditor = session?.view ? (
+    <SketchEditor
+      key={`${form?.stepId ?? "new"}-${session.arg}`}
+      initial={session.sketch}
+      initialView={session.view}
+      onView={(view) => setHeldPose(poseForSketchView(session.frame, view))}
+      panelHost={isMobile ? sketchPanelHost : null}
+      onFinish={finishSketch}
+      onSetup={sketchSetup}
+      onCancel={cancelSketch}
+    />
+  ) : null;
+
+  const detailAvailable = form != null && !session && !arriving;
+  const detailPanel = detailAvailable && (
+    <OperationForm
+      schema={form.schema}
+      args={form.args}
+      setArg={setArg}
+      stepId={form.stepId}
+      before={committed}
+      pickArg={pickArg}
+      setPickArg={setPickArg}
+      onDraw={(arg) => draw(form, arg)}
+      preview={preview}
+      setPreview={setPreview}
+      previewError={previewError}
+      error={formError}
+      complete={complete}
+      onCommit={() => commit(form)}
+      onCancel={closeForm}
+    />
+  );
+
   return (
     <div className="app">
-      <header className="toolbar">
-        <h1>Geop</h1>
-        <div className="tools">
-          <button disabled={busy || program.steps.length === 0} onClick={saveProgram}>
-            Save
-          </button>
-          <label className={`file-button${busy ? " disabled" : ""}`}>
-            Load
-            <input
-              type="file"
-              accept=".json,application/json"
-              disabled={busy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) loadFile(file);
-              }}
-            />
-          </label>
-          <select
-            value=""
-            disabled={busy}
-            onChange={(e) => {
-              const example = examples.find((x) => x.name === e.target.value);
-              if (example) loadProgram(example.program);
-            }}
-          >
-            <option value="">Examples…</option>
-            {examples.map((x) => (
-              <option key={x.name} value={x.name}>
-                {x.name}
-              </option>
-            ))}
-          </select>
-          <button disabled={busy || history.length === 0 || form != null} onClick={undo}>
-            Undo
-          </button>
-          <button disabled={busy || future.length === 0 || form != null} onClick={redo}>
-            Redo
-          </button>
-        </div>
-        <div className="tools">
-          {schemas.map((schema) => (
-            <button
-              key={schema.kind}
-              title={schema.doc}
-              className={form?.schema === schema && form.stepId == null ? "active" : ""}
-              disabled={busy || (form != null && form.schema !== schema)}
-              onClick={() => newStep(schema)}
-            >
-              {schema.label}
-            </button>
-          ))}
-        </div>
-        {(session ?? arriving) && <span className="mode-badge">Sketching on {entityLabel((session ?? arriving)!.plane)}</span>}
-        {committed && (
-          <span className="stats">
-            {program.steps.length} step{program.steps.length === 1 ? "" : "s"} · {displayResult?.scene.triangles.length ?? 0} tris
-          </span>
-        )}
-      </header>
+      <Toolbar
+        busy={busy}
+        hasSteps={program.steps.length > 0}
+        onSave={saveProgram}
+        onLoadFile={loadFile}
+        exampleNames={examples.map((x) => x.name)}
+        onLoadExample={(name) => {
+          const example = examples.find((x) => x.name === name);
+          if (example) loadProgram(example.program);
+        }}
+        canUndo={history.length > 0 && form == null}
+        onUndo={undo}
+        canRedo={future.length > 0 && form == null}
+        onRedo={redo}
+        operationButtons={operationButtonsRow}
+        sketchingOn={(session ?? arriving)?.plane ?? null}
+        committed={committed}
+        committedError={committedError}
+        program={program}
+        stepCount={program.steps.length}
+        triangleCount={displayResult?.scene.triangles.length ?? 0}
+      />
       <div className="body">
-        <aside className="sidebar">
-          <section className="panel timeline">
-            <h2>Program</h2>
-            <Timeline
-              steps={timelineSteps}
-              seeker={marker ?? stepCount}
-              enabled={!busy && form == null}
-              onEdit={editStep}
-              onRemove={removeStep}
-              onMove={moveStep}
-              onSeek={seek}
-            />
-          </section>
-        </aside>
+        <aside className="sidebar desktop-only">{programPanel}</aside>
         <main className="viewport">
           {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
           {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
@@ -625,17 +616,7 @@ function App() {
                 onPose={(pose) => (poseRef.current = pose)}
               />
           )}
-          {session?.view && (
-            <SketchEditor
-              key={`${form?.stepId ?? "new"}-${session.arg}`}
-              initial={session.sketch}
-              initialView={session.view}
-              onView={(view) => setHeldPose(poseForSketchView(session.frame, view))}
-              onFinish={finishSketch}
-              onSetup={sketchSetup}
-              onCancel={cancelSketch}
-            />
-          )}
+          {sketchEditor}
           <button
             className="projection-toggle"
             title="Switch between a perspective and an orthographic view"
@@ -643,27 +624,19 @@ function App() {
           >
             {projection === "perspective" ? "Perspective" : "Orthographic"}
           </button>
-          {form && !session && !arriving && (
-            <OperationForm
-              schema={form.schema}
-              args={form.args}
-              setArg={setArg}
-              stepId={form.stepId}
-              before={committed}
-              pickArg={pickArg}
-              setPickArg={setPickArg}
-              onDraw={(arg) => draw(form, arg)}
-              preview={preview}
-              setPreview={setPreview}
-              previewError={previewError}
-              error={formError}
-              complete={complete}
-              onCommit={() => commit(form)}
-              onCancel={closeForm}
-            />
-          )}
+          <div className="desktop-only">{detailPanel}</div>
         </main>
       </div>
+      <MobileBottom
+        tab={mobileTab}
+        onTab={setMobileTab}
+        detailAvailable={detailAvailable}
+        sketchAvailable={session?.view != null}
+        operationButtons={operationButtonsRow}
+        programPanel={programPanel}
+        detailPanel={detailPanel}
+        onSketchPanelHost={setSketchPanelHost}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { createPortal } from "react-dom";
 import type { SketchView } from "./camera";
 import {
   entries,
@@ -95,6 +96,12 @@ interface Props {
   /** Back to the step's form, keeping the drawing — e.g. to put it on another plane. */
   onSetup: (sketch: Sketch) => void;
   onCancel: () => void;
+  /**
+   * Where to put the Draw/Constrain/Status/Constraints panel instead of
+   * floating it over the canvas — the mobile layout's "Draw" tab pane.
+   * `null`/absent: floats over the canvas, as on desktop.
+   */
+  panelHost?: HTMLElement | null;
 }
 
 function emptyResult(sketch: Sketch): SolveResult {
@@ -115,7 +122,7 @@ function emptyResult(sketch: Sketch): SolveResult {
 }
 
 /** The 2-D constraint sketch editor: draw curves, constrain them, and hand back the solved sketch. */
-export function SketchEditor({ initial, initialView, onView, onFinish, onSetup, onCancel }: Props) {
+export function SketchEditor({ initial, initialView, onView, onFinish, onSetup, onCancel, panelHost }: Props) {
   const [result, setResult] = useState<SolveResult>(() => {
     try {
       return solveSketch(initial);
@@ -650,6 +657,127 @@ export function SketchEditor({ initial, initialView, onView, onFinish, onSetup, 
         ? "Fully constrained"
         : `${report.dof} degree${report.dof === 1 ? "" : "s"} of freedom`;
 
+  const panel = (
+    <aside className="sketch-panel">
+      <div className="button-row">
+        <button className="small" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="primary" onClick={() => onFinish(sketch)} disabled={curveList.length === 0}>
+          Finish sketch
+        </button>
+      </div>
+
+      <section className="panel">
+        <h2>Draw</h2>
+        <div className="button-grid">
+          {TOOLS.map((t) => (
+            <button
+              key={t.tool}
+              className={tool === t.tool ? "active" : ""}
+              onClick={() => {
+                finishDraft();
+                setTool(t.tool);
+              }}
+              title={`Shortcut: ${t.key}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Constrain</h2>
+        {options.length === 0 && selection.curves.length === 0 && (
+          <p className="hint">Select points and curves (Select tool) to see the constraints that apply.</p>
+        )}
+        <div className="button-grid">
+          {options.map((o) => (
+            <button key={o.label} title={o.title} onClick={() => addConstraint(o.make())}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {(selection.curves.length > 0 || selection.points.length > 0 || selectedConstraint != null) && (
+          <div className="button-grid">
+            {selection.curves.length > 0 && <button onClick={toggleConstruction}>Construction</button>}
+            <button onClick={deleteSelection}>Delete</button>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Status</h2>
+        <p className={report.converged && !solveError ? (report.dof === 0 ? "status-ok" : "hint") : "status-bad"}>{status}</p>
+        <p className="hint">
+          {nCurves} curve{nCurves === 1 ? "" : "s"} ·{" "}
+          {result.regions_error ? result.regions_error : `${result.regions.length} closed region${result.regions.length === 1 ? "" : "s"}`}
+        </p>
+      </section>
+
+      <section className="panel constraint-list">
+        <h2>Constraints</h2>
+        {constraintList.length === 0 && <p className="hint">None yet.</p>}
+        <ol>
+          {constraintList.map(([i, c]) => {
+            const value = constraintValue(c);
+            const isAngle = c.type === "Angle";
+            const shown = value == null ? "" : String(Number((isAngle ? (value * 180) / Math.PI : value).toFixed(6)));
+            return (
+              <li
+                key={i}
+                className={[
+                  report.failed_constraints.includes(i) ? "failed" : "",
+                  selectedConstraint === i ? "selected" : "",
+                ].join(" ")}
+                onClick={() => {
+                  setSelectedConstraint(i);
+                  setSelection(EMPTY_SELECTION);
+                }}
+              >
+                <span className="constraint-name">{constraintName(c)}</span>
+                {value != null && (
+                  // Typing only edits the field; Enter applies it, and
+                  // leaving the field without Enter puts the value back.
+                  // Keyed by the value, so a solve that changes it shows.
+                  <input
+                    key={shown}
+                    type="number"
+                    step={isAngle ? 1 : 0.1}
+                    defaultValue={shown}
+                    title="Enter applies"
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") e.currentTarget.blur();
+                      if (e.key !== "Enter") return;
+                      const v = Number(e.currentTarget.value);
+                      if (e.currentTarget.value !== "" && !Number.isNaN(v)) setConstraintValue(i, isAngle ? (v * Math.PI) / 180 : v);
+                    }}
+                    onBlur={(e) => (e.currentTarget.value = shown)}
+                  />
+                )}
+                <button
+                  className="constraint-remove"
+                  title="Delete this constraint"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteConstraint(i);
+                  }}
+                >
+                  ✕
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+
+      <button onClick={() => onSetup(sketch)} title="Back to the step's form, keeping the drawing — e.g. to choose another plane">
+        Sketch setup…
+      </button>
+    </aside>
+  );
+
   return (
     <div className="sketch-editor">
       <div className="sketch-canvas" ref={containerRef}>
@@ -728,123 +856,7 @@ export function SketchEditor({ initial, initialView, onView, onFinish, onSetup, 
         </div>
       </div>
 
-      <aside className="sketch-panel">
-        <section className="panel">
-          <h2>Draw</h2>
-          <div className="button-grid">
-            {TOOLS.map((t) => (
-              <button
-                key={t.tool}
-                className={tool === t.tool ? "active" : ""}
-                onClick={() => {
-                  finishDraft();
-                  setTool(t.tool);
-                }}
-                title={`Shortcut: ${t.key}`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel">
-          <h2>Constrain</h2>
-          {options.length === 0 && selection.curves.length === 0 && (
-            <p className="hint">Select points and curves (Select tool) to see the constraints that apply.</p>
-          )}
-          <div className="button-grid">
-            {options.map((o) => (
-              <button key={o.label} title={o.title} onClick={() => addConstraint(o.make())}>
-                {o.label}
-              </button>
-            ))}
-          </div>
-          {(selection.curves.length > 0 || selection.points.length > 0 || selectedConstraint != null) && (
-            <div className="button-grid">
-              {selection.curves.length > 0 && <button onClick={toggleConstruction}>Construction</button>}
-              <button onClick={deleteSelection}>Delete</button>
-            </div>
-          )}
-        </section>
-
-        <section className="panel">
-          <h2>Status</h2>
-          <p className={report.converged && !solveError ? (report.dof === 0 ? "status-ok" : "hint") : "status-bad"}>{status}</p>
-          <p className="hint">
-            {nCurves} curve{nCurves === 1 ? "" : "s"} ·{" "}
-            {result.regions_error ? result.regions_error : `${result.regions.length} closed region${result.regions.length === 1 ? "" : "s"}`}
-          </p>
-        </section>
-
-        <section className="panel constraint-list">
-          <h2>Constraints</h2>
-          {constraintList.length === 0 && <p className="hint">None yet.</p>}
-          <ol>
-            {constraintList.map(([i, c]) => {
-              const value = constraintValue(c);
-              const isAngle = c.type === "Angle";
-              const shown = value == null ? "" : String(Number((isAngle ? (value * 180) / Math.PI : value).toFixed(6)));
-              return (
-                <li
-                  key={i}
-                  className={[
-                    report.failed_constraints.includes(i) ? "failed" : "",
-                    selectedConstraint === i ? "selected" : "",
-                  ].join(" ")}
-                  onClick={() => {
-                    setSelectedConstraint(i);
-                    setSelection(EMPTY_SELECTION);
-                  }}
-                >
-                  <span className="constraint-name">{constraintName(c)}</span>
-                  {value != null && (
-                    // Typing only edits the field; Enter applies it, and
-                    // leaving the field without Enter puts the value back.
-                    // Keyed by the value, so a solve that changes it shows.
-                    <input
-                      key={shown}
-                      type="number"
-                      step={isAngle ? 1 : 0.1}
-                      defaultValue={shown}
-                      title="Enter applies"
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") e.currentTarget.blur();
-                        if (e.key !== "Enter") return;
-                        const v = Number(e.currentTarget.value);
-                        if (e.currentTarget.value !== "" && !Number.isNaN(v)) setConstraintValue(i, isAngle ? (v * Math.PI) / 180 : v);
-                      }}
-                      onBlur={(e) => (e.currentTarget.value = shown)}
-                    />
-                  )}
-                  <button
-                    className="constraint-remove"
-                    title="Delete this constraint"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteConstraint(i);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </section>
-
-        <button onClick={() => onSetup(sketch)} title="Back to the step's form, keeping the drawing — e.g. to choose another plane">
-          Sketch setup…
-        </button>
-        <div className="button-row">
-          <button className="small" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="primary" onClick={() => onFinish(sketch)} disabled={curveList.length === 0}>
-            Finish sketch
-          </button>
-        </div>
-      </aside>
+      {panelHost ? createPortal(panel, panelHost) : panel}
     </div>
   );
 }

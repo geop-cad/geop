@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - "homepage/**"
+      - "cad/geop-cad-cli/**"
+      - "ops/geop-ops-parts/src/examples.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/deploy-landing.yml"
   workflow_dispatch:
 
@@ -17,6 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The examples carousel's STL previews (see homepage/index.html) —
+      # generated fresh each deploy, not committed.
+      - name: Export example STLs
+        run: cargo run -p geop-cad-cli --release -- examples --out-dir homepage/examples
 
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3

@@ -269,6 +269,15 @@ export function OperationForm({
   return (
     <div className="popup-backdrop">
       <div className="popup">
+        <div className="button-row">
+          <button className="small" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="primary" disabled={!complete} onClick={onCommit}>
+            OK
+          </button>
+        </div>
+
         <h2>
           {schema.label}
           {stepId && <span className="op-id"> · {stepId}</span>}
@@ -295,15 +304,6 @@ export function OperationForm({
           Preview result in viewport
         </label>
         {preview && previewError && <p className="op-error-text">{previewError}</p>}
-
-        <div className="button-row">
-          <button className="small" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="primary" disabled={!complete} onClick={onCommit}>
-            OK
-          </button>
-        </div>
       </div>
     </div>
   );
