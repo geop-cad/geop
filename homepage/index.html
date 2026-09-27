@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Geop — an open CAD kernel</title>
+<meta name="description" content="Geop is an open-source, NURBS-based CAD kernel for the agentic engineering era — highly extendable, written in Rust, with sound interval numerics." />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<style>
+
+/* ---------------------------------------------------------------
+   Tokens
+--------------------------------------------------------------- */
+:root {
+  /* light variant of the app's own UI theme (web/src/App.css): same
+     neutral-gray + blue-accent identity, just inverted to a light page */
+  --ground:      #f7f7f8;
+  --surface:     #ffffff;
+  --surface-2:   #f0f0f2;
+  --ink:         #18181b;
+  --ink-dim:     #5f5f66;
+  --ink-faint:   #8b8b92;
+  --line:        #e4e4e7;
+  --line-strong: #cfcfd4;
+  --accent:      #2d6ca6;
+  --accent-ink:  #ffffff;
+  --accent-soft: #e7f1fa;
+  --cyan:        #0f7bc4;
+  --shadow:      0 1px 2px rgba(20, 20, 30, 0.06);
+}
+
+/* ---------------------------------------------------------------
+   Reset & base
+--------------------------------------------------------------- */
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+p { margin: 0; }
+a { color: inherit; }
+
+img, svg { max-width: 100%; display: block; }
+
+::selection { background: var(--accent); color: var(--accent-ink); }
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ---------------------------------------------------------------
+   Layout shell
+--------------------------------------------------------------- */
+.sheet {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(1.25rem, 4vw, 3rem);
+}
+
+.frame {
+  position: relative;
+}
+.frame::before,
+.frame::after,
+.tick-tl,
+.tick-tr,
+.tick-bl,
+.tick-br {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--line-strong);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* corner ticks reused across annotated sections */
+.corner-ticks { position: relative; }
+.corner-ticks::before,
+.corner-ticks::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+.corner-ticks::before {
+  top: -1px; left: -1px;
+  border-top: 1px solid var(--line-strong);
+  border-left: 1px solid var(--line-strong);
+}
+.corner-ticks::after {
+  bottom: -1px; right: -1px;
+  border-bottom: 1px solid var(--line-strong);
+  border-right: 1px solid var(--line-strong);
+}
+
+/* ---------------------------------------------------------------
+   Eyebrow / labels
+--------------------------------------------------------------- */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+.eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  background: var(--cyan);
+  transform: rotate(45deg);
+  flex: none;
+}
+
+/* ---------------------------------------------------------------
+   Header
+--------------------------------------------------------------- */
+header.site {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.9rem 0;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  color: var(--ink);
+}
+.brand svg { width: 22px; height: 21px; }
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.75rem;
+  font-size: 0.88rem;
+  color: var(--ink-dim);
+}
+.nav-links a { text-decoration: none; }
+.nav-links a:hover { color: var(--ink); }
+.nav-links .btn { color: var(--ink); }
+@media (max-width: 640px) {
+  .nav-links a:not(.btn) { display: none; }
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.55rem 1.05rem;
+  border: 1px solid var(--line-strong);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+}
+.btn-ghost:hover { border-color: var(--ink); }
+
+/* ---------------------------------------------------------------
+   Hero
+--------------------------------------------------------------- */
+.hero {
+  position: relative;
+  padding: clamp(3rem, 8vw, 6rem) 0 clamp(2.5rem, 6vw, 4rem);
+}
+.hero-inner {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .hero-inner { grid-template-columns: 1fr; }
+}
+
+.hero h1 {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-weight: 600;
+  font-size: clamp(2rem, 4.6vw, 3.15rem);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  margin: 0.9rem 0 1.15rem;
+}
+.hero h1 em {
+  font-style: normal;
+  color: var(--accent);
+}
+.hero .lede {
+  max-width: 46ch;
+  color: var(--ink-dim);
+  font-size: 1.06rem;
+}
+.hero .lede strong { color: var(--ink); font-weight: 600; }
+
+.hero-ctas {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.9rem;
+}
+
+.hero-figure {
+  position: relative;
+  padding: clamp(1.5rem, 3vw, 2rem);
+  background: var(--surface);
+}
+.examples-list {
+  list-style: none;
+  margin: 1.1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.examples-list li + li { border-top: 1px solid var(--line); }
+.examples-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0.15rem;
+  text-decoration: none;
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.92rem;
+}
+.examples-list a:hover { color: var(--accent); }
+.examples-note {
+  margin-top: 1.25rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--line);
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+}
+
+/* ---------------------------------------------------------------
+   Section rhythm
+--------------------------------------------------------------- */
+section { padding: clamp(3.25rem, 7vw, 5.5rem) 0; }
+.section-head {
+  max-width: 62ch;
+  margin-bottom: clamp(2rem, 4vw, 2.75rem);
+}
+.section-head h2 {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-weight: 600;
+  font-size: clamp(1.5rem, 2.6vw, 2rem);
+  line-height: 1.2;
+  margin: 0.75rem 0 0;
+}
+.rule {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0;
+}
+.prose { color: var(--ink-dim); font-size: 1rem; max-width: 62ch; }
+.prose + .prose { margin-top: 1rem; }
+
+/* ---------------------------------------------------------------
+   Compare block
+--------------------------------------------------------------- */
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line);
+  margin-top: 2.25rem;
+}
+@media (max-width: 760px) {
+  .compare { grid-template-columns: 1fr; }
+}
+.compare > div {
+  padding: 1.5rem 1.65rem;
+}
+.compare > div + div { border-left: 1px solid var(--line); }
+@media (max-width: 760px) {
+  .compare > div + div { border-left: none; border-top: 1px solid var(--line); }
+}
+.compare h3 {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 1rem;
+}
+.compare ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.65rem; }
+.compare li {
+  font-size: 0.95rem;
+  padding-left: 1.15em;
+  position: relative;
+}
+.compare .have li::before {
+  content: "+";
+  position: absolute; left: 0;
+  color: var(--cyan);
+  font-family: ui-monospace, monospace;
+}
+.compare .lack li::before {
+  content: "–";
+  position: absolute; left: 0;
+  color: var(--ink-faint);
+  font-family: ui-monospace, monospace;
+}
+
+/* ---------------------------------------------------------------
+   Pull quote
+--------------------------------------------------------------- */
+.pullquote {
+  margin: clamp(2.5rem, 5vw, 3.5rem) 0 0;
+  padding: clamp(1.5rem, 4vw, 2.25rem) clamp(1.5rem, 4vw, 2.5rem);
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+}
+.pullquote p {
+  font-size: clamp(1.15rem, 2.2vw, 1.5rem);
+  line-height: 1.35;
+  color: var(--ink);
+}
+.pullquote p strong { color: var(--accent); font-weight: 600; }
+
+/* ---------------------------------------------------------------
+   Spec sheet (capability grid)
+--------------------------------------------------------------- */
+.specsheet {
+  border-top: 1px solid var(--line);
+  margin-top: 2.25rem;
+}
+.spec-row {
+  display: grid;
+  grid-template-columns: 28px 220px 1fr;
+  gap: 1.25rem;
+  padding: 1.15rem 0;
+  border-bottom: 1px solid var(--line);
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .spec-row { grid-template-columns: 24px 1fr; }
+  .spec-row .spec-desc { grid-column: 2; }
+}
+.spec-icon { width: 24px; height: 24px; color: var(--accent); flex: none; }
+.spec-icon svg { width: 100%; height: 100%; }
+.spec-label {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.86rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  padding-top: 0.1rem;
+}
+.spec-desc { color: var(--ink-dim); font-size: 0.94rem; }
+
+/* ---------------------------------------------------------------
+   Status stamp
+--------------------------------------------------------------- */
+.status-box {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.75rem;
+  margin-top: 2.25rem;
+  padding: clamp(1.5rem, 3vw, 2rem);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  align-items: start;
+}
+@media (max-width: 620px) {
+  .status-box { grid-template-columns: 1fr; }
+}
+.stamp {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1.5px solid var(--accent);
+  padding: 0.55rem 0.8rem;
+  transform: rotate(-2deg);
+  white-space: nowrap;
+  align-self: center;
+}
+.status-box p { color: var(--ink-dim); font-size: 0.97rem; }
+.status-box p + p { margin-top: 0.7rem; }
+.status-box strong { color: var(--ink); }
+
+/* ---------------------------------------------------------------
+   Roadmap checklist
+--------------------------------------------------------------- */
+.checklist {
+  margin-top: 2.25rem;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0;
+  border: 1px solid var(--line);
+}
+@media (max-width: 700px) {
+  .checklist { grid-template-columns: 1fr; }
+}
+.checklist li {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 1rem 1.35rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.97rem;
+}
+.checklist li:nth-child(odd) { border-right: 1px solid var(--line); }
+@media (max-width: 700px) {
+  .checklist li:nth-child(odd) { border-right: none; }
+}
+.checklist .box {
+  font-family: ui-monospace, monospace;
+  color: var(--ink-faint);
+  flex: none;
+}
+.checklist .label { color: var(--ink); }
+.checklist .note { display: block; color: var(--ink-dim); font-size: 0.85rem; margin-top: 0.15rem; }
+
+/* ---------------------------------------------------------------
+   Ask / closing panel
+--------------------------------------------------------------- */
+.ask {
+  background: var(--ink);
+  color: var(--ground);
+}
+.ask .eyebrow { color: var(--cyan); }
+.ask h2 {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  font-weight: 600;
+  font-size: clamp(1.6rem, 3.4vw, 2.35rem);
+  line-height: 1.18;
+  margin: 0.9rem 0 1.1rem;
+  max-width: 22ch;
+  color: var(--ground);
+}
+.ask p.prose { color: color-mix(in srgb, var(--ground) 68%, transparent); max-width: 56ch; }
+.ask-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 1.75rem 0 2rem;
+}
+.ask-tags span {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--ground) 30%, transparent);
+  color: var(--ground);
+}
+.ask .btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.ask .btn-ghost {
+  color: var(--ground);
+  border-color: color-mix(in srgb, var(--ground) 35%, transparent);
+}
+.ask .btn-ghost:hover { border-color: var(--ground); }
+
+/* ---------------------------------------------------------------
+   Footer
+--------------------------------------------------------------- */
+footer.site {
+  border-top: 1px solid var(--line);
+}
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1.75rem 0;
+  font-size: 0.82rem;
+  color: var(--ink-faint);
+}
+.footer-inner a { text-decoration: none; color: var(--ink-dim); }
+.footer-inner a:hover { color: var(--ink); }
+.footer-brand { display: flex; align-items: center; gap: 0.5rem; }
+.footer-brand svg { width: 16px; height: 15px; }
+
+/* wide content never causes body scroll */
+.scroll-x { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="sheet nav">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path fill="currentColor" style="color:var(--accent)" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
+      </svg>
+      Geop
+    </a>
+    <nav class="nav-links">
+      <a href="#kernel">Kernel</a>
+      <a href="#status">Status</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="https://app.geop-cad.dev">App</a>
+      <a href="https://book.geop-cad.dev">Book</a>
+      <a href="https://docs.geop-cad.dev">Docs</a>
+      <a class="btn btn-ghost" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">Source ↗</a>
+      <a class="btn btn-primary" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Sponsor ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <div class="sheet hero-inner">
+      <div>
+        <p class="eyebrow">open-source cad kernel · rust · interval numerics</p>
+        <h1>An open-source, NURBS-based<br>CAD kernel for the <em>agentic engineering</em> era.</h1>
+        <p class="lede">
+          Geop is a highly extendable CAD kernel written in Rust, with sound interval
+          numerics. Bodies are smooth NURBS solids — <strong>it's SVG, but in 3D</strong> —
+          backed by topology that supports non‑manifold modeling and booleans that
+          don't miss intersections.
+        </p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">View source on GitHub ↗</a>
+          <a class="btn btn-primary" href="https://app.geop-cad.dev" target="_blank" rel="noopener">Try in your browser ↗</a>
+          <a class="btn btn-ghost" href="mailto:tobi.jacob@gmx.net">Get in touch →</a>
+        </div>
+      </div>
+
+      <div class="hero-figure corner-ticks">
+        <p class="eyebrow">live examples</p>
+        <ul class="examples-list">
+          <!-- placeholder links until designs can be shared directly -->
+          <li><a href="https://app.geop-cad.dev" target="_blank" rel="noopener">Bracket assembly ↗</a></li>
+          <li><a href="https://app.geop-cad.dev" target="_blank" rel="noopener">Filleted enclosure ↗</a></li>
+          <li><a href="https://app.geop-cad.dev" target="_blank" rel="noopener">Threaded standoff ↗</a></li>
+        </ul>
+        <p class="examples-note">Shareable example links are coming soon — for now, these open the app itself.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule" />
+
+  <!-- ============================= KERNEL / CAPABILITIES ============================= -->
+  <section id="kernel">
+    <div class="sheet">
+      <div class="section-head">
+        <p class="eyebrow">the data model</p>
+        <h2>A well-defined way of dealing with smooth 3D bodies.</h2>
+      </div>
+      <p class="prose">
+        Geop's bodies are NURBS solids, top to bottom — it's SVG, but in 3D. The
+        closest existing analogue is a STEP file, a powerful but famously opaque
+        format. Geop gives you the same expressive power through curves, surfaces,
+        and topological data structures you can actually read and extend.
+      </p>
+
+      <div class="specsheet scroll-x">
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M2 18C6 10 10 4 22 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="2" cy="18" r="1.4" fill="currentColor"/><circle cx="22" cy="6" r="1.4" fill="currentColor"/></svg>
+          </span>
+          <span class="spec-label">NURBS CURVES &amp; SURFACES</span>
+          <span class="spec-desc">The mathematical primitive underneath every smooth edge and face Geop draws.</span>
+        </div>
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 8h9v9H4z" stroke="currentColor" stroke-width="1.6"/><path d="M9 4h11v11" stroke="currentColor" stroke-width="1.6"/></svg>
+          </span>
+          <span class="spec-label">NON‑MANIFOLD TOPOLOGY</span>
+          <span class="spec-desc">Data structures that go beyond simple solids, for the shapes real assemblies actually need.</span>
+        </div>
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 16h6v4H4z" stroke="currentColor" stroke-width="1.6"/><path d="M7 16V6m0 0-3 3m3-3 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="spec-label">EXTRUSION &amp; REVOLUTION</span>
+          <span class="spec-desc">The basic modeling operations that take a sketch to a body.</span>
+        </div>
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="12" r="6.4" stroke="currentColor" stroke-width="1.6"/><circle cx="15" cy="12" r="6.4" stroke="currentColor" stroke-width="1.6"/></svg>
+          </span>
+          <span class="spec-label">ROBUST BOOLEANS</span>
+          <span class="spec-desc">Union, intersect, and subtract on real geometry, without missing intersections.</span>
+        </div>
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h3M17 12h3M8 6.5v11M16 6.5v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.5 2.2"/></svg>
+          </span>
+          <span class="spec-label">INTERVAL ARITHMETIC</span>
+          <span class="spec-desc">Numerical error is tracked from creation all the way to the final model — Geop knows what it doesn't know, so it won't miss an intersection.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule" />
+
+  <!-- ============================= STATUS ============================= -->
+  <section id="status">
+    <div class="sheet">
+      <div class="section-head">
+        <p class="eyebrow">honest status</p>
+        <h2>This is early. That's the point.</h2>
+      </div>
+
+      <div class="status-box">
+        <span class="stamp mono">Work in Progress</span>
+        <div>
+          <p>Right now Geop is a <strong>minimal MVP</strong> — booleans working
+          reliably on 3D objects, backed by interval-bounded numerics. There are
+          many ways to make it faster and more accurate, and that work is already
+          underway.</p>
+          <p>What I want to find out right now is whether people are genuinely
+          interested in this project. If you are, the roadmap below is where it
+          goes next — and I'd like your help getting there.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule" />
+
+  <!-- ============================= ROADMAP ============================= -->
+  <section id="roadmap">
+    <div class="sheet">
+      <div class="section-head">
+        <p class="eyebrow">on the roadmap</p>
+        <h2>The best engineering suite for mechanical engineers — while they stay in control of their data.</h2>
+      </div>
+
+      <ul class="checklist">
+        <li><span class="box mono">☐</span><span class="label">Fillets &amp; chamfers</span></li>
+        <li><span class="box mono">☐</span><span class="label">Projection</span></li>
+        <li><span class="box mono">☐</span><span class="label">Finite element simulation</span></li>
+        <li><span class="box mono">☐</span><span class="label">Wire harness / cabling</span></li>
+        <li><span class="box mono">☐</span><span class="label">Plugin system<span class="note">so the community can contribute part libraries and new modeling tools</span></span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================= ASK ============================= -->
+  <section class="ask">
+    <div class="sheet">
+      <p class="eyebrow">join the build</p>
+      <h2>Looking for sponsors, angels, early investors, and founding engineers.</h2>
+      <p class="prose">
+        Geop's mission is to build a genuinely competitive open-source CAD
+        program — and to establish it as common infrastructure the way numpy
+        is for scientific computing. That's a long build. I'm looking for
+        people who want to fund it, invest in it, or help build it from here.
+      </p>
+      <div class="ask-tags">
+        <span class="mono">SPONSORS</span>
+        <span class="mono">BUSINESS ANGELS</span>
+        <span class="mono">EARLY INVESTORS</span>
+        <span class="mono">FOUNDING ENGINEERS</span>
+      </div>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Become a sponsor ↗</a>
+        <a class="btn btn-ghost" href="mailto:tobi.jacob@gmx.net">Get in touch →</a>
+        <a class="btn btn-ghost" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">Explore the code ↗</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="sheet footer-inner">
+    <span class="footer-brand">
+      <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path fill="currentColor" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
+      </svg>
+      Geop — an open CAD kernel
+    </span>
+    <a href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">github.com/geop-cad/geop</a>
+  </div>
+</footer>
+
+</body>
+</html>

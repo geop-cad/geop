@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "docs/**"
+      - "homepage/**"
       - ".github/workflows/deploy-landing.yml"
   workflow_dispatch:
 
@@ -31,4 +31,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
-          command: pages deploy docs --project-name=geop-cad-landing --branch=main --commit-dirty=true
+          command: pages deploy homepage --project-name=geop-cad-landing --branch=main --commit-dirty=true
