@@ -324,6 +324,102 @@ pub fn boss_on_reference_plane() -> Program {
     program
 }
 
+/// A hand-drawn handle-shaped outline (an irregular blob, splined, with a
+/// smaller splined region inside it — as a free-hand sketch in the web
+/// editor draws, unconstrained) extruded, then cross-drilled with a
+/// circular hole near one end.
+///
+/// Reproduces two real user bug reports (2026-09-27) from the same
+/// outline, differing only in the hole's exact center: one had the
+/// `extrude`'s boolean difference fail outright with a degenerate-face
+/// error from `face_interior_point`; the other had it succeed but leave a
+/// non-watertight hole. Both point at the same root cause — the outline's
+/// hand-drawn spline passes close enough to itself, and to the hole, that
+/// the boolean's numerics lose a face — so this example uses the exact
+/// reported coordinates, unconstrained, rather than a re-derived "clean"
+/// equivalent that might not carry the same numerical case at all.
+pub fn handle_with_hole() -> Program {
+    let mut program = Program::new();
+
+    let mut outline = Sketch::new();
+    let outer_points = [
+        (0.01007682018456503, 0.8939399106232252),
+        (-0.9693901017551558, 0.8213868052943569),
+        (-1.00566665441959, 0.3175457960661055),
+        (-0.9452057333121998, -0.3555857922628385),
+        (0.09472210973491128, -0.9481028191152622),
+        (0.695300592734987, -0.3878316168534466),
+        (1.384555093359235, -0.4523232660346628),
+        (1.6233271012047248, -0.9224957048864859),
+        (1.9214381194506664, 0.15401630544608172),
+        (1.2092840203075834, 0.8578895429712221),
+    ]
+    .map(|(x, y)| outline.add_point(x, y));
+    let mut outer_loop = outer_points.to_vec();
+    outer_loop.push(outer_points[0]);
+    outline.add_spline(outer_loop);
+
+    let inner_points = [
+        (0.27854547786607586, 0.568500810276078),
+        (-0.3241022513094386, 0.561767316095346),
+        (-0.3645032163938306, 0.00962079327532167),
+        (0.03950643445008967, -0.4246895813818926),
+        (0.507484280010964, -0.11831559615858644),
+        (0.8643594715897602, 0.12072344725739975),
+        (1.1202322504575766, -0.1452495728815144),
+        (1.2919363520662426, 0.18805838906471978),
+        (1.0427970673791584, 0.470865144655464),
+    ]
+    .map(|(x, y)| outline.add_point(x, y));
+    let mut inner_loop = inner_points.to_vec();
+    inner_loop.push(inner_points[0]);
+    outline.add_spline(inner_loop);
+
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: EntityRef::Plane {
+                normal: WorldAxis::Z,
+            },
+            sketch: solved(outline),
+        },
+    );
+    program.push(
+        "handle",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            distance: 1.0,
+            symmetric: false,
+            combine: Combine::NewBody,
+        },
+    );
+
+    let mut hole = Sketch::new();
+    let center = hole.add_point(0.32989396295411244, -0.5632891678453777);
+    hole.add_circle(center, 0.31727744879927977);
+    program.push(
+        "hole_sketch",
+        AddSketchArgs {
+            plane: EntityRef::Plane {
+                normal: WorldAxis::Y,
+            },
+            sketch: solved(hole),
+        },
+    );
+    program.push(
+        "hole",
+        ExtrudeArgs {
+            sketch: "hole_sketch".into(),
+            distance: 2.44,
+            symmetric: true,
+            combine: Combine::Difference {
+                target: "extrude(handle)".into(),
+            },
+        },
+    );
+    program
+}
+
 /// Every example, by name.
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
@@ -610,5 +706,26 @@ mod tests {
         let mut program = box_with_drill_hole();
         program.steps[3].id = "box".into();
         assert!(program.apply(Part::<S>::new()).is_err());
+    }
+
+    /// Reproduces the two real bug reports described on `handle_with_hole`.
+    ///
+    /// Currently fails during `program.apply` (not even reaching
+    /// `build_and_round_trip`'s own `validate`): the `Difference` boolean
+    /// in the "hole" step errors from `face_interior_point` — "no point
+    /// strictly inside face FaceId(52) was found ... a loop spanning
+    /// nothing encloses no area, so the face is degenerate". Exact match to
+    /// one of the two bug reports; the other report's variant of this same
+    /// outline (a slightly different hole center) instead *succeeds* but
+    /// leaves a non-watertight hole, which is the more likely true failure
+    /// mode — this error is probably the same root cause caught earlier by
+    /// a stricter check. Not yet root-caused. `handle_with_hole` is
+    /// deliberately left out of `all()` until this is fixed, so it does not
+    /// reach the CLI's `examples` export (breaking the landing page's
+    /// carousel build) or the web app's example list.
+    #[test]
+    #[ignore = "known failure: face_interior_point degenerate face in the hole's boolean difference, not yet root-caused — see this test's doc comment"]
+    fn handle_with_hole_round_trips() {
+        build_and_round_trip("handle_with_hole", &handle_with_hole());
     }
 }
