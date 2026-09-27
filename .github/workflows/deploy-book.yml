@@ -26,9 +26,17 @@ jobs:
       - name: Build book
         run: mdbook build book
 
+      - name: Ensure Cloudflare Pages project exists
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
+          accountId: 9f1c6a47335dac47c8e580e269b0ae8d
+          command: pages project create geop-cad-book --production-branch main
+
       - name: Deploy to book.geop-cad.dev
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
-          command: pages deploy book/dist --project-name=geop-cad-book --branch=main
+          command: pages deploy book/dist --project-name=geop-cad-book --branch=main --commit-dirty=true

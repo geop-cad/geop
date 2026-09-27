@@ -18,9 +18,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure Cloudflare Pages project exists
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
+          accountId: 9f1c6a47335dac47c8e580e269b0ae8d
+          command: pages project create geop-cad-landing --production-branch main
+
       - name: Deploy to geop-cad.dev
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
-          command: pages deploy docs --project-name=geop-cad-landing --branch=main
+          command: pages deploy docs --project-name=geop-cad-landing --branch=main --commit-dirty=true
