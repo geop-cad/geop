@@ -5,9 +5,10 @@ before it. `web/` is a React front end that loads the top of that chain
 compiled to WebAssembly and renders its output with three.js, and
 `geop-cad-cli` puts the same chain on the command line.
 
-This book gives a brief, one-paragraph overview of each crate. It does not
-yet document their APIs in depth — see [docs.geop-cad.dev](https://docs.geop-cad.dev)
-for the generated rustdoc reference, and expect these chapters to grow over
+This book gives an overview of each crate: what it is for, its main types
+and operations, and the design decisions behind them. It does not document
+every API in depth — see [docs.geop-cad.dev](https://docs.geop-cad.dev) for
+the generated rustdoc reference, and expect these chapters to grow over
 time.
 
 ```text
