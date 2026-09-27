@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { entityLabel, type EntityRef, type Program, type RunResult } from "./geop";
 import { BugReport } from "./BugReport";
+import { Privacy } from "./Privacy";
 
 interface Props {
   busy: boolean;
@@ -101,6 +102,7 @@ export function Toolbar({
         onOpen={onBugReportOpen}
         onClose={onBugReportClose}
       />
+      <Privacy />
       {committed && (
         <span className="stats">
           {stepCount} step{stepCount === 1 ? "" : "s"} · {triangleCount} tris

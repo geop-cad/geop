@@ -46,6 +46,11 @@ jobs:
       - name: Build (wasm + vite)
         working-directory: web
         run: npm run build
+        env:
+          # PostHog project API key (a public, client-side key — a repository
+          # *variable*, not a secret). Unset means the build has no usage
+          # statistics at all; see web/src/analytics.ts.
+          VITE_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
 
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3

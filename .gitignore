@@ -22,5 +22,6 @@ pkg/
 # generated example STL previews for the landing page (rebuild with
 # `cargo run -p geop-cad-cli -- examples --out-dir homepage/examples`)
 homepage/examples/
+homepage/vendor/
 
 bugreports

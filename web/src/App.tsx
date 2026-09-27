@@ -41,6 +41,7 @@ import { toSketch } from "./sketchGeometry";
 import { formEdit, type FormState, type SketchSession } from "./editorState";
 import { pickAt } from "./picking";
 import { Toolbar } from "./Toolbar";
+import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
 import { MobileBottom, type MobileTab } from "./MobileBottom";
 import { useIsMobile } from "./useIsMobile";
 
@@ -113,7 +114,12 @@ function App() {
   useEffect(() => {
     if (!wasmReady) return;
     try {
-      setCommitted(runProgram(runStop));
+      const result = runProgram(runStop);
+      trackFailures(
+        result,
+        program.steps.map((s) => s.operation),
+      );
+      setCommitted(result);
       setCommittedError(null);
     } catch (e) {
       setCommittedError(String(e));
@@ -219,6 +225,7 @@ function App() {
   function edit(e: ProgramEdit): string | null {
     const before = program;
     const id = updateProgram(e);
+    trackEdit(e);
     setHistory((h) => [...h, before]);
     setFuture([]);
     setProgram(currentProgram());
@@ -340,12 +347,16 @@ function App() {
     a.download = "part.program.json";
     a.click();
     URL.revokeObjectURL(url);
+    trackFile("saved");
   }
 
   function loadFile(file: File) {
     file
       .text()
-      .then((text) => loadProgram(JSON.parse(text) as Program))
+      .then((text) => {
+        loadProgram(JSON.parse(text) as Program);
+        trackFile("loaded");
+      })
       .catch((e) => setCommittedError(String(e)));
   }
 
@@ -488,7 +499,10 @@ function App() {
     loadedFromUrl.current = true;
     const name = new URLSearchParams(window.location.search).get("example");
     const example = name && examples.find((x) => x.name === name);
-    if (example) loadProgram(example.program);
+    if (example) {
+      loadProgram(example.program);
+      trackExample(example.name);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examples]);
 
@@ -590,7 +604,10 @@ function App() {
         exampleNames={examples.map((x) => x.name)}
         onLoadExample={(name) => {
           const example = examples.find((x) => x.name === name);
-          if (example) loadProgram(example.program);
+          if (example) {
+            loadProgram(example.program);
+            trackExample(example.name);
+          }
         }}
         canUndo={history.length > 0 && form == null}
         onUndo={undo}

@@ -39,6 +39,19 @@ jobs:
             --only luggage_tag \
             --only bracket
 
+      # three.js is served from the site itself rather than a CDN, so a
+      # visitor's IP address never reaches a third party (see
+      # homepage/privacy.html). Fetched fresh each deploy, like the STLs;
+      # keep the version in step with web/package.json.
+      - name: Vendor three.js
+        run: |
+          mkdir -p homepage/vendor
+          npm pack three@0.185.1 --pack-destination "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP"/three-0.185.1.tgz -C "$RUNNER_TEMP"
+          mkdir -p homepage/vendor/three/build homepage/vendor/three/examples/jsm/loaders
+          cp "$RUNNER_TEMP"/package/build/three.module.min.js "$RUNNER_TEMP"/package/build/three.core.min.js homepage/vendor/three/build/
+          cp "$RUNNER_TEMP"/package/examples/jsm/loaders/STLLoader.js homepage/vendor/three/examples/jsm/loaders/
+
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3
         continue-on-error: true

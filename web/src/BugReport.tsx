@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import type { Program } from "./geop";
+import { PRIVACY_URL } from "./Privacy";
 
 interface Props {
   program: Program;
@@ -80,7 +81,14 @@ export function BugReport({ program, committedError, panelHost, onOpen, onClose 
           </p>
         ) : (
           <>
-            <p className="hint">What went wrong? The current file and some basic diagnostics (browser, URL, the last error if any) are attached automatically.</p>
+            <p className="hint">
+              What went wrong? The current file and some basic diagnostics (browser, URL, the last error if any) are
+              attached automatically. See the{" "}
+              <a href={PRIVACY_URL} target="_blank" rel="noopener">
+                privacy notice
+              </a>
+              .
+            </p>
             <textarea
               className="bug-report-text"
               rows={5}

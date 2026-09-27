@@ -950,14 +950,18 @@ footer.site {
       </svg>
       Geop — an open CAD kernel
     </span>
-    <a href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">github.com/geop-cad/geop</a>
+    <span>
+      <a href="privacy.html">Privacy &amp; imprint</a>
+      ·
+      <a href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">github.com/geop-cad/geop</a>
+    </span>
   </div>
 </footer>
 
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js"
+    "three": "./vendor/three/build/three.module.min.js"
   }
 }
 </script>
@@ -965,7 +969,7 @@ footer.site {
   // STLLoader imports "three" as a bare specifier — the import map above
   // is what lets that resolve outside a bundler.
   import * as THREE from "three";
-  import { STLLoader } from "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/STLLoader.js";
+  import { STLLoader } from "./vendor/three/examples/jsm/loaders/STLLoader.js";
 
   // Renders each example carousel card's STL — generated at build time by
   // `geop examples` (see cad/geop-cad-cli) into homepage/examples/ — as a

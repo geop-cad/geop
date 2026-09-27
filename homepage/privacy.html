@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy notice — Geop</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      --ground: #f7f7f8;
+      --ink: #18181b;
+      --ink-dim: #5f5f66;
+      --line: #e4e4e7;
+      --accent: #2d6ca6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--ground);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin: 1.5rem 0 0.5rem;
+    }
+
+    h2 {
+      font-size: 1.25rem;
+      margin: 2.25rem 0 0.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      margin: 1.5rem 0 0.25rem;
+    }
+
+    p,
+    ul {
+      margin: 0.5rem 0;
+    }
+
+    .dim {
+      color: var(--ink-dim);
+    }
+
+    .back {
+      text-decoration: none;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <a class="back" href="/">← Geop</a>
+    <h1>Privacy notice</h1>
+    <p class="dim">Covers geop-cad.dev, app.geop-cad.dev, book.geop-cad.dev and docs.geop-cad.dev. Last updated 27
+      September 2026.</p>
+
+    <h2>Who is responsible</h2>
+    <p>
+      Tobias Jacob<br />
+      <!-- TODO before publishing: a postal address at which you can be reached (required by Art. 13 GDPR and § 5 DDG). -->
+      100 Albany Street, Flat 19, London, UK<br />
+      Email: <a data-email-link href="#">see the contact link</a>
+    </p>
+    <p>This is also the site's imprint (Impressum, § 5 DDG).</p>
+
+    <h2>In short</h2>
+    <ul>
+      <li>The CAD app runs entirely in your browser. Your parts are not uploaded anywhere unless you send a bug report.
+      </li>
+      <li>The app counts anonymous usage statistics, without cookies and without storing anything on your device. You
+        can switch them off in the app (<em>Privacy</em> button), and they are off automatically if your browser sends
+        Do Not Track or Global Privacy Control.</li>
+      <li>No advertising, no tracking across sites, no session recordings, no selling of data.</li>
+    </ul>
+
+    <h2>Hosting</h2>
+    <p>
+      All four sites are served by Cloudflare Pages (Cloudflare, Inc., 101 Townsend St, San Francisco, CA 94107, USA).
+      To deliver
+      a page, Cloudflare necessarily processes your IP address and technical request data (time, requested URL, browser
+      identification) and may keep them in short-lived logs for security and to keep the service running. Legal basis:
+      Art. 6(1)(f) GDPR — our legitimate interest in serving the sites securely. Cloudflare is certified under the
+      EU-US Data Privacy Framework, and processes this data on our behalf under a data processing agreement.
+    </p>
+    <p>All scripts, images and other resources are served from these sites themselves; no page loads anything from third
+      parties.</p>
+
+    <h2>The CAD app</h2>
+    <h3>Your parts</h3>
+    <p>
+      The CAD kernel is compiled to WebAssembly and runs in your browser. Parts you build, sketches you draw and files
+      you
+      load or save are processed only there. Saving downloads a file to your device; nothing is sent to us.
+    </p>
+
+    <h3>Anonymous usage statistics</h3>
+    <p>
+      To learn which features are used and which fail, the app sends the following events to PostHog (PostHog Inc.),
+      hosted in PostHog's EU cloud in Frankfurt, Germany:
+    </p>
+    <ul>
+      <li>that the app was opened (page URL, referring page, browser and version, operating system, device type, screen
+        and window size, browser language, time zone);</li>
+      <li>that a step was added, changed, removed or moved, and which kind of operation it is (e.g. “extrude”) — never
+        its values, names or sketch;</li>
+      <li>when a step fails: its kind of operation and the kernel's error message, with every name removed;</li>
+      <li>which built-in example was opened, and that a file was saved or loaded (not its contents).</li>
+    </ul>
+    <p>
+      This runs in PostHog's cookieless mode: no cookie is set and nothing is stored on or read from your device. To
+      count
+      visitors, PostHog computes a hash of your IP address and browser identification together with a secret that
+      changes
+      every day; the IP address itself is not stored, and the hash cannot be linked across days. PostHog derives an
+      approximate location (country, region) from the IP address before discarding it. We do not create user profiles
+      and
+      cannot identify you.
+    </p>
+    <p>
+      Legal basis: Art. 6(1)(f) GDPR — our legitimate interest in finding and fixing failures and in understanding how
+      the
+      app is used. You can object at any time, with effect for the future, by switching statistics off under
+      <em>Privacy</em> in the app; that choice is remembered in your browser's local storage (a single flag, used for
+      nothing else). Statistics are also off if your browser sends Do Not Track or Global Privacy Control. PostHog
+      processes this data on our behalf under a data processing agreement. Statistics are kept for at most one year.
+    </p>
+
+    <h3>Bug reports</h3>
+    <p>
+      If you send a bug report from the app, we receive your description, the part you were working on (the program
+      file),
+      the page URL, your browser identification, the time and the last error message. They are stored in Cloudflare R2
+      and
+      used only to reproduce and fix the bug, and deleted when no longer needed for that. To prevent abuse, your IP
+      address
+      is kept for up to 24 hours to limit how many reports can be sent per day. Legal basis: Art. 6(1)(f) GDPR — our
+      legitimate interest in fixing reported bugs and protecting the service from abuse. Do not put personal information
+      into the description if you do not want us to have it.
+    </p>
+
+    <h2>Email</h2>
+    <p>
+      If you email us, we use your address and message only to answer you, and delete them when the conversation is
+      finished unless we are required to keep them. Legal basis: Art. 6(1)(f) GDPR, or Art. 6(1)(b) GDPR where your
+      message concerns a contract.
+    </p>
+
+    <h2>External links</h2>
+    <p>
+      Links to GitHub and Ko-fi open those sites; nothing is transferred to them before you click. Their own privacy
+      policies apply there.
+    </p>
+
+    <h2>Your rights</h2>
+    <p>
+      You have the right to access (Art. 15 GDPR), rectification (Art. 16), erasure (Art. 17), restriction of processing
+      (Art. 18), data portability (Art. 20) and to object to processing based on legitimate interests (Art. 21). Because
+      the usage statistics are anonymous, we usually cannot find data belonging to you in them. Email us to exercise any
+      of these rights. You also have the right to lodge a complaint with a data protection supervisory authority, in
+      particular in the EU member state where you live or work.
+    </p>
+  </main>
+  <script>
+    // Built at runtime rather than written as a literal mailto:, like on the
+    // main page, so a plain scrape of the source doesn't harvest the address.
+    const EMAIL_USER = "tobi.jacob";
+    const EMAIL_DOMAIN = "gmx.net";
+    document.querySelectorAll("[data-email-link]").forEach((el) => {
+      el.href = `mailto:${EMAIL_USER}@${EMAIL_DOMAIN}`;
+      el.textContent = `${EMAIL_USER}@${EMAIL_DOMAIN}`;
+    });
+  </script>
+</body>
+
+</html>
