@@ -329,15 +329,13 @@ pub fn boss_on_reference_plane() -> Program {
 /// editor draws, unconstrained) extruded, then cross-drilled with a
 /// circular hole near one end.
 ///
-/// Reproduces two real user bug reports (2026-09-27) from the same
-/// outline, differing only in the hole's exact center: one had the
-/// `extrude`'s boolean difference fail outright with a degenerate-face
-/// error from `face_interior_point`; the other had it succeed but leave a
-/// non-watertight hole. Both point at the same root cause — the outline's
-/// hand-drawn spline passes close enough to itself, and to the hole, that
-/// the boolean's numerics lose a face — so this example uses the exact
-/// reported coordinates, unconstrained, rather than a re-derived "clean"
-/// equivalent that might not carry the same numerical case at all.
+/// Reproduces a real user bug report (2026-09-27) with the exact reported
+/// coordinates, unconstrained, rather than a re-derived "clean" equivalent
+/// that might not carry the same numerical case at all: the hole's boolean
+/// difference failed with a degenerate-face error from
+/// `face_interior_point`. (A second report, of the same outline with a
+/// slightly different hole center, left a non-watertight hole instead; its
+/// coordinates were not recorded.)
 pub fn handle_with_hole() -> Program {
     let mut program = Program::new();
 
@@ -427,6 +425,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("cross_drilled_shaft", cross_drilled_shaft()),
         ("two_plates", two_plates()),
         ("boss_on_reference_plane", boss_on_reference_plane()),
+        ("handle_with_hole", handle_with_hole()),
     ]
 }
 
@@ -708,23 +707,16 @@ mod tests {
         assert!(program.apply(Part::<S>::new()).is_err());
     }
 
-    /// Reproduces the two real bug reports described on `handle_with_hole`.
+    /// Reproduces the real bug report described on `handle_with_hole`.
     ///
-    /// Currently fails during `program.apply` (not even reaching
-    /// `build_and_round_trip`'s own `validate`): the `Difference` boolean
-    /// in the "hole" step errors from `face_interior_point` — "no point
-    /// strictly inside face FaceId(52) was found ... a loop spanning
-    /// nothing encloses no area, so the face is degenerate". Exact match to
-    /// one of the two bug reports; the other report's variant of this same
-    /// outline (a slightly different hole center) instead *succeeds* but
-    /// leaves a non-watertight hole, which is the more likely true failure
-    /// mode — this error is probably the same root cause caught earlier by
-    /// a stricter check. Not yet root-caused. `handle_with_hole` is
-    /// deliberately left out of `all()` until this is fixed, so it does not
-    /// reach the CLI's `examples` export (breaking the landing page's
-    /// carousel build) or the web app's example list.
+    /// Used to fail in the "hole" step's `Difference`, with
+    /// `face_interior_point` finding no interior point on a side wall of the
+    /// inner spline. The wall's loop carried a spur whose pcurve ran across
+    /// the whole face: `fit_pcurve` seeded its first Newton projection from
+    /// the patch's parametric middle, and on this strongly curved wall that
+    /// converged to a foot point clamped against the far domain bound. The
+    /// walk is now seeded where the curve actually starts on the surface.
     #[test]
-    #[ignore = "known failure: face_interior_point degenerate face in the hole's boolean difference, not yet root-caused — see this test's doc comment"]
     fn handle_with_hole_round_trips() {
         build_and_round_trip("handle_with_hole", &handle_with_hole());
     }

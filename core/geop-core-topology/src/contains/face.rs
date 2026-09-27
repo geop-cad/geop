@@ -390,9 +390,26 @@ pub fn face_interior_point_where<S: Scalar>(
             });
         }
     }
+    // Each coedge's edge, start vertex and pcurve start: enough to recognise
+    // the face in the model, to see a loop that doubles back on itself (an
+    // edge appearing twice, as a spur), and to see a pcurve whose `(u, v)`
+    // disagrees with where its 3-D vertex actually is on the surface.
+    let loop_description: Vec<String> = coedges
+        .iter()
+        .map(|&coedge_id| {
+            let start = model.coedge_start_vertex(coedge_id).map(|v| v.point);
+            let coedge = model.get_coedge(coedge_id);
+            let geometry = coedge.as_ref().ok().map(|c| c.geometry);
+            let start_uv = coedge.and_then(|c| c.pcurve.evaluate(c.pcurve.domain().0));
+            format!("{coedge_id} ({geometry:?}): starts at {start:?}, (u, v) = {start_uv:?}")
+        })
+        .collect();
     Err(GeopError::new(format!(
-        "face_interior_point: no point strictly inside face {face_id} was found, stepping inward from the midpoint of each of its {} outer coedges; that loop spans u={u_extent:?}, v={v_extent:?} (a loop spanning nothing encloses no area, so the face is degenerate)",
-        coedges.len()
+        "face_interior_point: no point strictly inside face {face_id} was found, stepping inward from the midpoint of each of its {} outer coedges; that loop spans u={u_extent:?}, v={v_extent:?} (a loop spanning nothing encloses no area, so the face is degenerate) within the surface's domain u={:?}, v={:?}; the loop: [{}]",
+        coedges.len(),
+        (u_lo, u_hi),
+        (v_lo, v_hi),
+        loop_description.join("; ")
     )))
 }
 

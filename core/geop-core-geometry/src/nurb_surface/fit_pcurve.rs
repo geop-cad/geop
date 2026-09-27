@@ -1,4 +1,7 @@
-use crate::nurb_curve::{NurbCurve, NurbCurve2D, true_point_fractions};
+use crate::{
+    contains::surface::surface_could_contain,
+    nurb_curve::{NurbCurve, NurbCurve2D, true_point_fractions},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -30,6 +33,18 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// from the previous one's result, so the walk stays continuous), and
     /// fit a pcurve through the results.
     ///
+    /// The walk's first seed has to be found globally, because Newton only
+    /// polishes a foot point it is already near: seeded from anywhere else
+    /// on a curved patch it settles on whichever local foot point is closest
+    /// — including one clamped against a domain bound, where the residual is
+    /// merely orthogonal to the boundary — and every later sample, seeded
+    /// from its predecessor, follows it there. So the start is `pin_start`
+    /// when there is one (the face's own authoritative `(u, v)`), and is
+    /// otherwise isolated by [`surface_could_contain`] (`max_nodes` /
+    /// `min_subdivision_size` bound that search) — subdivide to isolate,
+    /// then Newton to refine. A curve that does not start on this surface is
+    /// an error: there is no trace of it to fit.
+    ///
     /// `pin_start` / `pin_end` override the projected `(u, v)` of the first
     /// and last sample. Pass them whenever the curve's endpoint is a place
     /// this surface's face *already* has a coedge for: that coedge's own
@@ -45,6 +60,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
         curve: &NurbCurve<S, 4>,
         pin_start: Option<Vector2<S>>,
         pin_end: Option<Vector2<S>>,
+        max_nodes: usize,
+        min_subdivision_size: S,
     ) -> GeopResult<NurbCurve2D<S>> {
         let ctx = |e: GeopError| {
             e.with_context(format!(
@@ -55,12 +72,23 @@ impl<S: Scalar> NurbSurface<S, 4> {
         };
 
         let (t0, t1) = curve.domain();
-        let (u0, u1) = self.domain_u();
-        let (v0, v1) = self.domain_v();
-        // Seed the first projection from the patch's own middle; every
-        // later one seeds from its predecessor.
-        let mut seed_u = u0.add(u1).div(S::TWO).with_context(&ctx)?.sharpen();
-        let mut seed_v = v0.add(v1).div(S::TWO).with_context(&ctx)?.sharpen();
+        // Seed the first projection where the curve actually starts on this
+        // surface (see above); every later one seeds from its predecessor.
+        // Sharp, since a seed is a free choice.
+        let (seed_u, seed_v) = match pin_start {
+            Some(pin) => (pin[0], pin[1]),
+            None => {
+                let start = curve.evaluate(t0).with_context(&ctx)?;
+                surface_could_contain(self, &start, max_nodes, min_subdivision_size)
+                    .with_context(&ctx)?
+                    .ok_or_else(|| {
+                        ctx(GeopError::new(format!(
+                            "the curve starts at {start:?}, which is not on this surface"
+                        )))
+                    })?
+            }
+        };
+        let (mut seed_u, mut seed_v) = (seed_u.sharpen(), seed_v.sharpen());
 
         // The foot point of the curve at `frac` of its domain. Seeded from a
         // sharp value (any point inside the previous iterate is an equally

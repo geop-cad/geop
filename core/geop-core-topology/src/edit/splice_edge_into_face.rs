@@ -72,7 +72,7 @@ impl<S: Scalar> Model<S> {
         let pin_end = pcurve_end_uv(model, at_end).with_context(&ctx)?;
         let surface = model.get_face(face_id).with_context(&ctx)?.surface.clone();
         let pcurve_fwd = surface
-            .fit_pcurve(&curve, pin_start, pin_end)
+            .fit_pcurve(&curve, pin_start, pin_end, max_nodes, min_subdivision_size)
             .with_context(&ctx)?;
         let pcurve_rev = pcurve_fwd.reverse();
 
