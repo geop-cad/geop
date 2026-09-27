@@ -845,7 +845,7 @@ footer.site {
         let frame = 0;
         function animate() {
           frame = requestAnimationFrame(animate);
-          mesh.rotation.z += 0.006;
+          mesh.rotation.y += 0.006;
           renderer.render(scene, camera);
         }
         animate();
