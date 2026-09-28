@@ -1,7 +1,7 @@
 //! `geop`: the kernel on the command line.
 //!
 //! `geop compile part.program.json` builds a program — the JSON the web
-//! editor saves (see `geop_ops_parts::Program`) — and writes the part it
+//! editor saves (see `geop_cad_base::Program`) — and writes the part it
 //! makes as an STL mesh. The mesh is the one the editor draws (see
 //! `geop_ops_rasterize::stl`), so a compiled file looks exactly like the
 //! part on screen.
@@ -14,12 +14,12 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use geop_cad_base::Program;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::scal_in_f64::ScalInF64,
 };
-use geop_core_part::Part;
-use geop_ops_parts::Program;
+use geop_ops::Part;
 use geop_ops_rasterize::{
     rasterize_model_tagged,
     stl::{StlFormat, stl_triangles, write_stl},
@@ -46,7 +46,7 @@ struct Cli {
 enum Command {
     /// Build a program (the JSON the web editor saves) and write its part as an STL mesh.
     Compile(CompileArgs),
-    /// Write every built-in example (see `geop_ops_parts::examples`) as a program and an STL mesh.
+    /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
     Examples(ExamplesArgs),
 }
 
@@ -184,7 +184,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
 fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     std::fs::create_dir_all(&args.out_dir)
         .map_err(|e| GeopError::new(format!("creating {}: {e}", args.out_dir.display())))?;
-    let all = geop_ops_parts::examples::all();
+    let all = geop_cad_base::examples::all();
     let selected: Vec<_> = if args.only.is_empty() {
         all
     } else {
@@ -253,7 +253,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use geop_ops_parts::examples;
+    use geop_cad_base::examples;
 
     use super::*;
 

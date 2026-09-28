@@ -395,7 +395,7 @@ pub(crate) fn triangulate_face<S: Scalar>(
 mod tests {
     use super::*;
     use geop_core_math::{for_all_scalars, vector::Vector3};
-    use geop_core_part::Part;
+    use geop_ops::Part;
     use geop_ops_extrude_revolve::{cube_solid, sphere::sphere_solid};
 
     fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
@@ -536,7 +536,7 @@ mod tests {
             })
             .collect();
         let hole: Vec<_> = ccw.iter().rev().map(|c| c.reverse()).collect();
-        let namer = geop_core_part::Namer::new("extrude", "e").unwrap();
+        let namer = geop_ops::Namer::new("extrude", "e").unwrap();
         geop_ops_extrude_revolve::extrude::extrude(
             &mut part,
             &geop_ops_extrude_revolve::extrude::ExtrudeNames::single(&namer),

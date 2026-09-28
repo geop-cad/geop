@@ -1,6 +1,6 @@
 //! WebAssembly bindings for the browser editor.
 //!
-//! The editor edits a `geop_ops_parts::Program`, and only through this
+//! The editor edits a `geop_cad_base::Program`, and only through this
 //! module: [`update_program`] applies a [`ProgramEdit`] with
 //! [`Program::update`] — the one way any editor changes a program — and
 //! [`run_program`] builds it with a [`ProgramRunner`], as far as the editor
@@ -24,14 +24,14 @@ use geop_core_math::{
     scalars::{Scalar, scal_in_f64::ScalInF64},
     vector::Vector3,
 };
-use geop_core_part::{DatumKind, Part, RefId};
+use geop_cad_base::{PartOperation, Program, ProgramEdit, ProgramRunner, examples};
 use geop_core_sketch::{CurveKind, PointId, Sketch, SolveReport};
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
-use geop_ops_parts::{
-    EntityRef, PartOperation, Program, ProgramEdit, ProgramRunner, StepHandle, StepResult,
-    examples,
-    operation::{inspect_selection, resolve_plane},
+use geop_ops::{
+    DatumKind, EntityRef, Operations, Part, RefId, StepDialog, StepHandle, StepResult,
+    operation::resolve_plane,
 };
+use geop_ops_datums::inspect_selection;
 use geop_ops_rasterize::{RasterizedModel, rasterize_model_tagged};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -253,7 +253,7 @@ pub fn init_panic_hook() {
 // ── operations and programs ──────────────────────────────────────────────────
 
 /// Every operation and what it takes (JSON array of
-/// `geop_ops_parts::OperationSchema`).
+/// `geop_ops::OperationSchema`).
 #[wasm_bindgen]
 pub fn operation_schemas() -> Result<String, JsValue> {
     to_json(&PartOperation::schemas()).map_err(to_js_err)
@@ -330,6 +330,8 @@ struct RunJson {
     /// Every handle of every step that ran — the editor picks which to
     /// offer.
     handles: Vec<StepHandle>,
+    /// The dialog of every step that ran, the failing one included.
+    dialogs: Vec<StepDialog>,
 }
 
 fn run_json(runner: &ProgramRunner<S>, view: &View) -> GeopResult<String> {
@@ -370,6 +372,7 @@ fn run_json(runner: &ProgramRunner<S>, view: &View) -> GeopResult<String> {
             })
             .collect(),
         handles: runner.handles()?,
+        dialogs: runner.dialogs(),
     })
 }
 
@@ -576,7 +579,7 @@ fn inspect_selection_inner(selection_json: &str) -> GeopResult<String> {
 /// What each entity of a selection (JSON array of `EntityRef`) can be used
 /// as in the part of the most recent [`run_program`], and which datum
 /// constructions fit it: JSON `{roles: [[role, ...], ...], fits: [method,
-/// ...]}` (see `geop_ops_parts::operation::SelectionFit`).
+/// ...]}` (see `geop_ops_datums::SelectionFit`).
 #[wasm_bindgen]
 pub fn inspect_selection_fit(selection_json: &str) -> Result<String, JsValue> {
     inspect_selection_inner(selection_json).map_err(to_js_err)

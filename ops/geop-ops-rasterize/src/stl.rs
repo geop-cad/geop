@@ -134,7 +134,7 @@ pub fn write_stl(
 #[cfg(test)]
 mod tests {
     use geop_core_math::{scalars::scal_in_f64::ScalInF64, vector::Vector3};
-    use geop_core_part::Part;
+    use geop_ops::Part;
     use geop_ops_extrude_revolve::{cube_solid, sphere::sphere_solid};
 
     use super::*;

@@ -27,7 +27,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
 };
-use geop_core_part::{Namer, Part};
+use geop_ops::{Namer, Part};
 use geop_core_topology::SolidId;
 
 // `sphere_quadrant_surface`'s own `u` (equator direction) runs `eq1 -> eq0`

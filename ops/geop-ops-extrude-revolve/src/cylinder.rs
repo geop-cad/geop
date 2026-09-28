@@ -13,7 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_core_part::{Namer, Part};
+use geop_ops::{Namer, Part};
 use geop_core_topology::SolidId;
 
 /// Which axis a cylinder's own axis runs parallel to.

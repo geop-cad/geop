@@ -20,7 +20,7 @@ mod tests {
         scenes::map_scenes_parallel,
     };
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_part::Namer;
+    use geop_ops::Namer;
     use geop_core_topology::validation::{ValidationParameters, validate_fast};
     use geop_ops_rasterize::rasterize_topology;
 

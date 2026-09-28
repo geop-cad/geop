@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "web/**"
+      - "cloudflare-functions/**"
       - "cad/**"
       - "core/**"
       - "ops/**"
@@ -60,13 +61,14 @@ jobs:
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
           command: pages project create geop-cad-app --production-branch main
 
-      # Run from web/ so Wrangler finds web/functions/ (Pages Functions are
-      # discovered relative to the working directory, not the output dir)
-      # and picks up its R2 binding — see functions/api/bug-report.ts.
+      # Run from cloudflare-functions/ so Wrangler finds its functions/
+      # (Pages Functions are discovered relative to the working directory,
+      # not the output dir) and picks up their R2 binding — see
+      # cloudflare-functions/functions/api/bug-report.ts.
       - name: Deploy to app.geop-cad.dev
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
-          workingDirectory: web
-          command: pages deploy dist --project-name=geop-cad-app --branch=main --commit-dirty=true
+          workingDirectory: cloudflare-functions
+          command: pages deploy ../web/dist --project-name=geop-cad-app --branch=main --commit-dirty=true

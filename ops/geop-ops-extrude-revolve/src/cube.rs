@@ -13,7 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_core_part::{Namer, Part};
+use geop_ops::{Namer, Part};
 use geop_core_topology::SolidId;
 
 /// A box solid spanning `[min, max]`, built as `extrude`'s start cap (the
@@ -63,7 +63,7 @@ pub fn cube_solid<S: Scalar>(
 mod tests {
     use super::cube_solid;
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
-    use geop_core_part::Part;
+    use geop_ops::Part;
     use geop_core_topology::contains::shell::{PointClassification, shell_contains};
 
     const MAX: usize = 200;

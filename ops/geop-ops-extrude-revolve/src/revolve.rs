@@ -46,7 +46,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
-use geop_core_part::{Namer, Part};
+use geop_ops::{Namer, Part};
 use geop_core_topology::{CoedgeId, SolidId};
 
 /// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole row
@@ -231,7 +231,7 @@ pub fn revolve_at<S: Scalar>(
 /// Everything built is named after the profile's curves `X` and joints `P`
 /// (see [`Profile`]), the angles `a0..a3` at which the meridians lie
 /// (`a0` along `u`, `a1` along `v`, ...), and the quadrants `q0..q3` between
-/// them (`q0` from `a0` to `a1`, ...), following `geop_core_part`'s scheme:
+/// them (`q0` from `a0` to `a1`, ...), following `geop_ops`'s scheme:
 ///
 /// | entity | name |
 /// |---|---|

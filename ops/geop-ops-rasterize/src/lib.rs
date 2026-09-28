@@ -273,7 +273,7 @@ mod tests {
     use super::*;
     use geop_core_math::for_all_scalars;
     use geop_core_math::primitives::TriangleFace;
-    use geop_core_part::Part;
+    use geop_ops::Part;
     use geop_ops_extrude_revolve::{cube_solid, sphere::sphere_solid};
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to

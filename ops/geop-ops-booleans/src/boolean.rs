@@ -20,7 +20,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_part::{Namer, Part};
+use geop_ops::{Namer, Part};
 use geop_core_topology::{
     FaceId, Model, ShellId, SolidId,
     contains::{
@@ -350,7 +350,7 @@ mod tests {
     use super::{BooleanOp, FaceClassification, boolean, classify_face};
     use crate::{remesh::remesh::RemeshParams, scenes::all_scenes};
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
-    use geop_core_part::Namer;
+    use geop_ops::Namer;
     use geop_core_topology::{
         contains::rng::Rng,
         validation::{ValidationParameters, validate_fast},
@@ -732,7 +732,7 @@ mod tests {
     // legitimately overlaps the others in space — which the validation would
     // report as edges crossing faces.
 
-    type M = geop_core_part::Part<ScalInF64>;
+    type M = geop_ops::Part<ScalInF64>;
 
     fn v(x: f64, y: f64, z: f64) -> Vector3<ScalInF64> {
         Vector3::from_array([x, y, z].map(ScalInF64::from_f64))

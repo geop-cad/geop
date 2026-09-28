@@ -25,7 +25,7 @@
 use geop_core_math::{
     geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar, vector::Vector3,
 };
-use geop_core_part::{Part, SketchId};
+use geop_ops::{Part, SketchId};
 use geop_core_sketch::{CurveId, profile::curve_polyline};
 use geop_core_topology::{FaceId, Model, SolidId};
 use geop_ops_rasterize::RasterizedModel;
@@ -474,7 +474,7 @@ pub fn pick_sketch<S: Scalar>(
 mod tests {
     use super::*;
     use geop_core_math::for_all_scalars;
-    use geop_core_part::Part;
+    use geop_ops::Part;
     use geop_ops_extrude_revolve::cube_solid;
     use geop_ops_rasterize::rasterize_model_tagged;
 
@@ -652,7 +652,7 @@ mod tests {
         use geop_core_math::{primitives::CoordinateSystem, scalars::ScalInF64 as S};
         use geop_core_sketch::Sketch;
         let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(S::from_f64));
-        let placed = |z: f64, sketch: &Sketch| geop_core_part::PlacedSketch {
+        let placed = |z: f64, sketch: &Sketch| geop_ops::PlacedSketch {
             plane: CoordinateSystem::try_new(
                 v(0.0, 0.0, z),
                 v(1.0, 0.0, 0.0),

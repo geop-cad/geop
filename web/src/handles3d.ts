@@ -1,5 +1,5 @@
 // Handles in the 3-D view: drawing the handles steps offer (see
-// `geop_ops_parts::operation::Handle`), hit-testing them, and turning a drag
+// `geop_ops::operation::Handle`), hit-testing them, and turning a drag
 // into new values for the argument paths they name. Nothing here knows any
 // operation: a handle says where it is, how it moves, and what it writes.
 

@@ -49,7 +49,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
-use geop_core_part::Part;
+use geop_ops::Part;
 use geop_core_topology::{
     CoedgeGeometry, Edge, EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
@@ -1568,7 +1568,7 @@ mod tests {
         remesh_vertices_x_edges::remesh_vertices_x_edges,
     };
     use geop_core_math::{scalars::ScalInF64, vector::Vector3};
-    use geop_core_part::Namer;
+    use geop_ops::Namer;
     use geop_ops_extrude_revolve::cube::cube_solid;
 
     const MAX_NODES: usize = 20000;
@@ -1680,7 +1680,7 @@ mod splice_regression_tests {
         scenes::all_scenes,
     };
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_part::Namer;
+    use geop_ops::Namer;
     use geop_core_topology::validation::{ValidationParameters, validate, validate_fast};
 
     fn namer() -> Namer {

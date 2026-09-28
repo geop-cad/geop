@@ -123,3 +123,11 @@ disjoint, corner overlaps, coincident faces). The render tests run remesh
 and every operator over all of them and write each result to `outputs/`.
 One failing scene is logged and rendered as far as it got, so it never hides
 the others.
+
+## The operations
+
+`Boolean` is the operation a program uses (see
+[geop-ops](./geop-ops.md#operations)) to unite, intersect or subtract two
+solids of the part by name. `Combine` is the same done by another
+operation with the solid it builds — an extrude cutting a pocket, say — and
+is what extrude and revolve take for it.

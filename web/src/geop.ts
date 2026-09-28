@@ -3,7 +3,7 @@
 // directly, so the wasm-loading/init dance and JSON (de)serialization stay
 // in one place.
 //
-// The app edits a part program (`geop_ops_parts::Program`) that lives in
+// The app edits a part program (`geop_cad_base::Program`) that lives in
 // the wasm module: it never changes the program itself, but sends each
 // change as a `ProgramEdit` through [[updateProgram]] — the same edits,
 // applied by the same code, as every other editor of these programs.
@@ -86,7 +86,7 @@ export function loadGeop(): Promise<void> {
 
 // ── operations ───────────────────────────────────────────────────────────────
 //
-// Mirrors `geop_ops_parts::OperationSchema`: what every operation takes, so
+// Mirrors `geop_ops::OperationSchema`: what every operation takes, so
 // the app builds its forms from these instead of knowing operations by hand.
 
 /** What kind of value an argument holds, and so how it is entered. */
@@ -133,7 +133,7 @@ export type Combine =
 /** What a datum stands for. */
 export type DatumKind = "point" | "axis" | "plane";
 
-/** What a construction needs an input to be — see `geop_ops_parts::operation::Role`. */
+/** What a construction needs an input to be — see `geop_ops::operation::Role`. */
 export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round";
 
 /** One way to build a datum: what it builds, what it needs selected, and the values it takes besides. */
@@ -187,7 +187,7 @@ export interface Program {
   steps: Step[];
 }
 
-/** A change to the program — see `geop_ops_parts::ProgramEdit`. */
+/** A change to the program — see `geop_ops::ProgramEdit`. */
 export type ProgramEdit =
   | ({ edit: "insert"; index: number; id?: string } & Operation)
   | ({ edit: "update"; id: string } & Operation)
@@ -204,7 +204,7 @@ export interface StepResult {
 export type ArgPath = string[];
 
 /**
- * A draggable value of a step (see `geop_ops_parts::operation::Handle`):
+ * A draggable value of a step (see `geop_ops::operation::Handle`):
  * where it is, how it moves, and which argument(s) it writes. Every run
  * returns every step's handles; `group` says whether a handle belongs to a
  * feature or to a sketch, for choosing which to offer.
@@ -218,6 +218,23 @@ export type StepHandle = {
   | { motion: "linear"; direction: Vec3; arg: ArgPath; value: number; scale: number }
   | { motion: "planar"; u: Vec3; v: Vec3; x: ArgPath; y: ArgPath; value: [number, number] }
 );
+
+/**
+ * What the part makes of one argument's value (see
+ * `geop_ops::operation::ArgDialog`): per picked entity, what it can be used
+ * as; or which of a choice's options fit.
+ */
+export type ArgDialog = { type: "selection"; roles: Role[][] } | { type: "options"; fit: string[] };
+
+/**
+ * A step's dialog (see `geop_ops::operation::Dialog`): what the part before
+ * it makes of its arguments, per argument that has anything to say. Every
+ * run returns the dialog of every step it covered, the failing one included.
+ */
+export interface StepDialog {
+  step: string;
+  args: Record<string, ArgDialog>;
+}
 
 /** A sketch of the built part. */
 export interface SketchInfo {
@@ -244,6 +261,7 @@ export interface RunResult {
   /** Datums, oldest first. */
   datums: DatumInfo[];
   handles: StepHandle[];
+  dialogs: StepDialog[];
 }
 
 export function operationSchemas(): OperationSchema[] {
@@ -319,7 +337,7 @@ export type Id = number;
 export type WorldAxis = "X" | "Y" | "Z";
 
 /**
- * Something a step builds on (see `geop_ops_parts::EntityRef`): the
+ * Something a step builds on (see `geop_ops::EntityRef`): the
  * origin, a world axis, a base plane through the origin named by its normal
  * (`Z` is normal to the z axis), or a vertex, edge, face or datum of the
  * part by name.

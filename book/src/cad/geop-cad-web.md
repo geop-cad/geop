@@ -16,7 +16,8 @@ files (`geop.js`, `geop_bg.wasm`) match what `web/src/geop.ts` imports.
 ## The editor's view of the kernel
 
 The browser edits a `Program` (see
-[geop-ops-parts](../ops/geop-ops-parts.md)), and only through this module.
+[geop-ops](../ops/geop-ops.md#programs) and
+[geop-cad-base](./geop-cad-base.md)), and only through this module.
 Everything crosses the boundary as JSON: programs and edits in their own
 serde format, and scenes as flat number arrays that a three.js viewer
 consumes directly. Entities are named, never numbered: a pick returns the

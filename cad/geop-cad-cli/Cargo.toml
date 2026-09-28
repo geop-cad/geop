@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 geop-core-math.workspace = true
-geop-core-part.workspace = true
-geop-ops-parts.workspace = true
+geop-ops.workspace = true
+geop-cad-base.workspace = true
 geop-ops-rasterize.workspace = true
 clap = { version = "4", features = ["derive"] }

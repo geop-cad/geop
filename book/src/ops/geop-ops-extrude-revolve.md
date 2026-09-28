@@ -6,7 +6,7 @@ Extrude and revolve operations, plus the sample primitive shapes (cube,
 sphere, cylinder, torus, ...) built from them.
 
 Every solid here is built entirely from the Euler operators of
-[geop-core-part](../core/geop-core-part.md) (`mvfs`, `mve`, `mef`, `mer`,
+[geop-ops](./geop-ops.md) `Part` (`mvfs`, `mve`, `mef`, `mer`,
 `replace_face`, ...), so it is valid by construction and every entity gets a
 stable name as it is created.
 
@@ -90,3 +90,14 @@ angles `a0..a3`: `N(X,q)` for the face swept by curve `X` through quadrant
 
 The torus (a 4×4 grid of NURBS patches) exists in `torus.rs` but is not
 currently compiled.
+
+## The operations
+
+`Extrude` and `Revolve` are the operations a program uses (see
+[geop-ops](./geop-ops.md#operations)): they sweep a sketch of the part into
+a solid, name everything after the sketch's elements, and offer the extrude
+distance as a handle. Both take a `Combine` from
+[geop-ops-booleans](./geop-ops-booleans.md): keep the result as a
+`NewBody`, or immediately unite, intersect or subtract it with a `target`
+solid — which is why this crate depends on the booleans, not the other way
+round.

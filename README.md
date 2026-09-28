@@ -98,4 +98,4 @@ built from — is an *entity reference*: `{"type": "Origin"}`, `{"type":
 
 "Save" in the web app downloads the program as `part.program.json`, and
 "Load" reads one back. `outputs/parts/` has the examples of
-`ops/geop-ops-parts/src/examples.rs` as program files.
+`cad/geop-cad-base/src/examples.rs` as program files.

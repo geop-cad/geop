@@ -18,16 +18,22 @@ core/geop-core-geometry      NURBS curves/surfaces, containment, intersection
 core/geop-core-topology      B-rep structures, Euler operators, edit/validation
 core/geop-core-sketch        2-D constraint sketches: entities, constraints,
                               BFGS solver, profile extraction
-core/geop-core-part          a part: topology and sketches, every entity
-                              with a stable name
+ops/geop-ops                 parts (topology, sketches, datums, every entity
+                              with a stable name), what an operation is (its
+                              arguments, dialog and handles), programs and
+                              running them (+ geop-ops-derive)
+ops/geop-ops-sketch          the sketch operation
+ops/geop-ops-datums          the datum operation: reference points, axes
+                              and planes
+ops/geop-ops-booleans        3-D boolean operations (union/intersection/diff),
+                              the boolean operation
 ops/geop-ops-extrude-revolve extrude/revolve and the sample shapes (cube,
-                              sphere, cylinder, torus, ...)
-ops/geop-ops-booleans        3-D boolean operations (union/intersection/diff)
+                              sphere, cylinder, torus, ...), the extrude and
+                              revolve operations
 ops/geop-ops-rasterize       turns a Model into a triangle mesh, and writes
                               it as STL
-ops/geop-ops-parts           programs: the operations a part is built with,
-                              and running them (+ geop-ops-parts-derive)
-cad/geop-cad-base            ray-based picking
+cad/geop-cad-base            the operations the editor offers, example
+                              programs, ray-based picking
 cad/geop-cad-web             the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli             the `geop` command-line tool
 ```

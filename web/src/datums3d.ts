@@ -1,5 +1,5 @@
 // Datums in the 3-D view: the reference points, axes and planes a part is
-// built with (see `geop_core_part::Datum`), drawn so they can be seen and
+// built with (see `geop_ops::Datum`), drawn so they can be seen and
 // picked — a plane as a translucent square, an axis as a long dashed line,
 // a point as its own small frame of three axes.
 //

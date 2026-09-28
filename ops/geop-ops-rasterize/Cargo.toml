@@ -10,4 +10,4 @@ geop-core-topology.workspace = true
 
 [dev-dependencies]
 geop-ops-extrude-revolve.workspace = true
-geop-core-part.workspace = true
+geop-ops.workspace = true

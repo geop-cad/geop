@@ -3,7 +3,7 @@ use geop_core_math::{
     scalars::{ScalInF64, Scalar},
     vector::Vector3,
 };
-use geop_core_part::Part;
+use geop_ops::Part;
 use geop_ops_extrude_revolve::cube::cube_solid;
 
 fn main() {

@@ -17,7 +17,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_core_part::{Namer, Part};
+use geop_ops::{Namer, Part};
 use geop_core_topology::SolidId;
 
 /// The outer boundary of the figure-8 profile, as a CCW polygon in `(u, v) ∈

@@ -13,7 +13,7 @@
 //! holes, nested/disjoint, corner overlaps, coincident faces, etc.).
 
 use geop_core_math::{scalars::Scalar, vector::Vector3};
-use geop_core_part::Part;
+use geop_ops::Part;
 use geop_core_topology::SolidId;
 use geop_ops_extrude_revolve::{
     cube::cube_solid, cylinder::revolved_cylinder, figure8_profile::figure8_profile,

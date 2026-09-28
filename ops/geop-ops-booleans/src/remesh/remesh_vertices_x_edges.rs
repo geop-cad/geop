@@ -3,7 +3,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_core_part::Part;
+use geop_ops::Part;
 use geop_core_topology::{EdgeId, Model, SolidId, VertexId};
 
 use crate::naming::BooleanNaming;
