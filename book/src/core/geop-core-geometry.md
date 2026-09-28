@@ -125,3 +125,5 @@ kernel's three-valued comparisons, never because it is merely close. The
 resulting `Axis`, `Circle`, `Arc` and `Plane` carry the few constructions
 that are built on them: projecting onto them and intersecting them. A
 reference axis along an edge and a sketch placed on a face both use this.
+
+> Originally I was using a lot of convex hulls and gjk algorithms to detect intersections and collisions, but this approach proved to be too slow. Fat line / surface clipping methods turned out to be much more efficient for the types of geometric computations I needed.
