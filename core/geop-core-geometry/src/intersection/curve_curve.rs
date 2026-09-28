@@ -311,9 +311,7 @@ where
 }
 
 /// Points where `curve_a` crosses — or, overlapping along an arc, coincides
-/// with — `curve_b`: the drop-in counterpart of
-/// [`super::curve_curve_bisect::curve_curve_intersect`], with the same signature
-/// and [`Intersections`] contract.
+/// with — `curve_b`, under the [`Intersections`] contract.
 ///
 /// Overlaps are found directly ([`curve_curve_overlaps`]: ends of each curve
 /// located on the other, then one midpoint probe per candidate stretch)

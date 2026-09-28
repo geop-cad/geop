@@ -1,7 +1,5 @@
-mod convex_hull;
 mod evaluate;
 mod interpolate;
-mod project;
 mod refine;
 pub use interpolate::true_point_fractions;
 pub use refine::ParameterRefinable;
@@ -13,18 +11,39 @@ mod translate;
 
 use std::fmt::Display;
 
-pub use convex_hull::HasConvexHull;
-// `fat_axis` needs the same dehomogenized points `convex_hull()` builds —
-// re-exported at this level since `convex_hull` itself is a private
-// submodule (only `HasConvexHull` was public before).
-pub(crate) use convex_hull::dehomogenize;
-
 use crate::aabb::compute_aabb;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector,
 };
+
+/// Dehomogenize `control_points` (`D`-dimensional homogeneous, last component
+/// the weight) into `C`-dimensional Cartesian points (`C` = `D - 1`, passed
+/// explicitly since Rust's stable const generics can't express `D - 1` in a
+/// single generic parameter's bound).
+///
+/// Infallible: every weight of a `NurbCurve`/`NurbSurface` is definitely
+/// positive by construction (see `NurbCurve::try_new`), so the division
+/// cannot fail. `pub(crate)`: surfaces and the intersection searches need
+/// the exact same points.
+pub(crate) fn dehomogenize<S: Scalar, const D: usize, const C: usize>(
+    control_points: &[Vector<S, D>],
+) -> Vec<Vector<S, C>> {
+    control_points
+        .iter()
+        .map(|p| {
+            let inv_w = S::ONE
+                .div(p[D - 1])
+                .expect("weights are definitely positive by construction");
+            let mut pt = Vector::<S, C>::zero();
+            for c in 0..C {
+                pt[c] = p[c].mul(inv_w);
+            }
+            pt
+        })
+        .collect()
+}
 
 /// A NURBS curve whose control points live in `D`-dimensional homogeneous space.
 ///

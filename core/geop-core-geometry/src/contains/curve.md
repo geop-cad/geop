@@ -1,8 +1,6 @@
 # Curve containment by per-axis clipping
 
-Implemented (Clip B + section 5) in `curve.rs`; `curve_bisect.rs` is the
-previous hull-test-and-bisect search it is benchmarked against
-(`examples/curve_contains_bench.rs`).
+Implemented (Clip B + section 5) in `curve.rs`.
 
 Given a NURBS curve and a point $p$, find an enclosure of the parameter set
 
@@ -204,7 +202,7 @@ One round on a segment with domain $[a, b]$:
 2. $\hat T = \emptyset$ → reject the segment.
 3. If the clip removed less than 20% of $[a, b]$ (the usual Bézier-clipping
    rule; happens when the segment contains several solutions, or a tangency),
-   split at the midpoint as `curve_bisect::curve_could_contain` does and push both
+   split at the midpoint and push both
    halves.
 4. Otherwise, restrict the segment to $\hat T$ (`NurbCurve::sub_curve`, cutting
    at the sharp outer bounds `lower()`/`upper()` of $\hat T$) and repeat.
@@ -233,10 +231,10 @@ what the returned enclosure means.
 
 ## Limitations
 
-- Neither this test nor the 3-D hull (GJK) test dominates the other: the
-  per-axis clips can each keep an interval although the 3-D hull misses $p$,
-  while conversely disjoint per-axis intervals can reject a segment whose 3-D
-  hull contains $p$ (the clips use the parameter $t$, the hull does not). Both
-  are sound, so they combine by running both and rejecting if either rejects.
+- The per-axis clips can each keep an interval although the 3-D convex hull
+  of the control points misses $p$ (conversely, disjoint per-axis intervals
+  can reject a segment whose 3-D hull contains $p$, since the clips use the
+  parameter $t$ and the hull does not). No 3-D hull test is run; the AABB
+  prefilter is the only additional rejection test.
 - Near a tangential or repeated contact ($g_k$ has a double root), clipping
   contracts slowly; step 3 bounds the damage by falling back to bisection.

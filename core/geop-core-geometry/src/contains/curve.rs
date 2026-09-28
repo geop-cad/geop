@@ -2,11 +2,10 @@
 //! is in `curve.md` next to this file; this module implements its Clip B
 //! ("fat line") together with the iteration of its section 5.
 //!
-//! Same contract as [`super::curve_bisect::curve_could_contain`] (a sound
-//! enclosure of every parameter at which the curve could pass through the
-//! point, `None` when it definitely doesn't), but instead of only asking
-//! "could this segment's hull contain the point?" and bisecting, every
-//! segment is *clipped*: each Cartesian axis `k` yields a scalar spline
+//! The result is a sound enclosure of every parameter at which the curve
+//! could pass through the point, `None` when it definitely doesn't. Instead
+//! of only asking "could this segment contain the point?" and bisecting,
+//! every segment is *clipped*: each Cartesian axis `k` yields a scalar spline
 //! `g_k(t) = X_k(t) - p_k W(t)` whose zeros are exactly the parameters where
 //! that coordinate matches, and a fat line around its graph's control
 //! polygon bounds those zeros to an interval. Intersecting the axes'
@@ -63,12 +62,11 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
     Some(t_hat)
 }
 
-/// Fat-line-clipping counterpart of [`super::curve_bisect::curve_could_contain`],
-/// with the same tunables: the [`Scalar::union`] of every converged
-/// segment's clipped parameter interval, exploring breadth-first up to
-/// `max_nodes` segments. `None` only when every part of the domain was
-/// rejected: unlike `curve_bisect`, running out of budget is never read as "not
-/// contained" (nor as "contained") — it is an error, since the search is
+/// Every parameter at which `curve` could pass through `point`: the
+/// [`Scalar::union`] of every converged segment's clipped parameter
+/// interval, exploring breadth-first up to `max_nodes` segments. `None` only
+/// when every part of the domain was rejected: running out of budget is
+/// never read as "not contained" (nor as "contained") — it is an error, since the search is
 /// incomplete (see `surface.md` §5).
 ///
 /// Each segment is clipped (see [`clip`]). An empty clip rejects it. While
@@ -121,7 +119,7 @@ where
         }
         explored += 1;
 
-        // Cheap prefilter against the cached bounding box, as in `curve_bisect`.
+        // Cheap prefilter against the cached bounding box.
         if !aabb_could_contain(&seg.aabb, point) {
             continue;
         }

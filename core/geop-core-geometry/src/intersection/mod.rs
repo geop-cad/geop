@@ -1,8 +1,6 @@
 mod coincidence;
 pub mod curve_curve;
-pub mod curve_curve_bisect;
 pub mod curve_surface;
-pub mod curve_surface_bisect;
 
 pub use curve_curve::curve_curve_intersect;
 pub use curve_curve::refine_crossing as refine_curve_curve_crossing;

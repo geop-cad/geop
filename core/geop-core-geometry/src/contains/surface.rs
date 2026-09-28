@@ -119,9 +119,9 @@ pub(crate) fn collapsed_boundary<S: Scalar>(
     None
 }
 
-/// Fat-line-clipping counterpart of [`super::surface_bisect::surface_could_contain`]
-/// (`surface.md` §§4–5), with the same tunables: the componentwise union of
-/// every converged patch's clipped `(u, v)` box, exploring breadth-first.
+/// Every `(u, v)` at which `surface` could pass through `point`
+/// (`surface.md` §§4–5): the componentwise union of every converged patch's
+/// clipped `(u, v)` box, exploring breadth-first.
 ///
 /// Per patch:
 /// - the cached AABB and the [`clip`] are necessary conditions — failing
@@ -134,9 +134,8 @@ pub(crate) fn collapsed_boundary<S: Scalar>(
 /// - once clipping stalls ([`crate::fat_line::stalled`]), a patch whose
 ///   extent along both directions (control-polygon lengths, which bound a
 ///   folded patch where corner chords don't) is within `min_subdivision_size`
-///   has converged, and then — the other existing necessary condition — its
-///   convex hull must still could-contain the point, or it is rejected; any
-///   other is bisected along its spatially longest direction.
+///   has converged and is reported with its clipped box; any other is
+///   bisected along its spatially longest direction.
 ///
 /// `min_subdivision_size` only bounds bisection: a patch that clipping keeps
 /// shrinking is never reported early, so a point merely within
@@ -217,9 +216,7 @@ pub fn surface_could_contain<S: Scalar>(
         let carried = carried_width(&patch.control_points).max(point_width);
         let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
             Stalled::Converged => {
-                if patch.convex_hull().could_contain(point) {
-                    report((u_hat, v_hat));
-                }
+                report((u_hat, v_hat));
                 continue;
             }
             Stalled::Bisect(order) => order,

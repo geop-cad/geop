@@ -331,9 +331,7 @@ pub(crate) fn curve_surface_overlaps<S: Scalar>(
 }
 
 /// Points where `curve` crosses — or, lying on it along an arc, coincides
-/// with — `surface`: the drop-in counterpart of
-/// [`super::curve_surface_bisect::curve_surface_intersect`], with the same
-/// signature and [`Intersections`] contract.
+/// with — `surface`, under the [`Intersections`] contract.
 ///
 /// Overlaps are found directly ([`curve_surface_overlaps`]) instead of being
 /// inferred from a search hitting `max_solutions`. Without one, the result

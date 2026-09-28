@@ -24,7 +24,7 @@ pub struct ValidationParameters<S: Scalar> {
     /// approximation meeting at a shallow dihedral angle, or an edge ending
     /// exactly at a `revolve`d cap's own pole) — each halving of the
     /// tolerance costs roughly one extra subdivision *level*, and a
-    /// near-tangential pair's hull-overlap pruning barely discriminates at
+    /// near-tangential pair's clipping barely discriminates at
     /// all (see `curve_surface_intersect`'s own doc comment), so that one
     /// extra level can mean an order of magnitude more nodes. `1e-4` is
     /// loose enough to resolve every case in this crate's own basic-shape

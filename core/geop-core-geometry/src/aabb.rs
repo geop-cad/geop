@@ -39,10 +39,8 @@ pub(crate) fn compute_aabb<S: Scalar, const D: usize>(control_points: &[Vector<S
 
 /// True if two cached [`compute_aabb`] boxes could overlap, comparing only
 /// the first `c` (the objects' actual Cartesian dimension) of the 3 padded
-/// axes. `false` is a hard proof of separation — as sound as (never a false
-/// negative relative to) the GJK convex-hull check it's meant to
-/// short-circuit, and far cheaper: `O(c)` scalar `could_be_equal`s against
-/// an already-cached value, no hull construction, no simplex search.
+/// axes. `false` is a hard proof of separation, and cheap: `O(c)` scalar
+/// `could_be_equal`s against an already-cached value.
 pub(crate) fn aabb_could_overlap<S: Scalar>(a: &[S; 3], b: &[S; 3], c: usize) -> bool {
     (0..c).all(|i| a[i].could_be_equal(b[i]))
 }

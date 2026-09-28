@@ -1,9 +1,8 @@
 # Curve–surface intersection by per-axis clipping
 
 Design extension of [curve containment](../contains/curve.md). Implemented
-in [`curve_surface.rs`](curve_surface.rs) (benchmarked against the previous
-[`curve_surface_bisect.rs`](curve_surface_bisect.rs) by `examples/intersection_bench.rs`),
-with the same choices as `curve_curve.rs`:
+in [`curve_surface.rs`](curve_surface.rs), with the same choices as
+`curve_curve.rs`:
 
 - Clip B only, on free-choice combinations of the axis equations instead of
   the axes themselves: the patch normal $e_u\times e_v$ (pins $t$), and

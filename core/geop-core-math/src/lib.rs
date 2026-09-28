@@ -1,4 +1,3 @@
-pub mod convex_hull;
 pub mod disjoint_set;
 pub mod geop_error;
 pub mod interval_newton;

@@ -1,4 +1,3 @@
-mod convex_hull;
 mod curvature;
 mod evaluate;
 mod fit_pcurve;

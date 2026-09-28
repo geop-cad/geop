@@ -1,7 +1,6 @@
 mod aabb;
 mod spline;
 pub mod contains;
-mod fat_axis;
 mod fat_line;
 pub mod intersection;
 mod knot_insertion;

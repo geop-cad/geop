@@ -1,6 +1,6 @@
 use geop_core_geometry::intersection::{curve_curve_intersect, curve_surface_intersect};
 use geop_core_math::{
-    convex_hull::gjk::could_overlap, geop_error::GeopError, scalars::Scalar, vector::Vector3,
+    geop_error::GeopError, scalars::Scalar, vector::Vector3,
 };
 
 use crate::{
@@ -45,7 +45,7 @@ pub fn check_vertices_disjoint<S: Scalar>(
         for j in (i + 1)..ids.len() {
             let a = model.vertices[&ids[i]].point;
             let b = model.vertices[&ids[j]].point;
-            if could_overlap(std::slice::from_ref(&a), std::slice::from_ref(&b)) {
+            if a.could_be_equal(&b) {
                 errors.push(GeopError::new(format!(
                     "vertex {} and vertex {} could overlap — they should be the same vertex, or genuinely disjoint",
                     ids[i].0, ids[j].0

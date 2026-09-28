@@ -1,17 +1,14 @@
 # Surface containment by per-axis clipping
 
 Design extension of [curve containment](curve.md). Implemented in
-[`surface.rs`](surface.rs) (benchmarked against the previous hull-and-bisect
-[`surface_bisect.rs`](surface_bisect.rs) by `examples/surface_contains_bench.rs`), with these
-choices:
+[`surface.rs`](surface.rs), with these choices:
 
 - Clip B only; Clip A is not implemented.
 - Positive weights are an invariant of `NurbSurface` (`try_new` rejects
   anything else, and subdivision only forms convex combinations), so every
   patch can be clipped.
 - Only a patch on which clipping has stalled can converge
-  (`fat_line::stalled`, on the control-polygon extents), and it then
-  requires the geometric hull test to pass as well.
+  (`fat_line::stalled`, on the control-polygon extents).
 - A direction pinned exactly onto a clamped domain end (§3) is searched as a
   boundary curve with `curve::curve_could_contain`.
 - Stalled patches bisect the direction that is widest relative to the
@@ -140,8 +137,7 @@ clipping the full graph hull by $g_k=0$, but reuses the curve construction.
 ## 4. Restrict, recompute, subdivide
 
 1. Start with the full domain, or its tensor-product knot-span patches.
-   Keep the existing AABB and geometric hull rejection tests as additional
-   necessary conditions.
+   Keep the AABB rejection test as an additional necessary condition.
 2. Compute the coefficients, project, and intersect the clips. Reject if
    either parameter interval is empty.
 3. If the box contracts usefully, restrict the surface with `split_u` and

@@ -1,9 +1,7 @@
 # Curve–curve intersection by per-axis clipping
 
 Design extension of [curve containment](../contains/curve.md). Implemented
-in [`curve_curve.rs`](curve_curve.rs) (benchmarked against the previous
-hull-and-bisect [`curve_curve_bisect.rs`](curve_curve_bisect.rs) by `examples/intersection_bench.rs`), with
-these choices:
+in [`curve_curve.rs`](curve_curve.rs), with these choices:
 
 - Clip B only, through the shared `fat_line::clip_tensor`.
 - Besides the axis equations, it clips **free-choice combinations**
@@ -106,8 +104,8 @@ not be stored if coefficients are streamed into the row/column unions.
 
 ## 3. Global search over pairs of subcurves
 
-1. Queue the original pair, or pairs of knot-span pieces. Use AABB, fat-axis,
-   or geometric hull separation as additional rejection tests.
+1. Queue the original pair, or pairs of knot-span pieces. Use AABB separation
+   as an additional rejection test.
 2. Form $d_{k,ij}$, clip both parameters, and reject an empty box.
 3. Restrict both curves to the clips' outer bounds, keeping their original
    parameter coordinates, then rebuild the coefficients and repeat.
