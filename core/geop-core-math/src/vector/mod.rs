@@ -77,6 +77,19 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
             data: [S::ENTIRE; N],
         }
     }
+
+    /// The `k`-th coordinate axis: one at `k`, zero elsewhere.
+    pub fn axis(k: usize) -> Self {
+        let mut out = Self::zero();
+        out[k] = S::ONE;
+        out
+    }
+
+    /// The first `M` components — e.g. the Cartesian part `H` of a
+    /// homogeneous point `(H, w)`, which is *not* its position `H / w`.
+    pub fn head<const M: usize>(&self) -> Vector<S, M> {
+        Vector::from_array(std::array::from_fn(|k| self.data[k]))
+    }
 }
 
 impl<S: Scalar, const N: usize> Display for Vector<S, N> {

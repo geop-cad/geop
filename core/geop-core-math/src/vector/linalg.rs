@@ -84,6 +84,27 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
         Ok(self.prod_scalar(S::ONE.div(n)?))
     }
 
+    /// `N - 1` orthonormal vectors perpendicular to `self`, or an error for
+    /// a zero `self`. They are the columns other than the first of the
+    /// Householder reflection `H = I - 2 w wᵀ / (wᵀ w)`, `w = v̂ + σ e_0`,
+    /// which swaps `v̂ = self / |self|` and `σ e_0`: `H` is orthogonal, so its
+    /// columns are orthonormal, and all but the first are perpendicular to
+    /// `v̂`. The sign `σ` of `v̂_0` keeps `wᵀ w = 2 (1 + |v̂_0|) >= 2` away
+    /// from cancellation, so the result is well conditioned for every `v̂`.
+    pub fn orthonormal_complement(&self) -> GeopResult<Vec<Self>> {
+        let v = self.normalize()?;
+        let sigma = if v[0].definitely_less(S::ZERO) {
+            S::ONE.neg()
+        } else {
+            S::ONE
+        };
+        let w = v.add(&Self::axis(0).prod_scalar(sigma));
+        let scale = S::from_i64(2).div(w.norm_sq())?;
+        Ok((1..N)
+            .map(|j| Self::axis(j).sub(&w.prod_scalar(scale.mul(w[j]))))
+            .collect())
+    }
+
     /// True if every component `could_be_equal` `other`'s.
     pub fn could_be_equal(&self, other: &Self) -> bool {
         (0..self.size()).all(|i| self[i].could_be_equal(other[i]))

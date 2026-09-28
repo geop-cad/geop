@@ -4,6 +4,8 @@
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector};
 
+use crate::nurb_curve::dehomogenize;
+
 /// Greville abscissae `ξ_i = (u_{i+1} + … + u_{i+p}) / p` of the `count`
 /// control points of degree `p` on knot vector `u`: the first coordinates
 /// that make `(ξ_i, d_i)` the control polygon of the graph
@@ -277,108 +279,46 @@ pub(crate) fn extent<S: Scalar, const D: usize>(
 /// Directions for *combining* the per-axis equations. For any fixed `n`,
 /// `g_n = Σ_k n_k g_k` vanishes wherever every `g_k` does, so clipping it is
 /// exactly as sound as clipping the axes — and `n` is a free choice, so it
-/// is computed in plain `f64` and used sharp. Choosing `n` perpendicular to
-/// how the *other* object varies (its chord) makes `g_n` nearly independent
-/// of that object's parameters, so collapsing them by union loses little:
-/// the classic Bézier clipping choice. It recovers exactly the coupling the
-/// axis projections lose (`intersection/curve_curve.md` §3's diagonal
-/// example gives `2s - 1` and `2t - 1`).
-pub(crate) mod directions {
-    use geop_core_math::{scalars::Scalar, vector::Vector};
-
-    pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-        [
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        ]
-    }
-
-    /// `v / |v|`, or `None` for a zero (or non-finite) `v` — no direction.
-    pub(crate) fn unit<const C: usize>(v: [f64; C]) -> Option<[f64; C]> {
-        let n = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-        (n > 0.0 && n.is_finite()).then(|| v.map(|x| x / n))
-    }
-
-    /// `C - 1` orthonormal directions perpendicular to `v` (Gram–Schmidt on
-    /// the coordinate axes least aligned with `v`), or none for a zero `v`.
-    pub(crate) fn complement<const C: usize>(v: [f64; C]) -> Vec<[f64; C]> {
-        let Some(v) = unit(v) else { return vec![] };
-        let mut axes: Vec<usize> = (0..C).collect();
-        axes.sort_by(|&a, &b| v[a].abs().total_cmp(&v[b].abs()));
-        let mut basis = vec![v];
-        for &k in &axes[..C - 1] {
-            let mut e = [0.0; C];
-            e[k] = 1.0;
-            for b in &basis {
-                let dot: f64 = (0..C).map(|i| e[i] * b[i]).sum();
-                (0..C).for_each(|i| e[i] -= dot * b[i]);
-            }
-            basis.extend(unit(e));
+/// is used sharp. Choosing `n` perpendicular to how the *other* object
+/// varies (its [`chord`]) makes `g_n` nearly independent of that object's
+/// parameters, so collapsing them by union loses little: the classic Bézier
+/// clipping choice. It recovers exactly the coupling the axis projections
+/// lose (`intersection/curve_curve.md` §3's diagonal example gives `2s - 1`
+/// and `2t - 1`).
+///
+/// Returns the unit vectors `dirs`, sharpened, plus the coordinate axes if
+/// `dirs` don't span space well: the equations along them must together
+/// pin down every coordinate, or a configuration where they all coincide —
+/// a curve lying in a patch's plane makes the normal and both `c × e`
+/// parallel — clips nothing at all. Conditioning is a free choice here (it
+/// affects only how well the equations clip, never what they prove), so a
+/// well-conditioned residual of ½ in Gram–Schmidt is simply required.
+pub(crate) fn spanning<S: Scalar, const C: usize>(
+    mut dirs: Vec<Vector<S, C>>,
+) -> Vec<Vector<S, C>> {
+    let quarter = S::from_f64(0.25);
+    let mut basis: Vec<Vector<S, C>> = Vec::new();
+    for d in &dirs {
+        let e = basis
+            .iter()
+            .fold(*d, |e, b| e.sub(&b.prod_scalar(e.prod_dot(b))));
+        if e.norm_sq().definitely_greater(quarter) {
+            basis.extend(e.normalize().ok().map(|e| e.sharpen()));
         }
-        basis.split_off(1)
     }
+    if basis.len() < C {
+        dirs.extend((0..C).map(Vector::axis));
+    }
+    dirs.into_iter().map(|d| d.sharpen()).collect()
+}
 
-    /// `dirs`, plus the coordinate axes if `dirs` don't span space well:
-    /// the equations along them must together pin down every coordinate, or
-    /// a configuration where they all coincide — a curve lying in a
-    /// patch's plane makes the normal and both `c × e` parallel — clips
-    /// nothing at all. Conditioning is a free choice here (it affects only
-    /// how well the equations clip, never what they prove), so a
-    /// well-conditioned residual of ½ in Gram–Schmidt is simply required.
-    pub(crate) fn spanning<const C: usize>(mut dirs: Vec<[f64; C]>) -> Vec<[f64; C]> {
-        let mut basis: Vec<[f64; C]> = Vec::new();
-        for d in &dirs {
-            let mut e = *d;
-            for b in &basis {
-                let dot: f64 = (0..C).map(|i| e[i] * b[i]).sum();
-                (0..C).for_each(|i| e[i] -= dot * b[i]);
-            }
-            let n = e.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if n > 0.5 {
-                basis.push(e.map(|x| x / n));
-            }
-        }
-        if basis.len() < C {
-            dirs.extend(axes::<C>());
-        }
-        dirs
-    }
-
-    /// The coordinate axes: the fallback when an object has no usable chord.
-    pub(crate) fn axes<const C: usize>() -> Vec<[f64; C]> {
-        (0..C)
-            .map(|k| {
-                let mut e = [0.0; C];
-                e[k] = 1.0;
-                e
-            })
-            .collect()
-    }
-
-    /// Cartesian position of a homogeneous control point, in `f64` — only
-    /// ever used to *choose* a direction.
-    pub(crate) fn cartesian<S: Scalar, const D: usize, const C: usize>(
-        q: &Vector<S, D>,
-    ) -> [f64; C] {
-        let w = q[D - 1].to_f64();
-        std::array::from_fn(|k| q[k].to_f64() / w)
-    }
-
-    pub(crate) fn sub<const C: usize>(a: [f64; C], b: [f64; C]) -> [f64; C] {
-        std::array::from_fn(|k| a[k] - b[k])
-    }
-
-    /// `n · q` over the Cartesian part of a homogeneous point (the weight
-    /// is left out: `Σ n_k H_k`), with `n` sharp.
-    pub(crate) fn dot<S: Scalar, const D: usize, const C: usize>(
-        n: &[S; C],
-        q: &Vector<S, D>,
-    ) -> S {
-        (0..C).fold(S::ZERO, |acc, k| acc.add(n[k].mul(q[k])))
-    }
-
-    pub(crate) fn sharp<S: Scalar, const C: usize>(n: [f64; C]) -> [S; C] {
-        n.map(S::from_f64)
-    }
+/// The sharp Cartesian chord from the first to the last of homogeneous
+/// `control_points` — only ever used to *choose* a direction ([`spanning`]),
+/// so sharpening is a free choice.
+pub(crate) fn chord<S: Scalar, const D: usize, const C: usize>(
+    control_points: &[Vector<S, D>],
+) -> Vector<S, C> {
+    let ends =
+        dehomogenize::<S, D, C>(&[control_points[0], control_points[control_points.len() - 1]]);
+    ends[1].sub(&ends[0]).sharpen()
 }

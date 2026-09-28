@@ -26,8 +26,8 @@ use crate::{
         boundary_curve, collapsed_boundary, surface_could_contain, surface_extents,
     },
     fat_line::{
-        Stalled, carried_width, clip_tensor, directions, extent, greville_abscissae, restriction,
-        stalled,
+        Stalled, carried_width, chord, clip_tensor, extent, greville_abscissae, restriction,
+        spanning, stalled,
     },
     intersection::curve_curve,
     knot_insertion::pinned_clamped_end,
@@ -48,7 +48,7 @@ use geop_core_math::{
 /// (`curve_surface.md` §1), which the cross multiplication needs.
 ///
 /// The equations are combinations `g_n = n · (H_C W_S - W_C H_S)` along
-/// free-choice directions ([`directions`]), from the curve's chord `c` and
+/// free-choice directions ([`spanning`]), from the curve's chord `c` and
 /// the patch's mean edge directions `e_u`, `e_v`: the patch normal
 /// `e_u × e_v` (nearly independent of `u, v`, so it pins `t`), `c × e_v`
 /// (pins `u`) and `c × e_u` (pins `v`). If they don't span space — a curve
@@ -65,41 +65,27 @@ fn clip<S: Scalar>(c: &NurbCurve<S, 4>, s: &NurbSurface<S, 4>) -> GeopResult<Opt
         greville_abscissae(&s.knot_vector_v, s.degree_v, nv)?,
     ];
 
-    let at = |i: usize, j: usize| directions::cartesian::<S, 4, 3>(&s.control_points[i * nv + j]);
-    let add = |a: [f64; 3], b: [f64; 3]| std::array::from_fn(|k| a[k] + b[k]);
-    let chord = directions::sub(
-        directions::cartesian::<S, 4, 3>(&c.control_points[nc - 1]),
-        directions::cartesian::<S, 4, 3>(&c.control_points[0]),
-    );
-    let e_u = directions::sub(
-        add(at(nu - 1, 0), at(nu - 1, nv - 1)),
-        add(at(0, 0), at(0, nv - 1)),
-    );
-    let e_v = directions::sub(
-        add(at(0, nv - 1), at(nu - 1, nv - 1)),
-        add(at(0, 0), at(nu - 1, 0)),
-    );
-    let dirs: Vec<[f64; 3]> = [
-        directions::cross(e_u, e_v),
-        directions::cross(chord, e_v),
-        directions::cross(chord, e_u),
+    let cp = &s.control_points;
+    let corners = dehomogenize::<S, 4, 3>(&[cp[0], cp[nv - 1], cp[(nu - 1) * nv], cp[nu * nv - 1]]);
+    let (p00, p01, p10, p11) = (corners[0], corners[1], corners[2], corners[3]);
+    let e_u = p10.add(&p11).sub(&p00.add(&p01)).sharpen();
+    let e_v = p01.add(&p11).sub(&p00.add(&p10)).sharpen();
+    let c_dir = chord::<S, 4, 3>(&c.control_points);
+    let dirs = [
+        e_u.prod_cross(&e_v),
+        c_dir.prod_cross(&e_v),
+        c_dir.prod_cross(&e_u),
     ]
     .into_iter()
-    .filter_map(directions::unit)
+    .filter_map(|n| n.normalize().ok())
     .collect();
-    let dirs = directions::spanning(dirs);
 
     let mut d = Vec::with_capacity(nc * nu * nv);
-    for n in dirs {
-        let n = directions::sharp::<S, 3>(n);
-        let ns: Vec<S> = s
-            .control_points
-            .iter()
-            .map(|q| directions::dot(&n, q))
-            .collect();
+    for n in spanning(dirs) {
+        let ns: Vec<S> = cp.iter().map(|q| n.prod_dot(&q.head())).collect();
         d.clear();
         for p in &c.control_points {
-            let np = directions::dot(&n, p);
+            let np = n.prod_dot(&p.head());
             d.extend(
                 s.control_points
                     .iter()

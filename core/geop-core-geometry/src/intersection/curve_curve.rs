@@ -24,8 +24,8 @@ use crate::{
     aabb::aabb_could_overlap,
     contains::curve::curve_could_contain,
     fat_line::{
-        Stalled, carried_width, clip_tensor, directions, extent, greville_abscissae, restriction,
-        stalled,
+        Stalled, carried_width, chord, clip_tensor, extent, greville_abscissae, restriction,
+        spanning, stalled,
     },
     knot_insertion::pinned_clamped_end,
     nurb_curve::{NurbCurve, ParameterRefinable, dehomogenize},
@@ -44,7 +44,7 @@ use geop_core_math::{
 /// multiplication needs.
 ///
 /// The equations are combinations `g_n = n · (H_A W_B - W_A H_B)` along
-/// free-choice directions ([`directions`]): the `C - 1` directions
+/// free-choice directions ([`spanning`]): the `C - 1` directions
 /// perpendicular to `B`'s chord (nearly independent of `t`, so they pin `s`)
 /// and those perpendicular to `A`'s (pinning `t`). Together they span
 /// space, so a pair satisfying all of them is a solution. If they don't —
@@ -61,28 +61,26 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
         greville_abscissae(&b.knot_vector, b.degree, nb)?,
     ];
 
-    let chord = |c: &NurbCurve<S, D>| {
-        directions::sub(
-            directions::cartesian::<S, D, C>(&c.control_points[c.control_points.len() - 1]),
-            directions::cartesian::<S, D, C>(&c.control_points[0]),
-        )
-    };
-    let mut dirs = directions::complement(chord(b));
-    dirs.extend(directions::complement(chord(a)));
-    let dirs = directions::spanning(dirs);
+    let mut dirs = chord::<S, D, C>(&b.control_points)
+        .orthonormal_complement()
+        .unwrap_or_default();
+    dirs.extend(
+        chord::<S, D, C>(&a.control_points)
+            .orthonormal_complement()
+            .unwrap_or_default(),
+    );
 
     let w = D - 1;
     let mut d = Vec::with_capacity(na * nb);
-    for n in dirs {
-        let n = directions::sharp::<S, C>(n);
+    for n in spanning(dirs) {
         let nb_pts: Vec<S> = b
             .control_points
             .iter()
-            .map(|q| directions::dot(&n, q))
+            .map(|q| n.prod_dot(&q.head()))
             .collect();
         d.clear();
         for p in &a.control_points {
-            let np = directions::dot(&n, p);
+            let np = n.prod_dot(&p.head());
             d.extend(
                 b.control_points
                     .iter()
