@@ -4,14 +4,14 @@
 //! line, a plane, an arc, something round, a curve — or several of these at
 //! once. Which of them an entity is decides what can be built on it.
 
-use crate::{DatumKind, Part};
+use crate::Part;
 use geop_core_geometry::{
     nurb_curve::NurbCurve3D,
     shape::{Arc, Axis},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::CoordinateSystem,
+    primitives::{CoordinateSystem, DatumKind},
     scalars::Scalar,
     vector::Vector3,
     with_context,
@@ -90,7 +90,8 @@ impl std::fmt::Display for EntityRef {
 
 /// Everything an entity can be used as. An entity is usually several at
 /// once: a straight edge is a line and a curve, a circular edge an arc, a
-/// curve and something round, a datum point a point and a frame.
+/// curve and something round, a datum point a point and a frame, a datum
+/// frame the same.
 #[derive(Clone, Debug)]
 pub struct Geometry<S: Scalar> {
     pub point: Option<Vector3<S>>,
@@ -263,6 +264,9 @@ impl EntityRef {
                     DatumKind::Point => g.point = Some(*frame.origin()),
                     DatumKind::Axis => g.line = Some(Axis::try_new(*frame.origin(), *frame.w())?),
                     DatumKind::Plane => g.plane = Some(frame.clone()),
+                    // A coordinate system is used by its origin, and by its
+                    // axes as the frame below.
+                    DatumKind::Frame => g.point = Some(*frame.origin()),
                 }
                 g.frame = Some(frame);
             }

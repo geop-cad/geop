@@ -2,11 +2,11 @@
 
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
-    primitives::CoordinateSystem,
+    primitives::{CoordinateSystem, Datum, DatumKind},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{Datum, DatumKind, EntityRef, Operation, Part, WorldAxis, operation::Role};
+use geop_ops::{EntityRef, Operation, Part, WorldAxis, operation::Role};
 use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, inspect_selection};
 
 use crate::examples;
@@ -412,4 +412,55 @@ fn sketches_go_on_datum_planes() {
     assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
     assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
     assert_at(&placed.plane, [0., 0., 1.5], [0., 0., 1.]);
+}
+
+/// A coordinate system through three points: at the first, x towards the
+/// second, xy through the third. It is used as a point — its origin — and
+/// by its axes, like the origin itself.
+#[test]
+fn frames() {
+    let part = drilled_box();
+    let args = AddDatumArgs {
+        selection: vec![
+            vertex("extrude(box,outline,p1,end)"),
+            vertex("extrude(box,outline,p2,end)"),
+            vertex("extrude(box,outline,p0,start)"),
+        ],
+        construction: Construction::FrameThreePoints {},
+    };
+    let part = AddDatum.apply(part, "cs", &args).unwrap();
+    let d = part.datum(part.datum_id("cs").unwrap()).unwrap();
+    assert_eq!(d.kind, DatumKind::Frame);
+    // x from (2, 0, 1) to (2, 2, 1); the third point (0, 0, 0) tilts the
+    // xy plane down towards -x.
+    assert_at(&d.frame, [2., 0., 1.], [-1., 0., 2.]);
+    assert!(d.frame.u().sub(&v(0., 1., 0.)).norm().to_f64() < 1e-9);
+
+    let fit = inspect_selection(&part, &[EntityRef::Datum { name: "cs".into() }]);
+    assert_eq!(fit.roles, [vec![Role::Point]]);
+    // Its axes carry an offset point, as a datum point's do.
+    let d = datum(
+        &part,
+        vec![EntityRef::Datum { name: "cs".into() }],
+        Construction::Point {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        },
+    );
+    assert_at(&d.frame, [2., 1., 1.], [-1., 0., 2.]);
+
+    // The first two points coincide: there is no x to go by.
+    let args = AddDatumArgs {
+        selection: vec![
+            EntityRef::Origin,
+            EntityRef::Origin,
+            vertex("extrude(box,outline,p2,end)"),
+        ],
+        ..args
+    };
+    let Err(e) = AddDatum.apply(part, "degenerate", &args) else {
+        panic!("a frame with no x axis");
+    };
+    assert!(e.to_string().contains("one line"), "{e}");
 }

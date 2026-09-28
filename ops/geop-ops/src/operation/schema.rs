@@ -8,10 +8,10 @@
 //! because it depends on the part a step is applied to, the step's
 //! [`super::Dialog`] does.
 
+use geop_core_math::primitives::DatumKind;
 use serde::Serialize;
 
 use super::entity::Role;
-use crate::DatumKind;
 
 /// What kind of value an argument holds — and so how an editor lets a user
 /// enter it.

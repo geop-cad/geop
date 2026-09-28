@@ -29,9 +29,11 @@ construction, not by the diligence of each caller.
   resolved once, when the sketch is added, so a sketch drawn on a face stays
   where that face *was*, even after a later operation reshapes or consumes
   the face.
-- **Datums** are reference geometry — points, axes and planes the part is
-  built *with*, not *of*. Every datum carries a full right-handed frame, so
-  anything built on it has axes to be built along.
+- **Datums** are reference geometry — points, axes, planes and coordinate
+  systems the part is built *with*, not *of* (the `Datum` of
+  [geop-core-math](../core/geop-core-math.md#render-primitives)). Every datum
+  carries a full right-handed frame, so anything built on it has axes to be
+  built along.
 - **Lookups by name** (`vertex_id`, `edge_id`, `face_id`, `solid_id`,
   `sketch_id`, `datum_id`, and `coedge_id(edge, face)`) are what every
   operation that refers to existing entities is built on.

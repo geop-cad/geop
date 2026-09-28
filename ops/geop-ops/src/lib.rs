@@ -89,7 +89,6 @@ mod program;
 mod resolve;
 mod sketch;
 
-pub use datum::{Datum, DatumKind};
 pub use describe::{EdgeDescription, FaceDescription, PartDescription};
 pub use ids::{DatumId, RefId, SketchId};
 pub use names::{NameRegistry, Namer, validate_operation_id};

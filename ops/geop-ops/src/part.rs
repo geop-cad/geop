@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    primitives::Datum,
     scalars::Scalar,
 };
 use geop_core_topology::Model;
 
-use crate::datum::Datum;
 use crate::ids::{DatumId, RefId, SketchId};
 use crate::names::NameRegistry;
 use crate::sketch::PlacedSketch;

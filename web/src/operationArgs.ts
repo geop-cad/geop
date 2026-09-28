@@ -162,7 +162,7 @@ export function isComplete(schema: OperationSchema, args: Args): boolean {
  * selection any of them.
  */
 export function acceptedDatums(kind: ArgKind): DatumKind[] {
-  return kind.type === "plane" ? ["plane"] : kind.type === "selection" ? ["point", "axis", "plane"] : [];
+  return kind.type === "plane" ? ["plane"] : kind.type === "selection" ? ["point", "axis", "plane", "frame"] : [];
 }
 
 /**

@@ -19,6 +19,7 @@ const RESULTS: { result: DatumKind; title: string }[] = [
   { result: "point", title: "Point" },
   { result: "axis", title: "Axis" },
   { result: "plane", title: "Plane" },
+  { result: "frame", title: "Coordinate system" },
 ];
 
 /** What `construction` needs selected, in words: `a point and a plane`. */

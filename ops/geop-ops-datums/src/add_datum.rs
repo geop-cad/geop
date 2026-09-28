@@ -1,6 +1,6 @@
-//! [`AddDatum`]: reference geometry — a point, an axis or a plane — built
-//! from entities picked in the part, in one of the ways CAD systems commonly
-//! offer (see [`Construction`]).
+//! [`AddDatum`]: reference geometry — a point, an axis, a plane or a
+//! coordinate system — built from entities picked in the part, in one of the
+//! ways CAD systems commonly offer (see [`Construction`]).
 //!
 //! Which constructions can be chosen depends on what is selected, and on its
 //! shape, not only its kind: a straight edge is a line, a circular one has a
@@ -12,7 +12,7 @@
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::CoordinateSystem,
+    primitives::{CoordinateSystem, Datum, DatumKind},
     scalars::Scalar,
     vector::Vector3,
     with_context,
@@ -20,7 +20,7 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use geop_ops::{
-    Datum, DatumKind, Part,
+    Part,
     operation::{
         ArgDialog, ArgKind, ArgSchema, ConstructionSchema, Dialog, EntityRef, Geometry, Handle,
         HandleGroup, HandleMotion, Operation, OperationArgs, Role, arg_path, frame_along, to_f64,
@@ -161,10 +161,15 @@ constructions! {
     "The plane perpendicular to an edge at a point along it." {
         position: f64 = Number { default: 0.5, min: 0.0, max: 1.0 }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
+
+    // ── coordinate systems ──
+    FrameThreePoints "frame_three_points" "Coordinate system through points" [Point, Point, Point] -> Frame,
+    "The coordinate system at the first point, its x axis towards the second and its xy plane through the third." {}
 }
 
-/// Adds a datum to the part, named by the operation's id: a point, an axis
-/// or a plane built from the selected entities by one of the
+/// Adds a datum to the part, named by the operation's id: a point, an
+/// axis, a plane or a coordinate system built from the selected entities by
+/// one of the
 /// [`Construction`]s. Like a sketch's plane, it is built when the step runs
 /// and stays where it was, whatever later steps do to what it was built
 /// from.
@@ -523,6 +528,18 @@ impl Construction {
             Construction::NormalToEdge { position } => {
                 let (p, tangent) = along_edge(&inputs[0], *position)?;
                 frame_along(p, &tangent)
+            }
+            Construction::FrameThreePoints {} => {
+                let (a, b, c) = (point(0), point(1), point(2));
+                let x = b.sub(&a);
+                let z = x.prod_cross(&c.sub(&a));
+                if z.norm_sq().could_be_equal(S::ZERO) {
+                    return Err(GeopError::new(
+                        "the points lie on one line: they pick out no plane for x and y",
+                    ));
+                }
+                let (u, w) = (x.normalize()?, z.normalize()?);
+                CoordinateSystem::try_new(a, u, w.prod_cross(&u), w)
             }
         }
     }

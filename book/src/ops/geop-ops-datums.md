@@ -14,7 +14,12 @@ the ways CAD systems commonly offer (`Construction`):
   point, angle bisector, tangent to an edge;
 - **planes:** offset, midplane, through three points, at an angle, through a
   line and a point, through two lines, parallel through a point, normal to a
-  line or an edge.
+  line or an edge;
+- **coordinate systems:** through three points — at the first, x towards
+  the second, the xy plane through the third.
+
+A coordinate system is used as a point, its origin, and by its axes, like
+the origin itself: a point offset from it goes along them.
 
 `inspect_selection` tells an editor which constructions fit a selection,
 using exactly the matching a step applies; it is also what `AddDatum`'s

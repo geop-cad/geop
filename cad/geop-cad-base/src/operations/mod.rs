@@ -36,8 +36,8 @@ pub enum PartOperation {
     Revolve(RevolveArgs),
     /// Unite, intersect or subtract two solids.
     Boolean(BooleanArgs),
-    /// Add reference geometry — a point, an axis or a plane — built from
-    /// selected points, edges and planes.
+    /// Add reference geometry — a point, an axis, a plane or a coordinate
+    /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]
     AddDatum(AddDatumArgs),
 }

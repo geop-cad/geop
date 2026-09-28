@@ -20,7 +20,7 @@ use geop_cad_base::pick::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::{Color10, CoordinateSystem},
+    primitives::{Color10, CoordinateSystem, DatumKind},
     scalars::{Scalar, scal_in_f64::ScalInF64},
     vector::Vector3,
 };
@@ -28,7 +28,7 @@ use geop_cad_base::{PartOperation, Program, ProgramEdit, ProgramRunner, examples
 use geop_core_sketch::{CurveKind, PointId, Sketch, SolveReport};
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
 use geop_ops::{
-    DatumKind, EntityRef, Operations, Part, RefId, StepDialog, StepHandle, StepResult,
+    EntityRef, Operations, Part, RefId, StepDialog, StepHandle, StepResult,
     operation::resolve_plane,
 };
 use geop_ops_datums::inspect_selection;

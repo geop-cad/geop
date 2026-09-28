@@ -168,3 +168,10 @@ sampled curves and surfaces (through the `RasterizableCurve` and
 `RasterizableSurface` traits) and saves them as an interactive HTML file.
 `PrimitiveSceneRecorder` records a sequence of scenes, for example one per
 iteration of a search.
+
+`Datum` is reference geometry: a right-handed orthonormal
+`CoordinateSystem` and the `DatumKind` saying which part of it the datum
+stands for — its origin (`Point`), the line along its `w` (`Axis`), the
+plane normal to it (`Plane`), or the whole frame (`Frame`, a coordinate
+system). Every datum carries the whole frame whatever its kind, so anything
+built on it has axes to be built along.

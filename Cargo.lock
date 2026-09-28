@@ -232,6 +232,9 @@ dependencies = [
 [[package]]
 name = "geop-core-math"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "geop-core-sketch"

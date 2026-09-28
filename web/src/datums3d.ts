@@ -1,7 +1,9 @@
-// Datums in the 3-D view: the reference points, axes and planes a part is
-// built with (see `geop_ops::Datum`), drawn so they can be seen and
+// Datums in the 3-D view: the reference points, axes, planes and
+// coordinate systems a part is built with (see
+// `geop_core_math::primitives::Datum`), drawn so they can be seen and
 // picked — a plane as a translucent square, an axis as a long dashed line,
-// a point as its own small frame of three axes.
+// a point as its own small frame of three axes, a coordinate system as those
+// axes with its xy plane marked between them.
 //
 // Like the origin gizmo, a datum is picked here, against what is drawn, and
 // a pick is the [[EntityRef]] a step refers to it by. Unlike the gizmo it is
@@ -14,10 +16,10 @@ import { sameEntity, type DatumInfo, type DatumKind, type EntityRef, type Highli
 
 const COLOR = new THREE.Color(0xb58cff);
 const LIT = new THREE.Color(0xffc94a);
-/** A point datum's axes, tinted towards x red, y green, z blue so its frame reads at a glance. */
+/** A point or frame datum's axes, tinted towards x red, y green, z blue so its frame reads at a glance. */
 const AXIS_TINTS = [0xff8080, 0x80e080, 0x80b0ff].map((c) => new THREE.Color(c));
 
-/** How long a point datum's axes are on screen, in pixels. */
+/** How long a point or frame datum's axes are on screen, in pixels. */
 const TRIAD_PX = 32;
 /** How near a click has to land on an axis to pick it, in pixels. */
 const PICK_PX = 6;
@@ -48,7 +50,7 @@ function basis(datum: DatumInfo): THREE.Quaternion {
 
 /**
  * One datum, `size` across if it is a plane or an axis, at unit size if it
- * is a point. A plane or an axis is endless, and drawn around the point of
+ * is a point or a frame. A plane or an axis is endless, and drawn around the point of
  * it nearest `center` — the model's — rather than around its frame's origin,
  * which can be anywhere on it.
  */
@@ -80,7 +82,8 @@ function buildDatum(datum: DatumInfo, size: number, center: THREE.Vector3): THRE
       group.add(line);
       break;
     }
-    case "point": {
+    case "point":
+    case "frame": {
       const triad = new THREE.Group();
       triad.userData.triad = true;
       triad.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), remembered(new THREE.MeshBasicMaterial(), COLOR, 1)));
@@ -89,6 +92,13 @@ function buildDatum(datum: DatumInfo, size: number, center: THREE.Vector3): THRE
         const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), end]);
         triad.add(new THREE.Line(geometry, remembered(new THREE.LineBasicMaterial(), AXIS_TINTS[k], 1)));
       });
+      if (datum.kind === "frame") {
+        // The corner of its xy plane between the x and y axes: a whole
+        // coordinate system, not just a point that happens to have one.
+        const square = new THREE.PlaneGeometry(0.5, 0.5).translate(0.25, 0.25, 0);
+        const fill = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, depthWrite: false });
+        triad.add(new THREE.Mesh(square, remembered(fill, COLOR, 0.35)));
+      }
       // A point often lies inside the solid — a hole's center, say — so
       // it is drawn over the model, like the origin gizmo.
       triad.traverse((o) => {

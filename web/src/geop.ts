@@ -131,7 +131,7 @@ export type Combine =
   | { mode: "union" | "intersection" | "difference"; target: string | null };
 
 /** What a datum stands for. */
-export type DatumKind = "point" | "axis" | "plane";
+export type DatumKind = "point" | "axis" | "plane" | "frame";
 
 /** What a construction needs an input to be — see `geop_ops::operation::Role`. */
 export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round";
