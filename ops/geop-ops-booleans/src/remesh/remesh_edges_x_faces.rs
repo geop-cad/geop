@@ -1198,11 +1198,22 @@ fn trace_one_side<S: Scalar>(
             GeopError::new("trace_one_side: start vertex does not lie on face_b's surface")
         })
         .with_context(&ctx)?;
+    let at = |which: &'static str, u: S, v: S| {
+        move |e: GeopError| e.with_context(format!("normal of {which} at point={point:?}, (u, v)=({u:?}, {v:?})"))
+    };
+    // The normals are taken over the honest boxes, not sharpened ones: at a
+    // pole only the box still touches the collapsed row, which is what
+    // `normal` needs to recognise it (see `NurbSurface::normal`).
+    let normal_a = surf_a
+        .normal(u_a0, v_a0)
+        .with_context(&at("face_a", u_a0, v_a0))
+        .with_context(&ctx)?;
+    let normal_b = surf_b
+        .normal(u_b0, v_b0)
+        .with_context(&at("face_b", u_b0, v_b0))
+        .with_context(&ctx)?;
     let (u_a0, v_a0) = (u_a0.sharpen(), v_a0.sharpen());
     let (u_b0, v_b0) = (u_b0.sharpen(), v_b0.sharpen());
-
-    let normal_a = surf_a.normal(u_a0, v_a0).with_context(&ctx)?;
-    let normal_b = surf_b.normal(u_b0, v_b0).with_context(&ctx)?;
     // A zero (or near-zero) cross product means `face_a`/`face_b` are
     // (locally) parallel here — there's no single well-defined tangent
     // direction for an intersection curve between two parallel surfaces,

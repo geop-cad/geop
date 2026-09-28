@@ -18,7 +18,9 @@ use std::collections::VecDeque;
 
 use crate::{
     aabb::aabb_could_contain,
-    fat_line::{fat_line_zeros, greville_abscissae},
+    fat_line::{
+        Stalled, carried_width, extent, fat_line_zeros, greville_abscissae, restriction, stalled,
+    },
     nurb_curve::{NurbCurve, ParameterRefinable},
 };
 use geop_core_math::{
@@ -61,51 +63,6 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
     Some(t_hat)
 }
 
-/// Euclidean distance between the segment's first and last (dehomogenized)
-/// control points — the same convergence measure `curve_bisect::curve_could_contain`
-/// uses.
-fn chord_length<S: Scalar, const D: usize, const C: usize>(seg: &NurbCurve<S, D>) -> GeopResult<S> {
-    let dehom = |q: &Vector<S, D>| -> GeopResult<Vector<S, C>> {
-        let inv_w = S::ONE.div(q[D - 1])?;
-        let mut v = Vector::<S, C>::zero();
-        for c in 0..C {
-            v[c] = q[c].mul(inv_w);
-        }
-        Ok(v)
-    };
-    let first = dehom(&seg.control_points[0])?;
-    let last = dehom(&seg.control_points[seg.control_points.len() - 1])?;
-    Ok(last.sub(&first).norm())
-}
-
-/// Enclosure of `{C(t) : t ∈ t_hat}`, or `None` if it can't be had cheaply.
-///
-/// De Boor evaluation with an interval parameter encloses the polynomial
-/// of the *one* knot span `find_knot_span` picks, over the whole interval —
-/// so it is only an enclosure of the curve if `t_hat` lies definitely inside
-/// a single span. Interior knots must therefore be definitely outside
-/// `t_hat`: even one touching `t_hat`'s upper end makes `find_knot_span`
-/// pick the span to its right and extrapolate that polynomial over the
-/// rest. The domain's own end knots may touch; `find_knot_span` handles
-/// both ends explicitly.
-fn evaluate_over<S: Scalar, const D: usize, const C: usize>(
-    seg: &NurbCurve<S, D>,
-    t_hat: S,
-) -> Option<Vector<S, C>>
-where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
-{
-    let (lo, hi) = (t_hat.lower(), t_hat.upper());
-    let interior_knots = &seg.knot_vector[seg.degree + 1..seg.control_points.len()];
-    let single_span = interior_knots
-        .iter()
-        .all(|&u| u.definitely_less(lo) || u.definitely_greater(hi));
-    if !single_span {
-        return None;
-    }
-    seg.evaluate_cartesian(t_hat).ok()
-}
-
 /// Fat-line-clipping counterpart of [`super::curve_bisect::curve_could_contain`],
 /// with the same tunables: the [`Scalar::union`] of every converged
 /// segment's clipped parameter interval, exploring breadth-first up to
@@ -114,16 +71,15 @@ where
 /// contained" (nor as "contained") — it is an error, since the search is
 /// incomplete (see `surface.md` §5).
 ///
-/// Each segment is clipped (see [`clip`]). An empty clip rejects it. A
-/// segment converges — and reports its *clipped* interval, tighter than its
-/// domain and still an enclosure — once either the curve evaluated over that
-/// interval contains the point within `min_subdivision_size` in every axis,
-/// or its chord is no longer definitely greater than `min_subdivision_size`.
-/// Otherwise, if the clip removed at least 20% of the domain, the segment is
-/// restricted to the clip and clipped again; if it didn't — several
-/// solutions in one segment, or a tangency, where clipping stalls — it is
-/// bisected instead, exactly as the hull search always does. (20% is the
-/// usual Bézier/fat line clipping rule, Sederberg & Nishita.)
+/// Each segment is clipped (see [`clip`]). An empty clip rejects it. While
+/// the clip keeps shrinking the segment it is restricted and clipped again
+/// ([`restriction`]). Once it stalls — several solutions or a tangency in
+/// one segment, or the resolution of the data reached — the segment is
+/// reported with its *clipped* interval (tighter than its domain, and still
+/// an enclosure) if it has converged, and bisected otherwise ([`stalled`]).
+/// `min_subdivision_size` thus only decides when to stop *bisecting*: a
+/// segment that clipping keeps shrinking is never cut short, so a point
+/// merely within `min_subdivision_size` of the curve is still rejected.
 ///
 /// Restriction cuts at the clip's *outer* bounds ([`Scalar::lower`] /
 /// [`Scalar::upper`]), which are free choices only on the outside: any cut
@@ -143,8 +99,6 @@ where
         D,
         "point dimension must match the curve's Cartesian dimension"
     );
-    let min_progress = S::from_ratio(4, 5)?;
-
     let mut queue: VecDeque<NurbCurve<S, D>> = VecDeque::new();
     queue.push_back(curve.clone());
 
@@ -183,59 +137,30 @@ where
             continue;
         };
 
-        // `t_hat` encloses every solution in this segment, but a narrow
-        // `t_hat` alone doesn't mean the point is near the curve: a single
-        // axis can pin it down while the others were never checked at that
-        // precision. So a narrow `t_hat` is settled by evaluating the curve
-        // over it — an enclosure of `C(t_hat)`. Missing the point proves
-        // there is no solution; containing it with a physically small
-        // enclosure is the same statement the chord test below makes. This
-        // is also what ends a search whose solution sits exactly on a domain
-        // end, where the clip collapses but no cut can be made.
-        if !t_hat.width().definitely_greater(min_subdivision_size) {
-            if let Some(on_curve) = evaluate_over(&seg, t_hat) {
-                if !on_curve.could_be_equal(point) {
-                    continue;
-                }
-                if (0..C).all(|c| !on_curve[c].width().definitely_greater(min_subdivision_size)) {
-                    report(t_hat);
-                    continue;
-                }
+        let ranges = [seg.domain()];
+        if let Some(bounds) = restriction(&[t_hat], &ranges)? {
+            if let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1) {
+                queue.push_back(restricted);
+                continue;
             }
         }
 
-        let (t0, t1) = seg.domain();
-        let domain_width = seg.domain_as_scalar().width();
-        if !chord_length::<S, D, C>(&seg)?.definitely_greater(min_subdivision_size) {
-            report(t_hat);
-            continue;
-        }
-
-        if t_hat
-            .width()
-            .definitely_less(domain_width.mul(min_progress))
-        {
-            let (lo, hi) = (t_hat.lower(), t_hat.upper());
-            // `sub_curve` only cuts at bounds strictly inside the domain; if
-            // neither is (e.g. a clip collapsed onto a domain end), no cut is
-            // possible and we fall through to bisection — re-queuing an
-            // uncut segment would just repeat this node until the budget.
-            let inside = |t: S| t.definitely_greater(t0) && t.definitely_less(t1);
-            if inside(lo) || inside(hi) {
-                if let Ok(restricted) = seg.sub_curve(lo, hi) {
-                    queue.push_back(restricted);
-                    continue;
-                }
-            }
-        }
-
-        match seg.split_mid() {
-            Ok((left, right)) => {
+        let sizes = [extent([seg.control_points.iter().copied()])];
+        // The query point's own width counts too, like a second object's.
+        let point_width = (0..C).map(|k| point[k].width().to_f64()).fold(0.0, f64::max);
+        let carried = carried_width(&seg.control_points).max(point_width);
+        let halves = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+            Stalled::Converged => None,
+            Stalled::Bisect(order) if order.is_empty() => None,
+            // Cannot split (e.g. midpoint already at multiplicity p+1).
+            Stalled::Bisect(_) => seg.split_mid().ok(),
+        };
+        match halves {
+            Some((left, right)) => {
                 queue.push_back(left);
                 queue.push_back(right);
             }
-            // Cannot split (e.g. midpoint already at multiplicity p+1).
-            Err(_) => report(t_hat),
+            None => report(t_hat),
         }
     }
 
@@ -404,5 +329,23 @@ mod tests {
     #[test]
     fn misses_off_curve_points() {
         for_all_scalars!(check_misses_off_curve_points);
+    }
+
+    /// `min_subdivision_size` bounds bisection, not accuracy: a point off the
+    /// arc by far less than it is still rejected, because clipping keeps
+    /// shrinking the segment until it proves the miss. (The offset stays well
+    /// above `ScalInFPA64`'s 2^-32 resolution, below which a report is the
+    /// honest answer.)
+    fn check_misses_points_closer_than_min_subdivision_size<S: Scalar>() {
+        let f = S::from_f64;
+        let r = 1. + 1e-7;
+        let (x, y) = (r * 0.6, r * 0.8);
+        let p = Vector3::from_array([f(x), f(y), f(0.)]);
+        let found = curve_could_contain(&quarter_circle::<S>(), &p, MAX, f(EPS)).unwrap();
+        assert!(found.is_none(), "{found:?}");
+    }
+    #[test]
+    fn misses_points_closer_than_min_subdivision_size() {
+        for_all_scalars!(check_misses_points_closer_than_min_subdivision_size);
     }
 }

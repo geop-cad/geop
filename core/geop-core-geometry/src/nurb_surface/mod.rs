@@ -78,15 +78,12 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
             )));
         }
 
-        // See `NurbCurve::try_new`'s identical check: a control point whose
-        // weight *could* be zero produces a surface that's undefined
-        // somewhere in its domain, silently, wherever the first
-        // `.convex_hull()`/dehomogenization call happens to land — reject
-        // it here instead.
+        // See `NurbCurve::try_new`'s identical check: every weight must be
+        // definitely positive, so `W(u, v) > 0` on the whole domain.
         for p in &control_points {
-            if p[D - 1].could_be_equal(S::ZERO) {
+            if !p[D - 1].definitely_greater(S::ZERO) {
                 return Err(GeopError::new(&format!(
-                    "NurbSurface::try_new: control point {p:?} has a weight that could be zero"
+                    "NurbSurface::try_new: control point {p:?} has a weight that is not definitely positive"
                 )));
             }
         }
@@ -204,5 +201,32 @@ impl<S: Scalar> Display for NurbSurface3D<S> {
             "NurbSurface((0, 0) -> {}, (1, 0) -> {}, (1, 1) -> {}, (0, 1) -> {})",
             p00, p10, p11, p01
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NurbSurface;
+    use geop_core_math::for_all_scalars;
+    use geop_core_math::{scalars::Scalar, vector::Vector4};
+
+    /// Weights must be definitely positive: zero and negative are rejected.
+    fn check_non_positive_weight_is_rejected<S: Scalar>() {
+        let f = S::from_f64;
+        let pt = |x, y, w| Vector4::from_array([f(x), f(y), f(0.), f(w)]);
+        for w in [0., -1.] {
+            let result = NurbSurface::<S, 4>::try_new(
+                1,
+                1,
+                vec![pt(0., 0., w), pt(0., 1., 1.), pt(1., 0., 1.), pt(1., 1., 1.)],
+                vec![f(0.), f(0.), f(1.), f(1.)],
+                vec![f(0.), f(0.), f(1.), f(1.)],
+            );
+            assert!(result.is_err(), "weight {w} accepted");
+        }
+    }
+    #[test]
+    fn non_positive_weight_is_rejected() {
+        for_all_scalars!(check_non_positive_weight_is_rejected);
     }
 }

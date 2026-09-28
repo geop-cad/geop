@@ -112,10 +112,8 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 /// `C = D - 1` directly.
 pub trait ParameterRefinable<S: Scalar, const C: usize> {
     fn evaluate_cartesian(&self, t: S) -> GeopResult<Vector<S, C>>;
-    /// The Cartesian tangent, via each dimension's own `tangent`. Not the
-    /// `derivative()` curve: that is the *homogeneous* derivative, whose
-    /// weight component is zero for a non-rational curve, so evaluating it
-    /// as a rational curve fails outright.
+    /// The Cartesian tangent, via each dimension's own `tangent` (the
+    /// quotient rule over the homogeneous `derivative()`).
     fn tangent_cartesian(&self, t: S) -> GeopResult<Vector<S, C>>;
 }
 

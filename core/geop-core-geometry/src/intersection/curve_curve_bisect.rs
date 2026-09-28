@@ -137,29 +137,17 @@ where
     // trustworthy as `hull.definitely_no_overlap` — see `fat_axis`'s own
     // module doc. Tried in both directions since either segment's own
     // axis might be the one that resolves it.
-    if let (Ok(pts_a), Ok(pts_b)) = (
-        dehomogenize::<S, D, C>(&seg_a.control_points),
-        dehomogenize::<S, D, C>(&seg_b.control_points),
-    ) {
-        if seg_a.fat_axes_separate(&pts_b) || seg_b.fat_axes_separate(&pts_a) {
-            return Ok(DfsOutcome::NoSolution);
-        }
-    }
-
-    let (hull_a, hull_b) = match (seg_a.convex_hull(), seg_b.convex_hull()) {
-        (Ok(a), Ok(b)) => (a, b),
-        // Degenerate segment (zero weight): can't bound or split it any
-        // further — report whatever's here rather than silently dropping it.
-        _ => return Ok(found_here(&seg_a, &seg_b)),
-    };
-    if hull_a.definitely_no_overlap(&hull_b) {
+    let pts_a = dehomogenize::<S, D, C>(&seg_a.control_points);
+    let pts_b = dehomogenize::<S, D, C>(&seg_b.control_points);
+    if seg_a.fat_axes_separate(&pts_b) || seg_b.fat_axes_separate(&pts_a) {
         return Ok(DfsOutcome::NoSolution);
     }
 
-    let (size_a, size_b) = match (seg_a.size(), seg_b.size()) {
-        (Ok(a), Ok(b)) => (a, b),
-        _ => return Ok(found_here(&seg_a, &seg_b)),
-    };
+    if seg_a.convex_hull().definitely_no_overlap(&seg_b.convex_hull()) {
+        return Ok(DfsOutcome::NoSolution);
+    }
+
+    let (size_a, size_b) = (seg_a.size(), seg_b.size());
 
     // A segment counts as converged once *either* its physical chord
     // (`size`) or its own parameter-domain width is no longer definitely

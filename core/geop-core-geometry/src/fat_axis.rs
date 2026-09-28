@@ -129,7 +129,7 @@ fn fat_planes_3d<S: Scalar>(points: &[Vector<S, 3>]) -> Option<(FatAxis<S, 3>, F
 /// of its two edges. `band` folds in *every* control point (not just the
 /// 3 corners), so a warped/twisted patch correctly gets a wide (still
 /// sound) band rather than a falsely tight one. `None` on collinear
-/// corners or a zero-weight corner (can't dehomogenize).
+/// corners.
 fn fat_plane_from_surface_points<S: Scalar>(
     corner_idx: [usize; 3],
     all_points: &[Vector<S, 3>],
@@ -160,9 +160,7 @@ pub trait HasFatAxes<S: Scalar, const C: usize> {
 
 impl<S: Scalar> HasFatAxes<S, 2> for NurbCurve<S, 3> {
     fn fat_axes_separate(&self, other_points: &[Vector<S, 2>]) -> bool {
-        let Ok(own_points) = dehomogenize::<S, 3, 2>(&self.control_points) else {
-            return false;
-        };
+        let own_points = dehomogenize::<S, 3, 2>(&self.control_points);
         match fat_line_2d(&own_points) {
             Some(axis) => !axis_could_overlap(&axis, other_points),
             None => false,
@@ -172,9 +170,7 @@ impl<S: Scalar> HasFatAxes<S, 2> for NurbCurve<S, 3> {
 
 impl<S: Scalar> HasFatAxes<S, 3> for NurbCurve<S, 4> {
     fn fat_axes_separate(&self, other_points: &[Vector<S, 3>]) -> bool {
-        let Ok(own_points) = dehomogenize::<S, 4, 3>(&self.control_points) else {
-            return false;
-        };
+        let own_points = dehomogenize::<S, 4, 3>(&self.control_points);
         match fat_planes_3d(&own_points) {
             Some((a1, a2)) => {
                 !axis_could_overlap(&a1, other_points) || !axis_could_overlap(&a2, other_points)
@@ -190,9 +186,7 @@ pub(crate) fn surface_fat_plane_separates<S: Scalar>(
     patch: &NurbSurface<S, 4>,
     curve_points: &[Vector<S, 3>],
 ) -> bool {
-    let Ok(surface_points) = dehomogenize::<S, 4, 3>(&patch.control_points) else {
-        return false;
-    };
+    let surface_points = dehomogenize::<S, 4, 3>(&patch.control_points);
     let nu = patch.num_u();
     let nv = patch.num_v();
     let corner_idx = [0, (nu - 1) * nv, nv - 1];

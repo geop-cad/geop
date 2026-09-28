@@ -14,7 +14,9 @@ use std::collections::VecDeque;
 
 use crate::{
     aabb::aabb_could_contain,
-    fat_line::{Plan, carried_width, clip_tensor, converged, extent, greville_abscissae, plan},
+    fat_line::{
+        Stalled, carried_width, clip_tensor, extent, greville_abscissae, restriction, stalled,
+    },
     knot_insertion::{is_clamped_at, pinned_clamped_end},
     nurb_curve::NurbCurve,
     nurb_surface::NurbSurface,
@@ -39,28 +41,15 @@ pub(crate) fn surface_extents<S: Scalar>(patch: &NurbSurface<S, 4>) -> [f64; 2] 
     ]
 }
 
-/// True if every weight of `patch` is definitely positive, so `W > 0` on it
-/// — the precondition of the clip (`surface.md` §1). Checked per patch,
-/// not assumed for every `NurbSurface`.
-pub(crate) fn weights_positive<S: Scalar>(patch: &NurbSurface<S, 4>) -> bool {
-    patch
-        .control_points
-        .iter()
-        .all(|q| q[3].definitely_greater(S::ZERO))
-}
-
 /// Clip `patch` against `point` (`surface.md` §§1–3): a box `(û, v̂)` inside
 /// the patch's domain enclosing every `(u, v)` with `S(u, v) = point`, or
-/// `None` if some axis proves there is none. Without positive weights the
-/// whole domain is returned (no information), and the search falls back to
-/// plain subdivision for this patch.
+/// `None` if some axis proves there is none. `NurbSurface::try_new`
+/// guarantees positive weights, so `W > 0` and the cross-multiplied
+/// equations have exactly the surface's zeros.
 fn clip<S: Scalar>(patch: &NurbSurface<S, 4>, point: &Vector3<S>) -> GeopResult<Option<(S, S)>> {
     let (u0, u1) = patch.domain_u();
     let (v0, v1) = patch.domain_v();
     let mut hats = [u0.union(u1), v0.union(v1)];
-    if !weights_positive(patch) {
-        return Ok(Some((hats[0], hats[1])));
-    }
     let (nu, nv) = (patch.num_u, patch.num_v);
     let greville = [
         greville_abscissae(&patch.knot_vector_u, patch.degree_u, nu)?,
@@ -137,16 +126,21 @@ pub(crate) fn collapsed_boundary<S: Scalar>(
 /// Per patch:
 /// - the cached AABB and the [`clip`] are necessary conditions — failing
 ///   either rejects the patch;
-/// - it converges once its extent along both directions (control-polygon
-///   lengths, which bound a folded patch where corner chords don't; see
-///   [`crate::fat_line::converged`]) is within `min_subdivision_size`, and then — the other existing
-///   necessary condition — its convex hull must still could-contain the
-///   point, or it is rejected;
 /// - if a direction collapsed onto a clamped domain end, the boundary row is
 ///   searched with [`curve_could_contain`];
-/// - otherwise it is restricted to the clip or bisected per
-///   [`crate::fat_line::plan`] (the spatially longest direction) — after a restriction, narrowing `v` tightens
-///   the next `u` projection and vice versa.
+/// - while the clip keeps shrinking the patch, it is restricted to the clip
+///   ([`crate::fat_line::restriction`]) — narrowing `v` tightens the next `u`
+///   projection and vice versa;
+/// - once clipping stalls ([`crate::fat_line::stalled`]), a patch whose
+///   extent along both directions (control-polygon lengths, which bound a
+///   folded patch where corner chords don't) is within `min_subdivision_size`
+///   has converged, and then — the other existing necessary condition — its
+///   convex hull must still could-contain the point, or it is rejected; any
+///   other is bisected along its spatially longest direction.
+///
+/// `min_subdivision_size` only bounds bisection: a patch that clipping keeps
+/// shrinking is never reported early, so a point merely within
+/// `min_subdivision_size` of the surface is still rejected.
 ///
 /// `None` means every part of the domain was rejected. Running out of
 /// `max_nodes` is never read as "not contained" (nor as "contained"): it is
@@ -187,20 +181,6 @@ pub fn surface_could_contain<S: Scalar>(
             continue;
         };
 
-        let sizes = surface_extents(&patch);
-        // The query point's own width counts too, like a second object's.
-        let point_width = (0..3)
-            .map(|k| point[k].width().to_f64())
-            .fold(0.0, f64::max);
-        let carried = carried_width(&patch.control_points).max(point_width);
-        if converged(&sizes, carried, min_subdivision_size) {
-            match patch.convex_hull() {
-                Ok(hull) if !hull.could_contain(point) => {}
-                _ => report((u_hat, v_hat)),
-            }
-            continue;
-        }
-
         if let Some((boundary, along_v)) = collapsed_boundary(&patch, u_hat, v_hat) {
             let budget = max_nodes - explored;
             if let Some(t) = curve_could_contain(&boundary, point, budget, min_subdivision_size)? {
@@ -222,15 +202,27 @@ pub fn surface_could_contain<S: Scalar>(
         }
 
         let ranges = [patch.domain_u(), patch.domain_v()];
-        let order = match plan(&[u_hat, v_hat], &ranges, &sizes, min_subdivision_size)? {
-            Plan::Restrict(b) => match patch.sub_surface(b[0], b[1]) {
-                Ok(restricted) => {
-                    queue.push_back(restricted);
-                    continue;
+        if let Some(b) = restriction(&[u_hat, v_hat], &ranges)? {
+            if let Ok(restricted) = patch.sub_surface(b[0], b[1]) {
+                queue.push_back(restricted);
+                continue;
+            }
+        }
+
+        let sizes = surface_extents(&patch);
+        // The query point's own width counts too, like a second object's.
+        let point_width = (0..3)
+            .map(|k| point[k].width().to_f64())
+            .fold(0.0, f64::max);
+        let carried = carried_width(&patch.control_points).max(point_width);
+        let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+            Stalled::Converged => {
+                if patch.convex_hull().could_contain(point) {
+                    report((u_hat, v_hat));
                 }
-                Err(_) => vec![0, 1],
-            },
-            Plan::Bisect(order) => order,
+                continue;
+            }
+            Stalled::Bisect(order) => order,
         };
         let halves = order.iter().find_map(|&dir| {
             if dir == 0 {
@@ -257,6 +249,7 @@ mod tests {
     use super::surface_could_contain;
     use crate::nurb_surface::NurbSurface;
     use geop_core_math::for_all_scalars;
+    use geop_core_math::scalars::ScalInF64;
     use geop_core_math::{
         scalars::Scalar,
         vector::{Vector3, Vector4},
@@ -413,6 +406,24 @@ mod tests {
     #[test]
     fn misses_off_surface_points() {
         for_all_scalars!(check_misses_off_surface_points);
+    }
+
+    /// `min_subdivision_size` bounds bisection, not accuracy: a point off the
+    /// sphere by far less than it is still rejected, because clipping keeps
+    /// shrinking the patch until it proves the miss. `ScalInF64` only: on
+    /// this rational patch `ScalInFPA64`'s fixed-point arithmetic carries
+    /// ~1e-7 of width, below which a report is its honest answer.
+    #[test]
+    fn misses_points_closer_than_min_subdivision_size() {
+        let r = (1. + 1e-10) / 3f64.sqrt();
+        let found = surface_could_contain(
+            &sphere_octant::<ScalInF64>(),
+            &v3(r, r, r),
+            MAX,
+            ScalInF64::from_f64(EPS),
+        )
+        .unwrap();
+        assert!(found.is_none(), "{found:?}");
     }
 
     /// An exhausted budget is an incomplete search: an error, never "not

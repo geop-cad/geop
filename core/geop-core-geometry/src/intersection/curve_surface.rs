@@ -24,10 +24,10 @@ use crate::{
     aabb::aabb_could_overlap,
     contains::surface::{
         boundary_curve, collapsed_boundary, surface_could_contain, surface_extents,
-        weights_positive,
     },
     fat_line::{
-        Plan, carried_width, clip_tensor, converged, directions, extent, greville_abscissae, plan,
+        Stalled, carried_width, clip_tensor, directions, extent, greville_abscissae, restriction,
+        stalled,
     },
     intersection::curve_curve,
     knot_insertion::pinned_clamped_end,
@@ -44,9 +44,8 @@ use geop_core_math::{
 
 /// Clip the pair: a box `[t̂, û, v̂]` inside the domains enclosing every
 /// `(t, u, v)` with `C(t) = S(u, v)`, or `None` if some equation proves
-/// there is none. The curve's weights are positive by construction; the
-/// surface's are checked (`curve_surface.md` §1) — without them the whole
-/// box is returned (no information) and the search subdivides.
+/// there is none. Both objects' weights are positive by construction
+/// (`curve_surface.md` §1), which the cross multiplication needs.
 ///
 /// The equations are combinations `g_n = n · (H_C W_S - W_C H_S)` along
 /// free-choice directions ([`directions`]), from the curve's chord `c` and
@@ -59,9 +58,6 @@ fn clip<S: Scalar>(c: &NurbCurve<S, 4>, s: &NurbSurface<S, 4>) -> GeopResult<Opt
     let (u0, u1) = s.domain_u();
     let (v0, v1) = s.domain_v();
     let mut hats = [c.domain_as_scalar(), u0.union(u1), v0.union(v1)];
-    if !weights_positive(s) {
-        return Ok(Some(hats));
-    }
     let (nc, nu, nv) = (c.control_points.len(), s.num_u, s.num_v);
     let greville = [
         greville_abscissae(&c.knot_vector, c.degree, nc)?,
@@ -146,10 +142,8 @@ fn solve_pinned<S: Scalar>(
         } else {
             c.control_points[c.control_points.len() - 1]
         };
-        let Ok(end) = dehomogenize::<S, 4, 3>(&[cp]) else {
-            return Ok(None);
-        };
-        let found = surface_could_contain(s, &end[0], budget, min_subdivision_size)?;
+        let end = dehomogenize::<S, 4, 3>(&[cp])[0];
+        let found = surface_could_contain(s, &end, budget, min_subdivision_size)?;
         return Ok(Some(
             found
                 .and_then(|(u, v)| overlapping([hats[0], u, v]))
@@ -185,11 +179,12 @@ fn solve_pinned<S: Scalar>(
 /// boxes (`curve_surface.md`), for a curve with no arc lying on the surface —
 /// see [`curve_surface_intersect`] for the wrapper that handles that. The same search as
 /// [`curve_curve::curve_curve_crossings`], over (curve segment, patch)
-/// pairs with three parameter directions: AABB and [`clip`] rejection,
-/// convergence once both objects' extents are within `min_subdivision_size`
-/// ([`crate::fat_line::converged`]), a pinned parameter handed down one dimension
-/// ([`solve_pinned`]), and otherwise restriction or fair bisection per
-/// [`crate::fat_line::plan`].
+/// pairs with three parameter directions: AABB and [`clip`] rejection, a
+/// pinned parameter handed down one dimension ([`solve_pinned`]),
+/// restriction while the clip keeps shrinking the pair
+/// ([`crate::fat_line::restriction`]), and once it stalls, convergence when
+/// both objects' extents are within `min_subdivision_size` or fair
+/// bisection otherwise ([`crate::fat_line::stalled`]).
 ///
 /// Overlapping boxes merge by union into one unresolved cluster, never an
 /// average. Exhausting `max_nodes` is an error — the result would be
@@ -223,18 +218,6 @@ pub fn curve_surface_crossings<S: Scalar>(
             continue;
         };
 
-        let [size_u, size_v] = surface_extents(&s);
-        let sizes = [extent([c.control_points.clone()]), size_u, size_v];
-        let carried = carried_width(&c.control_points).max(carried_width(&s.control_points));
-        if converged(&sizes, carried, min_subdivision_size) {
-            // The pieces' whole domains, not the tighter clip, so pieces the
-            // search could not separate merge — see `curve_curve_crossings`.
-            let (u0, u1) = s.domain_u();
-            let (v0, v1) = s.domain_v();
-            insert([c.domain_as_scalar(), u0.union(u1), v0.union(v1)]);
-            continue;
-        }
-
         if let Some(found) = solve_pinned(&c, &s, hats, max_nodes - explored, min_subdivision_size)?
         {
             found.into_iter().for_each(&mut insert);
@@ -242,15 +225,27 @@ pub fn curve_surface_crossings<S: Scalar>(
         }
 
         let ranges = [c.domain(), s.domain_u(), s.domain_v()];
-        let order = match plan(&hats, &ranges, &sizes, min_subdivision_size)? {
-            Plan::Restrict(b) => match (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2])) {
-                (Ok(rc), Ok(rs)) => {
-                    queue.push_back((rc, rs));
-                    continue;
-                }
-                _ => vec![0, 1, 2],
-            },
-            Plan::Bisect(order) => order,
+        if let Some(b) = restriction(&hats, &ranges)? {
+            if let (Ok(rc), Ok(rs)) = (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2])) {
+                queue.push_back((rc, rs));
+                continue;
+            }
+        }
+
+        let [size_u, size_v] = surface_extents(&s);
+        let sizes = [extent([c.control_points.clone()]), size_u, size_v];
+        let carried = carried_width(&c.control_points).max(carried_width(&s.control_points));
+        let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+            Stalled::Converged => {
+                // The pieces' whole domains, not the tighter clip, so pieces
+                // the search could not separate merge — see
+                // `curve_curve_crossings`.
+                let (u0, u1) = s.domain_u();
+                let (v0, v1) = s.domain_v();
+                insert([c.domain_as_scalar(), u0.union(u1), v0.union(v1)]);
+                continue;
+            }
+            Stalled::Bisect(order) => order,
         };
         let children = order.iter().find_map(|&dir| match dir {
             0 => {

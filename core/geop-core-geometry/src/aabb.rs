@@ -17,25 +17,17 @@ use geop_core_math::{scalars::Scalar, vector::Vector};
 /// produces exactly that axis's `[min, max]` extent — "3 scalar values" is
 /// the whole bounding box.
 ///
-/// A control point whose weight could be zero can't be safely dehomogenized
-/// (division by zero) — that axis falls back to [`Scalar::ENTIRE`]
-/// (matches-anything, i.e. that control point contributes no pruning power
-/// rather than an unsound one). `NurbCurve`/`NurbSurface::try_new` already
-/// reject such control points outright, so this only matters for the
-/// handful of constructors that build one directly (derivatives, splits),
-/// which don't always route through `try_new`.
+/// Every weight is definitely positive by construction
+/// (`NurbCurve`/`NurbSurface::try_new`), so dehomogenizing cannot fail.
 pub(crate) fn compute_aabb<S: Scalar, const D: usize>(control_points: &[Vector<S, D>]) -> [S; 3] {
     let mut acc: [Option<S>; 3] = [None; 3];
     for p in control_points {
         // One reciprocal per control point, shared by all its axes.
-        let w = p[D - 1];
-        let inv_w = if w.could_be_equal(S::ZERO) {
-            None
-        } else {
-            S::ONE.div(w).ok()
-        };
+        let inv_w = S::ONE
+            .div(p[D - 1])
+            .expect("weights are definitely positive by construction");
         for (axis, slot) in acc.iter_mut().enumerate().take(D - 1) {
-            let coord = inv_w.map_or(S::ENTIRE, |inv_w| p[axis].mul(inv_w));
+            let coord = p[axis].mul(inv_w);
             *slot = Some(match *slot {
                 None => coord,
                 Some(a) => a.union(coord),

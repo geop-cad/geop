@@ -1,98 +1,43 @@
 use geop_core_math::{
     geop_error::GeopResult,
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::{Vector, Vector2, Vector3},
 };
 
 use super::NurbCurve;
+use crate::spline::{find_span, homogeneous_derivatives, rational_derivatives};
+
+impl<S: Scalar, const D: usize> NurbCurve<S, D> {
+    /// The Cartesian point and its derivatives up to order `n` at `t`:
+    /// `[C(t), C'(t), …, C⁽ⁿ⁾(t)]`, with `C = D − 1`. Evaluated directly,
+    /// without building any derivative curve ([`homogeneous_derivatives`],
+    /// then the quotient rule [`rational_derivatives`]).
+    fn cartesian_derivatives<const C: usize>(&self, t: S, n: usize) -> GeopResult<Vec<Vector<S, C>>> {
+        let p = self.degree;
+        let span = find_span(p, &self.knot_vector, self.control_points.len() - 1, t)?;
+        let local = &self.control_points[span - p..=span];
+        rational_derivatives(&homogeneous_derivatives(p, &self.knot_vector, local, span, t, n))
+    }
+}
 
 impl<S: Scalar> NurbCurve<S, 4> {
     /// Cartesian tangent vector `C'(t)` (not normalized).
-    ///
-    /// Evaluates the homogeneous derivative curve from [`NurbCurve::derivative`]
-    /// and applies the quotient rule `C'(t) = (A'(t) − w'(t)·C(t)) / w(t)`,
-    /// where `(A(t), w(t))` is `self`'s own homogeneous point at `t`.
     pub fn tangent(&self, t: S) -> GeopResult<Vector3<S>> {
-        let pos = self.evaluate(t)?;
-
-        let span = self.find_knot_span(t)?;
-        let hw = self.de_boor(t, span);
-        let w = hw[3];
-
-        let deriv = self.derivative()?;
-        let dspan = deriv.find_knot_span(t)?;
-        let dhw = deriv.de_boor(t, dspan);
-
-        let mut result = Vector3::zero();
-        for c in 0..3 {
-            result[c] = dhw[c].sub(dhw[3].mul(pos[c])).div(w)?;
-        }
-        Ok(result)
+        Ok(self.cartesian_derivatives::<3>(t, 1)?[1])
     }
 
-    /// Cartesian second derivative `C''(t)` (not normalized).
-    ///
-    /// Applies the quotient rule twice: `C''(t) = (A''(t) − 2·w'(t)·C'(t) −
-    /// w''(t)·C(t)) / w(t)`, where `(A(t), w(t))` is `self`'s own homogeneous
-    /// point at `t` and `A''(t), w''(t)` come from differentiating the
-    /// homogeneous curve twice via [`NurbCurve::derivative`].
-    ///
-    /// A curve of degree `< 2` has no well-defined second derivative of its
-    /// *homogeneous* representation (differentiating twice underflows the
-    /// degree) — but geometrically a degree-`0`/`1` curve is a straight
-    /// line, whose Cartesian second derivative is genuinely zero, so that's
-    /// what's returned instead of an error.
+    /// Cartesian second derivative `C''(t)` (not normalized). Nonzero for a
+    /// rational degree-1 curve too: a line with unequal weights is not
+    /// traversed at constant speed.
     pub fn second_derivative(&self, t: S) -> GeopResult<Vector3<S>> {
-        if self.degree < 2 {
-            return Ok(Vector3::zero());
-        }
-
-        let pos = self.evaluate(t)?;
-        let tan = self.tangent(t)?;
-
-        let span = self.find_knot_span(t)?;
-        let w = self.de_boor(t, span)[3];
-
-        let d1 = self.derivative()?;
-        let d1span = d1.find_knot_span(t)?;
-        let wp = d1.de_boor(t, d1span)[3];
-
-        let d2 = d1.derivative()?;
-        let d2span = d2.find_knot_span(t)?;
-        let d2hw = d2.de_boor(t, d2span);
-        let wpp = d2hw[3];
-
-        let mut result = Vector3::zero();
-        for c in 0..3 {
-            result[c] = d2hw[c]
-                .sub(wp.mul(S::TWO).mul(tan[c]))
-                .sub(wpp.mul(pos[c]))
-                .div(w)?;
-        }
-        Ok(result)
+        Ok(self.cartesian_derivatives::<3>(t, 2)?[2])
     }
 }
 
 impl<S: Scalar> NurbCurve<S, 3> {
     /// Cartesian tangent vector `C'(t)` (not normalized), for a 2-D pcurve.
-    ///
-    /// Same quotient-rule derivation as the 3-D [`NurbCurve::<S, 4>::tangent`].
     pub fn tangent(&self, t: S) -> GeopResult<Vector2<S>> {
-        let pos = self.evaluate(t)?;
-
-        let span = self.find_knot_span(t)?;
-        let hw = self.de_boor(t, span);
-        let w = hw[2];
-
-        let deriv = self.derivative()?;
-        let dspan = deriv.find_knot_span(t)?;
-        let dhw = deriv.de_boor(t, dspan);
-
-        let mut result = Vector2::zero();
-        for c in 0..2 {
-            result[c] = dhw[c].sub(dhw[2].mul(pos[c])).div(w)?;
-        }
-        Ok(result)
+        Ok(self.cartesian_derivatives::<2>(t, 1)?[1])
     }
 }
 
@@ -171,6 +116,58 @@ mod tests {
     #[test]
     fn quadratic_start_tangent_direction() {
         for_all_scalars!(check_quadratic_start_tangent_direction);
+    }
+
+    /// Degree-1 line with weights 1 and 2: `x(t) = 2t / (1 + t)`, so
+    /// `x' = 2 / (1+t)²` and `x'' = −4 / (1+t)³` — nonzero although the
+    /// curve is straight.
+    fn check_rational_line_derivatives<S: Scalar>() {
+        let f = S::from_f64;
+        let c = NurbCurve::try_new(
+            1,
+            vec![pt(0., 0., 0., 1.), pt(2., 0., 0., 2.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap();
+        for t in [0., 0.3, 1.] {
+            let d1 = c.tangent(f(t)).unwrap();
+            let d2 = c.second_derivative(f(t)).unwrap();
+            assert!(d1[0].could_be_equal(f(2. / (1. + t).powi(2))), "{d1:?}");
+            assert!(d2[0].could_be_equal(f(-4. / (1. + t).powi(3))), "{d2:?}");
+            assert!(d1[1].could_be_equal(S::ZERO) && d2[1].could_be_equal(S::ZERO));
+        }
+    }
+    #[test]
+    fn rational_line_derivatives() {
+        for_all_scalars!(check_rational_line_derivatives);
+    }
+
+    /// On the exact rational unit quarter circle `|C| = 1`, so
+    /// `C·C' = 0` and `C·C'' + |C'|² = 0` for every `t`.
+    fn check_quarter_circle_derivatives<S: Scalar>() {
+        let f = S::from_f64;
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let c = NurbCurve::try_new(
+            2,
+            vec![pt(1., 0., 0., 1.), pt(w, w, 0., w), pt(0., 1., 0., 1.)],
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+        )
+        .unwrap();
+        for t in [0., 0.2, 0.5, 0.9, 1.] {
+            let p = c.evaluate(f(t)).unwrap();
+            let d1 = c.tangent(f(t)).unwrap();
+            let d2 = c.second_derivative(f(t)).unwrap();
+            assert!(p.prod_dot(&d1).could_be_equal(S::ZERO), "t={t}");
+            assert!(
+                p.prod_dot(&d2).add(d1.prod_dot(&d1)).could_be_equal(S::ZERO),
+                "t={t}: {d1:?} {d2:?}"
+            );
+            assert!(d1.norm().definitely_greater(S::ZERO));
+        }
+    }
+    #[test]
+    fn quarter_circle_derivatives() {
+        for_all_scalars!(check_quarter_circle_derivatives);
     }
 
     // ── 2-D (pcurve) tangent ──────────────────────────────────────────────────

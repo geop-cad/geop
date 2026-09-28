@@ -32,10 +32,9 @@ $$
 (H_S,W_S)=\sum_{j,l}Q_{jl}M_j(u)L_l(v),
 $$
 
-so $C=H_C/W_C$ and $S=H_S/W_S$. Require both denominators to be definitely
-nonzero on the current domain; definitely positive weights suffice. As in
-[surface containment](../contains/surface.md), verify this precondition
-rather than assuming every constructed surface satisfies it.
+so $C=H_C/W_C$ and $S=H_S/W_S$. Both denominators are positive on the whole
+domain: `NurbCurve::try_new` and `NurbSurface::try_new` only accept
+definitely positive weights (see [curve containment](../contains/curve.md)).
 
 For $k\in\{x,y,z\}$, cross multiplication gives
 

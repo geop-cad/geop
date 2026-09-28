@@ -214,24 +214,22 @@ splitting (see `AGENTS.md`); the enclosure $\hat T$ itself is an *answer*, so
 the restriction must use its outer bounds, never a sharpened midpoint, and the
 reported result is the union of the final segments' domains.
 
-Termination uses the existing tunables only. A segment is reported with its
-clipped $\hat T$ (tighter than its domain, and still an enclosure) once either
+Termination uses the existing tunables only. Only a segment on which
+clipping has *stalled* (step 3, or step 4 when no cut lies strictly inside
+the domain) can be reported: once its spatial extent (control-polygon length,
+`fat_line::extent`) is no longer `definitely_greater` than
+`min_subdivision_size` — or than the width the curve and the point carry
+(`fat_line::converged`) — it is reported with its clipped $\hat T$ (tighter
+than its domain, and still an enclosure) instead of being bisected.
 
-- $\hat T$ is narrow (not `definitely_greater` than `min_subdivision_size`)
-  and the curve evaluated over the interval $\hat T$ contains $p$ with every
-  coordinate's width within `min_subdivision_size` — if that evaluation
-  *misses* $p$, the segment is rejected instead. Interval de Boor evaluation
-  only encloses $C(\hat T)$ when $\hat T$ lies in a single knot span, so
-  this is skipped when an interior knot is not definitely outside $\hat T$;
-  or
-- its chord is not `definitely_greater` than `min_subdivision_size`.
-
-A narrow $\hat T$ alone is not enough: one axis can pin $t$ down while the
-others were never checked at that precision, which would report points that
-are far from the curve. The evaluation is also what ends a search whose
-solution sits exactly on a domain end, where $\hat T$ collapses but no cut is
-possible. The whole search stops after `max_nodes` segments. These affect
-effort, not what the returned enclosure means.
+A segment that clipping still shrinks is never cut short: clipping converges
+until either the point is rejected or the interval noise stalls it, so a
+point that is merely within `min_subdivision_size` of the curve is rejected,
+not reported. `min_subdivision_size` only bounds how far *bisection* goes —
+separating several solutions, and ending a search whose solution sits
+exactly on a domain end, where $\hat T$ collapses but no cut is possible.
+The whole search stops after `max_nodes` segments. These affect effort, not
+what the returned enclosure means.
 
 ## Limitations
 

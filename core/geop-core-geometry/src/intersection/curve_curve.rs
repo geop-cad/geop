@@ -24,7 +24,8 @@ use crate::{
     aabb::aabb_could_overlap,
     contains::curve::curve_could_contain,
     fat_line::{
-        Plan, carried_width, clip_tensor, converged, directions, extent, greville_abscissae, plan,
+        Stalled, carried_width, clip_tensor, directions, extent, greville_abscissae, restriction,
+        stalled,
     },
     knot_insertion::pinned_clamped_end,
     nurb_curve::{NurbCurve, ParameterRefinable, dehomogenize},
@@ -111,7 +112,7 @@ fn pinned_endpoint<S: Scalar, const D: usize, const C: usize>(
         } else {
             curve.control_points[curve.control_points.len() - 1]
         };
-        dehomogenize::<S, D, C>(&[cp]).ok().map(|v| v[0])
+        dehomogenize::<S, D, C>(&[cp])[0]
     };
     let pinned = |curve: &NurbCurve<S, D>, hat: S| {
         pinned_clamped_end(
@@ -122,10 +123,10 @@ fn pinned_endpoint<S: Scalar, const D: usize, const C: usize>(
         )
     };
     if let Some(first) = pinned(a, hats[0]) {
-        return endpoint(a, first).map(|p| (p, true));
+        return Some((endpoint(a, first), true));
     }
     if let Some(first) = pinned(b, hats[1]) {
-        return endpoint(b, first).map(|p| (p, false));
+        return Some((endpoint(b, first), false));
     }
     None
 }
@@ -137,15 +138,17 @@ fn pinned_endpoint<S: Scalar, const D: usize, const C: usize>(
 ///
 /// - the cached AABBs and the [`clip`] are necessary conditions — failing
 ///   either rejects the pair;
-/// - a pair converges once both segments' extents are within
-///   `min_subdivision_size` ([`crate::fat_line::converged`]), and reports its
-///   segments' domains — a *candidate*, not an existence proof;
 /// - if one parameter is pinned onto a clamped end, the other curve is
 ///   searched for that endpoint with [`curve_could_contain`];
-/// - otherwise both curves are restricted to the clip, or one is bisected,
-///   per [`crate::fat_line::plan`]. Rebuilding the coefficients after a
-///   restriction is what couples the directions: clipping `t` shrinks the
-///   rows unioned for `s`.
+/// - while the clip keeps shrinking the pair, both curves are restricted to
+///   it ([`crate::fat_line::restriction`]). Rebuilding the coefficients
+///   after a restriction is what couples the directions: clipping `t`
+///   shrinks the rows unioned for `s`;
+/// - once clipping stalls ([`crate::fat_line::stalled`]), a pair whose
+///   segments' extents are both within `min_subdivision_size` has converged
+///   and reports its segments' domains — a *candidate*, not an existence
+///   proof; any other has one curve bisected. `min_subdivision_size` thus
+///   bounds only bisection, never a pair clipping is still shrinking.
 ///
 /// Boxes that overlap are merged by union into one unresolved cluster
 /// (`DisjointSet`), never averaged. Exhausting `max_nodes` is an error —
@@ -182,22 +185,6 @@ where
             continue;
         };
 
-        let sizes = [
-            extent([a.control_points.clone()]),
-            extent([b.control_points.clone()]),
-        ];
-        let carried = carried_width(&a.control_points).max(carried_width(&b.control_points));
-        if converged(&sizes, carried, min_subdivision_size) {
-            // The pieces' whole domains, not the tighter clip: pieces the
-            // search could not separate — a tangency converges on a chain of
-            // adjacent ones — must merge into one unresolved cluster, and
-            // adjacent domains share an endpoint where clips need not touch.
-            // A transversal crossing loses nothing: restriction has already
-            // cut its pieces down to the clip.
-            solutions.insert((a.domain_as_scalar(), b.domain_as_scalar()));
-            continue;
-        }
-
         if let Some((point, on_a)) = pinned_endpoint::<S, D, C>(&a, &b, hats) {
             let (other, free) = if on_a { (&b, hats[1]) } else { (&a, hats[0]) };
             let budget = max_nodes - explored;
@@ -215,20 +202,33 @@ where
         }
 
         let ranges = [a.domain(), b.domain()];
-        let order = match plan(&hats, &ranges, &sizes, min_subdivision_size)? {
-            Plan::Restrict(bounds) => {
-                match (
-                    a.sub_curve(bounds[0].0, bounds[0].1),
-                    b.sub_curve(bounds[1].0, bounds[1].1),
-                ) {
-                    (Ok(ra), Ok(rb)) => {
-                        queue.push_back((ra, rb));
-                        continue;
-                    }
-                    _ => vec![0, 1],
-                }
+        if let Some(bounds) = restriction(&hats, &ranges)? {
+            if let (Ok(ra), Ok(rb)) = (
+                a.sub_curve(bounds[0].0, bounds[0].1),
+                b.sub_curve(bounds[1].0, bounds[1].1),
+            ) {
+                queue.push_back((ra, rb));
+                continue;
             }
-            Plan::Bisect(order) => order,
+        }
+
+        let sizes = [
+            extent([a.control_points.clone()]),
+            extent([b.control_points.clone()]),
+        ];
+        let carried = carried_width(&a.control_points).max(carried_width(&b.control_points));
+        let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+            Stalled::Converged => {
+                // The pieces' whole domains, not the tighter clip: pieces the
+                // search could not separate — a tangency converges on a chain
+                // of adjacent ones — must merge into one unresolved cluster,
+                // and adjacent domains share an endpoint where clips need not
+                // touch. A transversal crossing loses nothing: restriction has
+                // already cut its pieces down to the clip.
+                solutions.insert((a.domain_as_scalar(), b.domain_as_scalar()));
+                continue;
+            }
+            Stalled::Bisect(order) => order,
         };
         let children = order.iter().find_map(|&dir| {
             if dir == 0 {

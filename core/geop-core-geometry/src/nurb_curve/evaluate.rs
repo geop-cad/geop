@@ -5,60 +5,13 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
+use crate::spline::{de_boor, find_span};
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
-    /// Returns span index k where u[k] <= t < u[k+1].
-    pub(super) fn find_knot_span(&self, t: S) -> GeopResult<usize> {
-        let n = self.control_points.len() - 1;
-        let p = self.degree;
-        let u = &self.knot_vector;
-
-        if t.definitely_less(u[p]) || t.definitely_greater(u[n + 1]) {
-            return Err(GeopError::new(format!(
-                "parameter t={} out of domain [{}, {}]",
-                t,
-                u[p],
-                u[n + 1]
-            )));
-        }
-
-        if !t.definitely_less(u[n + 1]) {
-            for k in (p..=n).rev() {
-                if u[k].definitely_less(u[n + 1]) {
-                    return Ok(k);
-                }
-            }
-            return Ok(p);
-        }
-
-        for k in p..=n {
-            if !t.definitely_less(u[k]) && t.definitely_less(u[k + 1]) {
-                return Ok(k);
-            }
-        }
-
-        Err(GeopError::new("could not find knot span"))
-    }
-
-    /// De Boor triangular recursion; returns the homogeneous result `Vector<S, D>`.
-    pub(super) fn de_boor(&self, t: S, span: usize) -> Vector<S, D> {
-        let p = self.degree;
-        let u = &self.knot_vector;
-        let mut d: Vec<Vector<S, D>> = (0..=p).map(|j| self.control_points[span - p + j]).collect();
-
-        for r in 1..=p {
-            for j in (r..=p).rev() {
-                let i = span - p + j;
-                let denom = u[i + p - r + 1].sub(u[i]);
-                let alpha = if denom.could_be_equal(S::ZERO) {
-                    S::ZERO
-                } else {
-                    t.sub(u[i]).div(denom).unwrap_or(S::ZERO)
-                };
-                d[j] = Vector::interpolate(&d[j - 1], &d[j], alpha);
-            }
-        }
-        d[p]
+    /// The homogeneous point `(A(t), W(t))` and the knot span it came from.
+    pub(super) fn homogeneous(&self, t: S) -> GeopResult<(Vector<S, D>, usize)> {
+        let span = find_span(self.degree, &self.knot_vector, self.control_points.len() - 1, t)?;
+        Ok((de_boor(self.degree, &self.knot_vector, &self.control_points, t, span), span))
     }
 }
 
@@ -67,8 +20,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 impl<S: Scalar> NurbCurve<S, 4> {
     /// Evaluate the 3-D NURBS curve at `t`, returning a Cartesian `Vector3`.
     pub fn evaluate(&self, t: S) -> GeopResult<Vector3<S>> {
-        let span = self.find_knot_span(t)?;
-        let hw = self.de_boor(t, span);
+        let (hw, span) = self.homogeneous(t)?;
         let w = hw[3];
         if w.could_be_equal(S::ZERO) {
             return Err(GeopError::new(format!(
@@ -101,8 +53,7 @@ impl<S: Scalar> geop_core_math::primitives::scene::RasterizableCurve<S> for Nurb
 impl<S: Scalar> NurbCurve<S, 3> {
     /// Evaluate the 2-D pcurve at `t`, returning a Cartesian `Vector2`.
     pub fn evaluate(&self, t: S) -> GeopResult<Vector2<S>> {
-        let span = self.find_knot_span(t)?;
-        let hw = self.de_boor(t, span);
+        let (hw, span) = self.homogeneous(t)?;
         let w = hw[2];
         if w.could_be_equal(S::ZERO) {
             return Err(GeopError::new(format!(

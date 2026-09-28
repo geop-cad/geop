@@ -127,70 +127,66 @@ pub(crate) fn clip_tensor<S: Scalar>(
     true
 }
 
-/// What a clipping search does next with a box that was clipped but has not
-/// converged.
-pub(crate) enum Plan<S> {
-    /// Restrict to these per-direction bounds. A direction that isn't cut
-    /// gets its own domain ends, which cut nothing.
-    Restrict(Vec<(S, S)>),
-    /// Bisect, trying directions in this order.
-    Bisect(Vec<usize>),
-}
-
-/// The shared schedule of the clipping searches (`surface.md` §4).
+/// The restriction step of the clipping searches' shared schedule
+/// (`surface.md` §4): the per-direction bounds to restrict the box to, or
+/// `None` if clipping has stalled.
 ///
 /// A direction is cut when its clip `hats[dir]` removed at least 20% of its
 /// domain `ranges[dir]` (the usual Bézier clipping rule) *and* one of the
 /// clip's sharp outer bounds lies strictly inside the domain. If any
-/// direction is cut, all such cuts are made at once. Otherwise the box is
-/// bisected, preferring the direction with the largest *spatial* extent
-/// `sizes[dir]` (see [`extent`]): parameter widths from differently scaled
-/// domains aren't comparable (`curve_surface.md` §3), and a direction with no
-/// extent at all — `u` along a pole row — gains nothing from a split, while
-/// every piece of it survives, so it is skipped, as is one whose domain is
-/// no wider than `min_subdivision_size`. An empty bisection order means
-/// nothing is left to split.
-pub(crate) fn plan<S: Scalar>(
+/// direction is cut, all such cuts are made at once; a direction that isn't
+/// gets its own domain ends, which cut nothing.
+///
+/// This comes *before* any convergence test ([`stalled`]): while clipping
+/// still shrinks a box, the box is not the resolution limit of anything, and
+/// stopping there would report a piece clipping was about to reject.
+pub(crate) fn restriction<S: Scalar>(
     hats: &[S],
     ranges: &[(S, S)],
-    sizes: &[f64],
-    min_subdivision_size: S,
-) -> GeopResult<Plan<S>> {
+) -> GeopResult<Option<Vec<(S, S)>>> {
     let min_progress = S::from_ratio(4, 5)?;
     let inside = |t: S, (a, b): (S, S)| t.definitely_greater(a) && t.definitely_less(b);
-    let widths: Vec<S> = ranges.iter().map(|&(a, b)| a.union(b).width()).collect();
-
     let cut: Vec<bool> = (0..hats.len())
         .map(|dir| {
             let hat = hats[dir];
-            hat.width().definitely_less(widths[dir].mul(min_progress))
+            let (a, b) = ranges[dir];
+            hat.width().definitely_less(a.union(b).width().mul(min_progress))
                 && (inside(hat.lower(), ranges[dir]) || inside(hat.upper(), ranges[dir]))
         })
         .collect();
-    if cut.iter().any(|&c| c) {
-        return Ok(Plan::Restrict(
-            (0..hats.len())
-                .map(|dir| {
-                    if cut[dir] {
-                        (hats[dir].lower(), hats[dir].upper())
-                    } else {
-                        ranges[dir]
-                    }
-                })
-                .collect(),
-        ));
+    if !cut.iter().any(|&c| c) {
+        return Ok(None);
     }
-
-    let mut order: Vec<usize> = (0..hats.len())
-        .filter(|&dir| sizes[dir] > 0.0 && widths[dir].definitely_greater(min_subdivision_size))
-        .collect();
-    order.sort_by(|&a, &b| sizes[b].total_cmp(&sizes[a]));
-    Ok(Plan::Bisect(order))
+    Ok(Some(
+        (0..hats.len())
+            .map(|dir| {
+                if cut[dir] {
+                    (hats[dir].lower(), hats[dir].upper())
+                } else {
+                    ranges[dir]
+                }
+            })
+            .collect(),
+    ))
 }
 
-/// Whether a piece has converged: each spatial [`extent`] in `sizes` is no
-/// longer definitely greater than `min_subdivision_size` — or than
-/// `carried`, the interval width the geometry being compared carries (see
+/// What a clipping search does with a box on which clipping has stalled
+/// (no [`restriction`], or it could not be made).
+pub(crate) enum Stalled {
+    /// The box is at the resolution the data has: report it.
+    Converged,
+    /// Bisect, trying directions in this order. Empty means nothing is left
+    /// to split, so the box is reported as it is.
+    Bisect(Vec<usize>),
+}
+
+/// The rest of the shared schedule, for a box clipping could not shrink:
+/// either several solutions (or a tangency) share it, or it has reached the
+/// resolution its data has.
+///
+/// It has converged once each spatial [`extent`] in `sizes` is no longer
+/// definitely greater than `min_subdivision_size` — or than `carried`, the
+/// interval width the geometry being compared carries (see
 /// [`carried_width`]), whichever is larger. `carried` is the widest of *all*
 /// objects in the comparison: resolving one object finer than another's
 /// width answers nothing new — every piece within that width stays a
@@ -203,13 +199,37 @@ pub(crate) fn plan<S: Scalar>(
 /// that width; and once its extent is under it, splitting further cannot
 /// sharpen the answer either — every sub-piece still carries the full width —
 /// it only multiplies the pieces that survive. So subdivision stops at the
-/// resolution the data actually has. Only effort depends on this, never what
-/// a converged answer claims.
-pub(crate) fn converged<S: Scalar>(sizes: &[f64], carried: f64, min_subdivision_size: S) -> bool {
+/// resolution the data actually has. `min_subdivision_size` thus bounds only
+/// how far *bisection* goes, never how far clipping goes: only effort
+/// depends on it, never what a converged answer claims.
+///
+/// Otherwise the box is bisected, preferring the direction with the largest
+/// *spatial* extent `sizes[dir]`: parameter widths from differently scaled
+/// domains aren't comparable (`curve_surface.md` §3), and a direction with no
+/// extent at all — `u` along a pole row — gains nothing from a split, while
+/// every piece of it survives, so it is skipped, as is one whose domain is
+/// no wider than `min_subdivision_size`.
+pub(crate) fn stalled<S: Scalar>(
+    ranges: &[(S, S)],
+    sizes: &[f64],
+    carried: f64,
+    min_subdivision_size: S,
+) -> Stalled {
     let resolution = S::from_f64(carried).union(min_subdivision_size).upper();
-    sizes
+    if sizes
         .iter()
         .all(|&e| !S::from_f64(e).definitely_greater(resolution))
+    {
+        return Stalled::Converged;
+    }
+    let mut order: Vec<usize> = (0..ranges.len())
+        .filter(|&dir| {
+            let (a, b) = ranges[dir];
+            sizes[dir] > 0.0 && a.union(b).width().definitely_greater(min_subdivision_size)
+        })
+        .collect();
+    order.sort_by(|&a, &b| sizes[b].total_cmp(&sizes[a]));
+    Stalled::Bisect(order)
 }
 
 /// The interval width `points` carry: the widest Cartesian coordinate of any

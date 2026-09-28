@@ -13,6 +13,7 @@ use geop_core_math::{
 };
 
 use super::{NurbCurve, ParameterRefinable};
+use crate::spline::find_span;
 
 /// Uniform parameterization: `t[0] = 0`, `t[last] = 1`, interior values
 /// evenly spaced regardless of the spacing of `points`.
@@ -98,36 +99,6 @@ fn averaging_knots<S: Scalar>(t: &[S], degree: usize) -> Vec<S> {
         knots[j + p] = sum.div(p_s).unwrap();
     }
     knots
-}
-
-/// Find the knot span containing `t` (last index `k` in `[degree, n]` with
-/// `knots[k] <= t < knots[k+1]`) — identical in structure to
-/// `nurb_surface::evaluate::find_span` / `NurbCurve::find_knot_span`, kept
-/// standalone here since the knot vector doesn't belong to a curve yet.
-fn find_span<S: Scalar>(degree: usize, knots: &[S], n: usize, t: S) -> GeopResult<usize> {
-    let p = degree;
-    if t.definitely_less(knots[p]) || t.definitely_greater(knots[n + 1]) {
-        return Err(GeopError::new(format!(
-            "parameter t={} out of domain [{}, {}]",
-            t,
-            knots[p],
-            knots[n + 1]
-        )));
-    }
-    if !t.definitely_less(knots[n + 1]) {
-        for k in (p..=n).rev() {
-            if knots[k].definitely_less(knots[n + 1]) {
-                return Ok(k);
-            }
-        }
-        return Ok(p);
-    }
-    for k in p..=n {
-        if !t.definitely_less(knots[k]) && t.definitely_less(knots[k + 1]) {
-            return Ok(k);
-        }
-    }
-    Err(GeopError::new("could not find knot span"))
 }
 
 /// All `degree + 1` nonzero basis function values at `t`, for the span

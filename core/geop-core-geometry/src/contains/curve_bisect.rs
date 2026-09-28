@@ -71,16 +71,7 @@ where
             continue;
         }
 
-        let hull = match seg.convex_hull() {
-            Ok(hull) => hull,
-            // Degenerate segment (zero weight): can't be ruled out, so its
-            // whole domain conservatively folds into the solution instead of
-            // aborting the rest of the search.
-            Err(_) => {
-                solution = Some(union_domain(solution, seg.domain_as_scalar()));
-                continue;
-            }
-        };
+        let hull = seg.convex_hull();
 
         if !hull.could_contain(point) {
             continue;

@@ -264,7 +264,7 @@ impl<S: Scalar> NurbCurve3D<S> {
     /// on the line from the first to the last, which is then the curve's
     /// direction. `None` for a curve that bends, or whose ends coincide.
     pub fn as_line(&self) -> GeopResult<Option<Axis<S>>> {
-        let points = dehomogenize::<S, 4, 3>(&self.control_points)?;
+        let points = dehomogenize::<S, 4, 3>(&self.control_points);
         let (first, last) = (points[0], points[points.len() - 1]);
         let d = last.sub(&first);
         if could_be_zero(&d) {
@@ -337,7 +337,7 @@ fn bezier_circle<S: Scalar>(piece: &NurbCurve3D<S>) -> GeopResult<Option<Circle<
         [a, b, c] => [*a, *b, *c],
         _ => return Ok(None),
     };
-    let points = dehomogenize::<S, 4, 3>(&[h0, h1, h2])?;
+    let points = dehomogenize::<S, 4, 3>(&[h0, h1, h2]);
     let (p0, p1, p2) = (points[0], points[1], points[2]);
     let (w0, w1, w2) = (h0[3], h1[3], h2[3]);
     let tangent = p1.sub(&p0).norm_sq();
@@ -387,7 +387,7 @@ impl<S: Scalar> NurbSurface3D<S> {
             point: self.evaluate(u, v)?,
             normal: self.normal(u, v)?,
         };
-        let points = dehomogenize::<S, 4, 3>(&self.control_points)?;
+        let points = dehomogenize::<S, 4, 3>(&self.control_points);
         Ok(points
             .iter()
             .all(|p| plane.signed_distance(p).could_be_equal(S::ZERO))
@@ -451,7 +451,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                     return Ok(None);
                 }
             }
-            let points = dehomogenize::<S, 4, 3>(&cps)?;
+            let points = dehomogenize::<S, 4, 3>(&cps);
             if points.iter().all(|p| p.could_be_equal(&points[0])) {
                 poles.push(points[0]);
                 continue;

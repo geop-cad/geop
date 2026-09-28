@@ -75,16 +75,7 @@ pub fn surface_could_contain<S: Scalar>(
             continue;
         }
 
-        let hull = match patch.convex_hull() {
-            Ok(hull) => hull,
-            Err(_) => {
-                // Degenerate patch: can't be ruled out, so its whole domain
-                // conservatively folds into the solution instead of aborting
-                // the rest of the search.
-                solution = Some(union_uv(solution, patch_uv()));
-                continue;
-            }
-        };
+        let hull = patch.convex_hull();
 
         if !hull.could_contain(point) {
             continue;

@@ -1,5 +1,4 @@
 mod convex_hull;
-mod derivative;
 mod evaluate;
 mod interpolate;
 mod project;
@@ -71,9 +70,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         // case here, so they are rejected at construction rather than
         // surfacing as a division by zero far downstream. `split` forms
         // convex combinations of existing control points and so preserves
-        // this; `derivative` does not (its last coordinate is `W'`, not a
-        // weight), so a derivative curve is a hodograph for evaluation only
-        // and must never be handed to a containment/intersection search.
+        // this.
         for p in &control_points {
             if !p[D - 1].definitely_greater(S::ZERO) {
                 return Err(GeopError::new(&format!(
@@ -159,5 +156,32 @@ impl<S: Scalar> Display for NurbCurve3D<S> {
             .map(|p| p.to_string())
             .unwrap_or_else(|_| "N/A".to_string());
         write!(f, "NurbCurve({} -> {})", start, end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NurbCurve;
+    use geop_core_math::for_all_scalars;
+    use geop_core_math::{scalars::Scalar, vector::Vector4};
+
+    /// Weights must be definitely positive: zero and negative are rejected.
+    fn check_non_positive_weight_is_rejected<S: Scalar>() {
+        let f = S::from_f64;
+        for w in [0., -1.] {
+            let result = NurbCurve::<S, 4>::try_new(
+                1,
+                vec![
+                    Vector4::from_array([f(0.), f(0.), f(0.), f(w)]),
+                    Vector4::from_array([f(1.), f(0.), f(0.), f(1.)]),
+                ],
+                vec![f(0.), f(0.), f(1.), f(1.)],
+            );
+            assert!(result.is_err(), "weight {w} accepted");
+        }
+    }
+    #[test]
+    fn non_positive_weight_is_rejected() {
+        for_all_scalars!(check_non_positive_weight_is_rejected);
     }
 }

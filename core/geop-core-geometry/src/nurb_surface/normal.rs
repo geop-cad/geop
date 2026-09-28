@@ -1,57 +1,132 @@
-use crate::nurb_curve::NurbCurve;
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult, WithContext},
+    scalars::Scalar,
+    vector::{Vector, Vector3},
+};
 
-use super::{
-    NurbSurface,
-    evaluate::{de_boor, find_span},
+use super::NurbSurface;
+use crate::{
+    knot_insertion::is_clamped_at,
+    nurb_curve::dehomogenize,
+    spline::{find_span, homogeneous_derivatives, rational_derivatives},
 };
 
 impl<S: Scalar> NurbSurface<S, 4> {
-    /// Isoparametric curve `u ↦ S(u, v)` at fixed `v`, as a `NurbCurve<S, 4>`.
-    fn isocurve_u(&self, v: S) -> GeopResult<NurbCurve<S, 4>> {
-        let span_v = find_span(self.degree_v, &self.knot_vector_v, self.num_v - 1, v)?;
-        let mut pts = Vec::with_capacity(self.num_u);
-        for i in 0..self.num_u {
-            let col: Vec<_> = (0..self.num_v)
-                .map(|j| self.control_points[i * self.num_v + j])
-                .collect();
-            pts.push(de_boor(self.degree_v, &self.knot_vector_v, &col, v, span_v));
-        }
-        NurbCurve::try_new(self.degree_u, pts, self.knot_vector_u.clone())
-    }
-
-    /// Isoparametric curve `v ↦ S(u, v)` at fixed `u`, as a `NurbCurve<S, 4>`.
-    fn isocurve_v(&self, u: S) -> GeopResult<NurbCurve<S, 4>> {
-        let span_u = find_span(self.degree_u, &self.knot_vector_u, self.num_u - 1, u)?;
-        let mut pts = Vec::with_capacity(self.num_v);
-        for j in 0..self.num_v {
-            let row: Vec<_> = (0..self.num_u)
-                .map(|i| self.control_points[i * self.num_v + j])
-                .collect();
-            pts.push(de_boor(self.degree_u, &self.knot_vector_u, &row, u, span_u));
-        }
-        NurbCurve::try_new(self.degree_v, pts, self.knot_vector_v.clone())
+    /// The pure partial derivatives up to order `n` at `(u, v)`:
+    /// `([S, S_u, S_uu, …], [S, S_v, S_vv, …])`. A pure partial only
+    /// differentiates along its own direction, so each is the curve case
+    /// ([`homogeneous_derivatives`], then [`rational_derivatives`]) run
+    /// across the local rows (columns), each first evaluated at `v` (`u`).
+    fn pure_derivatives(&self, u: S, v: S, n: usize) -> GeopResult<(Vec<Vector3<S>>, Vec<Vector3<S>>)> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
+        let nv = self.num_v;
+        let span_u = find_span(p, ku, self.num_u - 1, u)?;
+        let span_v = find_span(q, kv, nv - 1, v)?;
+        let cp = &self.control_points;
+        let rows: Vec<Vector<S, 4>> = (span_u - p..=span_u)
+            .map(|i| {
+                let local: Vec<_> = (span_v - q..=span_v).map(|j| cp[i * nv + j]).collect();
+                homogeneous_derivatives(q, kv, &local, span_v, v, 0)[0]
+            })
+            .collect();
+        let cols: Vec<Vector<S, 4>> = (span_v - q..=span_v)
+            .map(|j| {
+                let local: Vec<_> = (span_u - p..=span_u).map(|i| cp[i * nv + j]).collect();
+                homogeneous_derivatives(p, ku, &local, span_u, u, 0)[0]
+            })
+            .collect();
+        Ok((
+            rational_derivatives(&homogeneous_derivatives(p, ku, &rows, span_u, u, n))?,
+            rational_derivatives(&homogeneous_derivatives(q, kv, &cols, span_v, v, n))?,
+        ))
     }
 
     /// Partial derivatives `(∂S/∂u, ∂S/∂v)` at `(u, v)`.
     pub fn derivatives(&self, u: S, v: S) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let du = self.isocurve_u(v)?.tangent(u)?;
-        let dv = self.isocurve_v(u)?.tangent(v)?;
-        Ok((du, dv))
+        let (du, dv) = self.pure_derivatives(u, v, 1)?;
+        Ok((du[1], dv[1]))
     }
 
     /// Pure second partial derivatives `(∂²S/∂u², ∂²S/∂v²)` at `(u, v)`.
-    ///
-    /// Each is obtained by fixing the *other* parameter, collapsing the
-    /// surface to a 1-D isocurve, and differentiating that curve twice —
-    /// exactly what "pure" (non-mixed) partials mean. The mixed partial
-    /// `∂²S/∂u∂v` is deliberately not computed here (see
+    /// The mixed partial `∂²S/∂u∂v` is deliberately not computed (see
     /// [`curvature_radius`](super::curvature::curvature_radius) for why it's
     /// not needed for this crate's surfaces).
     pub(crate) fn second_derivatives(&self, u: S, v: S) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let duu = self.isocurve_u(v)?.second_derivative(u)?;
-        let dvv = self.isocurve_v(u)?.second_derivative(v)?;
-        Ok((duu, dvv))
+        let (du, dv) = self.pure_derivatives(u, v, 2)?;
+        Ok((du[2], dv[2]))
+    }
+
+    /// The boundary row at the start (`first`) or end of the `u` domain
+    /// (`u_fixed`) or `v` domain, and the row next to it — `None` unless the
+    /// knot vector is clamped there, so that the boundary row *is* the
+    /// surface.
+    fn boundary_rows(&self, u_fixed: bool, first: bool) -> Option<[Vec<Vector<S, 4>>; 2]> {
+        let (nu, nv) = (self.num_u, self.num_v);
+        let (knots, degree, len) = if u_fixed {
+            (&self.knot_vector_u, self.degree_u, nu)
+        } else {
+            (&self.knot_vector_v, self.degree_v, nv)
+        };
+        if len < 2 || !is_clamped_at(knots, degree, first) {
+            return None;
+        }
+        let row = |k: usize| -> Vec<Vector<S, 4>> {
+            if u_fixed {
+                self.control_points[k * nv..(k + 1) * nv].to_vec()
+            } else {
+                (0..nu).map(|i| self.control_points[i * nv + k]).collect()
+            }
+        };
+        let (edge, next) = if first { (0, 1) } else { (len - 1, len - 2) };
+        Some([row(edge), row(next)])
+    }
+
+    /// The normal at a pole: the boundary row at the start (`first`) or end
+    /// of the `u` (`u_fixed`) or `v` domain, if it collapses to a single
+    /// point `P`. `None` if that row is no pole.
+    ///
+    /// Leaving the pole, the derivative across the row is a positive
+    /// combination of the *spokes* `E_i = X_i − P` to the next row's
+    /// Cartesian control points `X_i` (the weights only scale each spoke by
+    /// a positive factor). So the pole has a tangent plane exactly when the
+    /// spokes are coplanar, and its normal is that plane's, oriented like
+    /// `S_u × S_v` next to it by the spokes' turning `T = Σ E_i × E_{i+1}`.
+    /// Spokes that are not coplanar — an apex, like a cone's — leave no
+    /// single normal: an error, not an arbitrary pick among them.
+    fn pole_normal(&self, u_fixed: bool, first: bool) -> Option<GeopResult<Vector3<S>>> {
+        let [edge, next] = self.boundary_rows(u_fixed, first)?;
+        let edge = dehomogenize::<S, 4, 3>(&edge);
+        if !edge.iter().all(|p| p.could_be_equal(&edge[0])) {
+            return None;
+        }
+        let pole = edge[0];
+        let spokes: Vec<Vector3<S>> = dehomogenize::<S, 4, 3>(&next)
+            .iter()
+            .map(|x| x.sub(&pole))
+            .collect();
+        let turning = spokes
+            .windows(2)
+            .fold(Vector3::zero(), |acc: Vector3<S>, e| acc.add(&e[0].prod_cross(&e[1])));
+        let result = turning.normalize().and_then(|t| {
+            if !spokes.iter().all(|e| e.prod_dot(&t).could_be_equal(S::ZERO)) {
+                return Err(GeopError::new(format!(
+                    "the spokes {spokes:?} are not coplanar: an apex has no single normal"
+                )));
+            }
+            // Next to a collapsed `v` row `S_u × S_v ≈ (v − v₀) S_uv × S_v`,
+            // next to a collapsed `u` row `≈ (u − u₀) S_u × S_uv`; `S_uv`
+            // turns the way the spokes do, and `v − v₀` (`u − u₀`) is
+            // positive at the domain start.
+            Ok(if u_fixed == first { t } else { t.neg() })
+        });
+        Some(result.with_context(&|e: GeopError| {
+            e.with_context(format!(
+                "NurbSurface::pole_normal(pole={pole:?}, collapsed {} row at the {})",
+                if u_fixed { "u" } else { "v" },
+                if first { "start" } else { "end" }
+            ))
+        }))
     }
 
     /// Unit surface normal at `(u, v)`, `normalize(∂S/∂u × ∂S/∂v)`.
@@ -65,9 +140,30 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// `box_solid`'s `FACE_DEFS` (`(P10 − P00) × (P01 − P00)`, `Forward`)
     /// and `revolve`/`sphere`'s patch constructors (natural normal is
     /// inward, hence `Reversed`) for both cases.
+    ///
+    /// **At a pole** — `(u, v)` touching a boundary row that collapses to a
+    /// point — `S_u × S_v` vanishes, and the normal is that of the pole
+    /// itself ([`Self::pole_normal`]), the same for every `u` (`v`) along
+    /// the row. Anything else where the cross product vanishes has no
+    /// normal and is an error.
     pub fn normal(&self, u: S, v: S) -> GeopResult<Vector3<S>> {
         let (du, dv) = self.derivatives(u, v)?;
-        du.prod_cross(&dv).normalize()
+        let regular = du.prod_cross(&dv).normalize();
+        if regular.is_ok() {
+            return regular;
+        }
+        let (u0, u1) = self.domain_u();
+        let (v0, v1) = self.domain_v();
+        for (u_fixed, t, (start, end)) in [(false, v, (v0, v1)), (true, u, (u0, u1))] {
+            for (end_value, first) in [(start, true), (end, false)] {
+                if t.could_be_equal(end_value) {
+                    if let Some(normal) = self.pole_normal(u_fixed, first) {
+                        return normal;
+                    }
+                }
+            }
+        }
+        regular
     }
 }
 
@@ -148,5 +244,93 @@ mod tests {
     #[test]
     fn bent_surface_center_normal_is_z() {
         for_all_scalars!(check_bent_surface_center_normal_is_z);
+    }
+
+    // ── Poles ──────────────────────────────────────────────────────────────
+
+    /// Quarter of a revolved patch: `u` sweeps the unit quarter arc at
+    /// height `rim_z`, `v` runs linearly from the collapsed `v = 0` row at
+    /// `(0, 0, apex_z)` out to the arc. `apex_z = rim_z` is a flat disc, any
+    /// other a cone.
+    fn revolved<S: Scalar>(apex_z: f64, rim_z: f64) -> NurbSurface<S, 4> {
+        let f = S::from_f64;
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let rim = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
+        let mut cps = Vec::new();
+        for (x, y, wi) in rim {
+            cps.push(pt(0., 0., apex_z * wi, wi));
+            cps.push(pt(x * wi, y * wi, rim_z * wi, wi));
+        }
+        NurbSurface::try_new(
+            2,
+            1,
+            cps,
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap()
+    }
+
+    /// A disc's centre has the disc's normal — for every `u` at once, and
+    /// the same as just off the pole.
+    fn check_disc_centre_normal<S: Scalar>() {
+        let f = S::from_f64;
+        let disc = revolved::<S>(0., 0.);
+        let every_u = f(0.).union(f(1.));
+        let n = disc.normal(every_u, f(0.)).unwrap();
+        let off = disc.normal(f(0.5), f(0.5)).unwrap();
+        assert!(n.could_be_equal(&off), "{n:?} vs {off:?}");
+        assert!(n[2].abs().could_be_equal(S::ONE) && n[0].could_be_equal(S::ZERO), "{n:?}");
+    }
+    #[test]
+    fn disc_centre_normal() {
+        for_all_scalars!(check_disc_centre_normal);
+    }
+
+    /// A cone's apex has no single normal: its spokes are not coplanar.
+    fn check_cone_apex_has_no_normal<S: Scalar>() {
+        let f = S::from_f64;
+        let cone = revolved::<S>(1., 0.);
+        assert!(cone.normal(f(0.).union(f(1.)), f(0.)).is_err());
+        assert!(cone.normal(f(0.5), f(0.5)).is_ok());
+    }
+    #[test]
+    fn cone_apex_has_no_normal() {
+        for_all_scalars!(check_cone_apex_has_no_normal);
+    }
+
+    /// Exact rational sphere octant; `v = 1` is the pole (0, 0, 1) — a
+    /// collapsed row at the *end* of the domain, where the limit's sign
+    /// flips.
+    fn check_sphere_pole_normal<S: Scalar>() {
+        let f = S::from_f64;
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let sphere = NurbSurface::try_new(
+            2,
+            2,
+            vec![
+                pt(1., 0., 0., 1.),
+                pt(w, 0., w, w),
+                pt(0., 0., 1., 1.),
+                pt(w, w, 0., w),
+                pt(0.5, 0.5, 0.5, 0.5),
+                pt(0., 0., w, w),
+                pt(0., 1., 0., 1.),
+                pt(0., w, w, w),
+                pt(0., 0., 1., 1.),
+            ],
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let n = sphere.normal(f(0.).union(f(1.)), f(1.)).unwrap();
+        assert!(n[0].could_be_equal(S::ZERO) && n[1].could_be_equal(S::ZERO), "{n:?}");
+        // Same orientation as the regular normal just below the pole.
+        let below = sphere.normal(f(0.5), f(0.9)).unwrap();
+        assert!(n[2].mul(below[2]).definitely_greater(S::ZERO), "{n:?} vs {below:?}");
+    }
+    #[test]
+    fn sphere_pole_normal() {
+        for_all_scalars!(check_sphere_pole_normal);
     }
 }

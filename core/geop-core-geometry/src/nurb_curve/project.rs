@@ -34,11 +34,7 @@ impl<S: Scalar> NurbCurve<S, 4> {
             }
             explored += 1;
 
-            let hull = match seg.convex_hull() {
-                Ok(hull) => hull,
-                // Degenerate segment (zero weight): can't bound or split it — skip it.
-                Err(_) => continue,
-            };
+            let hull = seg.convex_hull();
             if hull.definitely_not_contains(&target) {
                 continue;
             }

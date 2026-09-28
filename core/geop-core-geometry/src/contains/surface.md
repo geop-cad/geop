@@ -6,9 +6,11 @@ Design extension of [curve containment](curve.md). Implemented in
 choices:
 
 - Clip B only; Clip A is not implemented.
-- Positive weights are checked per patch; if the check fails, that patch gets
-  no clip and plain subdivision takes over.
-- Convergence uses the AABB of the control net (the enclosing range), then
+- Positive weights are an invariant of `NurbSurface` (`try_new` rejects
+  anything else, and subdivision only forms convex combinations), so every
+  patch can be clipped.
+- Only a patch on which clipping has stalled can converge
+  (`fat_line::stalled`, on the control-polygon extents), and it then
   requires the geometric hull test to pass as well.
 - A direction pinned exactly onto a clamped domain end (§3) is searched as a
   boundary curve with `curve::curve_could_contain`.
@@ -45,11 +47,9 @@ S(u,v)=\frac{H(u,v)}{W(u,v)},\qquad
 (H,W)=\sum_{i,j}P_{ij}N_i(u)M_j(v).
 $$
 
-Require definitely positive weights on the patches to which this construction
-is applied; then $W>0$. This is a precondition to check, not an assumption to
-make merely because an object is a `NurbSurface`. More generally a denominator
-proved nonzero suffices for the algebra below. An unresolved denominator
-requires subdivision or an explicit unresolved result.
+All weights are definitely positive — `NurbSurface::try_new` rejects anything
+else, and subdivision only forms convex combinations of existing control
+points — so $W>0$ on the whole domain.
 
 For each Cartesian axis $k$:
 

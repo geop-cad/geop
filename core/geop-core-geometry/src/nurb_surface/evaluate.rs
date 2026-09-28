@@ -5,63 +5,7 @@ use geop_core_math::{
 };
 
 use super::NurbSurface;
-
-/// Find the knot span: last index k in [degree, n] where knots[k] <= t < knots[k+1].
-pub(super) fn find_span<S: Scalar>(
-    degree: usize,
-    knots: &[S],
-    n: usize,
-    t: S,
-) -> GeopResult<usize> {
-    let p = degree;
-    if t.definitely_less(knots[p]) || t.definitely_greater(knots[n + 1]) {
-        return Err(GeopError::new(format!(
-            "parameter t={} out of domain [{}, {}]",
-            t,
-            knots[p],
-            knots[n + 1]
-        )));
-    }
-    if !t.definitely_less(knots[n + 1]) {
-        for k in (p..=n).rev() {
-            if knots[k].definitely_less(knots[n + 1]) {
-                return Ok(k);
-            }
-        }
-        return Ok(p);
-    }
-    for k in p..=n {
-        if !t.definitely_less(knots[k]) && t.definitely_less(knots[k + 1]) {
-            return Ok(k);
-        }
-    }
-    Err(GeopError::new("could not find knot span"))
-}
-
-/// De Boor triangular recursion in homogeneous space; generic over CP dimension D.
-pub(super) fn de_boor<S: Scalar, const D: usize>(
-    degree: usize,
-    knots: &[S],
-    points: &[Vector<S, D>],
-    t: S,
-    span: usize,
-) -> Vector<S, D> {
-    let p = degree;
-    let mut d: Vec<Vector<S, D>> = (0..=p).map(|j| points[span - p + j]).collect();
-    for r in 1..=p {
-        for j in (r..=p).rev() {
-            let i = span - p + j;
-            let denom = knots[i + p - r + 1].sub(knots[i]);
-            let alpha = if denom.could_be_equal(S::ZERO) {
-                S::ZERO
-            } else {
-                t.sub(knots[i]).div(denom).unwrap_or(S::ZERO)
-            };
-            d[j] = Vector::interpolate(&d[j - 1], &d[j], alpha);
-        }
-    }
-    d[p]
-}
+use crate::spline::{de_boor, find_span};
 
 // ── 3-D surface ──────────────────────────────────────────────────────────────
 

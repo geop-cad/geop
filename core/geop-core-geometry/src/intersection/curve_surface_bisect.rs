@@ -124,32 +124,18 @@ fn dfs<S: Scalar>(
     // `fat_axis`'s own module doc. Tried in both directions: the surface's
     // own fat plane (its 3 corners) against the curve's points, and the
     // curve's own fat axis/axes against the surface's points.
-    if let (Ok(pts_c), Ok(pts_s)) = (
-        dehomogenize::<S, 4, 3>(&curve_seg.control_points),
-        dehomogenize::<S, 4, 3>(&surf_patch.control_points),
-    ) {
-        if surface_fat_plane_separates(&surf_patch, &pts_c)
-            || curve_fat_axes_separate(&curve_seg, &pts_s)
-        {
-            return Ok(DfsOutcome::NoSolution);
-        }
-    }
-
-    let (hull_c, hull_s) = match (curve_seg.convex_hull(), surf_patch.convex_hull()) {
-        (Ok(c), Ok(s)) => (c, s),
-        // Degenerate segment/patch (zero weight): can't bound or split it
-        // any further — report whatever's here rather than silently
-        // dropping it.
-        _ => return Ok(found_here(&curve_seg, &surf_patch)),
-    };
-    if hull_c.definitely_no_overlap(&hull_s) {
+    let pts_c = dehomogenize::<S, 4, 3>(&curve_seg.control_points);
+    let pts_s = dehomogenize::<S, 4, 3>(&surf_patch.control_points);
+    if surface_fat_plane_separates(&surf_patch, &pts_c) || curve_fat_axes_separate(&curve_seg, &pts_s)
+    {
         return Ok(DfsOutcome::NoSolution);
     }
 
-    let (curve_size, surf_size) = match (curve_seg.size(), surf_patch.size()) {
-        (Ok(c), Ok(s)) => (c, s),
-        _ => return Ok(found_here(&curve_seg, &surf_patch)),
-    };
+    if curve_seg.convex_hull().definitely_no_overlap(&surf_patch.convex_hull()) {
+        return Ok(DfsOutcome::NoSolution);
+    }
+
+    let (curve_size, surf_size) = (curve_seg.size(), surf_patch.size());
 
     // A side counts as converged once *either* its physical size or its own
     // parameter-domain width is no longer definitely greater than
