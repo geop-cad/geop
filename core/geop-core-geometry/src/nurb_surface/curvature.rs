@@ -97,12 +97,4 @@ mod tests {
     fn flat_patch_has_no_curvature_radius() {
         for_all_scalars!(check_flat_patch_has_no_curvature_radius);
     }
-
-    // A cylindrical-patch regression test (checking `curvature_radius`
-    // against a real `cylinder_solid`) used to live here, commented out.
-    // Since the crate split it can no longer live in this crate at all —
-    // `cylinder_solid` is built by `geop-ops-extrude-revolve`, which sits
-    // *above* `geop-core-geometry` in the workspace's dependency order — so
-    // it was removed rather than carried forward commented out. Equivalent
-    // coverage belongs in `geop-ops-extrude-revolve::cylinder`'s own tests.
 }

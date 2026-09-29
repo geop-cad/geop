@@ -15,9 +15,9 @@ use geop_core_math::{
     scalars::{Scalar, as_f64},
     vector::{Vector2, Vector3},
 };
-use geop_core_sketch::{CurveId, profile::curve_polyline};
+use geop_core_sketch::{CurveId, point::P2, profile::curve_polyline};
 use geop_core_topology::{FaceId, Model, SolidId};
-use geop_ops_rasterize::rasterize_model_tagged;
+use geop_ops_rasterize::rasterize;
 use serde::Serialize;
 
 use super::{Pointer, hit::nearer};
@@ -158,9 +158,9 @@ impl<S: Scalar> PartView<S> {
     /// `part` as drawn.
     pub fn of(part: &Part<S>) -> GeopResult<Self> {
         let model = part.topology();
-        let raster = rasterize_model_tagged(model, RESOLUTION)?;
+        let raster = rasterize(model, RESOLUTION)?;
         let name = |id: crate::RefId| part.name_of(id).unwrap_or_default().to_string();
-        let uv = |polyline: Vec<[f64; 2]>| {
+        let uv = |polyline: Vec<P2>| {
             polyline
                 .into_iter()
                 .map(|p| Vector2::from_array(p.map(S::from_f64)))

@@ -9,6 +9,7 @@
 pub mod bfgs;
 pub mod dual;
 pub mod geometry;
+pub mod point;
 pub mod profile;
 pub mod sketch;
 pub mod solve;

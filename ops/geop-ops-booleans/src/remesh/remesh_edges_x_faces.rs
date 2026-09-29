@@ -1590,7 +1590,7 @@ mod tests {
     };
     use geop_core_math::{scalars::ScalInF64, vector::Vector3};
     use geop_ops::Namer;
-    use geop_ops_extrude_revolve::cube::cube_solid;
+    use geop_ops_extrude_revolve::shapes::cube_solid;
 
     const MAX_NODES: usize = 20000;
     const MAX_EDGE_INTERSECTIONS: usize = 17;
@@ -1685,7 +1685,7 @@ mod tests {
         );
 
         std::fs::create_dir_all("outputs").unwrap();
-        match geop_ops_rasterize::rasterize_topology(model, 12) {
+        match geop_ops_rasterize::debug::rasterize_topology(model, 12) {
             Ok(render) => render
                 .save_to_file("outputs/remesh_edges_x_faces_box_grid_offset_x_half.html")
                 .unwrap(),

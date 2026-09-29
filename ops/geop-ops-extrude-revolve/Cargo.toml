@@ -12,5 +12,9 @@ geop-ops.workspace = true
 geop-ops-booleans.workspace = true
 serde.workspace = true
 
+[features]
+# The basic solids of `shapes`, for other crates' tests.
+test-shapes = []
+
 [dev-dependencies]
 geop-ops-rasterize.workspace = true

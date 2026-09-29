@@ -25,6 +25,7 @@ use geop_core_math::{
 };
 use geop_core_sketch::{
     Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch, SolveReport,
+    point::{P2, add, dist, sub},
     profile::curve_polyline,
 };
 use geop_ops::{
@@ -38,7 +39,7 @@ use geop_ops::{
 use crate::{
     AddSketchArgs,
     constraints::{self, Selection},
-    geometry::{P2, add, dist, sub, sweep_through},
+    geometry::sweep_through,
 };
 
 /// What a sketch's plane can be picked from.

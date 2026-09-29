@@ -19,6 +19,8 @@
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 
+use crate::point::P2;
+
 /// A 2-D vector.
 #[derive(Clone, Copy, Debug)]
 pub struct V<T> {
@@ -33,7 +35,7 @@ impl<T: Scalar> V<T> {
     pub fn new(x: T, y: T) -> Self {
         V { x, y }
     }
-    pub fn cst(p: [f64; 2]) -> Self {
+    pub fn cst(p: P2) -> Self {
         V::new(T::from_f64(p[0]), T::from_f64(p[1]))
     }
     pub fn add(self, o: Self) -> Self {
@@ -68,7 +70,7 @@ impl<T: Scalar> V<T> {
             self.x.mul(s).add(self.y.mul(c)),
         )
     }
-    pub fn value(self) -> [f64; 2] {
+    pub fn value(self) -> P2 {
         [self.x.to_f64(), self.y.to_f64()]
     }
 }

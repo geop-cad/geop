@@ -10,7 +10,7 @@ use geop_ops::{
     EntityRef, ORIGIN, Part, PlacedSketch,
     ui::{PartView, Pointer, Reach, Target},
 };
-use geop_ops_extrude_revolve::cube_solid;
+use geop_ops_extrude_revolve::shapes::cube_solid;
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))

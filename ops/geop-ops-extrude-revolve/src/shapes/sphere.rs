@@ -90,9 +90,8 @@ fn meridian_closing_pcurve<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_c
 /// pole-to-arc ruled patch, whose straight meridian direction would cut
 /// inside the sphere everywhere except right at the pole and the equator):
 /// every `(u, v)` sample, not just the boundary, lands exactly `radius`
-/// from `center`. Same tensor-product-of-two-arcs construction as
-/// `torus`'s own grid patches, specialized for one degenerate (pole) row —
-/// its own "row" arc has 3 coincident control points, same as
+/// from `center`. A tensor product of two arcs, one of them degenerate: its
+/// pole "row" arc has 3 coincident control points, same as
 /// `revolve`'s/`row_cps`'s degenerate case.
 fn sphere_quadrant_surface<S: Scalar>(
     pole: Vector3<S>,
@@ -527,7 +526,7 @@ mod tests {
         sphere_solid(&mut part, "t6", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::rasterize_topology(&model, 32).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 32).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());
@@ -547,7 +546,7 @@ mod tests {
         sphere_solid(&mut part, "t7", center, S::from_f64(2.0)).unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::rasterize_topology(&model, 32).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 32).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());

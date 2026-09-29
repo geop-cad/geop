@@ -42,12 +42,6 @@ impl<S: Scalar> NurbCurve<S, 4> {
     }
 }
 
-impl<S: Scalar> geop_core_math::primitives::scene::RasterizableCurve<S> for NurbCurve<S, 4> {
-    fn eval_at(&self, t: S) -> GeopResult<Vector3<S>> {
-        self.evaluate(t)
-    }
-}
-
 // ── 2-D curve (pcurve): evaluate returns Vector2 ─────────────────────────────
 
 impl<S: Scalar> NurbCurve<S, 3> {

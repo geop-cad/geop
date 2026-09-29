@@ -5,7 +5,7 @@
 //! whatever internal id it happens to get.
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
-use geop_core_sketch::{Constraint, CurveId, PointId, Sketch};
+use geop_core_sketch::{Constraint, CurveId, PointId, Sketch, point::P2};
 use geop_ops::{EntityRef, ORIGIN};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
@@ -16,7 +16,7 @@ use crate::Program;
 
 /// A closed polygon through `corners`, one line per side: its points and
 /// lines.
-fn polygon(sketch: &mut Sketch, corners: &[[f64; 2]]) -> (Vec<PointId>, Vec<CurveId>) {
+fn polygon(sketch: &mut Sketch, corners: &[P2]) -> (Vec<PointId>, Vec<CurveId>) {
     let points: Vec<PointId> = corners
         .iter()
         .map(|c| sketch.add_point(c[0], c[1]))
@@ -39,7 +39,7 @@ fn solved(mut sketch: Sketch) -> Sketch {
 
 /// A `width` x `depth` rectangle with its first corner at `origin`, drawn
 /// roughly and fully constrained.
-fn rectangle(sketch: &mut Sketch, origin: [f64; 2], width: f64, depth: f64) -> Vec<CurveId> {
+fn rectangle(sketch: &mut Sketch, origin: P2, width: f64, depth: f64) -> Vec<CurveId> {
     let [x, y] = origin;
     // Deliberately a little off: the constraints decide the shape.
     let (p, l) = polygon(
@@ -68,7 +68,7 @@ fn rectangle(sketch: &mut Sketch, origin: [f64; 2], width: f64, depth: f64) -> V
 }
 
 /// A circle of `radius` around `center`, fully constrained.
-fn circle(sketch: &mut Sketch, center: [f64; 2], radius: f64) -> CurveId {
+fn circle(sketch: &mut Sketch, center: P2, radius: f64) -> CurveId {
     let c = sketch.add_point(center[0], center[1]);
     let circle = sketch.add_circle(c, radius * 1.1);
     sketch.constrain(Constraint::Fix {
@@ -609,8 +609,9 @@ mod tests {
             serde_json::to_string_pretty(&description).unwrap(),
         )
         .unwrap();
-        geop_ops_rasterize::rasterize_model(part.topology(), 16)
+        geop_ops_rasterize::rasterize(part.topology(), 16)
             .unwrap()
+            .scene(|_| geop_ops_rasterize::debug::Color10::Blue)
             .save_to_file(dir.join(format!("{name}.html")).to_str().unwrap())
             .unwrap();
 

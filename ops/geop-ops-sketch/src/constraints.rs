@@ -5,7 +5,9 @@
 use geop_core_sketch::{Constraint, CurveId, CurveKind, PointId, Sketch, profile::curve_polyline};
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{P2, add, cross, dist, dot, polyline_mid, scale, sub};
+use geop_core_sketch::point::{P2, add, cross, dist, dot, scale, sub};
+
+use crate::geometry::polyline_mid;
 
 /// The points and curves selected in the sketch, in the order they were
 /// picked.
@@ -206,7 +208,7 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
             }
             if let Some((a, b)) = line_points(sketch, k) {
                 let d = sub(b, a);
-                let value = (cross(d, sub(pt(sketch, point), a)) / d[0].hypot(d[1])).abs();
+                let value = (cross(d, sub(pt(sketch, point), a)) / dist(a, b)).abs();
                 add(
                     "Distance",
                     "Distance from the line",

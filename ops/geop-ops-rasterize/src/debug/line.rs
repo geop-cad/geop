@@ -1,4 +1,4 @@
-use crate::{
+use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector3,

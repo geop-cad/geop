@@ -1,9 +1,9 @@
 use geop_core_geometry::{intersection::curve_curve_intersect, nurb_curve::NurbCurve};
 use geop_core_math::{
-    primitives::{Color10, PrimitiveScene},
     scalars::{ScalInF64, Scalar},
     vector::Vector4,
 };
+use geop_ops_rasterize::debug::{Color10, PrimitiveScene};
 
 fn f(v: f64) -> ScalInF64 {
     ScalInF64::from_f64(v)

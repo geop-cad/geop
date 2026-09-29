@@ -14,5 +14,5 @@ serde.workspace = true
 [dev-dependencies]
 # Only the tests' scenes are built from basic shapes. The extrude and revolve
 # operations combine through this crate, so it must not depend on them.
-geop-ops-extrude-revolve.workspace = true
+geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }
 geop-ops-rasterize.workspace = true

@@ -14,6 +14,7 @@ pub mod boolean;
 pub mod naming;
 pub mod operation;
 pub mod remesh;
+#[cfg(test)]
 mod render_test;
 #[cfg(test)]
 mod scenes;

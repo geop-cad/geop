@@ -1,9 +1,10 @@
 use crate::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::Vector3,
 };
 
+#[derive(Clone)]
 pub struct TriangleFace<S: Scalar> {
     pub a: Vector3<S>,
     pub b: Vector3<S>,
@@ -62,35 +63,4 @@ impl<S: Scalar> TriangleFace<S> {
             ..self
         }
     }
-
-    // /// Caller-supplied normal; validates it is roughly unit and perpendicular to edges.
-    // pub fn try_new_with_normal(
-    //     a: Vector3<S>,
-    //     b: Vector3<S>,
-    //     c: Vector3<S>,
-    //     normal: Vector3<S>,
-    // ) -> GeopResult<Self> {
-    //     let norm_sq = dot(&normal, &normal);
-    //     if norm_sq.definitely_less(S::ZERO) || !norm_sq.could_be_equal(S::ONE) {
-    //         return Err(GeopError::new(
-    //             "TriangleFace::try_new_with_normal: normal is not unit length",
-    //         ));
-    //     }
-    //     Ok(Self { a, b, c, normal })
-    // }
-
-    // /// Oriented signed distance from `p` to the plane: (p − a) · normal.
-    // pub fn distance_to_point(&self, p: &Vector3<S>) -> S {
-    //     let pa = VecN::<S, 3>::from_fn(|idx| p.get(idx).sub(self.a.get(idx)));
-    //     dot(&pa, &self.normal)
-    // }
-}
-
-/// A triangle in 2-D parameter space, used for surface rasterization.
-#[derive(Debug, Clone, Copy)]
-pub struct TriangleFace2d<S: Scalar> {
-    pub a: Vector2<S>,
-    pub b: Vector2<S>,
-    pub c: Vector2<S>,
-    pub normal: Vector2<S>,
 }

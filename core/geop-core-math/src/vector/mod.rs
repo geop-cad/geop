@@ -16,9 +16,6 @@ pub type Vector4<S> = Vector<S, 4>;
 pub type Vector3<S> = Vector<S, 3>;
 pub type Vector2<S> = Vector<S, 2>;
 
-/// Type alias for backwards compatibility with older code.
-pub type VecN<S, const N: usize> = Vector<S, N>;
-
 impl<S: Default + Copy, const N: usize> Vector<S, N> {
     pub fn new() -> Self {
         Self {

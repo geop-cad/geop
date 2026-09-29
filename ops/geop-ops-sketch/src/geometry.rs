@@ -1,34 +1,10 @@
-//! Plain-number geometry in a sketch's plane, for editing it: what the
-//! pointer is near, and the arc a tool draws through it. Distances here are
-//! UI tolerances and previews, not results the kernel reasons about; what
-//! the sketch *is* comes from its solver.
+//! What editing a sketch needs of its plane's geometry beyond
+//! [`geop_core_sketch::point`]: the arc a tool draws through the pointer,
+//! and where a curve's label goes. Distances here are UI tolerances and
+//! previews, not results the kernel reasons about; what the sketch *is*
+//! comes from its solver.
 
-pub type P2 = [f64; 2];
-
-pub fn sub(a: P2, b: P2) -> P2 {
-    [a[0] - b[0], a[1] - b[1]]
-}
-
-pub fn add(a: P2, b: P2) -> P2 {
-    [a[0] + b[0], a[1] + b[1]]
-}
-
-pub fn scale(a: P2, s: f64) -> P2 {
-    [a[0] * s, a[1] * s]
-}
-
-pub fn dot(a: P2, b: P2) -> f64 {
-    a[0] * b[0] + a[1] * b[1]
-}
-
-pub fn cross(a: P2, b: P2) -> f64 {
-    a[0] * b[1] - a[1] * b[0]
-}
-
-pub fn dist(a: P2, b: P2) -> f64 {
-    let d = sub(a, b);
-    d[0].hypot(d[1])
-}
+use geop_core_sketch::point::{P2, add, cross, dist, dot, scale, sub};
 
 /// The signed sweep of the arc from `s` to `e` through `p`, by the
 /// inscribed angle theorem: counter-clockwise (positive) when `p` lies right

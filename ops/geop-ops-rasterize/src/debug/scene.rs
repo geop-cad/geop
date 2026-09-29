@@ -2,25 +2,15 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{
+use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
+use geop_core_math::{
     geop_error::{DebugContext, GeopError, GeopResult},
+    primitives::TriangleFace,
     scalars::Scalar,
     vector::Vector3,
 };
 
-use super::{Color10, Line, TriangleFace};
-
-/// Trait for objects that can be uniformly sampled into 3D points for rendering.
-pub trait RasterizableCurve<S: Scalar> {
-    /// Evaluate the curve at parameter `t` and return a 3D point.
-    fn eval_at(&self, t: S) -> GeopResult<Vector3<S>>;
-}
-
-/// Trait for objects that can be uniformly sampled into 3D points for rendering.
-pub trait RasterizableSurface<S: Scalar> {
-    /// Evaluate the surface at `(u, v)` and return a 3D point.
-    fn eval_at(&self, u: S, v: S) -> GeopResult<Vector3<S>>;
-}
+use super::{Color10, Line};
 
 // ── unique id counter ─────────────────────────────────────────────────────────
 
@@ -30,7 +20,7 @@ fn next_id() -> u64 {
 }
 
 fn sample_surface_grid<S: Scalar>(
-    surface: &dyn RasterizableSurface<S>,
+    surface: &NurbSurface3D<S>,
     u_min: S,
     u_max: S,
     v_min: S,
@@ -56,7 +46,7 @@ fn sample_surface_grid<S: Scalar>(
                 let f = S::from_ratio(j as i64, (n - 1) as i64)?;
                 v_min.add(v_max.sub(v_min).mul(f))
             };
-            grid.push(surface.eval_at(u, v)?);
+            grid.push(surface.evaluate(u, v)?);
         }
     }
     Ok(grid)
@@ -214,7 +204,7 @@ impl<S: Scalar> PrimitiveScene<S> {
     /// Rasterize a curve: n uniform samples → n-1 line segments.
     pub fn add_curve(
         &mut self,
-        curve: &dyn RasterizableCurve<S>,
+        curve: &NurbCurve3D<S>,
         t_min: S,
         t_max: S,
         color: Color10,
@@ -233,7 +223,7 @@ impl<S: Scalar> PrimitiveScene<S> {
                 let frac = S::from_ratio(i as i64, (n - 1) as i64)?;
                 t_min.add(t_max.sub(t_min).mul(frac))
             };
-            pts.push(curve.eval_at(t)?);
+            pts.push(curve.evaluate(t)?);
         }
         for i in 0..n - 1 {
             if let Ok(seg) = Line::try_new(pts[i].clone(), pts[i + 1].clone()) {
@@ -247,7 +237,7 @@ impl<S: Scalar> PrimitiveScene<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn add_surface(
         &mut self,
-        surface: &dyn RasterizableSurface<S>,
+        surface: &NurbSurface3D<S>,
         color: Color10,
         u_min: S,
         u_max: S,
@@ -280,7 +270,7 @@ impl<S: Scalar> PrimitiveScene<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn add_surface_wireframe(
         &mut self,
-        surface: &dyn RasterizableSurface<S>,
+        surface: &NurbSurface3D<S>,
         color: Color10,
         u_min: S,
         u_max: S,

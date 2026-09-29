@@ -7,7 +7,10 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_sketch::{CurveId, CurveKind, Positions, ProfileLoop};
+use geop_core_sketch::{
+    CurveId, CurveKind, Positions, ProfileLoop,
+    point::{P2, dot, sub},
+};
 use geop_ops::{
     Namer, Part,
     operation::{EntityRef, Operation},
@@ -198,7 +201,7 @@ impl Operation for Revolve {
             // relative to the region's extent — a classification of design
             // data, like the nesting test in `Sketch::regions`.
             let outline = region.outer.polyline(sketch, &positions);
-            let side = |p: &[f64; 2]| (p[0] - a[0]) * left[0] + (p[1] - a[1]) * left[1];
+            let side = |p: &P2| dot(sub(*p, a), left);
             let (lo, hi) = outline
                 .iter()
                 .map(side)
@@ -276,7 +279,7 @@ impl Operation for Revolve {
             );
 
             let plane = &placed.plane;
-            let dir3 = |d: [f64; 2]| {
+            let dir3 = |d: P2| {
                 plane
                     .u()
                     .prod_scalar(S::from_f64(d[0]))

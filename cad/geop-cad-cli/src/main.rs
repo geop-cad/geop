@@ -21,7 +21,7 @@ use geop_core_math::{
 };
 use geop_ops::Part;
 use geop_ops_rasterize::{
-    rasterize_model_tagged,
+    rasterize,
     stl::{StlFormat, stl_triangles, write_stl},
 };
 
@@ -149,7 +149,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         faces.extend(of_solid);
     }
 
-    let raster = rasterize_model_tagged(model, usize::from(args.quality))?;
+    let raster = rasterize(model, usize::from(args.quality))?;
     let triangles = stl_triangles(&raster, &faces);
 
     let output = args

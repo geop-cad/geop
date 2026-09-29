@@ -8,7 +8,7 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_sketch::{ProfilePiece, Sketch, profile::curve_polyline};
+use geop_core_sketch::{ProfilePiece, Sketch, point::P2, profile::curve_polyline};
 use geop_ops::{
     Namer, Part,
     operation::{EntityRef, Operation},
@@ -248,7 +248,7 @@ pub(crate) fn sketch_profile<S: Scalar>(
 /// or its points if it has none — in sketch coordinates.
 fn sketch_center<S: Scalar>(sketch: &Sketch) -> Option<Vector2<S>> {
     let positions = sketch.positions();
-    let mut drawn: Vec<[f64; 2]> = sketch
+    let mut drawn: Vec<P2> = sketch
         .curves
         .iter()
         .filter(|(_, c)| !c.construction)

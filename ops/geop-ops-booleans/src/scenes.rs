@@ -1,6 +1,7 @@
 //! Reusable named test scenes for the booleans test suite: pairs of solids,
-//! each built in their own fresh [`Part`] purely from `basic_shapes` — no
-//! dependency on any boolean/remesh machinery (all still disabled pending
+//! each built in their own fresh [`Part`] purely from
+//! `geop_ops_extrude_revolve::shapes` — no dependency on any boolean/remesh
+//! machinery (all still disabled pending
 //! step-by-step revival, see `mod`'s own doc comment). Later
 //! revival steps grow what they *do* with a [`TestScene`]; for now,
 //! `topology_render_test` just renders each one's raw topology, as a first
@@ -15,7 +16,7 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_ops::Part;
 use geop_core_topology::SolidId;
-use geop_ops_extrude_revolve::{
+use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, figure8_profile::figure8_profile,
     sphere::sphere_solid,
 };
@@ -409,15 +410,15 @@ pub fn all_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 #[cfg(test)]
 mod topology_render_test {
     use super::*;
-    use geop_core_math::{primitives::Color10, scalars::ScalInF64};
-    use geop_ops_rasterize::rasterize_model_with_face_color;
+    use geop_core_math::scalars::ScalInF64;
+    use geop_ops_rasterize::{debug::Color10, rasterize};
 
     /// Render every scene's raw topology (no boolean/remesh operation at
     /// all — just the two solids as built) to `outputs/topology_tests/`,
     /// `solid_a`'s faces in blue and `solid_b`'s in purple. This is
     /// deliberately the *only* thing this first revival step does: confirm
     /// every scene builds and rasterizes cleanly against the current
-    /// `Model`/`basic_shapes` API before any tracing/remeshing logic gets
+    /// `Model`/`shapes` API before any tracing/remeshing logic gets
     /// switched back on.
     ///
     /// `ScalInF64` only, not `for_all_scalars!`: this sweeps 175 scenes (125
@@ -433,14 +434,13 @@ mod topology_render_test {
         for scene in all_scenes::<ScalInF64>() {
             let model = scene.part.topology();
             let faces_a = model.solid_faces(scene.solid_a).unwrap();
-            let scene_render = rasterize_model_with_face_color(model, 12, |face_id| {
+            let scene_render = rasterize(model, 12).unwrap().scene(|face_id| {
                 if faces_a.contains(&face_id) {
                     Color10::Blue
                 } else {
                     Color10::Purple
                 }
-            })
-            .unwrap();
+            });
             scene_render
                 .save_to_file(&format!("{dir}/{}.html", scene.name))
                 .unwrap();

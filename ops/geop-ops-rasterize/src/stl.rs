@@ -2,7 +2,7 @@
 //!
 //! STL is a bag of triangles, each with a normal and its three corners
 //! listed counter-clockwise seen from outside. The triangles here are the
-//! ones the viewer draws (see [`crate::rasterize_model_tagged`]), so an
+//! ones the viewer draws (see [`crate::rasterize`]), so an
 //! exported mesh is exactly what is on screen. Their winding comes from the
 //! `(u, v)` triangulation, which says nothing about outside; the surface
 //! normals do — every face's surface normal points out of its solid (see
@@ -135,15 +135,15 @@ pub fn write_stl(
 mod tests {
     use geop_core_math::{scalars::scal_in_f64::ScalInF64, vector::Vector3};
     use geop_ops::Part;
-    use geop_ops_extrude_revolve::{cube_solid, sphere::sphere_solid};
+    use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     use super::*;
-    use crate::rasterize_model_tagged;
+    use crate::rasterize;
 
     type S = ScalInF64;
 
     fn triangles_of(part: &Part<S>) -> Vec<StlTriangle> {
-        let raster = rasterize_model_tagged(part.topology(), 8).unwrap();
+        let raster = rasterize(part.topology(), 8).unwrap();
         let mut faces: Vec<FaceId> = raster.faces.keys().copied().collect();
         faces.sort_by_key(|f| f.0);
         stl_triangles(&raster, &faces)

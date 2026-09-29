@@ -3,7 +3,7 @@
 //! around a vertical axis, entirely from euler operations — built one
 //! angular quadrant *column* at a time (all `P = profile.len() - 1` row
 //! faces of a given 90-degree wedge, before moving to the next wedge),
-//! exactly the same strategy [`sphere_octants`](super::sphere::sphere_octants)
+//! exactly the same strategy `shapes::sphere::sphere_octants`
 //! uses for its own dedicated (exact, doubly-curved) construction, just
 //! generalized to an arbitrary profile instead of a fixed 2-segment
 //! pole-equator-pole one.
@@ -200,7 +200,7 @@ fn quadrant_patch<S: Scalar>(
 ///
 /// A thin wrapper around [`revolve_at_oriented`] with the identity
 /// (z-axis) coordinate system — see that function to revolve around an
-/// arbitrary axis (e.g. [`super::cylinder::revolved_cylinder_along_axis`]).
+/// arbitrary axis (e.g. `shapes::cylinder::revolved_cylinder_along_axis`).
 pub fn revolve_at<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,

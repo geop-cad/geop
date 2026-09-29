@@ -628,7 +628,7 @@ mod tests {
     use super::*;
     use geop_core_math::{for_all_scalars, vector::Vector3};
     use geop_ops::Part;
-    use geop_ops_extrude_revolve::{cube_solid, sphere::sphere_solid};
+    use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
         let (ax, ay) = (a[0].to_f64(), a[1].to_f64());
@@ -827,7 +827,7 @@ mod tests {
     /// out for trims a fixed grid-without-clipping can't represent.
     fn check_holed_footprint_triangulates_cleanly<S: Scalar>() {
         let mut part = Part::<S>::new();
-        geop_ops_extrude_revolve::figure8_profile::figure8_profile(&mut part, "f").unwrap();
+        geop_ops_extrude_revolve::shapes::figure8_profile::figure8_profile(&mut part, "f").unwrap();
         let model = part.topology();
         let mut total_triangles = 0;
         for face in model.faces.values() {

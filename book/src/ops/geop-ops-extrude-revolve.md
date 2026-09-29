@@ -2,8 +2,8 @@
 
 > Brief overview only — full documentation is coming later.
 
-Extrude and revolve operations, plus the sample primitive shapes (cube,
-sphere, cylinder, torus, ...) built from them.
+Extrude and revolve operations, plus basic shapes (cube, sphere,
+cylinder, ...) for tests to be written against.
 
 Every solid here is built entirely from the Euler operators of
 [geop-ops](./geop-ops.md) `Part` (`mvfs`, `mve`, `mef`, `mer`,
@@ -80,6 +80,10 @@ angles `a0..a3`: `N(X,q)` for the face swept by curve `X` through quadrant
 
 ## Basic shapes
 
+The `shapes` module builds basic solids directly. It is only compiled for
+tests: this crate's own, and other crates' through the `test-shapes`
+feature, which their dev-dependencies turn on.
+
 | Function                          | Shape                                                    |
 | --------------------------------- | -------------------------------------------------------- |
 | `cube_solid`                      | an axis-aligned box, extruded from its top face          |
@@ -87,9 +91,6 @@ angles `a0..a3`: `N(X,q)` for the face swept by curve `X` through quadrant
 | `revolved_cylinder`, `revolved_cylinder_along_axis` | an exact cylinder, revolved around z, x or y |
 | `extruded_cylinder`               | an `n`-gon prism approximating a cylinder                |
 | `figure8_profile`                 | a dumbbell outline with two holes, extruded              |
-
-The torus (a 4×4 grid of NURBS patches) exists in `torus.rs` but is not
-currently compiled.
 
 ## The operations
 

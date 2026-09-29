@@ -1,16 +1,16 @@
-//! Constructors for basic B-rep solids and shapes, and the [`Extrude`] and
-//! [`Revolve`] operations built on them.
+//! Extruding and revolving profiles into B-rep solids, and the [`Extrude`]
+//! and [`Revolve`] operations built on them.
+//!
+//! With the `test-shapes` feature — which only other crates' tests turn on
+//! — [`shapes`] also builds basic solids directly: cubes, cylinders,
+//! spheres, the fixtures those tests are written against.
 
 pub mod common;
 
-pub mod cube;
-pub mod cylinder;
 pub mod extrude;
-pub mod figure8_profile;
 pub mod operation;
 pub mod revolve;
-pub mod sphere;
-// pub mod torus;
+#[cfg(any(test, feature = "test-shapes"))]
+pub mod shapes;
 
-pub use cube::cube_solid;
 pub use operation::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};

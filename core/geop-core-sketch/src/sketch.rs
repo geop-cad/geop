@@ -11,6 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
+
+use crate::point::{P2, dist};
 use serde::{Deserialize, Serialize};
 
 macro_rules! define_ids {
@@ -81,7 +83,7 @@ pub struct Point {
 }
 
 impl Point {
-    pub fn xy(&self) -> [f64; 2] {
+    pub fn xy(&self) -> P2 {
         [self.x, self.y]
     }
 }
@@ -304,7 +306,7 @@ impl Constraint {
 /// Every point's `[x, y]`, by [`PointId`]: the sketch's own positions
 /// ([`Sketch::positions`]) or a rigid motion of them (see
 /// [`crate::ProfileLoop::to_nurbs`]).
-pub type Positions = BTreeMap<PointId, [f64; 2]>;
+pub type Positions = BTreeMap<PointId, P2>;
 
 /// A constraint sketch.
 ///
@@ -409,9 +411,7 @@ impl Sketch {
     /// exceeds what the chord allows. For a major arc, give the sweep
     /// directly via [`Sketch::add_arc_with_sweep`].
     pub fn add_arc(&mut self, start: PointId, end: PointId, curvature: f64) -> CurveId {
-        let [sx, sy] = self.points[&start].xy();
-        let [ex, ey] = self.points[&end].xy();
-        let chord = (ex - sx).hypot(ey - sy);
+        let chord = dist(self.points[&start].xy(), self.points[&end].xy());
         let sweep = 2.0 * (curvature * chord / 2.0).clamp(-1.0, 1.0).asin();
         self.add_arc_with_sweep(start, end, sweep)
     }

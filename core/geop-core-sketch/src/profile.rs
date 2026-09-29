@@ -17,7 +17,10 @@
 //! trim, on the same NURBS curves the profile is made of. Polylines here are
 //! for drawing only.
 
-use crate::sketch::{CurveId, CurveKind, PointId, Positions, Sketch};
+use crate::{
+    point::{P2, add, dist, lerp, scale, sub},
+    sketch::{CurveId, CurveKind, PointId, Positions, Sketch},
+};
 use geop_core_geometry::{
     intersection::curve_curve_intersect,
     nurb_curve::{NurbCurve, NurbCurve2D},
@@ -398,7 +401,7 @@ impl ProfileLoop {
     }
 
     /// A dense polyline along the loop (for nesting tests and display).
-    pub fn polyline(&self, sketch: &Sketch, positions: &Positions) -> Vec<[f64; 2]> {
+    pub fn polyline(&self, sketch: &Sketch, positions: &Positions) -> Vec<P2> {
         let mut out = Vec::new();
         for edge in &self.edges {
             let mut pts = curve_polyline(sketch, positions, edge.curve);
@@ -421,32 +424,23 @@ impl ProfileLoop {
 /// machinery would only get in the way of tessellating an already-solved
 /// sketch for display or NURBS-piece construction.
 struct PlainArc {
-    s: [f64; 2],
-    e: [f64; 2],
+    s: P2,
+    e: P2,
     half: f64,
 }
 
 impl PlainArc {
-    fn chord(&self) -> [f64; 2] {
-        [self.e[0] - self.s[0], self.e[1] - self.s[1]]
-    }
     fn chord_length(&self) -> f64 {
-        let c = self.chord();
-        c[0].hypot(c[1])
-    }
-    fn chord_mid(&self) -> [f64; 2] {
-        [(self.s[0] + self.e[0]) * 0.5, (self.s[1] + self.e[1]) * 0.5]
+        dist(self.s, self.e)
     }
     /// Unit normal to the chord, pointing to its left.
-    fn left(&self) -> [f64; 2] {
-        let c = self.chord();
-        let n = self.chord_length();
-        [-c[1] / n, c[0] / n]
+    fn left(&self) -> P2 {
+        let c = sub(self.e, self.s);
+        scale([-c[1], c[0]], 1.0 / self.chord_length())
     }
-    fn center(&self) -> [f64; 2] {
+    fn center(&self) -> P2 {
         let d = self.chord_length() * 0.5 * self.half.cos() / self.half.sin();
-        let (m, l) = (self.chord_mid(), self.left());
-        [m[0] + l[0] * d, m[1] + l[1] * d]
+        add(lerp(self.s, self.e, 0.5), scale(self.left(), d))
     }
     /// `|radius|`.
     fn radius(&self) -> f64 {
@@ -454,7 +448,7 @@ impl PlainArc {
     }
 }
 
-fn pos(positions: &Positions, p: PointId) -> [f64; 2] {
+fn pos(positions: &Positions, p: PointId) -> P2 {
     positions[&p]
 }
 
@@ -480,7 +474,7 @@ fn arc_of(positions: &Positions, start: PointId, end: PointId, sweep: f64) -> Pl
 
 /// Points along a curve from its start to its end (a circle starts and ends
 /// at angle 0), dense enough for display and nesting tests.
-pub fn curve_polyline(sketch: &Sketch, positions: &Positions, curve: CurveId) -> Vec<[f64; 2]> {
+pub fn curve_polyline(sketch: &Sketch, positions: &Positions, curve: CurveId) -> Vec<P2> {
     match &sketch.curves[&curve].kind {
         CurveKind::Line { start, end } => vec![positions[start], positions[end]],
         CurveKind::Arc { start, end, sweep } => {
@@ -492,7 +486,7 @@ pub fn curve_polyline(sketch: &Sketch, positions: &Positions, curve: CurveId) ->
             let r = arc.radius();
             let a0 = (arc.s[1] - c[1]).atan2(arc.s[0] - c[0]);
             let n = SAMPLES * (1 + (sweep.abs() / FRAC_PI_2) as usize);
-            let mut pts: Vec<[f64; 2]> = (0..=n)
+            let mut pts: Vec<P2> = (0..=n)
                 .map(|i| {
                     let a = a0 + sweep * i as f64 / n as f64;
                     [c[0] + r * a.cos(), c[1] + r * a.sin()]
@@ -513,7 +507,7 @@ pub fn curve_polyline(sketch: &Sketch, positions: &Positions, curve: CurveId) ->
                 .collect()
         }
         CurveKind::Spline { control_points } => {
-            let cps: Vec<[f64; 2]> = control_points.iter().map(|p| positions[p]).collect();
+            let cps: Vec<P2> = control_points.iter().map(|p| positions[p]).collect();
             let n = 2 * SAMPLES * cps.len();
             (0..=n)
                 .map(|i| bspline_point(&cps, i as f64 / n as f64))
@@ -537,12 +531,12 @@ fn spline_knots(n: usize, degree: usize) -> Vec<f64> {
 }
 
 /// De Boor evaluation of the sketch's spline convention in `f64`.
-fn bspline_point(cps: &[[f64; 2]], t: f64) -> [f64; 2] {
+fn bspline_point(cps: &[P2], t: f64) -> P2 {
     let p = spline_degree(cps.len());
     let knots = spline_knots(cps.len(), p);
     // Span `k` with knots[k] <= t < knots[k + 1] (the last span at t = 1).
     let k = (p..cps.len()).rev().find(|&k| knots[k] <= t).unwrap_or(p);
-    let mut d: Vec<[f64; 2]> = (0..=p).map(|j| cps[j + k - p]).collect();
+    let mut d: Vec<P2> = (0..=p).map(|j| cps[j + k - p]).collect();
     for r in 1..=p {
         for j in (r..=p).rev() {
             let i = j + k - p;
@@ -552,17 +546,14 @@ fn bspline_point(cps: &[[f64; 2]], t: f64) -> [f64; 2] {
             } else {
                 (t - knots[i]) / denom
             };
-            d[j] = [
-                (1.0 - alpha) * d[j - 1][0] + alpha * d[j][0],
-                (1.0 - alpha) * d[j - 1][1] + alpha * d[j][1],
-            ];
+            d[j] = lerp(d[j - 1], d[j], alpha);
         }
     }
     d[p]
 }
 
 /// Homogeneous control point `(w x, w y, w)`.
-fn hom<S: Scalar>(p: [f64; 2], w: f64) -> Vector3<S> {
+fn hom<S: Scalar>(p: P2, w: f64) -> Vector3<S> {
     Vector3::from_array([S::from_f64(p[0] * w), S::from_f64(p[1] * w), S::from_f64(w)])
 }
 
@@ -572,7 +563,7 @@ fn unit_knots<S: Scalar>(knots: &[f64]) -> Vec<S> {
 
 /// A rational quadratic from `p0` to `p2` through the tangent intersection
 /// `m`, with middle weight `w`.
-fn conic<S: Scalar>(p0: [f64; 2], m: [f64; 2], p2: [f64; 2], w: f64) -> GeopResult<NurbCurve2D<S>> {
+fn conic<S: Scalar>(p0: P2, m: P2, p2: P2, w: f64) -> GeopResult<NurbCurve2D<S>> {
     NurbCurve::try_new(
         2,
         vec![hom(p0, 1.0), hom(m, w), hom(p2, 1.0)],
@@ -580,7 +571,7 @@ fn conic<S: Scalar>(p0: [f64; 2], m: [f64; 2], p2: [f64; 2], w: f64) -> GeopResu
     )
 }
 
-fn line<S: Scalar>(p0: [f64; 2], p1: [f64; 2]) -> GeopResult<NurbCurve2D<S>> {
+fn line<S: Scalar>(p0: P2, p1: P2) -> GeopResult<NurbCurve2D<S>> {
     NurbCurve::try_new(
         1,
         vec![hom(p0, 1.0), hom(p1, 1.0)],
@@ -630,8 +621,7 @@ fn edge_pieces<S: Scalar>(
                         half: delta / 2.0,
                     };
                     let bulge = piece.chord_length() * 0.5 * (delta / 2.0).tan();
-                    let (cm, l) = (piece.chord_mid(), piece.left());
-                    let m = [cm[0] - l[0] * bulge, cm[1] - l[1] * bulge];
+                    let m = sub(lerp(piece.s, piece.e, 0.5), scale(piece.left(), bulge));
                     conic(w[0], m, w[1], (delta / 2.0).cos())
                 })
                 .collect()
@@ -683,7 +673,7 @@ fn rescale_to_unit<S: Scalar>(curve: NurbCurve2D<S>) -> GeopResult<NurbCurve2D<S
 /// other: how long a ray has to be to leave every loop behind, and the
 /// length the probe offsets below are measured against.
 fn extent_of(loops: &[Vec<NurbCurve2D<F>>]) -> f64 {
-    let points: Vec<[f64; 2]> = loops
+    let points: Vec<P2> = loops
         .iter()
         .flatten()
         .flat_map(|c| {
@@ -705,7 +695,7 @@ fn extent_of(loops: &[Vec<NurbCurve2D<F>>]) -> f64 {
 }
 
 /// The point halfway along `curve`, in plain coordinates.
-fn midpoint(curve: &NurbCurve2D<F>) -> GeopResult<[f64; 2]> {
+fn midpoint(curve: &NurbCurve2D<F>) -> GeopResult<P2> {
     let (t0, t1) = curve.domain();
     let p = curve.evaluate(t0.add(t1).div(F::TWO)?)?;
     Ok([p[0].to_f64(), p[1].to_f64()])
@@ -713,9 +703,9 @@ fn midpoint(curve: &NurbCurve2D<F>) -> GeopResult<[f64; 2]> {
 
 /// A segment from `from` in direction `dir`, long enough to leave a profile
 /// of size `extent` behind.
-fn ray(from: [f64; 2], dir: [f64; 2], extent: f64) -> GeopResult<NurbCurve2D<F>> {
+fn ray(from: P2, dir: P2, extent: f64) -> GeopResult<NurbCurve2D<F>> {
     let length = 3.0 * extent;
-    let to = [from[0] + dir[0] * length, from[1] + dir[1] * length];
+    let to = add(from, scale(dir, length));
     NurbCurve::try_new(
         1,
         vec![hom::<F>(from, 1.0), hom::<F>(to, 1.0)],
@@ -733,7 +723,7 @@ fn ray(from: [f64; 2], dir: [f64; 2], extent: f64) -> GeopResult<NurbCurve2D<F>>
 /// says nothing reliable, and the next direction is tried instead; the
 /// directions walk the golden angle, so a handful of them are spread evenly
 /// around the circle without ever repeating.
-fn loop_contains(curves: &[NurbCurve2D<F>], probe: [f64; 2], extent: f64) -> GeopResult<bool> {
+fn loop_contains(curves: &[NurbCurve2D<F>], probe: P2, extent: f64) -> GeopResult<bool> {
     let min_subdivision = F::from_f64(MIN_SUBDIVISION);
     let mut last_rejection = String::new();
     'attempt: for k in 0..MAX_RAY_ATTEMPTS {

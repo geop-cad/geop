@@ -2,25 +2,22 @@
 
 > Brief overview only — full documentation is coming later.
 
-Turns a `Model` into a triangle mesh and writes it out as an STL file.
+Turns a `Model` into a triangle mesh, writes it out as an STL file, and
+renders it for debugging.
 
 ## Rasterizing a model
 
-`rasterize_model_tagged(model, n)` samples every vertex, edge and face of a
-model into a `RasterizedModel`, keeping each point, polyline and triangle
-together with the id of the entity it came from. This is the one place
-topology becomes sampled geometry. Rendering (`rasterize_model`), STL export
-and picking in [geop-ops](./geop-ops.md#operations) all read the same
-triangles, so a pick can never disagree with what the viewer drew, and an
-exported mesh is exactly what is on screen.
+`rasterize(model, n)` samples every vertex, edge and face of a model into a
+`RasterizedModel`, keeping each point, polyline and triangle together with
+the id of the entity it came from. This is the one place topology becomes
+sampled geometry. Drawing and picking in
+[geop-ops](./geop-ops.md#operations), STL export and debug rendering all
+read the same triangles, so a pick can never disagree with what the viewer
+drew, and an exported mesh is exactly what is on screen.
 
 `n` is a *quality*, not a fixed sample count: it controls how finely
 geometry that actually curves is approximated, while a straight edge or a
 flat face stays cheap.
-
-`rasterize_model` and `rasterize_model_wireframe` produce a
-`PrimitiveScene` (see [geop-core-math](../core/geop-core-math.md)) with one
-point per vertex, one polyline per edge and one mesh per face.
 
 ## Triangulating a face
 
@@ -60,7 +57,17 @@ triangle is wound to agree with the normal.
 Faces are sampled one at a time, so two faces that share an edge each sample
 it independently. The mesh is only as watertight as those samplings agree.
 
-## Debugging topology
+## Debug rendering
+
+The `debug` module renders models for a person to look at. A
+`PrimitiveScene` collects points, lines, triangles, labels and sampled NURBS
+curves and surfaces, and saves them as an interactive HTML file;
+`PrimitiveSceneRecorder` records a sequence of them, for example one per
+iteration of a search. Attached to an error (see
+[geop-core-math](../core/geop-core-math.md)), a scene is rendered when the
+error is printed. `RasterizedModel::scene` draws a rasterized model, each
+face in a color of the caller's choice. The `*_viz` examples render
+curve-curve and curve-surface intersections.
 
 `rasterize_topology` draws a model's raw topology rather than its shape.
 Every vertex, edge, coedge and face is labelled with its id, edges and

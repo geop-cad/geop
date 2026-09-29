@@ -1,6 +1,6 @@
 //! A verbose, id-labelled debug rasterization of a [`Model`]'s raw topology
-//! — as opposed to [`super::rasterize_model`], which only cares about the
-//! final geometric shape. Draws every vertex, edge (with `0.1..0.9`
+//! — as opposed to [`crate::rasterize`], which only cares about the final
+//! geometric shape. Draws every vertex, edge (with `0.1..0.9`
 //! direction-arrow markers, plus one at its midpoint), coedge (as a trim
 //! curve pulled slightly inward, mitered back at each end so neighboring
 //! coedges' trim curves don't overlap at the shared corner, with its own
@@ -18,11 +18,13 @@
 use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{Color10, Line, PrimitiveScene, TriangleFace},
+    primitives::TriangleFace,
     scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_topology::{Coedge, CoedgeId, Model, boundary::BoundaryType};
+
+use super::{Color10, Line, PrimitiveScene};
 
 /// How far inward (in 3-D world units) a coedge's trim curve and its
 /// `0.1..0.9` markers are pulled off of the true boundary curve.
@@ -279,7 +281,7 @@ fn add_coordinate_system<S: Scalar>(
 }
 
 /// Rasterize `model`'s raw topology (as opposed to just its final shape —
-/// see [`super::rasterize_model`]): every vertex, edge, coedge and face,
+/// see [`crate::rasterize`]): every vertex, edge, coedge and face,
 /// each labelled with its id, `n` samples per curve/coedge.
 pub fn rasterize_topology<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<PrimitiveScene<S>> {
     rasterize_topology_inner(model, n)
@@ -492,7 +494,7 @@ fn rasterize_topology_inner<S: Scalar>(
             continue;
         }
 
-        for (uv_a, uv_b, uv_c) in super::face_triangles_uv(model, face, n)? {
+        for (uv_a, uv_b, uv_c) in crate::face_triangles_uv(model, face, n)? {
             let a = face.surface.evaluate(uv_a[0], uv_a[1])?;
             let b = face.surface.evaluate(uv_b[0], uv_b[1])?;
             let c = face.surface.evaluate(uv_c[0], uv_c[1])?;
