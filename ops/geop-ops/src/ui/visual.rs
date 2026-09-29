@@ -1,5 +1,6 @@
-//! [`Presentation`]: what an operation shows for a step — its dialog and
-//! the [`Visual`]s it draws in the viewport.
+//! [`Form`]: what an operation shows for a step — its dialog and the
+//! [`Visual`]s it draws in the viewport — and [`Presentation`], what an
+//! editor shows of it.
 
 use geop_core_math::{
     primitives::CoordinateSystem,
@@ -33,10 +34,11 @@ pub enum Shape<S: Scalar> {
         text: String,
         offset: Vector3<S>,
     },
-    /// Something to drag, at `at` — along `direction`, if it has one.
+    /// The number field of the visual's key, as something to drag along
+    /// `direction`: moving it by `direction` adds one to the field.
     Handle {
         at: Vector3<S>,
-        direction: Option<Vector3<S>>,
+        direction: Vector3<S>,
     },
 }
 
@@ -107,7 +109,35 @@ impl<S: Scalar> Visual<S> {
     }
 }
 
-/// What an operation shows for a step.
+/// What an operation shows for a step: its fields, and what it draws.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Form<S: Scalar> {
+    pub dialog: Dialog,
+    pub visuals: Vec<Visual<S>>,
+    /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
+    /// stops orbiting, and draws a grid on it.
+    pub focus: Option<CoordinateSystem<S>>,
+    /// Whether a press where the pointer last hovered starts a drag the
+    /// operation follows itself (see [`crate::Operation::event`]); handles
+    /// are dragged by the editor.
+    pub grab: bool,
+}
+
+impl<S: Scalar> Form<S> {
+    /// Only a dialog.
+    pub fn dialog(dialog: Dialog) -> Self {
+        Self {
+            dialog,
+            visuals: Vec::new(),
+            focus: None,
+            grab: false,
+        }
+    }
+}
+
+/// What an editor shows for a step being edited: the operation's
+/// [`Form`], and what the editor adds to it — what is picked and what a
+/// click would pick.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Presentation<S: Scalar> {
@@ -125,17 +155,4 @@ pub struct Presentation<S: Scalar> {
     /// Whether a press where the pointer last hovered starts a drag (sent
     /// as [`super::Event::Drag`]) rather than moving the camera.
     pub grab: bool,
-}
-
-impl<S: Scalar> Default for Presentation<S> {
-    fn default() -> Self {
-        Self {
-            dialog: Dialog::default(),
-            visuals: Vec::new(),
-            highlights: Vec::new(),
-            pickable: Vec::new(),
-            focus: None,
-            grab: false,
-        }
-    }
 }

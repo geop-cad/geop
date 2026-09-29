@@ -12,9 +12,11 @@ do to it.
 
 ## Editing a sketch
 
-A new sketch starts by picking its plane; picking one goes straight on to
-drawing on it, the viewer facing it head on. Everything a sketch editor
-does is `AddSketch`'s `edit`, answering the editor's events:
+A new sketch starts by picking its plane — a pick field like any other, so
+picking another one later moves the drawing onto it — and once it has one
+it is drawn on it, the viewer facing it head on. Drawing is `AddSketch`'s
+own: it takes the pointer and key events the editor does not (see
+[geop-ops](./geop-ops.md#operations)):
 
 - **Tools** — line (chaining), rectangle, arc (start, end, a point it passes
   through), circle, spline, point — are state machines on the session: the

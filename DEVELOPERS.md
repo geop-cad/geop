@@ -36,7 +36,8 @@ ops/geop-ops-extrude-revolve  extrude/revolve and the sample shapes (cube,
                                revolve operations
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, and writes
                                it as STL
-cad/geop-cad-base             the operations the editor offers, example programs
+cad/geop-cad-base             the operations the editor offers, the editor engine,
+                               example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
 ```

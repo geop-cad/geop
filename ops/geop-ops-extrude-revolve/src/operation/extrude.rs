@@ -10,14 +10,14 @@ use geop_core_math::{
 };
 use geop_core_sketch::{ProfilePiece, Sketch, profile::curve_polyline};
 use geop_ops::{
-    EditContext, Edited, Namer, Part,
+    Namer, Part,
     operation::{EntityRef, Operation},
-    ui::{Dialog, DialogValue, Dragging, Event, Presentation, Shape, Style, Visual},
+    ui::{Dialog, Form, Shape, Style, Value, Visual},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use super::{SweepSession, pick_sketch, pickable, sketch_field};
+use super::sketch_field;
 use crate::{
     common::Profile,
     extrude::{ExtrudeNames, extrude_from_plane},
@@ -66,29 +66,27 @@ pub struct ExtrudeArgs {
 }
 
 /// The distance, as a handle at the centre of the end cap that slides along
-/// the sketch plane's normal — and how far the handle moves per unit of
-/// distance. None while the sketch cannot be found.
-fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<(Visual<S>, f64)> {
+/// the sketch plane's normal. None while the sketch cannot be found.
+fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<Visual<S>> {
     let placed = before.sketch(before.sketch_id(&args.sketch).ok()?).ok()?;
     let plane = &placed.plane;
     let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?);
     // A symmetric extrude's end cap is half the distance off the plane.
     let scale = if args.symmetric { 0.5 } else { 1.0 };
     let normal = *plane.w();
-    let handle = Visual::new(
+    Some(Visual::new(
         "distance",
         Shape::Handle {
             at: center.add(&normal.prod_scalar(S::from_f64(args.distance * scale))),
-            direction: Some(normal),
+            direction: normal.prod_scalar(S::from_f64(scale)),
         },
         Style::Handle,
-    );
-    Some((handle, scale))
+    ))
 }
 
 impl Operation for Extrude {
     type Args = ExtrudeArgs;
-    type Session = SweepSession;
+    type Session = ();
 
     /// The newest sketch, a unit up, joined to the newest solid if there is
     /// one.
@@ -101,88 +99,43 @@ impl Operation for Extrude {
         }
     }
 
-    /// The sketch, picked; the distance, typed or dragged as a handle —
-    /// joining when it is positive and cutting when negative, until the
-    /// user chooses how to combine.
-    fn edit<S: Scalar>(
-        &self,
-        ctx: &EditContext<S>,
-        mut args: ExtrudeArgs,
-        mut s: SweepSession,
-        event: Option<&Event<S>>,
-    ) -> Edited<ExtrudeArgs, SweepSession, S> {
-        if let Some(event) = event {
-            let mut distance = None;
-            match event.dialog() {
-                Some(("sketch", _)) => s.pick.toggle("sketch"),
-                Some(("distance", DialogValue::Number(v))) => distance = Some(*v),
-                Some(("symmetric", DialogValue::Bool(b))) => args.symmetric = *b,
-                _ => {}
-            }
-            if args.combine.event(ctx.view, event, &mut s.pick) {
-                s.combine_touched = true;
-            }
-            if let Some(sketch) = pick_sketch(ctx.view, event, &mut s.pick) {
-                args.sketch = sketch;
-            }
-            let handles: Vec<Visual<S>> = distance_handle(ctx.part, &args)
-                .map(|(h, _)| h)
-                .into_iter()
-                .collect();
-            let scale = distance_handle(ctx.part, &args).map_or(1.0, |(_, scale)| scale);
-            if let Some((_, v)) = s
-                .drag
-                .linear(&handles, event, |_| Some((args.distance, scale)))
-            {
-                distance = Some(v);
-            }
-            if let Some(v) = distance {
-                args.distance = v;
-                if !s.combine_touched {
-                    args.combine.follow_sign(v);
-                }
-            }
-            if let Event::Hover { pointer } = event {
-                s.over_handle = Dragging::over_handle(&handles, pointer);
-            }
-        }
+    /// The sketch, picked; the distance, typed or dragged as a handle;
+    /// and how to combine.
+    fn form<S: Scalar>(&self, before: &Part<S>, args: &ExtrudeArgs, _: &()) -> Form<S> {
         let mut d = Dialog::new();
-        sketch_field(&mut d, ctx.part, &args.sketch, &s.pick);
+        sketch_field(&mut d, before, &args.sketch);
         d.slider("distance", "distance", args.distance, -10.0, 10.0);
         d.checkbox("symmetric", "symmetric", args.symmetric);
-        args.combine.show(&mut d, &s.pick);
-        let presentation = Presentation {
-            dialog: d,
-            visuals: distance_handle(ctx.part, &args)
-                .map(|(h, _)| h)
-                .into_iter()
-                .collect(),
-            highlights: s.pick.hover.clone().into_iter().collect(),
-            pickable: pickable(&s.pick),
-            focus: None,
-            grab: s.over_handle,
-        };
-        Edited {
-            args,
-            session: s,
-            presentation,
+        args.combine.show(&mut d);
+        Form {
+            visuals: distance_handle(before, args).into_iter().collect(),
+            ..Form::dialog(d)
         }
     }
 
-    fn summary(&self, args: &ExtrudeArgs) -> String {
-        format!(
-            "sketch={}, distance={:.2}, symmetric={}, combine={}",
-            args.sketch,
-            args.distance,
-            if args.symmetric { "yes" } else { "no" },
-            args.combine.summary()
-        )
-    }
-
-    fn references(&self, args: &ExtrudeArgs) -> Vec<EntityRef> {
-        vec![EntityRef::Sketch {
-            name: args.sketch.clone(),
-        }]
+    /// A distance joins when it is positive and cuts when it is negative,
+    /// if the extrude combines with a solid at all (see
+    /// [`Combine::follow_sign`]).
+    fn set<S: Scalar>(
+        &self,
+        before: &Part<S>,
+        args: &mut ExtrudeArgs,
+        _: &mut (),
+        key: &str,
+        value: Value,
+    ) {
+        if args.combine.set(before, key, &value) {
+            return;
+        }
+        match (key, value) {
+            ("sketch", Value::Entity(EntityRef::Sketch { name })) => args.sketch = name,
+            ("distance", Value::Number(v)) => {
+                args.distance = v;
+                args.combine.follow_sign(v);
+            }
+            ("symmetric", Value::Bool(b)) => args.symmetric = b,
+            _ => {}
+        }
     }
 
     fn apply<S: Scalar>(

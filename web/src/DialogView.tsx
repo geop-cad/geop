@@ -1,21 +1,14 @@
 import { Dropdown, SliderNumber } from "./controls";
-import type { Choice, Control, DialogValue, Field, Tone } from "./geop";
+import { entityLabel, type Choice, type Control, type StepState, type Tone, type Value } from "./geop";
 
 interface Props {
-  /** The operation's short name, and the step's id if it has one yet. */
-  label: string;
-  stepId: string | null;
-  doc: string;
-  /** What the operation shows, in order. */
-  dialog: Field[];
-  /** A control was used. */
-  onDialog: (key: string, value: DialogValue) => void;
-  preview: boolean;
+  /** The step being edited, as the kernel shows it. */
+  step: StepState;
+  /** A field was used. */
+  onDialog: (key: string, value: Value) => void;
   setPreview: (v: boolean) => void;
-  previewError: string | null;
+  /** Why the last command was refused, if it was. */
   error: string | null;
-  /** Whether the step builds, and so can go into the program. */
-  canCommit: boolean;
   onCommit: () => void;
   onCancel: () => void;
 }
@@ -65,42 +58,34 @@ function groups(options: Choice[]): [string | null, Choice[]][] {
   return out;
 }
 
+/** What a pick field shows: what it holds, or that it waits for a pick. */
+function picked(c: Extract<Control, { type: "pick" }>): string {
+  if (c.value.length === 0) return c.armed ? "click in the viewport…" : "pick…";
+  return c.value.map(entityLabel).join(", ");
+}
+
 /**
- * The dialog of the step being edited: every control the operation shows,
+ * The dialog of the step being edited: every field the operation shows,
  * rendered from its primitives alone — so any operation the kernel offers
  * gets its dialog without this knowing about it — and the controls every
  * step has: preview, OK, Cancel.
  */
-export function DialogView({
-  label,
-  stepId,
-  doc,
-  dialog,
-  onDialog,
-  preview,
-  setPreview,
-  previewError,
-  error,
-  canCommit,
-  onCommit,
-  onCancel,
-}: Props) {
+export function DialogView({ step, onDialog, setPreview, error, onCommit, onCancel }: Props) {
   function control(key: string, c: Control) {
-    const send = (value: DialogValue) => onDialog(key, value);
+    const send = (value: Value) => onDialog(key, value);
     switch (c.type) {
       case "heading":
         return <h3 className="dialog-heading">{c.text}</h3>;
       case "text":
         return <p className={TONES[c.tone]}>{c.text}</p>;
-      case "button":
+      case "pick":
         return (
           <button
-            className={[c.active ? "active" : "", c.primary ? "primary" : ""].join(" ")}
-            disabled={!c.enabled}
-            title={c.title ?? undefined}
+            className={c.armed ? "active" : ""}
+            title={c.multiple ? "Pick in the viewport — again to take out" : "Pick in the viewport"}
             onClick={() => send({ type: "press" })}
           >
-            {c.label}
+            {c.label}: {picked(c)}
           </button>
         );
       case "buttons":
@@ -143,7 +128,7 @@ export function DialogView({
           </label>
         );
       case "select":
-        if (c.style === "dropdown") {
+        if (c.options.every((o) => o.group == null)) {
           return (
             <Dropdown
               label={c.label}
@@ -228,17 +213,17 @@ export function DialogView({
           <button className="small" onClick={onCancel}>
             Cancel
           </button>
-          <button className="primary" disabled={!canCommit} onClick={onCommit}>
+          <button className="primary" disabled={step.error != null} onClick={onCommit}>
             OK
           </button>
         </div>
 
         <h2>
-          {label}
-          {stepId && <span className="op-id"> · {stepId}</span>}
+          {step.label}
+          {step.id && <span className="op-id"> · {step.id}</span>}
         </h2>
-        <p className="hint">{doc}</p>
-        {dialog.map(({ key, ...c }) => (
+        <p className="hint">{step.doc}</p>
+        {step.presentation.dialog.map(({ key, ...c }) => (
           <div key={key} className="field">
             {control(key, c as Control)}
           </div>
@@ -246,10 +231,10 @@ export function DialogView({
         {error && <p className="op-error-text">{error}</p>}
 
         <label className="row preview-row">
-          <input type="checkbox" checked={preview} onChange={(e) => setPreview(e.target.checked)} />
+          <input type="checkbox" checked={step.preview} onChange={(e) => setPreview(e.target.checked)} />
           Preview result in viewport
         </label>
-        {previewError && <p className="op-error-text">{previewError}</p>}
+        {step.error && <p className="op-error-text">{step.error}</p>}
       </div>
     </div>
   );

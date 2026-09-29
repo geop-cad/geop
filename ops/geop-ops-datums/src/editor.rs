@@ -4,18 +4,13 @@
 
 use geop_core_math::{primitives::DatumKind, scalars::Scalar, vector::Vector3};
 use geop_ops::{
-    EditContext, Edited, Part,
-    operation::EntityRef,
-    ui::{
-        Choice, Dialog, DialogValue, Dragging, Event, ListItem, Picked, Picking, Presentation,
-        SelectStyle, Shape, Style, Target, Tone, Visual,
-    },
+    Part,
+    ui::{Choice, Dialog, Form, ListItem, Shape, Style, Target, Tone, Value, Visual},
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     AddDatumArgs, CONSTRUCTIONS, Construction,
-    add_datum::{ConstructionSchema, ParamKind, describe_role, inspect_selection},
+    add_datum::{ConstructionSchema, ParamKind, inspect_selection},
 };
 
 /// What a datum can be built from.
@@ -33,18 +28,6 @@ const SELECTION_TARGETS: &[Target] = &[
 /// units, so the three of one point can each be grabbed.
 const POINT_HANDLE_OUT: f64 = 0.3;
 
-/// The temporary state of editing a datum step.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct DatumSession {
-    /// Whether the edit has begun: a step with nothing selected yet starts
-    /// by picking.
-    started: bool,
-    pick: Picking,
-    drag: Dragging,
-    /// Whether the pointer is over a handle.
-    over_handle: bool,
-}
-
 /// What a group of constructions is called: by what they build.
 fn group(result: DatumKind) -> &'static str {
     match result {
@@ -57,18 +40,14 @@ fn group(result: DatumKind) -> &'static str {
 
 /// What `construction` needs selected, in words: `a point and a plane`.
 fn needs(construction: &ConstructionSchema) -> String {
-    let roles: Vec<&str> = construction
-        .inputs
-        .iter()
-        .map(|&r| describe_role(r))
-        .collect();
+    let roles: Vec<&str> = construction.inputs.iter().map(|&r| r.describe()).collect();
     roles.join(" and ")
 }
 
-/// The offsets of what `args` builds in `part`, as handles: an offset
-/// plane's distance on the plane, sliding along its normal; an offset
-/// point's `x`, `y`, `z` a little out along each axis, sliding along it.
-/// None for a step that does not build.
+/// The offsets of what `args` builds in `part`, as handles of their fields:
+/// an offset plane's distance on the plane, sliding along its normal; an
+/// offset point's `x`, `y`, `z` a little out along each axis, sliding along
+/// it. None for a step that does not build.
 fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Vec<Visual<S>> {
     let Ok(built) = args
         .inputs(part)
@@ -76,12 +55,12 @@ fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Vec<Visual<S>> {
     else {
         return Vec::new();
     };
-    let handle = |key: &str, d: &Vector3<S>, out: f64| {
+    let handle = |param: &str, d: &Vector3<S>, out: f64| {
         Visual::new(
-            key,
+            format!("param:{param}"),
             Shape::Handle {
                 at: built.origin().add(&d.prod_scalar(S::from_f64(out))),
-                direction: Some(*d),
+                direction: *d,
             },
             Style::Handle,
         )
@@ -108,99 +87,67 @@ fn follow_selection<S: Scalar>(part: &Part<S>, args: &mut AddDatumArgs) {
     }
 }
 
-fn event<S: Scalar>(
-    ctx: &EditContext<S>,
-    args: &mut AddDatumArgs,
-    s: &mut DatumSession,
-    event: &Event<S>,
-) {
-    match event.dialog() {
-        Some(("selection", _)) => s.pick.toggle("selection"),
-        Some(("clear", _)) => {
-            args.selection.clear();
-            follow_selection(ctx.part, args);
+/// Sets the field `key` to `value`: a pick adds the entity to the
+/// selection, or takes it out again; the construction follows what the
+/// selection fits.
+pub(crate) fn set<S: Scalar>(part: &Part<S>, args: &mut AddDatumArgs, key: &str, value: Value) {
+    match (key, value) {
+        ("selection", Value::Entity(entity)) => {
+            match args.selection.iter().position(|e| *e == entity) {
+                Some(i) => {
+                    args.selection.remove(i);
+                }
+                None => args.selection.push(entity),
+            }
+            follow_selection(part, args);
         }
-        Some(("construction", DialogValue::Choice(method))) => {
+        ("clear", _) => {
+            args.selection.clear();
+            follow_selection(part, args);
+        }
+        ("construction", Value::Choice(method)) => {
             if let Some(schema) = CONSTRUCTIONS.iter().find(|c| c.method == method) {
                 args.construction = Construction::default_of(schema);
             }
         }
-        Some((key, value)) => {
+        (key, Value::Remove) => {
             if let Some(i) = key
                 .strip_prefix("selection:")
                 .and_then(|i| i.parse::<usize>().ok())
-                && *value == DialogValue::Remove
                 && i < args.selection.len()
             {
                 args.selection.remove(i);
-                follow_selection(ctx.part, args);
-            }
-            if let Some(name) = key.strip_prefix("param:") {
-                let value = match value {
-                    DialogValue::Number(v) => Some(serde_json::Value::from(*v)),
-                    DialogValue::Bool(b) => Some(serde_json::Value::from(*b)),
-                    _ => None,
-                };
-                if let Some(next) = value.and_then(|v| args.construction.with_param(name, v)) {
-                    args.construction = next;
-                }
+                follow_selection(part, args);
             }
         }
-        None => {}
-    }
-    if let Event::Key { key } = event
-        && key == "Escape"
-    {
-        s.pick.disarm();
-    }
-    // A pick adds the entity to the selection, or takes it out again; the
-    // pick stays armed for the next.
-    if let Picked::Picked { entity, .. } = s.pick.handle(ctx.view, event, SELECTION_TARGETS) {
-        match args.selection.iter().position(|e| *e == entity) {
-            Some(i) => {
-                args.selection.remove(i);
+        (key, value) => {
+            let value = match value {
+                Value::Number(v) => serde_json::Value::from(v),
+                Value::Bool(b) => serde_json::Value::from(b),
+                _ => return,
+            };
+            if let Some(name) = key.strip_prefix("param:")
+                && let Some(next) = args.construction.with_param(name, value)
+            {
+                args.construction = next;
             }
-            None => args.selection.push(entity),
         }
-        follow_selection(ctx.part, args);
-    }
-    let handles = handles(ctx.part, args);
-    let value_of = |key: &str| {
-        let value = args.construction.param(key)?.as_f64()?;
-        Some((value, 1.0))
-    };
-    if let Some((key, value)) = s.drag.linear(&handles, event, value_of)
-        && let Some(next) = args
-            .construction
-            .with_param(&key, serde_json::Value::from(value))
-    {
-        args.construction = next;
-    }
-    if let Event::Hover { pointer } = event {
-        s.over_handle = Dragging::over_handle(&handles, pointer);
     }
 }
 
-fn dialog<S: Scalar>(part: &Part<S>, args: &AddDatumArgs, s: &DatumSession) -> Dialog {
+/// The selection to pick, what each selected entity can be used as, the
+/// constructions that fit — and the construction's values, as fields and
+/// as handles.
+pub(crate) fn form<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Form<S> {
     let mut d = Dialog::new();
     let fit = inspect_selection(part, &args.selection);
-    let picking = s.pick.is("selection");
-    d.pick_button(
+    d.pick(
         "selection",
-        if picking {
-            "Done picking"
-        } else {
-            "Pick selection…"
-        },
-        picking,
+        "selection",
+        args.selection.clone(),
+        SELECTION_TARGETS,
+        true,
     );
-    if picking {
-        d.text(
-            "selection_hint",
-            "Click points, edges, faces and planes — and the origin's — to add them, or again to remove them…",
-            Tone::Hint,
-        );
-    }
     d.list(
         "selected",
         args.selection
@@ -252,7 +199,6 @@ fn dialog<S: Scalar>(part: &Part<S>, args: &AddDatumArgs, s: &DatumSession) -> D
                 choice
             })
             .collect(),
-        SelectStyle::Radio,
     );
     d.text("construction_doc", chosen.doc, Tone::Hint);
     if !fit.fits.contains(&chosen.method) {
@@ -276,42 +222,8 @@ fn dialog<S: Scalar>(part: &Part<S>, args: &AddDatumArgs, s: &DatumSession) -> D
             }
         }
     }
-    d
-}
-
-/// Edits a datum step: see the module docs.
-pub(crate) fn edit<S: Scalar>(
-    ctx: &EditContext<S>,
-    mut args: AddDatumArgs,
-    mut s: DatumSession,
-    event_: Option<&Event<S>>,
-) -> Edited<AddDatumArgs, DatumSession, S> {
-    if !s.started {
-        s.started = true;
-        if args.selection.is_empty() {
-            s.pick.arm("selection");
-        }
-    }
-    if let Some(e) = event_ {
-        event(ctx, &mut args, &mut s, e);
-    }
-    let mut highlights: Vec<EntityRef> = args.selection.clone();
-    highlights.extend(s.pick.hover.clone());
-    let presentation = Presentation {
-        dialog: dialog(ctx.part, &args, &s),
-        visuals: handles(ctx.part, &args),
-        highlights,
-        pickable: if s.pick.field.is_some() {
-            SELECTION_TARGETS.to_vec()
-        } else {
-            Vec::new()
-        },
-        focus: None,
-        grab: s.over_handle,
-    };
-    Edited {
-        args,
-        session: s,
-        presentation,
+    Form {
+        visuals: handles(part, args),
+        ..Form::dialog(d)
     }
 }

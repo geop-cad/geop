@@ -21,6 +21,11 @@ the ways CAD systems commonly offer (`Construction`):
 A coordinate system is used as a point, its origin, and by its axes, like
 the origin itself: a point offset from it goes along them.
 
+What a selected entity can be used as — its `Geometry`: a point, a line, a
+plane, an arc, something round — is decided by its shape, not its kind,
+using `geop-core-geometry`'s shape recognition: a straight edge is a line, a
+circular one has a center and an axis, a flat face is a plane.
+
 `inspect_selection` says which constructions fit a selection, using
 exactly the matching a step applies. `AddDatum`'s dialog is built on it:
 the selection is picked in the viewport — anything but solids and

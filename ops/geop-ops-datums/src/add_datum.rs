@@ -19,12 +19,15 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use geop_ops::{
-    EditContext, Edited, Part,
-    operation::{EntityRef, Geometry, Operation, Role, frame_along},
-    ui::Event,
+    Part,
+    operation::{EntityRef, Operation, frame_along},
+    ui::{Form, Value},
 };
 
-use crate::editor::{self, DatumSession};
+use crate::{
+    editor,
+    geometry::{Geometry, Role},
+};
 
 /// What kind of value a construction takes besides its selection.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -259,11 +262,13 @@ pub struct SelectionFit {
 
 /// Which constructions fit `selection` in `part` (see [`SelectionFit`]).
 pub fn inspect_selection<S: Scalar>(part: &Part<S>, selection: &[EntityRef]) -> SelectionFit {
-    let resolved: Option<Vec<Geometry<S>>> =
-        selection.iter().map(|e| e.resolve(part).ok()).collect();
+    let resolved: Option<Vec<Geometry<S>>> = selection
+        .iter()
+        .map(|e| Geometry::of(e, part).ok())
+        .collect();
     let roles = selection
         .iter()
-        .map(|e| e.resolve(part).map(|g| g.roles()).unwrap_or_default())
+        .map(|e| Geometry::of(e, part).map(|g| g.roles()).unwrap_or_default())
         .collect();
     let fits = match &resolved {
         Some(resolved) => CONSTRUCTIONS
@@ -276,18 +281,6 @@ pub fn inspect_selection<S: Scalar>(part: &Part<S>, selection: &[EntityRef]) -> 
     SelectionFit { roles, fits }
 }
 
-/// A role as a construction's requirement reads: `a point`.
-pub(crate) fn describe_role(role: Role) -> &'static str {
-    match role {
-        Role::Point => "a point",
-        Role::Line => "a line",
-        Role::Plane => "a plane",
-        Role::Edge => "an edge",
-        Role::Circle => "a circular edge",
-        Role::Round => "a circular edge or a round face",
-    }
-}
-
 impl AddDatumArgs {
     /// The selection resolved in `part` and ordered as the construction
     /// takes it.
@@ -296,10 +289,10 @@ impl AddDatumArgs {
         let resolved = self
             .selection
             .iter()
-            .map(|e| e.resolve(part))
+            .map(|e| Geometry::of(e, part))
             .collect::<GeopResult<Vec<_>>>()?;
         let Some(order) = assign(schema.inputs, &resolved) else {
-            let needs: Vec<&str> = schema.inputs.iter().map(|&r| describe_role(r)).collect();
+            let needs: Vec<&str> = schema.inputs.iter().map(|&r| r.describe()).collect();
             return Err(GeopError::new(format!(
                 "{} needs {} selected, one each, and nothing else",
                 schema.label,
@@ -610,7 +603,7 @@ impl Construction {
 
 impl Operation for AddDatum {
     type Args = AddDatumArgs;
-    type Session = DatumSession;
+    type Session = ();
 
     /// Nothing selected yet, and the first construction.
     fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddDatumArgs {
@@ -641,27 +634,19 @@ impl Operation for AddDatum {
 
     /// Picking the selection, choosing among the constructions that fit
     /// it, and offsets as handles: see [`crate::editor`].
-    fn edit<S: Scalar>(
+    fn form<S: Scalar>(&self, before: &Part<S>, args: &AddDatumArgs, _: &()) -> Form<S> {
+        editor::form(before, args)
+    }
+
+    fn set<S: Scalar>(
         &self,
-        ctx: &EditContext<S>,
-        args: AddDatumArgs,
-        session: DatumSession,
-        event: Option<&Event<S>>,
-    ) -> Edited<AddDatumArgs, DatumSession, S> {
-        editor::edit(ctx, args, session, event)
-    }
-
-    fn summary(&self, args: &AddDatumArgs) -> String {
-        let selection: Vec<String> = args.selection.iter().map(EntityRef::label).collect();
-        format!(
-            "selection=[{}], construction={}",
-            selection.join(", "),
-            args.construction.schema().label
-        )
-    }
-
-    fn references(&self, args: &AddDatumArgs) -> Vec<EntityRef> {
-        args.selection.clone()
+        before: &Part<S>,
+        args: &mut AddDatumArgs,
+        _: &mut (),
+        key: &str,
+        value: Value,
+    ) {
+        editor::set(before, args, key, value);
     }
 }
 
@@ -673,8 +658,11 @@ mod tests {
     };
 
     use geop_ops::{
-        ORIGIN,
-        ui::{Button, Control, PartView, Pointer, Reach, Shape, Target},
+        ORIGIN, Operations,
+        ui::{
+            Button, Control, Event, PartView, Pointer, Presentation, Reach, Shape, StepEditor,
+            Target,
+        },
     };
 
     use super::*;
@@ -782,20 +770,28 @@ mod tests {
         assert!(err(vec![edge("nowhere")], Construction::AlongLine {}).contains("nowhere"));
     }
 
-    /// A datum step edited as an editor drives it: its presentation
-    /// after `events`, from a fresh session.
+    /// The one operation, as a set an editor edits.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
+    #[serde(tag = "operation", content = "args", rename_all = "snake_case")]
+    enum Ops {
+        AddDatum(AddDatumArgs),
+    }
+
+    /// A datum step edited as an editor drives it — `new`, starting with a
+    /// pick — and what it shows after `events`.
     fn edited(
         part: &Part<S>,
         args: AddDatumArgs,
+        new: bool,
         events: &[Event<S>],
-    ) -> Edited<AddDatumArgs, DatumSession, S> {
+    ) -> (AddDatumArgs, Presentation<S>) {
         let view = PartView::of(part).unwrap();
-        let ctx = EditContext { part, view: &view };
-        let mut edited = AddDatum.edit(&ctx, args, DatumSession::default(), None);
+        let mut editor = StepEditor::new(Ops::AddDatum(args), part, new);
         for event in events {
-            edited = AddDatum.edit(&ctx, edited.args, edited.session, Some(event));
+            editor.handle(part, &view, event);
         }
-        edited
+        let Ops::AddDatum(args) = editor.step().clone();
+        (args, editor.presentation(part))
     }
 
     /// Offsets are handles: dragging one along its direction edits the
@@ -811,13 +807,13 @@ mod tests {
             },
         };
         let part = Part::<S>::new();
-        let handles = edited(&part, args.clone(), &[]).presentation.visuals;
+        let handles = edited(&part, args.clone(), false, &[]).1.visuals;
         let keys: Vec<&str> = handles.iter().map(|h| h.key.as_str()).collect();
-        assert_eq!(keys, ["x", "y", "z"]);
+        assert_eq!(keys, ["param:x", "param:y", "param:z"]);
         let Shape::Handle { at, direction } = handles[2].shape else {
             panic!("a handle");
         };
-        assert_eq!(direction, Some(v([0.0, 0.0, 1.0])));
+        assert_eq!(direction, v([0.0, 0.0, 1.0]));
         assert!(at.could_be_equal(&v([1.0, 2.0, 3.3])), "{at:?}");
         // Seen from the side, dragged half a unit up.
         let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
@@ -826,9 +822,9 @@ mod tests {
             to: side(3.8),
             done: true,
         };
-        let dragged = edited(&part, args, &[drag]);
+        let (dragged, _) = edited(&part, args, false, &[drag]);
         assert_eq!(
-            dragged.args.construction,
+            dragged.construction,
             Construction::Point {
                 x: 1.0,
                 y: 2.0,
@@ -848,7 +844,7 @@ mod tests {
         };
         let part = Part::<S>::new();
         assert!(AddDatum.apply(part.clone(), "d", &args).is_err());
-        let dialog = edited(&part, args.clone(), &[]).presentation.dialog;
+        let dialog = edited(&part, args.clone(), false, &[]).1.dialog;
         let Some(Control::List { items, .. }) = dialog.get("selected") else {
             panic!("the selection is listed");
         };
@@ -860,7 +856,7 @@ mod tests {
             selection: vec![base(FrameAxis::Z)],
             ..args
         };
-        let dialog = edited(&part, args, &[]).presentation.dialog;
+        let dialog = edited(&part, args, false, &[]).1.dialog;
         let Some(Control::Select { options, .. }) = dialog.get("construction") else {
             panic!("the constructions are a select");
         };
@@ -882,14 +878,10 @@ mod tests {
             double: false,
             shift: false,
         };
-        let once = edited(&part, args.clone(), std::slice::from_ref(&click));
-        assert_eq!(once.args.selection, [origin()]);
-        assert!(
-            once.presentation
-                .pickable
-                .contains(&Target::Datum(DatumKind::Frame))
-        );
-        let twice = edited(&part, args, &[click.clone(), click]);
-        assert!(twice.args.selection.is_empty());
+        let (once, shown) = edited(&part, args.clone(), true, std::slice::from_ref(&click));
+        assert_eq!(once.selection, [origin()]);
+        assert!(shown.pickable.contains(&Target::Datum(DatumKind::Frame)));
+        let (twice, _) = edited(&part, args, true, &[click.clone(), click]);
+        assert!(twice.selection.is_empty());
     }
 }

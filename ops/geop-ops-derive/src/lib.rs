@@ -63,9 +63,10 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
     let mut infos = Vec::new();
     let mut new_arms = Vec::new();
     let mut apply_arms = Vec::new();
-    let mut edit_arms = Vec::new();
-    let mut summary_arms = Vec::new();
-    let mut reference_arms = Vec::new();
+    let mut session_arms = Vec::new();
+    let mut form_arms = Vec::new();
+    let mut set_arms = Vec::new();
+    let mut event_arms = Vec::new();
     let mut kind_arms = Vec::new();
     let mut label_arms = Vec::new();
     let mut froms = Vec::new();
@@ -111,13 +112,26 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
         apply_arms.push(quote! {
             #name::#op(args) => #operation::apply(&#op, part, operation_id, args),
         });
-        edit_arms.push(quote! {
-            #name::#op(args) => ::geop_ops::operation::edit_json(
-                &#op, ctx, ::std::clone::Clone::clone(args), session, event,
-            ).map_args(#name::#op),
+        let session = quote!(<#op as #operation>::Session);
+        let expect = quote!(.expect("a session made for a step of the same operation"));
+        session_arms.push(quote! {
+            #name::#op(_) => ::std::boxed::Box::new(<#session as ::std::default::Default>::default()),
         });
-        summary_arms.push(quote! { #name::#op(args) => #operation::summary(&#op, args), });
-        reference_arms.push(quote! { #name::#op(args) => #operation::references(&#op, args), });
+        form_arms.push(quote! {
+            #name::#op(args) => #operation::form(
+                &#op, before, args, session.downcast_ref::<#session>()#expect,
+            ),
+        });
+        set_arms.push(quote! {
+            #name::#op(args) => #operation::set(
+                &#op, before, args, session.downcast_mut::<#session>()#expect, key, value,
+            ),
+        });
+        event_arms.push(quote! {
+            #name::#op(args) => #operation::event(
+                &#op, before, args, session.downcast_mut::<#session>()#expect, event,
+            ),
+        });
         kind_arms.push(quote! { #name::#op(_) => #kind, });
         label_arms.push(quote! { #name::#op(_) => #label, });
         froms.push(quote! {
@@ -157,26 +171,42 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn edit<S: #private::Scalar>(
+            fn new_session(&self) -> ::std::boxed::Box<dyn ::std::any::Any> {
+                match self {
+                    #(#session_arms)*
+                }
+            }
+
+            fn form<S: #private::Scalar>(
                 &self,
-                ctx: &::geop_ops::operation::EditContext<S>,
-                session: #private::Value,
-                event: ::std::option::Option<&::geop_ops::ui::Event<S>>,
-            ) -> ::geop_ops::operation::Edited<Self, #private::Value, S> {
+                before: &::geop_ops::Part<S>,
+                session: &dyn ::std::any::Any,
+            ) -> ::geop_ops::ui::Form<S> {
                 match self {
-                    #(#edit_arms)*
+                    #(#form_arms)*
                 }
             }
 
-            fn summary(&self) -> ::std::string::String {
+            fn set<S: #private::Scalar>(
+                &mut self,
+                before: &::geop_ops::Part<S>,
+                session: &mut dyn ::std::any::Any,
+                key: &str,
+                value: ::geop_ops::ui::Value,
+            ) {
                 match self {
-                    #(#summary_arms)*
+                    #(#set_arms)*
                 }
             }
 
-            fn references(&self) -> ::std::vec::Vec<::geop_ops::operation::EntityRef> {
+            fn event<S: #private::Scalar>(
+                &mut self,
+                before: &::geop_ops::Part<S>,
+                session: &mut dyn ::std::any::Any,
+                event: &::geop_ops::ui::Event<S>,
+            ) {
                 match self {
-                    #(#reference_arms)*
+                    #(#event_arms)*
                 }
             }
 

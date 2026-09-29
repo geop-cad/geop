@@ -4,9 +4,11 @@
 //! ways CAD systems commonly offer (see [`Construction`]).
 
 mod add_datum;
-pub mod editor;
+mod editor;
+mod geometry;
 
 pub use add_datum::{
     AddDatum, AddDatumArgs, CONSTRUCTIONS, Construction, ConstructionSchema, Param, ParamKind,
     SelectionFit, inspect_selection,
 };
+pub use geometry::{Geometry, Role};

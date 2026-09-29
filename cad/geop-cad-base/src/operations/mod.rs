@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 mod datum_tests;
 #[cfg(test)]
+mod editor_tests;
+#[cfg(test)]
 mod program_tests;
 #[cfg(test)]
 mod regression_tests;
@@ -51,7 +53,5 @@ pub enum PartOperation {
 pub type Program = geop_ops::Program<PartOperation>;
 /// A step of a [`Program`].
 pub type Step = geop_ops::Step<PartOperation>;
-/// An edit of a [`Program`].
-pub type ProgramEdit = geop_ops::ProgramEdit<PartOperation>;
 /// Builds a [`Program`] incrementally.
 pub type ProgramRunner<S> = geop_ops::ProgramRunner<S, PartOperation>;

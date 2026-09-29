@@ -182,9 +182,7 @@ dependencies = [
  "console_error_panic_hook",
  "geop-cad-base",
  "geop-core-math",
- "geop-ops",
  "getrandom",
- "serde",
  "serde_json",
  "wasm-bindgen",
 ]

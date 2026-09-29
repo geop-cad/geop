@@ -8,9 +8,9 @@ use geop_core_math::{
 };
 use geop_core_sketch::Sketch;
 use geop_ops::{
-    EditContext, Edited, ORIGIN, Part, PlacedSketch,
-    operation::{EntityRef, Operation, resolve_plane},
-    ui::Event,
+    ORIGIN, Part, PlacedSketch,
+    operation::{EntityRef, Operation},
+    ui::{Event, Form, Value},
 };
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +52,7 @@ impl Operation for AddSketch {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("add_sketch({operation_id}, plane={:?})", args.plane);
         args.sketch.validate().with_context(ctx)?;
-        let plane = resolve_plane(&part, &args.plane).with_context(ctx)?;
+        let plane = args.plane.resolve_plane(&part).with_context(ctx)?;
         let placed = PlacedSketch {
             plane,
             sketch: args.sketch.clone(),
@@ -61,27 +61,35 @@ impl Operation for AddSketch {
         Ok(part)
     }
 
-    /// Choosing the plane, then drawing in it: see [`crate::editor`].
-    fn edit<S: Scalar>(
+    /// The plane, picked, and the sketch drawn in it: see
+    /// [`crate::editor`].
+    fn form<S: Scalar>(
         &self,
-        ctx: &EditContext<S>,
-        args: AddSketchArgs,
-        session: SketchSession,
-        event: Option<&Event<S>>,
-    ) -> Edited<AddSketchArgs, SketchSession, S> {
-        editor::edit(ctx, args, session, event)
+        before: &Part<S>,
+        args: &AddSketchArgs,
+        s: &SketchSession,
+    ) -> Form<S> {
+        editor::form(before, args, s)
     }
 
-    fn summary(&self, args: &AddSketchArgs) -> String {
-        let n = args.sketch.curves.len();
-        format!(
-            "plane={}, {n} curve{}",
-            args.plane.label(),
-            if n == 1 { "" } else { "s" }
-        )
+    fn set<S: Scalar>(
+        &self,
+        before: &Part<S>,
+        args: &mut AddSketchArgs,
+        s: &mut SketchSession,
+        key: &str,
+        value: Value,
+    ) {
+        editor::set(before, args, s, key, value);
     }
 
-    fn references(&self, args: &AddSketchArgs) -> Vec<EntityRef> {
-        vec![args.plane.clone()]
+    fn event<S: Scalar>(
+        &self,
+        before: &Part<S>,
+        args: &mut AddSketchArgs,
+        s: &mut SketchSession,
+        event: &Event<S>,
+    ) {
+        editor::event(before, args, s, event);
     }
 }

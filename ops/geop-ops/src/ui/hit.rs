@@ -46,12 +46,12 @@ fn distance<S: Scalar>(pointer: &Pointer<S>, visual: &Visual<S>) -> Option<(u8, 
     match &visual.shape {
         Shape::Handle { at, direction } => {
             let radius = pointer.reach_at(HANDLE, ray.closest_to_point(at));
-            let (dist, t) = match direction.and_then(|d| d.normalize().ok()) {
-                Some(d) => {
+            let (dist, t) = match direction.normalize() {
+                Ok(d) => {
                     let reach = d.prod_scalar(radius.mul(S::from_f64(3.0)));
                     ray.distance_to_segment(&at.sub(&reach), &at.add(&reach))
                 }
-                None => ray.distance_to_point(at),
+                Err(_) => ray.distance_to_point(at),
             };
             within(dist, t, HANDLE).map(|(p, t)| (0, p, t))
         }

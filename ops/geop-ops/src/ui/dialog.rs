@@ -1,6 +1,9 @@
-//! [`Dialog`]: the controls an operation shows for a step, in order.
+//! [`Dialog`]: the fields an operation shows for a step, in order.
 
 use serde::Serialize;
+
+use super::Target;
+use crate::operation::EntityRef;
 
 /// How a text reads: plain, a hint, a problem, or good news.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -13,7 +16,7 @@ pub enum Tone {
     Success,
 }
 
-/// A button of a [`Control::Buttons`] grid, with its own key.
+/// A button of a [`Control::Buttons`] row, with its own key.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ButtonItem {
     pub key: String,
@@ -72,17 +75,8 @@ impl Choice {
     }
 }
 
-/// How a [`Control::Select`] is shown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SelectStyle {
-    Dropdown,
-    /// Every option at once, grouped.
-    Radio,
-}
-
 /// One entry of a [`Control::List`], with its own key: pressing it sends
-/// [`super::DialogValue::Press`], removing it `Remove`, editing its value
+/// [`super::Value::Press`], removing it `Remove`, editing its value
 /// `Number`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ListItem {
@@ -122,15 +116,7 @@ pub enum Control {
         text: String,
         tone: Tone,
     },
-    Button {
-        label: String,
-        title: Option<String>,
-        /// Shown pressed: a pick waiting for the viewport.
-        active: bool,
-        enabled: bool,
-        primary: bool,
-    },
-    /// A grid of buttons, each with its own key.
+    /// A row of buttons, each with its own key.
     Buttons {
         buttons: Vec<ButtonItem>,
     },
@@ -145,12 +131,22 @@ pub enum Control {
         slider: Option<[f64; 2]>,
         step: f64,
     },
-    /// One of `options`, by value.
+    /// One of `options`, by value. Grouped options are shown all at once.
     Select {
         label: String,
         value: String,
         options: Vec<Choice>,
-        style: SelectStyle,
+    },
+    /// Entities picked in the viewport, of the `targets` kinds: one, or —
+    /// `multiple` — any number, a pick adding or removing one. Pressing it
+    /// arms it: the editor then picks for it (see
+    /// [`super::StepEditor`]), and says so in `armed`.
+    Pick {
+        label: String,
+        value: Vec<EntityRef>,
+        targets: Vec<Target>,
+        multiple: bool,
+        armed: bool,
     },
     List {
         items: Vec<ListItem>,
@@ -167,7 +163,7 @@ pub struct Field {
     pub control: Control,
 }
 
-/// The controls an operation shows for a step, in order: an ordered
+/// The fields an operation shows for a step, in order: an ordered
 /// dictionary from key to control, serialized as a list, so a UI renders it
 /// with one `map` and keys each element by it. Keys are unique.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -204,32 +200,9 @@ impl Dialog {
         )
     }
 
+    /// One button, pressing which sends `key`.
     pub fn button(&mut self, key: &str, label: impl Into<String>) -> &mut Self {
-        self.push(
-            key,
-            Control::Button {
-                label: label.into(),
-                title: None,
-                active: false,
-                enabled: true,
-                primary: false,
-            },
-        )
-    }
-
-    /// A button that arms a pick in the viewport, shown pressed while it is
-    /// armed.
-    pub fn pick_button(&mut self, key: &str, label: impl Into<String>, active: bool) -> &mut Self {
-        self.push(
-            key,
-            Control::Button {
-                label: label.into(),
-                title: Some("Pick in the viewport".into()),
-                active,
-                enabled: true,
-                primary: false,
-            },
-        )
+        self.buttons(key, vec![ButtonItem::new(key, label)])
     }
 
     pub fn buttons(&mut self, key: &str, buttons: Vec<ButtonItem>) -> &mut Self {
@@ -272,7 +245,6 @@ impl Dialog {
         label: impl Into<String>,
         value: impl Into<String>,
         options: Vec<Choice>,
-        style: SelectStyle,
     ) -> &mut Self {
         self.push(
             key,
@@ -280,7 +252,28 @@ impl Dialog {
                 label: label.into(),
                 value: value.into(),
                 options,
-                style,
+            },
+        )
+    }
+
+    /// A field picking one entity of the `targets` kinds, or — `multiple` —
+    /// any number of them.
+    pub fn pick(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: Vec<EntityRef>,
+        targets: &[Target],
+        multiple: bool,
+    ) -> &mut Self {
+        self.push(
+            key,
+            Control::Pick {
+                label: label.into(),
+                value,
+                targets: targets.to_vec(),
+                multiple,
+                armed: false,
             },
         )
     }
@@ -298,5 +291,58 @@ impl Dialog {
     /// The field `key`.
     pub fn get(&self, key: &str) -> Option<&Control> {
         self.0.iter().find(|f| f.key == key).map(|f| &f.control)
+    }
+
+    pub(crate) fn get_mut(&mut self, key: &str) -> Option<&mut Control> {
+        self.0
+            .iter_mut()
+            .find(|f| f.key == key)
+            .map(|f| &mut f.control)
+    }
+
+    /// Every entity its pick fields hold: what the step builds on.
+    pub fn picked(&self) -> impl Iterator<Item = &EntityRef> {
+        self.0.iter().flat_map(|f| match &f.control {
+            Control::Pick { value, .. } => value.as_slice(),
+            _ => &[],
+        })
+    }
+
+    /// Its values in one line, for a list of steps:
+    /// `sketch=outline, distance=1.00`.
+    pub fn summary(&self) -> String {
+        self.0
+            .iter()
+            .filter_map(|f| {
+                let value = match &f.control {
+                    Control::Checkbox { label, value } => {
+                        (label, if *value { "yes" } else { "no" }.to_string())
+                    }
+                    Control::Number { label, value, .. } => (label, format!("{value:.2}")),
+                    Control::Select {
+                        label,
+                        value,
+                        options,
+                    } => (
+                        label,
+                        options
+                            .iter()
+                            .find(|o| &o.value == value)
+                            .map_or(value.clone(), |o| o.label.clone()),
+                    ),
+                    Control::Pick { label, value, .. } => (
+                        label,
+                        value
+                            .iter()
+                            .map(EntityRef::label)
+                            .collect::<Vec<_>>()
+                            .join(" & "),
+                    ),
+                    _ => return None,
+                };
+                Some(format!("{}={}", value.0, value.1))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }

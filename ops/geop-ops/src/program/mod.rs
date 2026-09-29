@@ -1,14 +1,9 @@
-//! [`Program`]: an ordered list of operations that builds a [`Part`]; the
-//! edits it can undergo ([`ProgramEdit`]); and [`ProgramRunner`], which
-//! builds it incrementally.
+//! [`Program`]: an ordered list of operations that builds a [`Part`], and
+//! [`ProgramRunner`], which builds it incrementally.
 //!
-//! All three are generic over the set of operations the program can use
-//! (see [`Operations`]): which operations those are is for an application
-//! to decide.
-//!
-//! Editing lives here, not in any editor, so that every editor — the
-//! browser UI, a future desktop one, a script — changes programs the same
-//! way and is only a more convenient way of writing them.
+//! Both are generic over the set of operations the program can use (see
+//! [`Operations`]): which operations those are is for an application to
+//! decide.
 
 use std::collections::HashSet;
 
@@ -19,11 +14,7 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Part,
-    operation::{EntityRef, Operations},
-    validate_operation_id,
-};
+use crate::{Part, operation::Operations, validate_operation_id};
 
 /// One step of a [`Program`]: an operation with its arguments, and the id
 /// everything it creates is named after. Serializes as
@@ -48,63 +39,6 @@ pub struct Program<O> {
 impl<O> Default for Program<O> {
     fn default() -> Self {
         Self { steps: Vec::new() }
-    }
-}
-
-/// A change to a [`Program`]. Every edit of a program — whoever makes it —
-/// is one of these, applied by [`Program::update`].
-///
-/// Steps are addressed by id, not position, so an edit means the same thing
-/// however the steps around it have moved. Serializes as, e.g.,
-/// `{"edit": "update", "id": "box", "operation": "extrude", "args": {...}}`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "edit", rename_all = "snake_case")]
-pub enum ProgramEdit<O> {
-    /// Insert `operation` as a new step at position `index` (the end, if it
-    /// is the number of steps), with the id `id` — or, if that is `None`, a
-    /// fresh one derived from the operation (see [`Program::fresh_id`]).
-    Insert {
-        index: usize,
-        #[serde(default)]
-        id: Option<String>,
-        #[serde(flatten)]
-        operation: O,
-    },
-    /// Give step `id` a new operation or new arguments, in place.
-    Update {
-        id: String,
-        #[serde(flatten)]
-        operation: O,
-    },
-    /// Remove step `id`. Steps that referred to what it built fail from then
-    /// on, until they are edited — the program is left as the user made it.
-    Remove { id: String },
-    /// Move step `id` to position `index` among the remaining steps.
-    Move { id: String, index: usize },
-    /// Replace the whole program, e.g. with one loaded from a file.
-    Replace { program: Program<O> },
-}
-
-impl<O: Operations> ProgramEdit<O> {
-    /// What the edit does, in a few words — without the arguments, which
-    /// can be a whole sketch.
-    pub fn summary(&self) -> String {
-        match self {
-            ProgramEdit::Insert {
-                index, operation, ..
-            } => format!("insert a {} step at {index}", operation.kind()),
-            ProgramEdit::Update { id, operation } => {
-                format!("update step {id:?} to a {} step", operation.kind())
-            }
-            ProgramEdit::Remove { id } => format!("remove step {id:?}"),
-            ProgramEdit::Move { id, index } => format!("move step {id:?} to {index}"),
-            ProgramEdit::Replace { program } => {
-                format!(
-                    "replace the program by one of {} steps",
-                    program.steps.len()
-                )
-            }
-        }
     }
 }
 
@@ -154,73 +88,6 @@ impl<O: Operations> Program<O> {
             }
         }
         Ok(())
-    }
-
-    /// Applies `edit`, returning the id of the step it inserted, changed or
-    /// moved (`None` for a removal or a replacement). An edit that would
-    /// leave the program invalid — an unknown step, a position past the end,
-    /// a duplicate or malformed id — is rejected and changes nothing.
-    ///
-    /// This only changes the recipe; whether the steps still build is for
-    /// running it to say (see [`ProgramRunner`]).
-    pub fn update(&mut self, edit: ProgramEdit<O>) -> GeopResult<Option<String>> {
-        let summary = edit.summary();
-        let ctx = with_context!("Program::update({summary})");
-        let mut next = self.clone();
-        let changed = match edit {
-            ProgramEdit::Insert {
-                index,
-                id,
-                operation,
-            } => {
-                if index > next.steps.len() {
-                    return Err(GeopError::new(format!(
-                        "cannot insert at {index}: the program has {} steps",
-                        next.steps.len()
-                    )))
-                    .with_context(ctx);
-                }
-                let id = id.unwrap_or_else(|| next.fresh_id(&operation));
-                next.steps.insert(
-                    index,
-                    Step {
-                        id: id.clone(),
-                        operation,
-                    },
-                );
-                Some(id)
-            }
-            ProgramEdit::Update { id, operation } => {
-                let index = next.index_of(&id).with_context(ctx)?;
-                next.steps[index].operation = operation;
-                Some(id)
-            }
-            ProgramEdit::Remove { id } => {
-                let index = next.index_of(&id).with_context(ctx)?;
-                next.steps.remove(index);
-                None
-            }
-            ProgramEdit::Move { id, index } => {
-                let from = next.index_of(&id).with_context(ctx)?;
-                let step = next.steps.remove(from);
-                if index > next.steps.len() {
-                    return Err(GeopError::new(format!(
-                        "cannot move to {index}: the program has {} other steps",
-                        next.steps.len()
-                    )))
-                    .with_context(ctx);
-                }
-                next.steps.insert(index, step);
-                Some(id)
-            }
-            ProgramEdit::Replace { program } => {
-                next = program;
-                None
-            }
-        };
-        next.validate().with_context(ctx)?;
-        *self = next;
-        Ok(changed)
     }
 
     /// Runs every step in order, starting from `part` (typically
@@ -354,20 +221,15 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         &self.parts[self.ran]
     }
 
+    /// The part the first `n` steps of the last run built — or, where the
+    /// run stopped before, the part it built.
+    pub fn part_at(&self, n: usize) -> &Part<S> {
+        &self.parts[n.min(self.ran)]
+    }
+
     /// One result per step the last run covered.
     pub fn results(&self) -> &[StepResult] {
         &self.results[..self.ran]
-    }
-
-    /// The sketches and datums the steps the last run built build on (see
-    /// [`Operations::references`]); a failed step built on nothing.
-    pub fn references(&self) -> Vec<EntityRef> {
-        self.steps
-            .iter()
-            .zip(self.results())
-            .filter(|(_, r)| r.error.is_none())
-            .flat_map(|(step, _)| step.operation.references())
-            .collect()
     }
 }
 

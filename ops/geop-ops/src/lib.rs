@@ -11,25 +11,25 @@
 //!   [`ORIGIN`], and a stable name for every entity in it (see
 //!   [Topological naming](#topological-naming)).
 //! - [`operation`]: what an operation is. Built, a step maps a part and
-//!   its arguments to a new part; edited, every user action maps
+//!   its arguments to a new part; edited, it shows a
+//!   [`Form`](ui::Form) — fields and visuals — and has its fields set:
 //!
 //!   ```text
-//!   (part, args, session, event) -> (args, session, presentation)
+//!   (part, args)                 -> form
+//!   (part, args, field, value)   -> args
 //!   ```
 //!
 //!   The arguments are plain, serializable design data: numbers, choices,
 //!   sketches, and references to entities of the part by name
-//!   ([`EntityRef`]). The session is the temporary state of an edit — a
-//!   tool in hand, a half-drawn line, a pick waiting for a click — and is
-//!   never saved.
-//! - [`ui`]: what that exchange is made of — the [`Event`](ui::Event)s an
-//!   editor sends (a dialog control used, a click or a drag as a ray from
-//!   the eye, a key), and the [`Presentation`](ui::Presentation) it gets
-//!   back: a [`Dialog`](ui::Dialog) of simple controls and the
-//!   [`Visual`](ui::Visual)s to draw. And the helpers that make operations
-//!   answer events consistently: hit tests against visuals and against the
-//!   part as drawn ([`PartView`](ui::PartView)), picking an entity for an
-//!   argument, dragging a handle. An editor only renders primitives and
+//!   ([`EntityRef`]).
+//! - [`ui`]: what an editor exchanges with the operations — the
+//!   [`Event`](ui::Event)s it sends (a dialog field used, a click or a drag
+//!   as a ray from the eye, a key) and the
+//!   [`Presentation`](ui::Presentation) it gets back — and the
+//!   [`StepEditor`](ui::StepEditor), which makes every operation answer
+//!   them alike: picking entities for a field, dragging a handle, hit tests
+//!   against visuals and against the part as drawn
+//!   ([`PartView`](ui::PartView)). An editor only renders primitives and
 //!   forwards raw input; every decision is made here.
 //! - [`Operations`]: a set of operations a program can use, as one
 //!   serializable enum; `#[derive(Operations)]` writes it. Which operations
@@ -39,9 +39,8 @@
 //!   operation with its arguments and an id of its own, that builds a part
 //!   from scratch. A program is design data: it serializes to JSON and
 //!   back without losing anything, and rebuilding the read-back program
-//!   gives the same part, name for name. It changes only through
-//!   [`Program::update`], and [`ProgramRunner`] builds it incrementally,
-//!   stopping wherever an editor asks.
+//!   gives the same part, name for name. [`ProgramRunner`] builds it
+//!   incrementally, stopping wherever an editor asks.
 //!
 //! # Parts
 //!
@@ -90,8 +89,8 @@ pub use part::{
     PlacedSketch, RefId, SketchId, validate_operation_id,
 };
 
-pub use operation::{EditContext, Edited, EntityRef, Operation, OperationInfo, Operations};
-pub use program::{Program, ProgramEdit, ProgramRunner, Step, StepResult};
+pub use operation::{EntityRef, Operation, OperationInfo, Operations};
+pub use program::{Program, ProgramRunner, Step, StepResult};
 
 #[doc(hidden)]
 /// What `#[derive(Operations)]` writes refers to, so a crate using it needs
@@ -101,5 +100,4 @@ pub mod __private {
         geop_error::{GeopError, GeopResult},
         scalars::Scalar,
     };
-    pub use serde_json::Value;
 }

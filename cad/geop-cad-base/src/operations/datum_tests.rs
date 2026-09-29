@@ -6,8 +6,8 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{EntityRef, ORIGIN, Operation, Part, operation::Role};
-use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, inspect_selection};
+use geop_ops::{EntityRef, ORIGIN, Operation, Part};
+use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, Role, inspect_selection};
 
 use crate::examples;
 

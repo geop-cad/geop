@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
@@ -6,16 +6,15 @@ import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, type CameraPose, type Projection } 
 import { DatumLayer } from "./datums3d";
 import {
   sameEntity,
-  type DatumInfo,
   type DatumKind,
   type EntityRef,
-  type Extent,
   type Frame,
+  type PartView,
   type Pointer,
   type PointerEvent_,
   type Reach,
-  type Scene,
   type Target,
+  type Vec3,
   type Visual,
 } from "./geop";
 import { PlaneGrid } from "./planeGrid";
@@ -34,18 +33,91 @@ function datumKinds(targets: Target[]): DatumKind[] {
 /** How long a [[Props.focus]] move takes, in milliseconds. */
 const FOCUS_MS = 550;
 
+/** How the part's entities are colored. */
+const VERTEX_COLOR = 0x3c3c3c;
+const EDGE_COLOR = 0x808080;
+const FACE_COLOR = 0x4472c4;
+/** Sketch curves: profile geometry and construction geometry. */
+const SKETCH_COLOR = 0xffa040;
+const CONSTRUCTION_COLOR = 0x808080;
+
+/**
+ * A part as flat buffers, each element colored and tagged with the name of
+ * what it draws — what three.js takes, and what highlighting by name needs.
+ */
+interface Scene {
+  /** `[x, y, z, colorHex]` per point, and the name of the vertex each draws. */
+  points: [number, number, number, number][];
+  point_names: string[];
+  /** `[x0, y0, z0, x1, y1, z1, colorHex]` per line segment. */
+  lines: [number, number, number, number, number, number, number][];
+  /** Per line: the sketch it belongs to, or the edge it draws. */
+  line_sketches: (string | null)[];
+  line_edges: (string | null)[];
+  /** Per triangle: its corners, its color, its corners' normals, and the index in `faces` of its face. */
+  triangles: [Vec3, Vec3, Vec3, number][];
+  normals: [Vec3, Vec3, Vec3][];
+  triangle_faces: number[];
+  faces: { name: string; solid: string | null }[];
+}
+
+/** The point `(x, y)` of `plane`. */
+function inPlane(plane: Frame, [x, y]: [number, number]): Vec3 {
+  return [0, 1, 2].map((k) => plane.origin[k] + x * plane.u[k] + y * plane.v[k]) as Vec3;
+}
+
+/** `part` as a [[Scene]]. */
+function flatten(part: PartView): Scene {
+  const scene: Scene = {
+    points: [],
+    point_names: [],
+    lines: [],
+    line_sketches: [],
+    line_edges: [],
+    triangles: [],
+    normals: [],
+    triangle_faces: [],
+    faces: [],
+  };
+  for (const v of part.vertices) {
+    scene.points.push([...v.at, VERTEX_COLOR]);
+    scene.point_names.push(v.name);
+  }
+  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, edge: string | null) => {
+    scene.lines.push([...a, ...b, color]);
+    scene.line_sketches.push(sketch);
+    scene.line_edges.push(edge);
+  };
+  for (const e of part.edges) {
+    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, e.name);
+  }
+  part.faces.forEach((f, index) => {
+    scene.faces.push({ name: f.name, solid: f.solid });
+    f.triangles.forEach(([a, b, c], i) => {
+      scene.triangles.push([a, b, c, FACE_COLOR]);
+      scene.normals.push(f.normals[i]);
+      scene.triangle_faces.push(index);
+    });
+  });
+  for (const sketch of part.sketches) {
+    for (const curve of sketch.curves) {
+      const color = curve.construction ? CONSTRUCTION_COLOR : SKETCH_COLOR;
+      const points = curve.polyline.map((p) => inPlane(sketch.plane, p));
+      for (let i = 1; i < points.length; i++) line(points[i - 1], points[i], color, sketch.name, null);
+    }
+  }
+  return scene;
+}
+
 interface Props {
-  scene: Scene;
+  /** The part to draw, with its datums. */
+  part: PartView;
   /** What the step being edited shows, drawn over the model. */
   visuals?: Visual[];
   /** What to draw highlighted — what is picked, what a click would pick. */
   highlights?: EntityRef[];
   /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
   pickable?: Target[];
-  /** The part's datums, drawn as reference geometry. */
-  datums?: DatumInfo[];
-  /** Where the drawing is and how big: how big datum planes and axes are drawn. */
-  extent?: Extent;
   /** Sketches and datums, by name, not to draw. */
   hidden?: string[];
   /**
@@ -106,12 +178,11 @@ function buildSceneGroup(scene: Scene): THREE.Group {
   if (scene.triangles.length > 0) {
     const positions = new Float32Array(scene.triangles.length * 9);
     const colors = new Float32Array(scene.triangles.length * 9);
-    const hasNormals = scene.normals?.length === scene.triangles.length;
-    const normals = hasNormals ? new Float32Array(scene.triangles.length * 9) : null;
-    scene.triangles.forEach(([ax, ay, az, bx, by, bz, cx, cy, cz, hex], i) => {
+    const normals = new Float32Array(scene.triangles.length * 9);
+    scene.triangles.forEach(([a, b, c, hex], i) => {
       const o = i * 9;
-      positions.set([ax, ay, az, bx, by, bz, cx, cy, cz], o);
-      normals?.set(scene.normals[i], o);
+      positions.set([...a, ...b, ...c], o);
+      normals.set(scene.normals[i].flat(), o);
       const color = new THREE.Color(hex);
       for (let v = 0; v < 3; v++) {
         colors.set([color.r, color.g, color.b], o + v * 3);
@@ -120,12 +191,11 @@ function buildSceneGroup(scene: Scene): THREE.Group {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    // The kernel's own normals where it has them: averaging the mesh's
-    // facet normals (computeVertexNormals) cannot, since every triangle
-    // here has its own three vertices — that is what made curved faces
-    // look faceted however finely they were tessellated.
-    if (normals) geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-    else geometry.computeVertexNormals();
+    // The kernel's own normals: averaging the mesh's facet normals
+    // (computeVertexNormals) cannot, since every triangle here has its own
+    // three vertices — that is what made curved faces look faceted however
+    // finely they were tessellated.
+    geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,
@@ -145,9 +215,9 @@ function buildSceneGroup(scene: Scene): THREE.Group {
   // the model's edges), so a sketch can be highlighted on its own.
   const byOwner = new Map<string, { hex: number; sketch: string | null; coords: number[] }>();
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1, hex], i) => {
-    const owner = scene.line_sketches[i] ?? -1;
-    const key = `${owner}:${hex}`;
-    const entry = byOwner.get(key) ?? { hex, sketch: owner >= 0 ? scene.sketch_names[owner] : null, coords: [] };
+    const sketch = scene.line_sketches[i];
+    const key = `${sketch ?? ""}:${hex}`;
+    const entry = byOwner.get(key) ?? { hex, sketch, coords: [] };
     entry.coords.push(x0, y0, z0, x1, y1, z1);
     byOwner.set(key, entry);
   });
@@ -228,8 +298,8 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[
   overlay.userData.overlay = true;
   const coords: number[] = [];
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1], i) => {
-    const edge = scene.line_edges[i] ?? -1;
-    if (edge >= 0 && edges.has(scene.edge_names[edge])) coords.push(x0, y0, z0, x1, y1, z1);
+    const edge = scene.line_edges[i];
+    if (edge != null && edges.has(edge)) coords.push(x0, y0, z0, x1, y1, z1);
   });
   if (coords.length) {
     const geometry = new THREE.BufferGeometry();
@@ -259,8 +329,8 @@ function disposeGroup(group: THREE.Object3D) {
 }
 
 /**
- * Renders a [[Scene]] (points/lines/triangles from the wasm crate) with
- * three.js, and what the step being edited shows over it.
+ * Renders a part (a [[PartView]] from the wasm crate) with three.js, and
+ * what the step being edited shows over it.
  *
  * The renderer, camera and controls are created once and kept: a new scene
  * (a committed op, or a preview updating under a slider) only swaps the
@@ -268,16 +338,14 @@ function disposeGroup(group: THREE.Object3D) {
  * it was.
  *
  * It picks nothing itself: hovers, clicks and drags go to
- * [[Props.onPointer]] as rays, with what a screen pixel measures along
- * them, and the kernel decides what they hit.
+ * [[Props.onPointer]] as rays, with how far they reach, and the kernel
+ * decides what they hit.
  */
 export function SceneViewer({
-  scene,
+  part,
   visuals,
   highlights,
   pickable,
-  datums,
-  extent,
   hidden,
   plane,
   grab,
@@ -296,10 +364,8 @@ export function SceneViewer({
   highlightsRef.current = highlights ?? [];
   const pickableRef = useRef(pickable ?? []);
   pickableRef.current = pickable ?? [];
-  const datumsRef = useRef(datums ?? []);
-  datumsRef.current = datums ?? [];
-  const extentRef = useRef<Extent>(extent ?? { center: [0, 0, 0], size: 1 });
-  extentRef.current = extent ?? { center: [0, 0, 0], size: 1 };
+  const partRef = useRef(part);
+  partRef.current = part;
   const hiddenRef = useRef(hidden ?? []);
   hiddenRef.current = hidden ?? [];
   const planeRef = useRef(plane ?? null);
@@ -559,7 +625,8 @@ export function SceneViewer({
 
       const lit = highlightsRef.current;
       const hidden = hiddenRef.current.filter((name) => !lit.some((l) => sameEntity(l, { type: "Datum", name })));
-      datumLayer.sync(datumsRef.current, hidden, extentRef.current.size, vec(extentRef.current.center));
+      const { datums, extent } = partRef.current;
+      datumLayer.sync(datums, hidden, extent.size, vec(extent.center));
       datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);
       visualLayer.sync(visualsRef.current);
       visualLayer.update(camera, height, controls.target);
@@ -605,7 +672,8 @@ export function SceneViewer({
     };
   }, [focus]);
 
-  // Swap in the current scene's geometry, leaving camera and controls alone.
+  // Swap in the current part's geometry, leaving camera and controls alone.
+  const scene = useMemo(() => flatten(part), [part]);
   useEffect(() => {
     const threeScene = sceneRef.current;
     if (!threeScene) return;

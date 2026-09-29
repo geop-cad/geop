@@ -1,16 +1,10 @@
 //! [`EntityRef`]: how a step refers to geometry it builds on — a vertex,
-//! edge, face, datum, solid or sketch of the part, by name — and [`Geometry`], what such an entity is: a point, a
-//! line, a plane, an arc, something round, a curve — or several of these at
-//! once. Which of them an entity is decides what can be built on it.
+//! edge, face, datum, solid or sketch of the part, by name.
 
 use crate::Part;
-use geop_core_geometry::{
-    nurb_curve::NurbCurve3D,
-    shape::{Arc, Axis},
-};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{CoordinateSystem, DatumComponent, DatumKind},
+    primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind},
     scalars::Scalar,
     vector::Vector3,
     with_context,
@@ -106,90 +100,6 @@ impl std::fmt::Display for EntityRef {
     }
 }
 
-/// Everything an entity can be used as. An entity is usually several at
-/// once: a straight edge is a line and a curve, a circular edge an arc, a
-/// curve and something round, a datum point a point and a frame, a datum
-/// frame the same.
-#[derive(Clone, Debug)]
-pub struct Geometry<S: Scalar> {
-    pub point: Option<Vector3<S>>,
-    /// The line it runs along: a straight edge, an axis.
-    pub line: Option<Axis<S>>,
-    /// The plane it lies in, as a frame with `w` the normal and `u`/`v` a
-    /// sketch's `x`/`y` on it.
-    pub plane: Option<CoordinateSystem<S>>,
-    pub arc: Option<Arc<S>>,
-    /// The axis it turns around: a circular edge, a cylinder, a cone.
-    pub round: Option<Axis<S>>,
-    /// An edge's curve, whatever its shape.
-    pub curve: Option<NurbCurve3D<S>>,
-    /// Its own axes, if it has any: a datum's frame.
-    pub frame: Option<CoordinateSystem<S>>,
-}
-
-impl<S: Scalar> Geometry<S> {
-    fn none() -> Self {
-        Self {
-            point: None,
-            line: None,
-            plane: None,
-            arc: None,
-            round: None,
-            curve: None,
-            frame: None,
-        }
-    }
-
-    /// Every role it can fill.
-    pub fn roles(&self) -> Vec<Role> {
-        Role::ALL
-            .into_iter()
-            .filter(|role| role.fits(self))
-            .collect()
-    }
-}
-
-/// What a construction needs an input to be.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    /// A vertex, a datum point, a frame's origin.
-    Point,
-    /// A straight edge, a datum axis, a frame's axis.
-    Line,
-    /// A planar face, a datum plane, a frame's plane.
-    Plane,
-    /// Any edge.
-    Edge,
-    /// A circular edge.
-    Circle,
-    /// Something that turns around an axis: a circular edge, a cylindrical,
-    /// conical or spherical face.
-    Round,
-}
-
-impl Role {
-    const ALL: [Role; 6] = [
-        Role::Point,
-        Role::Line,
-        Role::Plane,
-        Role::Edge,
-        Role::Circle,
-        Role::Round,
-    ];
-
-    pub fn fits<S: Scalar>(self, geometry: &Geometry<S>) -> bool {
-        match self {
-            Role::Point => geometry.point.is_some(),
-            Role::Line => geometry.line.is_some(),
-            Role::Plane => geometry.plane.is_some(),
-            Role::Edge => geometry.curve.is_some(),
-            Role::Circle => geometry.arc.is_some(),
-            Role::Round => geometry.round.is_some(),
-        }
-    }
-}
-
 /// A right-handed orthonormal frame at `origin` with `w` along `normal`,
 /// and `u` the world axis most parallel to the plane normal to it,
 /// projected into that plane — so frames with parallel normals line up.
@@ -209,77 +119,50 @@ pub fn frame_along<S: Scalar>(
 }
 
 impl EntityRef {
-    /// What the entity is in `part`. Fails if the part has no such entity.
-    pub fn resolve<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Geometry<S>> {
+    /// The datum it refers to in `part` — for a component of a frame, that
+    /// component as a datum of its own. Fails if it is no datum of the
+    /// part.
+    pub fn resolve_datum<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Datum<S>> {
         let ctx = with_context!("resolving {self}");
-        let mut g = Geometry::none();
+        let EntityRef::Datum { name, component } = self else {
+            return Err(GeopError::new(format!("{self} is not a datum")));
+        };
+        let datum = part.datum(part.datum_id(name).with_context(ctx)?)?;
+        match component {
+            Some(component) => datum.component(*component).with_context(ctx),
+            None => Ok(datum.clone()),
+        }
+    }
+
+    /// The plane it lies in, as a frame with `u`/`v` a sketch's `x`/`y` on
+    /// it and `w = u x v` its normal: a planar face's — normal pointing out
+    /// of its solid, origin the world origin's projection onto it and `u`
+    /// the world axis most parallel to it, so sketches on parallel faces
+    /// line up — a datum plane's, a frame's plane's, or a sketch's. Fails
+    /// for anything else.
+    pub fn resolve_plane<S: Scalar>(&self, part: &Part<S>) -> GeopResult<CoordinateSystem<S>> {
+        let ctx = with_context!("resolving the plane of {self}");
         match self {
-            EntityRef::Vertex { name } => {
-                let id = part.vertex_id(name).with_context(ctx)?;
-                g.point = Some(part.topology().get_vertex(id).with_context(ctx)?.point);
-            }
-            EntityRef::Edge { name } => {
-                let id = part.edge_id(name).with_context(ctx)?;
-                let curve = part
-                    .topology()
-                    .get_edge(id)
-                    .with_context(ctx)?
-                    .curve
-                    .clone();
-                g.line = curve.as_line().with_context(ctx)?;
-                g.arc = curve.as_arc().with_context(ctx)?;
-                g.round = g.arc.as_ref().map(|arc| arc.circle.axis());
-                g.curve = Some(curve);
-            }
             EntityRef::Face { name } => {
                 let id = part.face_id(name).with_context(ctx)?;
                 let surface = &part.topology().get_face(id).with_context(ctx)?.surface;
-                if let Some(plane) = surface.as_plane().with_context(ctx)? {
-                    let origin = plane.project(&Vector3::zero());
-                    g.plane = Some(frame_along(origin, &plane.normal)?);
+                match surface.as_plane().with_context(ctx)? {
+                    Some(plane) => frame_along(plane.project(&Vector3::zero()), &plane.normal),
+                    None => Err(GeopError::new(format!("{self} is not planar"))),
                 }
-                g.round = surface.axis_of_revolution().with_context(ctx)?;
             }
-            EntityRef::Datum { name, component } => {
-                let id = part.datum_id(name).with_context(ctx)?;
-                let mut datum = part.datum(id).with_context(ctx)?.clone();
-                if let Some(component) = component {
-                    datum = datum.component(*component).with_context(ctx)?;
-                }
-                let frame = datum.frame.clone();
+            EntityRef::Datum { .. } => {
+                let datum = self.resolve_datum(part)?;
                 match datum.kind {
-                    DatumKind::Point => g.point = Some(*frame.origin()),
-                    DatumKind::Axis => g.line = Some(Axis::try_new(*frame.origin(), *frame.w())?),
-                    DatumKind::Plane => g.plane = Some(frame.clone()),
-                    // A coordinate system is used by its origin, and by its
-                    // axes as the frame below.
-                    DatumKind::Frame => g.point = Some(*frame.origin()),
+                    DatumKind::Plane => Ok(datum.frame),
+                    _ => Err(GeopError::new(format!("{self} is not a plane"))),
                 }
-                g.frame = Some(frame);
-            }
-            // A solid as a whole is none of these.
-            EntityRef::Solid { name } => {
-                part.solid_id(name).with_context(ctx)?;
             }
             EntityRef::Sketch { name } => {
                 let id = part.sketch_id(name).with_context(ctx)?;
-                let plane = part.sketch(id).with_context(ctx)?.plane.clone();
-                g.plane = Some(plane.clone());
-                g.frame = Some(plane);
+                Ok(part.sketch(id).with_context(ctx)?.plane.clone())
             }
+            _ => Err(GeopError::new(format!("{self} is not planar"))),
         }
-        Ok(g)
     }
-}
-
-/// The frame of the plane `plane` refers to in `part`: `u`/`v` a sketch's
-/// `x`/`y` on it, `w = u x v` its normal. Fails if it is not a plane.
-pub fn resolve_plane<S: Scalar>(
-    part: &Part<S>,
-    plane: &EntityRef,
-) -> GeopResult<CoordinateSystem<S>> {
-    plane
-        .resolve(part)?
-        .plane
-        .ok_or_else(|| GeopError::new(format!("{plane} is not planar")))
 }

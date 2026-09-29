@@ -9,14 +9,14 @@ use geop_core_math::{
 };
 use geop_core_sketch::{CurveId, CurveKind, Positions, ProfileLoop};
 use geop_ops::{
-    EditContext, Edited, Namer, Part,
+    Namer, Part,
     operation::{EntityRef, Operation},
-    ui::{Choice, Dialog, DialogValue, Event, Presentation, SelectStyle, Tone},
+    ui::{Choice, Dialog, Form, Tone, Value},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use super::{SweepSession, extrude::sketch_profile, pick_sketch, pickable, sketch_field};
+use super::{extrude::sketch_profile, sketch_field};
 use crate::revolve::revolve_at_oriented;
 
 /// Revolves every region of a sketch a full turn around one of its lines,
@@ -82,7 +82,7 @@ fn default_axis<S: Scalar>(part: &Part<S>, sketch: &str) -> CurveId {
 
 impl Operation for Revolve {
     type Args = RevolveArgs;
-    type Session = SweepSession;
+    type Session = ();
 
     /// The newest sketch around its axis line, joined to the newest solid
     /// if there is one.
@@ -95,34 +95,11 @@ impl Operation for Revolve {
         }
     }
 
-    /// The sketch, picked — its axis then back to its default — and the
-    /// axis among its lines.
-    fn edit<S: Scalar>(
-        &self,
-        ctx: &EditContext<S>,
-        mut args: RevolveArgs,
-        mut s: SweepSession,
-        event: Option<&Event<S>>,
-    ) -> Edited<RevolveArgs, SweepSession, S> {
-        if let Some(event) = event {
-            match event.dialog() {
-                Some(("sketch", _)) => s.pick.toggle("sketch"),
-                Some(("axis", DialogValue::Choice(id))) => {
-                    if let Ok(id) = id.parse() {
-                        args.axis = CurveId(id);
-                    }
-                }
-                _ => {}
-            }
-            args.combine.event(ctx.view, event, &mut s.pick);
-            if let Some(sketch) = pick_sketch(ctx.view, event, &mut s.pick) {
-                args.axis = default_axis(ctx.part, &sketch);
-                args.sketch = sketch;
-            }
-        }
+    /// The sketch, picked, and the axis among its lines.
+    fn form<S: Scalar>(&self, before: &Part<S>, args: &RevolveArgs, _: &()) -> Form<S> {
         let mut d = Dialog::new();
-        sketch_field(&mut d, ctx.part, &args.sketch, &s.pick);
-        let lines = lines(ctx.part, &args.sketch);
+        sketch_field(&mut d, before, &args.sketch);
+        let lines = lines(before, &args.sketch);
         if lines.is_empty() {
             d.text(
                 "axis",
@@ -145,36 +122,36 @@ impl Operation for Revolve {
                         Choice::new(id.0.to_string(), label)
                     })
                     .collect(),
-                SelectStyle::Dropdown,
             );
         }
-        args.combine.show(&mut d, &s.pick);
-        let presentation = Presentation {
-            dialog: d,
-            highlights: s.pick.hover.clone().into_iter().collect(),
-            pickable: pickable(&s.pick),
-            ..Presentation::default()
-        };
-        Edited {
-            args,
-            session: s,
-            presentation,
+        args.combine.show(&mut d);
+        Form::dialog(d)
+    }
+
+    /// A sketch picked brings its axis back to its default.
+    fn set<S: Scalar>(
+        &self,
+        before: &Part<S>,
+        args: &mut RevolveArgs,
+        _: &mut (),
+        key: &str,
+        value: Value,
+    ) {
+        if args.combine.set(before, key, &value) {
+            return;
         }
-    }
-
-    fn summary(&self, args: &RevolveArgs) -> String {
-        format!(
-            "sketch={}, axis={}, combine={}",
-            args.sketch,
-            args.axis,
-            args.combine.summary()
-        )
-    }
-
-    fn references(&self, args: &RevolveArgs) -> Vec<EntityRef> {
-        vec![EntityRef::Sketch {
-            name: args.sketch.clone(),
-        }]
+        match (key, value) {
+            ("sketch", Value::Entity(EntityRef::Sketch { name })) => {
+                args.axis = default_axis(before, &name);
+                args.sketch = name;
+            }
+            ("axis", Value::Choice(id)) => {
+                if let Ok(id) = id.parse() {
+                    args.axis = CurveId(id);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn apply<S: Scalar>(

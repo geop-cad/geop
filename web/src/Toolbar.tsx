@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Program, RunResult } from "./geop";
+import type { Program } from "./geop";
 import { BugReport } from "./BugReport";
 import { Privacy } from "./Privacy";
 
@@ -18,8 +18,8 @@ interface Props {
   operationButtons: ReactNode;
   /** What the editor is in the middle of, when it is working in a plane. */
   badge: string | null;
-  committed: RunResult | null;
-  committedError: string | null;
+  /** Why the last command was refused, if it was. */
+  error: string | null;
   program: Program;
   stepCount: number;
   triangleCount: number;
@@ -43,8 +43,7 @@ export function Toolbar({
   onRedo,
   operationButtons,
   badge,
-  committed,
-  committedError,
+  error,
   program,
   stepCount,
   triangleCount,
@@ -97,13 +96,13 @@ export function Toolbar({
       {badge && <span className="mode-badge">{badge}</span>}
       <BugReport
         program={program}
-        committedError={committedError}
+        committedError={error}
         panelHost={bugReportHost}
         onOpen={onBugReportOpen}
         onClose={onBugReportClose}
       />
       <Privacy />
-      {committed && (
+      {!busy && (
         <span className="stats">
           {stepCount} step{stepCount === 1 ? "" : "s"} · {triangleCount} tris
         </span>

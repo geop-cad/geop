@@ -76,75 +76,81 @@ stay unambiguous even when an argument is itself a name.
 ## Operations
 
 Every operation is a unit struct implementing `Operation`, with an `Args`
-struct of plain, serializable design data and a `Session` holding the
-temporary state of editing a step of it. Built, a step maps
+struct of plain, serializable design data. Built, a step maps
 
 ```text
 (part, args) -> part                                            apply
 ```
 
-and edited, every user action maps
+and edited, it shows a `Form` — fields and visuals — whose fields an editor
+sets:
 
 ```text
-(part, args, session, event) -> (args, session, presentation)   edit
+(part, args)                 -> form                            form
+(part, args, field, value)   -> args                            set
 ```
 
-— the editor reruns the program with the new arguments, shows the
-presentation, and sends the next event. `edit` never fails: an editor needs
-a dialog most exactly when the arguments do not build, so whatever goes
-wrong is said in the dialog. Besides these, an operation gives the
-arguments of a new step (`new_args`, from what the part before it holds), a
-one-line `summary`, and the sketches and datums a step builds on
-(`references`), which an editor hides once they are used.
+`form` never fails: an editor needs a dialog most exactly when the arguments
+do not build, so whatever goes wrong is said in it. Besides these, an
+operation gives the arguments of a new step (`new_args`, from what the part
+before it holds).
 
 - **Arguments** are numbers, choices, sketches, and references to entities
   by name (`EntityRef`): what the program stores.
-- **The session** is everything else of an edit: the tool in hand, a
-  half-drawn curve, which field waits for a pick, what the pointer is over.
-  It is never saved, and starts afresh whenever an editor opens a step.
-- **The event** is what the user did: a dialog control used, a hover, a
-  click or a drag in the viewport — each a `Pointer`: the `Ray` from the eye
-  through the cursor, and its `Reach`, how far from the ray it counts as
-  under it (a cone from the eye in perspective, a tube in an orthographic
-  view) — or a key. The kernel knows nothing else of the viewport.
-- **The presentation** is what to show: a `Dialog` — an ordered list of
-  keyed primitives: headings, texts, buttons, checkboxes, sliders, selects,
-  lists — and `Visual`s to draw in the viewport: points, polylines, filled
-  areas, labels and handles, each with a key and a style. It also says which
-  entities of the part to light, what a click picks now, whether to work in
-  a plane (head on, with a grid), and whether a press where the pointer is
-  starts a drag.
+- **The form** is a `Dialog` — an ordered list of keyed fields: headings,
+  texts, buttons, checkboxes, sliders, selects, lists, and entities to pick
+  — and `Visual`s to draw in the viewport: points, polylines, filled areas,
+  labels, and handles, each bound to a number field.
+- **A field is set** by the dialog, by a pick in the viewport, or by
+  dragging its handle. Which of these it was, the operation never knows.
+
+Picking and dragging are the same for every operation, so they are not the
+operations' but the `StepEditor`'s, which edits one step. It turns what the
+user did — an `Event`: a dialog field used, a hover, a click or a drag in
+the viewport, each a `Pointer` (the `Ray` from the eye through the cursor,
+and its `Reach`: how far from the ray counts as under it, a cone from the
+eye in perspective, a tube in an orthographic view), or a key — into fields
+set:
+
+- **Pick fields** arm on a press; the editor then finds what a click would
+  pick on hover, lights it, and sets the field on a click — once for a
+  field of one entity, again and again for a field of several. A new step
+  starts with its first pick field armed: what it is built on is what it
+  needs first. While a field waits for a pick, the part is shown as it
+  stands, not the plane the step works in.
+- **Handles** are dragged along their direction, the value following how
+  far the pointer has moved along the handle's track, from the ray where the
+  drag started to the ray where it is now, snapped to a hundredth.
+
+An operation that draws in a canvas of its own — a sketch — also takes the
+pointer and key events the editor does not (`Operation::event`), with a
+`Session` for what it keeps between them: the tool in hand, a half-drawn
+curve. Every other operation's session is `()`. What the editor sends back
+is a `Presentation`: the form, what the pick fields hold and what a click
+would pick lit, and what a click picks now.
 
 So an editor renders primitives and forwards raw input, and every decision
 — what a click picks, what a line snaps to, what a drag changes — is made in
-Rust, where it can be tested. The `ui` module holds the helpers that make
-operations answer consistently:
-
-- **Hit tests** against visuals (`hit::hit_visuals`) and against the part
-  as drawn (`PartView::pick`): near means within the pointer's reach, and
-  the smallest entity under it wins — a vertex over an edge over a face, a
-  coordinate system's origin over its axes over its planes. What the viewer
-  draws at a constant size on screen — handles, labels, coordinate systems —
-  is laid out in reaches. `PartView` is the part as the viewport draws it —
-  its rasterization, sketch outlines and datums, laid out by the same sizes
-  the viewer draws them at — so a pick cannot disagree with what is on
-  screen. The ray geometry itself — how near a ray passes to a point, a
-  segment, a triangle, a plane — is `geop_core_math::primitives::Ray`'s, and
-  all of it is in the part's scalar type.
-- **`Picking`**: a dialog field waiting for an entity; a hover finds what a
-  click would pick, a click picks it.
-- **`Dragging`**: a handle dragged along its direction, the value following
-  how far the pointer has moved along the handle's track, from the ray where
-  the drag started to the ray where it is now.
+Rust, where it can be tested. Hit tests against visuals (`hit::hit_visuals`)
+and against the part as drawn (`PartView::pick`) decide what a pointer is
+over: near means within its reach, and the smallest entity under it wins —
+a vertex over an edge over a face, a coordinate system's origin over its
+axes over its planes. What the viewer draws at a constant size on screen —
+handles, labels, coordinate systems — is laid out in reaches. `PartView` is
+the part as the viewport draws it — its rasterization, sketch outlines and
+datums, laid out by the same sizes the viewer draws them at, and serialized
+as what a viewer draws — so a pick cannot disagree with what is on screen.
+The ray geometry itself — how near a ray passes to a point, a segment, a
+triangle, a plane — is `geop_core_math::primitives::Ray`'s, and all of it is
+in the part's scalar type.
 
 **Entity references.** A step that builds on existing geometry names it
 with an `EntityRef`: a `Vertex`, `Edge`, `Face`, `Solid`, `Sketch` or
 `Datum` of the part by name — for a coordinate system, perhaps only one of
-its axes or planes.
-What an entity *is* (its `Geometry`: a point, a line, a plane, an arc,
-something round) is decided by its shape, not its kind, using
-`geop-core-geometry`'s shape recognition: a straight edge is a line, a
-circular one has a center and an axis, a flat face is a plane.
+its axes or planes. `resolve_plane` gives the plane one lies in, what a
+sketch is placed on; what else an entity can be used as is for the
+operations that build on it to say (see
+[geop-ops-datums](./geop-ops-datums.md)).
 
 No operation lives here. Each is a plugin in a crate of its own, built on
 this one and using nothing the others cannot: `AddSketch` in
@@ -167,12 +173,12 @@ editor's is `PartOperation` in [geop-cad-base](../cad/geop-cad-base.md).
 implements `Operations`: each variant `Name(NameArgs)` dispatches to the
 unit struct `Name`, the doc comment describes the operation, and
 `#[operation(label = "...")]` gives its short name. Sessions differ by
-operation, so the set carries a step's session as JSON.
+operation, so the set carries a step's session boxed.
 
 ## Programs
 
-The `program` module. `Program`, `ProgramEdit` and `ProgramRunner` are generic over the operation
-set a program is written in.
+The `program` module. `Program` and `ProgramRunner` are generic over the
+operation set a program is written in.
 
 A `Program` is an ordered list of `Step`s, each an operation with its
 arguments and an id. Everything a step creates is named after that id (see
@@ -202,20 +208,12 @@ program.push("hole", ExtrudeArgs {
 });
 ```
 
-A program changes only through `Program::update(ProgramEdit)`: `Insert`,
-`Update`, `Remove`, `Move` or `Replace`. Edits address steps by id rather
-than position, so an edit means the same thing however the steps around it
-have moved. An edit that would leave the program invalid (an unknown step, a
-duplicate or malformed id) is rejected and changes nothing. Whether the
-steps still *build* is a separate question, answered by running them.
-Editing lives here rather than in an editor, so that the browser UI, a
-script, or any future editor all change programs the same way.
-
 `Program::apply` builds a part from scratch and checks after every step that
 every entity has a name. `ProgramRunner` builds incrementally for an editor:
 `run(program, stop)` runs the first `stop` steps, reuses whatever earlier
 runs built that still applies, and stops at the first failing step, since
-the steps after it would fail for lack of what it should have built.
-`to_json` pretty-prints one step per object, with every sketch entity keyed
-by its id, so edits show up as small line diffs. `ProgramRunner` also
-reports what the steps it built build on (`references`).
+the steps after it would fail for lack of what it should have built; the
+part after any number of them is `part_at`. `to_json` pretty-prints one
+step per object, with every sketch entity keyed by its id, so edits show up
+as small line diffs. How a program is edited is an editor's (see
+[geop-cad-base](../cad/geop-cad-base.md)).

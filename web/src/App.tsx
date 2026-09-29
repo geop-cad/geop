@@ -1,22 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import {
-  currentProgram,
-  describeProgram,
-  editStep,
-  examplePrograms,
   loadGeop,
-  operationInfos,
-  previewProgram,
-  runProgram,
-  updateProgram,
-  type DialogValue,
+  send,
+  type Command,
   type EditEvent,
-  type Edited,
   type OperationInfo,
   type Program,
-  type ProgramEdit,
-  type RunResult,
+  type ProgramState,
+  type SceneState,
+  type StepState,
+  type Value,
 } from "./geop";
 import { DEFAULT_POSE, headOnPose, type CameraPose, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
@@ -27,64 +21,31 @@ import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
 import { MobileBottom, type MobileTab } from "./MobileBottom";
 import { useIsMobile } from "./useIsMobile";
 
-/** A step being edited: a new one to insert at `index`, or the existing step `stepId` there. */
-interface FormState {
-  info: OperationInfo;
-  index: number;
-  stepId: string | null;
-  /** The step as it now is, the session to send with the next event, and what to show. */
-  edited: Edited;
-}
-
-/** The edit that writes `form` into the program. */
-function formEdit(form: FormState): ProgramEdit {
-  const operation = form.edited.operation;
-  return form.stepId == null
-    ? { edit: "insert", index: form.index, ...operation }
-    : { edit: "update", id: form.stepId, ...operation };
-}
-
 /** Whether a key press belongs to a field being typed into rather than to the step. */
 function typing(e: KeyboardEvent): boolean {
   const t = e.target;
   return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
 }
 
+/** The commands that change the program, for statistics. */
+const EDITS: Command["command"][] = ["commit", "remove", "move", "load", "load_example", "undo", "redo"];
+
 /**
- * The editor: a tool for writing part programs. The program lives in the
- * kernel and changes only through `updateProgram` — every button here just
- * composes one `ProgramEdit` — and a step is edited only through
- * `editStep`: what the user does goes there, and what comes back is shown.
- * So editing works the same as in any other editor of these programs, and
- * nothing here knows any operation.
+ * The editor: a view of the one the kernel runs (see `geop_cad_base::editor`).
+ * Every button, click and key is a command sent to it, and what comes back
+ * — the program, the part to draw, the step being edited — is shown; so
+ * nothing here knows any operation, and the only state kept here is how
+ * things are laid out and where the camera is.
  */
 function App() {
   const [wasmReady, setWasmReady] = useState(false);
   const [wasmError, setWasmError] = useState<string | null>(null);
-  const [infos, setInfos] = useState<OperationInfo[]>([]);
 
-  const [program, setProgram] = useState<Program>({ steps: [] });
-  /** Earlier programs, for undo — restored through `updateProgram` like any edit. */
-  const [history, setHistory] = useState<Program[]>([]);
-  /** Programs undone, most recent last, for redo — gone with the next edit. */
-  const [future, setFuture] = useState<Program[]>([]);
-  /** Rolled back: only the first `marker` steps run, and new steps go there. `null`: the end. */
-  const [marker, setMarker] = useState<number | null>(null);
-  const [committed, setCommitted] = useState<RunResult | null>(null);
-  const [committedError, setCommittedError] = useState<string | null>(null);
-
-  const [form, setFormState] = useState<FormState | null>(null);
-  /**
-   * The step being edited as of the last event: events arrive faster than
-   * React renders (a hover every frame), and each must build on the last.
-   */
-  const formRef = useRef<FormState | null>(null);
-  const setForm = (next: FormState | null) => {
-    formRef.current = next;
-    setFormState(next);
-  };
-  const [preview, setPreview] = useState(true);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [program, setProgram] = useState<ProgramState | null>(null);
+  const [scene, setScene] = useState<SceneState | null>(null);
+  const [step, setStep] = useState<StepState | null>(null);
+  /** Why the last command was refused, if it was. */
+  const [error, setError] = useState<string | null>(null);
 
   /** Which panel the bottom half shows on a narrow (mobile) screen — irrelevant on desktop, where all three show at once. */
   const [mobileTab, setMobileTab] = useState<MobileTab>("buttons");
@@ -99,63 +60,38 @@ function App() {
   /** Where the camera was before it turned to face the plane being worked in, to come back to. */
   const beforePlaneRef = useRef<CameraPose | null>(null);
 
+  /** Send `command` to the kernel, and show what comes back. */
+  function dispatch(command: Command) {
+    try {
+      const update = send(command);
+      if (update.program) {
+        setProgram(update.program);
+        trackFailures(update.program.steps);
+      }
+      if (update.scene) setScene(update.scene);
+      setStep(update.step);
+      setError(update.error);
+      if (!update.error && EDITS.includes(command.command)) {
+        trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
+      }
+      return update;
+    } catch (e) {
+      setError(String(e));
+      return null;
+    }
+  }
+
   useEffect(() => {
     loadGeop()
       .then(() => {
-        setInfos(operationInfos());
-        setProgram(currentProgram());
+        dispatch({ command: "show" });
         setWasmReady(true);
       })
       .catch((e) => setWasmError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // While a step is being written, the program runs only up to it: what it
-  // can refer to is what the steps before it built, and the steps after it
-  // needn't run on every change.
-  const runStop = form ? form.index : marker;
-  useEffect(() => {
-    if (!wasmReady) return;
-    try {
-      const result = runProgram(runStop);
-      trackFailures(
-        result,
-        program.steps.map((s) => s.operation),
-      );
-      setCommitted(result);
-      setCommittedError(null);
-    } catch (e) {
-      setCommittedError(String(e));
-    }
-  }, [wasmReady, program, runStop]);
-
-  // The kernel describes the program it holds, which `program` mirrors.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const steps = useMemo(() => (wasmReady ? describeProgram() : []), [wasmReady, program]);
-
-  // The step being edited, run: what it builds — and whether it builds,
-  // which is what lets it into the program.
-  const pendingKey = form ? JSON.stringify(formEdit(form)) : null;
-  const [previewResult, setPreviewResult] = useState<RunResult | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  useEffect(() => {
-    const f = formRef.current;
-    if (!wasmReady || !f) {
-      setPreviewResult(null);
-      setPreviewError(null);
-      return;
-    }
-    try {
-      // Up to and including the step being written.
-      const result = previewProgram(formEdit(f), f.index + 1);
-      setPreviewResult(result);
-      setPreviewError(result.results.find((r) => r.error)?.error ?? null);
-    } catch (e) {
-      setPreviewResult(null);
-      setPreviewError(String(e));
-    }
-  }, [wasmReady, pendingKey, program]);
-
-  const presentation = form?.edited.presentation ?? null;
+  const presentation = step?.presentation ?? null;
   const plane = presentation?.focus ?? null;
 
   // Working in a plane: the camera turns to face it, and comes back to
@@ -174,137 +110,50 @@ function App() {
 
   // ── editing a step ─────────────────────────────────────────────────────
 
-  /** Start editing: a new step of `info` at `index`, or the existing step `stepId` there. */
-  function openForm(info: OperationInfo, index: number, stepId: string | null) {
-    try {
-      // What the step is edited against: the part the steps before it build.
-      setCommitted(runProgram(index));
-      const step = stepId == null ? null : program.steps.find((s) => s.id === stepId);
-      const edited = editStep(step ? { operation: step, session: null } : { kind: info.kind });
-      setForm({ info, index, stepId, edited });
-      setFormError(null);
-      setMobileTab("detail");
-    } catch (e) {
-      setCommittedError(String(e));
-    }
+  function open(command: Command) {
+    if (dispatch(command)?.step) setMobileTab("detail");
   }
 
-  function closeForm() {
-    setForm(null);
-    setFormError(null);
-    setMobileTab((tab) => (tab === "detail" ? "buttons" : tab));
+  function close(command: Command) {
+    const update = dispatch(command);
+    if (update && !update.step) setMobileTab((tab) => (tab === "detail" ? "buttons" : tab));
   }
 
   /** What the user did to the step being edited. */
-  function send(event: EditEvent) {
-    const f = formRef.current;
-    if (!f) return;
-    try {
-      const edited = editStep({ operation: f.edited.operation, session: f.edited.session, event });
-      setForm({ ...f, edited });
-      setFormError(null);
-    } catch (e) {
-      setFormError(String(e));
-    }
+  function event(event: EditEvent) {
+    dispatch({ command: "event", event });
   }
 
   // Keys go to the step being edited — tools, Escape, Delete — unless
   // typed into a field.
+  const editing = step != null;
   useEffect(() => {
-    if (!form) return;
+    if (!editing) return;
     const onKey = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
-      send({ type: "key", key: e.key });
+      event({ type: "key", key: e.key });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form != null]);
+  }, [editing]);
 
   function newStep(info: OperationInfo) {
-    if (form?.info.kind === info.kind && form.stepId == null) {
-      closeForm();
-      return;
-    }
-    openForm(info, marker ?? program.steps.length, null);
-  }
-
-  function editExisting(index: number) {
-    const info = infos.find((i) => i.kind === program.steps[index].operation);
-    if (info) openForm(info, index, program.steps[index].id);
-  }
-
-  function commit() {
-    const f = formRef.current;
-    if (!f) return;
-    try {
-      edit(formEdit(f));
-      if (f.stepId == null && marker != null) setMarker(marker + 1);
-      closeForm();
-    } catch (e) {
-      setFormError(String(e));
-    }
+    if (step?.kind === info.kind && step.id == null) close({ command: "cancel" });
+    else open({ command: "new", kind: info.kind });
   }
 
   // ── the program ────────────────────────────────────────────────────────
 
-  /** Apply `edit` to the program, remembering the program before it for undo. Throws if it is rejected. */
-  function edit(e: ProgramEdit): string | null {
-    const before = program;
-    const id = updateProgram(e);
-    trackEdit(e);
-    setHistory((h) => [...h, before]);
-    setFuture([]);
-    setProgram(currentProgram());
-    return id;
-  }
-
-  function undo() {
-    const previous = history[history.length - 1];
-    if (!previous) return;
-    updateProgram({ edit: "replace", program: previous });
-    setHistory(history.slice(0, -1));
-    setFuture([...future, program]);
-    setProgram(currentProgram());
-    setMarker(null);
-  }
-
-  function redo() {
-    const next = future[future.length - 1];
-    if (!next) return;
-    updateProgram({ edit: "replace", program: next });
-    setFuture(future.slice(0, -1));
-    setHistory([...history, program]);
-    setProgram(currentProgram());
-    setMarker(null);
-  }
-
-  function tryEdit(e: ProgramEdit) {
-    try {
-      edit(e);
-      setCommittedError(null);
-    } catch (err) {
-      setCommittedError(String(err));
-    }
-  }
-
-  function removeStep(index: number) {
-    tryEdit({ edit: "remove", id: program.steps[index].id });
-    if (marker != null && index < marker) setMarker(marker - 1);
-  }
-
-  function moveStep(index: number, to: number) {
-    tryEdit({ edit: "move", id: program.steps[index].id, index: to });
-  }
+  const steps = program?.steps ?? [];
 
   function loadProgram(p: Program) {
-    tryEdit({ edit: "replace", program: p });
-    closeForm();
-    setMarker(null);
+    dispatch({ command: "load", program: p });
   }
 
   function saveProgram() {
-    const json = JSON.stringify(program, null, 2);
+    if (!program) return;
+    const json = JSON.stringify(program.program, null, 2);
     const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
@@ -321,80 +170,41 @@ function App() {
         loadProgram(JSON.parse(text) as Program);
         trackFile("loaded");
       })
-      .catch((e) => setCommittedError(String(e)));
+      .catch((e) => setError(String(e)));
   }
 
-  // ── what is shown ──────────────────────────────────────────────────────
-
-  // Working in a plane, the model as the steps before the step built it: a
-  // preview would draw what is being drawn a second time.
-  const displayResult = !plane && preview && previewResult ? previewResult : committed;
-
-  /**
-   * The sketches and datums a shown step has used: the viewer hides them,
-   * since what was made from them shows them now. None of a kind while that
-   * kind is being picked: then any can be chosen, used or not. A frame one
-   * of whose planes or axes was used stays: the rest of it still can be.
-   */
-  function hidden(): string[] {
-    const pickable = presentation?.pickable ?? [];
-    const pickingSketch = pickable.includes("sketch");
-    const pickingDatum = pickable.some((t) => typeof t === "object");
-    return (displayResult?.references ?? []).flatMap((r) =>
-      (r.type === "Sketch" && !pickingSketch) || (r.type === "Datum" && !r.component && !pickingDatum)
-        ? [r.name]
-        : [],
-    );
+  function loadExample(name: string) {
+    if (dispatch({ command: "load_example", name })?.error == null) trackExample(name);
   }
-
-  const examples = useMemo(() => (wasmReady ? examplePrograms() : []), [wasmReady]);
 
   // A shared link — app.geop-cad.dev/?example=<name> — loads that example
-  // once it's available, in place of the (still-empty) starting program.
-  // Once, not on every re-render: a ref, not state, records it happened.
-  const loadedFromUrl = useRef(false);
+  // once the kernel is up, in place of the (still-empty) starting program.
   useEffect(() => {
-    if (loadedFromUrl.current || examples.length === 0) return;
-    loadedFromUrl.current = true;
+    if (!wasmReady) return;
     const name = new URLSearchParams(window.location.search).get("example");
-    const example = name && examples.find((x) => x.name === name);
-    if (example) {
-      loadProgram(example.program);
-      trackExample(example.name);
-    }
+    if (name && program?.examples.includes(name)) loadExample(name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [examples]);
+  }, [wasmReady]);
 
-  const ran = committed?.results.length ?? 0;
+  const infos = program?.operations ?? [];
+  const stepCount = steps.length;
+  const triangleCount = scene?.part.faces.reduce((n, f) => n + f.triangles.length, 0) ?? 0;
+  const timelineSteps: TimelineStep[] = steps.map((s) => ({
+    id: s.id,
+    title: `${s.label}: ${s.summary}`,
+    error: s.error,
+    dim: !s.editing && !s.runs,
+    editing: s.editing,
+  }));
 
-  const stepCount = program.steps.length;
-  /** Move the seeker to just after the first `n` steps — the end means "all of them". */
-  const seek = (n: number) => setMarker(n >= stepCount ? null : n);
-  const timelineSteps: TimelineStep[] = steps.map((step, i) => {
-    const editing = form?.stepId === step.id;
-    return {
-      id: step.id,
-      title: `${step.label}: ${step.summary}`,
-      error: (i < ran ? committed?.results[i]?.error : null) ?? null,
-      dim: !editing && runStop != null && i >= runStop,
-      editing,
-    };
-  });
-
-  // The operation-buttons row, the program panel and the step's dialog are
-  // each rendered once here and placed in two spots in the tree below:
-  // inline in the desktop layout, and again in the mobile bottom-tab
-  // region, shown or hidden per breakpoint by CSS alone. They hold no
-  // state of their own (Timeline's drag state lives in its own instance
-  // either way), so reusing the same JSX in two places is safe.
   const operationButtonsRow = (
     <div className="tools operation-tools">
       {infos.map((info) => (
         <button
           key={info.kind}
           title={info.doc}
-          className={form?.info.kind === info.kind && form.stepId == null ? "active" : ""}
-          disabled={!wasmReady || (form != null && form.info.kind !== info.kind)}
+          className={step?.kind === info.kind && step.id == null ? "active" : ""}
+          disabled={!wasmReady || (step != null && step.kind !== info.kind)}
           onClick={() => newStep(info)}
         >
           {info.label}
@@ -408,30 +218,24 @@ function App() {
       <h2>Program</h2>
       <Timeline
         steps={timelineSteps}
-        seeker={marker ?? stepCount}
-        enabled={wasmReady && form == null}
-        onEdit={editExisting}
-        onRemove={removeStep}
-        onMove={moveStep}
-        onSeek={seek}
+        seeker={program?.marker ?? stepCount}
+        enabled={wasmReady && step == null}
+        onEdit={(i) => open({ command: "open", id: steps[i].id })}
+        onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
+        onMove={(i, to) => dispatch({ command: "move", id: steps[i].id, index: to })}
+        onSeek={(slot) => dispatch({ command: "seek", marker: slot >= stepCount ? null : slot })}
       />
     </section>
   );
 
-  const detailPanel = form && presentation && (
+  const detailPanel = step && (
     <DialogView
-      label={form.info.label}
-      stepId={form.stepId}
-      doc={form.info.doc}
-      dialog={presentation.dialog}
-      onDialog={(key: string, value: DialogValue) => send({ type: "dialog", key, value })}
-      preview={preview}
-      setPreview={setPreview}
-      previewError={previewError}
-      error={formError}
-      canCommit={previewResult != null && previewError == null}
-      onCommit={commit}
-      onCancel={closeForm}
+      step={step}
+      onDialog={(key: string, value: Value) => event({ type: "dialog", key, value })}
+      setPreview={(preview) => dispatch({ command: "preview", preview })}
+      error={error}
+      onCommit={() => close({ command: "commit" })}
+      onCancel={() => close({ command: "cancel" })}
     />
   );
 
@@ -439,28 +243,21 @@ function App() {
     <div className="app">
       <Toolbar
         busy={!wasmReady}
-        hasSteps={program.steps.length > 0}
+        hasSteps={stepCount > 0}
         onSave={saveProgram}
         onLoadFile={loadFile}
-        exampleNames={examples.map((x) => x.name)}
-        onLoadExample={(name) => {
-          const example = examples.find((x) => x.name === name);
-          if (example) {
-            loadProgram(example.program);
-            trackExample(example.name);
-          }
-        }}
-        canUndo={history.length > 0 && form == null}
-        onUndo={undo}
-        canRedo={future.length > 0 && form == null}
-        onRedo={redo}
+        exampleNames={program?.examples ?? []}
+        onLoadExample={loadExample}
+        canUndo={(program?.can_undo ?? false) && step == null}
+        onUndo={() => dispatch({ command: "undo" })}
+        canRedo={(program?.can_redo ?? false) && step == null}
+        onRedo={() => dispatch({ command: "redo" })}
         operationButtons={operationButtonsRow}
-        badge={form && plane ? `${form.info.label}: working in its plane` : null}
-        committed={committed}
-        committedError={committedError}
-        program={program}
-        stepCount={program.steps.length}
-        triangleCount={displayResult?.scene.triangles.length ?? 0}
+        badge={step && plane ? `${step.label}: working in its plane` : null}
+        error={error}
+        program={program?.program ?? { steps: [] }}
+        stepCount={stepCount}
+        triangleCount={triangleCount}
         bugReportHost={isMobile ? bugReportHost : null}
         onBugReportOpen={() => {
           setBugReportOpen(true);
@@ -476,19 +273,17 @@ function App() {
         <main className="viewport">
           {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
           {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
-          {committedError && <p className="error">{committedError}</p>}
-          {wasmReady && displayResult && (
+          {error && !step && <p className="error">{error}</p>}
+          {wasmReady && scene && (
             <SceneViewer
-              scene={displayResult.scene}
+              part={scene.part}
               visuals={presentation?.visuals}
               highlights={presentation?.highlights}
               pickable={presentation?.pickable}
-              datums={displayResult.datums}
-              extent={displayResult.extent}
-              hidden={hidden()}
+              hidden={scene.hidden}
               plane={plane}
               grab={presentation?.grab ?? false}
-              onPointer={send}
+              onPointer={event}
               projection={projection}
               focus={focus}
               onFocusReached={(pose) => {
@@ -511,7 +306,7 @@ function App() {
       <MobileBottom
         tab={mobileTab}
         onTab={setMobileTab}
-        detailAvailable={form != null}
+        detailAvailable={step != null}
         bugReportOpen={bugReportOpen}
         operationButtons={operationButtonsRow}
         programPanel={programPanel}

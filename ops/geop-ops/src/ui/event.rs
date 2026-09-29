@@ -6,6 +6,8 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::operation::EntityRef;
+
 /// How far from its ray a [`Pointer`] reaches: what counts as under it, at
 /// any distance along the ray. Everything a viewer draws at a constant size
 /// on screen — a handle, a label, a frame datum — is laid out in reaches,
@@ -67,10 +69,11 @@ pub enum Button {
     Secondary,
 }
 
-/// What a dialog control was set to — or that it was pressed.
+/// What a field was set to — or that it was pressed: in the dialog, by a
+/// pick in the viewport, or by dragging a handle.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
-pub enum DialogValue {
+pub enum Value {
     /// A button, or a list item, was pressed.
     Press,
     /// A list item's remove button was pressed.
@@ -79,14 +82,16 @@ pub enum DialogValue {
     Number(f64),
     /// A select's option, by its value.
     Choice(String),
+    /// An entity picked for a pick field.
+    Entity(EntityRef),
 }
 
 /// One thing the user did while editing a step.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
 pub enum Event<S: Scalar> {
-    /// The dialog control `key` was used.
-    Dialog { key: String, value: DialogValue },
+    /// The dialog field `key` was used.
+    Dialog { key: String, value: Value },
     /// The pointer moved over the viewport with no button held.
     Hover { pointer: Pointer<S> },
     /// The pointer left the viewport.
@@ -103,8 +108,9 @@ pub enum Event<S: Scalar> {
         shift: bool,
     },
     /// A drag with the primary button that started where the last
-    /// presentation offered a grab (see [`super::Presentation::grab`]): from
-    /// where it went down to where the pointer is now. `done` on release.
+    /// presentation offered a grab (see [`super::Presentation::grab`]): the
+    /// ray where it went down and the ray where the pointer is now. `done`
+    /// on release.
     Drag {
         from: Pointer<S>,
         to: Pointer<S>,
@@ -116,8 +122,8 @@ pub enum Event<S: Scalar> {
 }
 
 impl<S: Scalar> Event<S> {
-    /// The dialog control this event uses, and its value.
-    pub fn dialog(&self) -> Option<(&str, &DialogValue)> {
+    /// The dialog field this event uses, and its value.
+    pub fn dialog(&self) -> Option<(&str, &Value)> {
         match self {
             Event::Dialog { key, value } => Some((key, value)),
             _ => None,

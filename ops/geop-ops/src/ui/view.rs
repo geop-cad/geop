@@ -59,14 +59,16 @@ pub struct PartHit<S: Scalar> {
 }
 
 /// A vertex of the part, as drawn.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
 pub struct ViewVertex<S: Scalar> {
     pub name: String,
     pub at: Vector3<S>,
 }
 
 /// An edge of the part, as drawn: its curve sampled into a polyline.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
 pub struct ViewEdge<S: Scalar> {
     pub name: String,
     pub polyline: Vec<Vector3<S>>,
@@ -74,7 +76,8 @@ pub struct ViewEdge<S: Scalar> {
 
 /// A face of the part, as drawn: triangulated, with the surface's normal at
 /// each corner.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
 pub struct ViewFace<S: Scalar> {
     pub name: String,
     /// The solid the face bounds.
@@ -84,8 +87,10 @@ pub struct ViewFace<S: Scalar> {
 }
 
 /// A curve of a sketch, as drawn, in the sketch's plane.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
 pub struct ViewCurve<S: Scalar> {
+    #[serde(skip)]
     pub id: CurveId,
     pub construction: bool,
     pub polyline: Vec<Vector2<S>>,
@@ -94,10 +99,12 @@ pub struct ViewCurve<S: Scalar> {
 /// A sketch of the part, as drawn: its plane, its closed regions (each an
 /// outer loop and its holes) and its curves, in the plane's `u`/`v`
 /// coordinates.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
 pub struct ViewSketch<S: Scalar> {
     pub name: String,
     pub plane: CoordinateSystem<S>,
+    #[serde(skip)]
     pub regions: Vec<Vec<Vec<Vector2<S>>>>,
     pub curves: Vec<ViewCurve<S>>,
 }
@@ -122,8 +129,10 @@ pub struct Extent<S: Scalar> {
     pub size: S,
 }
 
-/// A part as the viewport draws it, every entity by name.
-#[derive(Clone, Debug)]
+/// A part as the viewport draws it, every entity by name — and, serialized,
+/// what a viewer draws.
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
 pub struct PartView<S: Scalar> {
     pub vertices: Vec<ViewVertex<S>>,
     pub edges: Vec<ViewEdge<S>>,
