@@ -9,5 +9,6 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops-derive.workspace = true
+geop-ops-rasterize.workspace = true
 serde.workspace = true
 serde_json.workspace = true

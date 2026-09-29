@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Part,
-    operation::{Dialog, Handle, Operations},
+    operation::{EntityRef, Operations},
     validate_operation_id,
 };
 
@@ -267,22 +267,6 @@ fn run_step<S: Scalar, O: Operations>(
     Ok(part)
 }
 
-/// A handle (see [`Handle`]) of the step `step`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct StepHandle {
-    pub step: String,
-    #[serde(flatten)]
-    pub handle: Handle,
-}
-
-/// The dialog (see [`Dialog`]) of the step `step`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct StepDialog {
-    pub step: String,
-    #[serde(flatten)]
-    pub dialog: Dialog,
-}
-
 /// How one step of a run went.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StepResult {
@@ -375,38 +359,14 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         &self.results[..self.ran]
     }
 
-    /// Every handle of every step the last run built — all of them, of
-    /// every group: which to offer is an editor's choice. Each is placed
-    /// with the part as its step saw it.
-    pub fn handles(&self) -> GeopResult<Vec<StepHandle>> {
-        let mut handles = Vec::new();
-        for (i, (step, result)) in self.steps.iter().zip(self.results()).enumerate() {
-            if result.error.is_some() {
-                continue;
-            }
-            let ctx = with_context!("handles of step {i} ({:?})", step.id);
-            for handle in step.operation.handles(&self.parts[i]).with_context(ctx)? {
-                handles.push(StepHandle {
-                    step: step.id.clone(),
-                    handle,
-                });
-            }
-        }
-        Ok(handles)
-    }
-
-    /// The dialog of every step the last run covered, the one that failed
-    /// included: a dialog is what helps fix a step's arguments. Each is
-    /// made with the part as its step saw it.
-    pub fn dialogs(&self) -> Vec<StepDialog> {
+    /// The sketches and datums the steps the last run built build on (see
+    /// [`Operations::references`]); a failed step built on nothing.
+    pub fn references(&self) -> Vec<EntityRef> {
         self.steps
             .iter()
             .zip(self.results())
-            .enumerate()
-            .map(|(i, (step, _))| StepDialog {
-                step: step.id.clone(),
-                dialog: step.operation.dialog(&self.parts[i]),
-            })
+            .filter(|(_, r)| r.error.is_none())
+            .flat_map(|(step, _)| step.operation.references())
             .collect()
     }
 }

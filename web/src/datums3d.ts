@@ -5,14 +5,15 @@
 // a point as its own small frame of three axes, a coordinate system as those
 // axes with its xy plane marked between them.
 //
-// Like the origin gizmo, a datum is picked here, against what is drawn, and
-// a pick is the [[EntityRef]] a step refers to it by. Unlike the gizmo it is
-// part of the scene, not drawn over it: a plane in front of the model hides
-// it, and a click decides between the two by distance (see `SceneViewer`).
+// Picking one is the kernel's (see `geop_ops::ui::PartView`), which lays
+// datums out the same way: a plane as a square the drawing's size (see
+// `Extent`) around the point of it nearest the drawing's center, an axis as
+// a line that long. Unlike the origin gizmo it is part of the scene, not
+// drawn over it: a plane in front of the model hides it.
 
 import * as THREE from "three";
 import { worldPerPixel } from "./camera";
-import { sameEntity, type DatumInfo, type DatumKind, type EntityRef, type Highlight, type Vec3 } from "./geop";
+import { sameEntity, type DatumInfo, type DatumKind, type EntityRef, type Vec3 } from "./geop";
 
 const COLOR = new THREE.Color(0xb58cff);
 const LIT = new THREE.Color(0xffc94a);
@@ -21,16 +22,6 @@ const AXIS_TINTS = [0xff8080, 0x80e080, 0x80b0ff].map((c) => new THREE.Color(c))
 
 /** How long a point or frame datum's axes are on screen, in pixels. */
 const TRIAD_PX = 32;
-/** How near a click has to land on an axis to pick it, in pixels. */
-const PICK_PX = 6;
-
-/** A datum a ray hits: which, where, and how far along the (unit) ray. */
-export interface DatumHit {
-  entity: EntityRef;
-  point: Vec3;
-  distance: number;
-}
-
 const vec = (v: Vec3) => new THREE.Vector3(...v);
 
 /** A material that remembers how it is drawn when nothing is lit or being picked. */
@@ -140,7 +131,7 @@ export class DatumLayer {
    * `height` pixels tall, and show which datums can be picked: those of
    * `pickable` kinds stand out, the rest fade, and those in `lit` light up.
    */
-  update(camera: THREE.Camera, height: number, pickable: DatumKind[], lit: Highlight[]) {
+  update(camera: THREE.Camera, height: number, pickable: DatumKind[], lit: EntityRef[]) {
     for (const datum of this.group.children) {
       const triad = datum.children.find((c) => c.userData.triad);
       triad?.scale.setScalar(worldPerPixel(camera, datum.position, height) * TRIAD_PX);
@@ -153,28 +144,5 @@ export class DatumLayer {
         material.color.copy(isLit ? LIT : material.userData.color);
       });
     }
-  }
-
-  /**
-   * The nearest datum of a `pickable` kind `raycaster` hits, an axis
-   * counting as hit within a few pixels — `pixel` is what one measures in
-   * world units there.
-   */
-  pick(raycaster: THREE.Raycaster, pickable: DatumKind[], pixel: number): DatumHit | null {
-    if (pickable.length === 0) return null;
-    raycaster.params.Line = { threshold: pixel * PICK_PX };
-    const candidates = this.group.children.filter((d) => pickable.includes(d.userData.kind as DatumKind));
-    // A point's axes are only drawn: it is picked by its ball.
-    const hits = raycaster
-      .intersectObjects(candidates, true)
-      .filter((hit) => !(hit.object instanceof THREE.Line && hit.object.parent?.userData.triad));
-    const hit = hits[0];
-    if (!hit) return null;
-    let owner: THREE.Object3D | null = hit.object;
-    while (owner && !owner.userData.entity) owner = owner.parent;
-    if (!owner) return null;
-    // An axis is marked where the ray passes it, not somewhere on the ray.
-    const at = hit.object instanceof THREE.Line ? (hit.pointOnLine ?? hit.point) : hit.point;
-    return { entity: owner.userData.entity as EntityRef, point: [at.x, at.y, at.z], distance: hit.distance };
   }
 }

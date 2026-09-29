@@ -10,7 +10,7 @@ Turns a `Model` into a triangle mesh and writes it out as an STL file.
 model into a `RasterizedModel`, keeping each point, polyline and triangle
 together with the id of the entity it came from. This is the one place
 topology becomes sampled geometry. Rendering (`rasterize_model`), STL export
-and picking in [geop-cad-base](../cad/geop-cad-base.md) all read the same
+and picking in [geop-ops](./geop-ops.md#operations) all read the same
 triangles, so a pick can never disagree with what the viewer drew, and an
 exported mesh is exactly what is on screen.
 

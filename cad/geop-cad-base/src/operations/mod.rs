@@ -18,9 +18,11 @@ mod datum_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
-mod schema_tests;
+mod set_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod view_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

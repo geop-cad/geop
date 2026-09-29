@@ -548,4 +548,37 @@ mod tests {
         assert_eq!(back, s);
         back.validate().unwrap();
     }
+
+    /// Removing a curve takes its constraints with it, and the points only
+    /// it used; a lone point drawn on purpose, and every id left, stay.
+    #[test]
+    fn remove_takes_what_depends_on_it() {
+        let mut s = Sketch::new();
+        let a = s.add_point(0.0, 0.0);
+        let b = s.add_point(1.0, 0.0);
+        let c = s.add_point(1.0, 1.0);
+        let lone = s.add_point(5.0, 5.0);
+        let ab = s.add_line(a, b);
+        let bc = s.add_line(b, c);
+        let horizontal = s.constrain(Constraint::Horizontal { line: ab });
+        let vertical = s.constrain(Constraint::Vertical { line: bc });
+        let fix = s.constrain(Constraint::Fix {
+            point: a,
+            x: 0.0,
+            y: 0.0,
+        });
+        s.remove(&[], &[ab], &[]);
+        assert!(!s.curves.contains_key(&ab) && s.curves.contains_key(&bc));
+        assert!(!s.constraints.contains_key(&horizontal));
+        assert!(s.constraints.contains_key(&vertical) && s.constraints.contains_key(&fix));
+        // `a` is still fixed, so still used; `b` is `bc`'s.
+        assert!(s.points.contains_key(&a) && s.points.contains_key(&b));
+
+        s.remove(&[], &[], &[fix]);
+        assert!(!s.points.contains_key(&a), "a was only the fix's");
+        s.remove(&[c], &[], &[]);
+        assert!(s.curves.is_empty() && s.constraints.is_empty());
+        assert_eq!(s.points.keys().copied().collect::<Vec<_>>(), [lone]);
+        s.validate().unwrap();
+    }
 }

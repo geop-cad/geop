@@ -6,8 +6,7 @@
 //! shape, not only its kind: a straight edge is a line, a circular one has a
 //! center and an axis, a flat face is a plane (see [`Geometry`]).
 //! [`inspect_selection`] tells an editor which constructions fit a
-//! selection, by exactly the matching a step applies — and makes a step's
-//! [`Dialog`].
+//! selection, by exactly the matching a step applies.
 
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
@@ -20,18 +19,53 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use geop_ops::{
-    Part,
-    operation::{
-        ArgDialog, ArgKind, ArgSchema, ConstructionSchema, Dialog, EntityRef, Geometry, Handle,
-        HandleGroup, HandleMotion, Operation, OperationArgs, Role, arg_path, frame_along, to_f64,
-        world_frame,
-    },
+    EditContext, Edited, Part,
+    operation::{EntityRef, Geometry, Operation, Role, frame_along, world_frame},
+    ui::Event,
 };
+
+use crate::editor::{self, DatumSession};
+
+/// What kind of value a construction takes besides its selection.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ParamKind {
+    /// `min`/`max` bound what a slider offers, not what is valid.
+    Number {
+        default: f64,
+        min: f64,
+        max: f64,
+    },
+    Bool {
+        default: bool,
+    },
+}
+
+/// A value a construction takes besides its selection.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Param {
+    pub name: &'static str,
+    pub doc: &'static str,
+    pub kind: ParamKind,
+}
+
+/// One way to build a datum (see [`Construction`]): what it builds, what it
+/// needs selected — one entity per input, in any order — and the values it
+/// takes besides.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ConstructionSchema {
+    /// How the construction is spelled: `offset`.
+    pub method: &'static str,
+    pub label: &'static str,
+    pub doc: &'static str,
+    pub result: DatumKind,
+    pub inputs: &'static [Role],
+    pub params: &'static [Param],
+}
 
 /// Declares [`Construction`] and [`CONSTRUCTIONS`] from one table, so the
 /// two can't disagree: each construction's variant, method name, label,
 /// the inputs it needs selected, what it builds, what it does, and the
-/// values it takes besides — each with its kind, as an argument's.
+/// values it takes besides — each with its kind.
 macro_rules! constructions {
     ($(
         $variant:ident $method:literal $label:literal [$($role:ident),*] -> $result:ident,
@@ -60,10 +94,10 @@ macro_rules! constructions {
                 doc: $doc,
                 result: DatumKind::$result,
                 inputs: &[$(Role::$role),*],
-                params: &[$(ArgSchema {
+                params: &[$(Param {
                     name: stringify!($param),
                     doc: $pdoc,
-                    kind: ArgKind::$pkind { $($kfield: $kval),* },
+                    kind: ParamKind::$pkind { $($kfield: $kval),* },
                 }),*],
             },
         )*];
@@ -176,15 +210,13 @@ constructions! {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddDatum;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, OperationArgs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AddDatumArgs {
     /// What it is built from: points, edges, faces and other references,
     /// picked in the viewport.
-    #[arg(Selection)]
     pub selection: Vec<EntityRef>,
     /// How it is built from them; only the ways that fit what is selected
     /// can be chosen.
-    #[arg(Construction { selection: "selection", options: CONSTRUCTIONS })]
     pub construction: Construction,
 }
 
@@ -245,7 +277,7 @@ pub fn inspect_selection<S: Scalar>(part: &Part<S>, selection: &[EntityRef]) -> 
 }
 
 /// A role as a construction's requirement reads: `a point`.
-fn describe_role(role: Role) -> &'static str {
+pub(crate) fn describe_role(role: Role) -> &'static str {
     match role {
         Role::Point => "a point",
         Role::Line => "a line",
@@ -259,7 +291,7 @@ fn describe_role(role: Role) -> &'static str {
 impl AddDatumArgs {
     /// The selection resolved in `part` and ordered as the construction
     /// takes it.
-    fn inputs<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Vec<Geometry<S>>> {
+    pub(crate) fn inputs<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Vec<Geometry<S>>> {
         let schema = self.construction.schema();
         let resolved = self
             .selection
@@ -326,9 +358,38 @@ fn radians<S: Scalar>(degrees: f64) -> S {
 }
 
 impl Construction {
+    /// The construction `schema` describes, every value at its default.
+    pub fn default_of(schema: &ConstructionSchema) -> Self {
+        let mut json = serde_json::json!({ "method": schema.method });
+        for param in schema.params {
+            json[param.name] = match param.kind {
+                ParamKind::Number { default, .. } => default.into(),
+                ParamKind::Bool { default } => default.into(),
+            };
+        }
+        serde_json::from_value(json).expect("every construction reads from its schema")
+    }
+
+    /// The value it takes named `name`, as it serializes.
+    pub fn param(&self, name: &str) -> Option<serde_json::Value> {
+        serde_json::to_value(self).ok()?.get(name).cloned()
+    }
+
+    /// It with the value named `name` set to `value` — `None` if it takes
+    /// no such value, or not of that kind.
+    pub fn with_param(&self, name: &str, value: serde_json::Value) -> Option<Self> {
+        let mut json = serde_json::to_value(self).ok()?;
+        json.get(name)?;
+        json[name] = value;
+        serde_json::from_value(json).ok()
+    }
+
     /// The frame it builds from `inputs`, ordered as it takes them (see
     /// [`AddDatumArgs::inputs`]).
-    fn build<S: Scalar>(&self, inputs: &[Geometry<S>]) -> GeopResult<CoordinateSystem<S>> {
+    pub(crate) fn build<S: Scalar>(
+        &self,
+        inputs: &[Geometry<S>],
+    ) -> GeopResult<CoordinateSystem<S>> {
         let point = |i: usize| inputs[i].point.expect("assigned a point");
         let line = |i: usize| inputs[i].line.clone().expect("assigned a line");
         let frame = |i: usize| inputs[i].plane.clone().expect("assigned a plane");
@@ -545,13 +606,19 @@ impl Construction {
     }
 }
 
-/// How far out along its axis an offset point's handle sits, in world units.
-const POINT_HANDLE_OUT: f64 = 0.3;
-
-impl<S: Scalar> Operation<S> for AddDatum {
+impl Operation for AddDatum {
     type Args = AddDatumArgs;
+    type Session = DatumSession;
 
-    fn apply(
+    /// Nothing selected yet, and the first construction.
+    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddDatumArgs {
+        AddDatumArgs {
+            selection: Vec::new(),
+            construction: Construction::default_of(&CONSTRUCTIONS[0]),
+        }
+    }
+
+    fn apply<S: Scalar>(
         &self,
         mut part: Part<S>,
         operation_id: &str,
@@ -570,53 +637,29 @@ impl<S: Scalar> Operation<S> for AddDatum {
         Ok(part)
     }
 
-    /// What the selected entities can be used as, and which constructions
-    /// fit them (see [`inspect_selection`]).
-    fn dialog(&self, before: &Part<S>, args: &AddDatumArgs) -> Dialog {
-        let SelectionFit { roles, fits } = inspect_selection(before, &args.selection);
-        Dialog {
-            args: [
-                ("selection", ArgDialog::Selection { roles }),
-                ("construction", ArgDialog::Options { fit: fits }),
-            ]
-            .into(),
-        }
+    /// Picking the selection, choosing among the constructions that fit
+    /// it, and offsets as handles: see [`crate::editor`].
+    fn edit<S: Scalar>(
+        &self,
+        ctx: &EditContext<S>,
+        args: AddDatumArgs,
+        session: DatumSession,
+        event: Option<&Event>,
+    ) -> Edited<AddDatumArgs, DatumSession> {
+        editor::edit(ctx, args, session, event)
     }
 
-    /// An offset plane's distance, as a handle on the plane sliding along
-    /// its normal; an offset point's offsets, as a handle on the point per
-    /// axis, sliding along it.
-    fn handles(&self, before: &Part<S>, args: &AddDatumArgs) -> GeopResult<Vec<Handle>> {
-        let inputs = args.inputs(before)?;
-        let built = args.construction.build(&inputs)?;
-        let at = to_f64(built.origin());
-        // Handles of one point sit a little out along their axes, so each
-        // can be grabbed.
-        let handle = |label: &str, direction: &Vector3<S>, value: f64, out: f64| Handle {
-            label: label.into(),
-            group: HandleGroup::Feature,
-            position: {
-                let d = to_f64(direction);
-                [0, 1, 2].map(|k| at[k] + d[k] * out)
-            },
-            motion: HandleMotion::Linear {
-                direction: to_f64(direction),
-                arg: arg_path(&["construction", label]),
-                value,
-                scale: 1.0,
-            },
-        };
-        Ok(match &args.construction {
-            Construction::Offset { distance } => {
-                vec![handle("distance", built.w(), *distance, 0.0)]
-            }
-            Construction::Point { x, y, z } => vec![
-                handle("x", built.u(), *x, POINT_HANDLE_OUT),
-                handle("y", built.v(), *y, POINT_HANDLE_OUT),
-                handle("z", built.w(), *z, POINT_HANDLE_OUT),
-            ],
-            _ => Vec::new(),
-        })
+    fn summary(&self, args: &AddDatumArgs) -> String {
+        let selection: Vec<String> = args.selection.iter().map(EntityRef::label).collect();
+        format!(
+            "selection=[{}], construction={}",
+            selection.join(", "),
+            args.construction.schema().label
+        )
+    }
+
+    fn references(&self, args: &AddDatumArgs) -> Vec<EntityRef> {
+        args.selection.clone()
     }
 }
 
@@ -624,7 +667,10 @@ impl<S: Scalar> Operation<S> for AddDatum {
 mod tests {
     use geop_core_math::scalars::ScalInF64 as S;
 
-    use geop_ops::WorldAxis;
+    use geop_ops::{
+        WorldAxis,
+        ui::{Button, Control, PartView, PixelScale, Pointer, Shape, Target},
+    };
 
     use super::*;
 
@@ -646,15 +692,15 @@ mod tests {
             let mut json = serde_json::json!({ "method": schema.method });
             for param in schema.params {
                 json[param.name] = match param.kind {
-                    ArgKind::Number { default, .. } => default.into(),
-                    ArgKind::Bool { default } => default.into(),
-                    ref other => panic!("{}: unexpected parameter kind {other:?}", schema.method),
+                    ParamKind::Number { default, .. } => default.into(),
+                    ParamKind::Bool { default } => default.into(),
                 };
             }
             let construction: Construction = serde_json::from_value(json.clone())
                 .unwrap_or_else(|e| panic!("{}: {e}", schema.method));
             assert_eq!(construction.schema(), schema);
             assert_eq!(serde_json::to_value(&construction).unwrap(), json);
+            assert_eq!(Construction::default_of(schema), construction);
         }
     }
 
@@ -716,9 +762,26 @@ mod tests {
         assert!(err(vec![edge("nowhere")], Construction::AlongLine {}).contains("nowhere"));
     }
 
-    /// Offsets are handles: dragging one edits the construction's value.
+    /// A datum step edited as an editor drives it: its presentation
+    /// after `events`, from a fresh session.
+    fn edited(
+        part: &Part<S>,
+        args: AddDatumArgs,
+        events: &[Event],
+    ) -> Edited<AddDatumArgs, DatumSession> {
+        let view = PartView::of(part).unwrap();
+        let ctx = EditContext { part, view: &view };
+        let mut edited = AddDatum.edit(&ctx, args, DatumSession::default(), None);
+        for event in events {
+            edited = AddDatum.edit(&ctx, edited.args, edited.session, Some(event));
+        }
+        edited
+    }
+
+    /// Offsets are handles: dragging one along its direction edits the
+    /// construction's value.
     #[test]
-    fn offsets_have_handles() {
+    fn offsets_are_dragged() {
         let args = AddDatumArgs {
             selection: vec![EntityRef::Origin],
             construction: Construction::Point {
@@ -727,18 +790,48 @@ mod tests {
                 z: 3.0,
             },
         };
-        let handles = AddDatum.handles(&Part::<S>::new(), &args).unwrap();
-        let labels: Vec<&str> = handles.iter().map(|h| h.label.as_str()).collect();
-        assert_eq!(labels, ["x", "y", "z"]);
-        let HandleMotion::Linear { arg, value, .. } = &handles[2].motion else {
-            panic!("a linear handle")
+        let part = Part::<S>::new();
+        let handles = edited(&part, args.clone(), &[]).presentation.visuals;
+        let keys: Vec<&str> = handles.iter().map(|h| h.key.as_str()).collect();
+        assert_eq!(keys, ["x", "y", "z"]);
+        let Shape::Handle { at, direction } = handles[2].shape else {
+            panic!("a handle");
         };
-        assert_eq!(arg, &arg_path(&["construction", "z"]));
-        assert_eq!(*value, 3.0);
+        assert_eq!(direction, Some([0.0, 0.0, 1.0]));
+        let off = (0..3)
+            .map(|k| (at[k] - [1.0, 2.0, 3.3][k]).abs())
+            .fold(0.0, f64::max);
+        assert!(off < 1e-9, "{at:?}");
+        // Seen from the side, dragged half a unit up.
+        let side = |z: f64| Pointer {
+            origin: [1.0, -10.0, z],
+            dir: [0.0, 1.0, 0.0],
+            right: [1.0, 0.0, 0.0],
+            up: [0.0, 0.0, 1.0],
+            pixel: PixelScale {
+                at_origin: 0.001,
+                per_distance: 0.0,
+            },
+        };
+        let drag = Event::Drag {
+            from: side(3.3),
+            to: side(3.8),
+            done: true,
+        };
+        let dragged = edited(&part, args, &[drag]);
+        assert_eq!(
+            dragged.args.construction,
+            Construction::Point {
+                x: 1.0,
+                y: 2.0,
+                z: 3.5
+            }
+        );
     }
 
-    /// The dialog says what each selected entity can be used as, and which
-    /// constructions fit the selection — for a step that does not build too.
+    /// The dialog says what each selected entity can be used as, and offers
+    /// only the constructions that fit the selection — for a step that does
+    /// not build too.
     #[test]
     fn dialogs_say_what_a_selection_fits() {
         let args = AddDatumArgs {
@@ -747,26 +840,53 @@ mod tests {
         };
         let part = Part::<S>::new();
         assert!(AddDatum.apply(part.clone(), "d", &args).is_err());
-        let dialog = AddDatum.dialog(&part, &args);
-        assert_eq!(
-            dialog.args["selection"],
-            ArgDialog::Selection {
-                roles: vec![vec![Role::Point], vec![]]
-            }
-        );
-        assert_eq!(
-            dialog.args["construction"],
-            ArgDialog::Options { fit: vec![] }
-        );
+        let dialog = edited(&part, args.clone(), &[]).presentation.dialog;
+        let Some(Control::List { items, .. }) = dialog.get("selected") else {
+            panic!("the selection is listed");
+        };
+        assert_eq!(items[0].detail.as_deref(), Some("point"));
+        assert_eq!(items[1].detail.as_deref(), Some("not found"));
+        assert!(dialog.get("construction_needs").is_some());
 
         let args = AddDatumArgs {
             selection: vec![base(WorldAxis::Z)],
             ..args
         };
-        let ArgDialog::Options { fit } = &AddDatum.dialog(&part, &args).args["construction"] else {
-            panic!("the constructions are options");
+        let dialog = edited(&part, args, &[]).presentation.dialog;
+        let Some(Control::Select { options, .. }) = dialog.get("construction") else {
+            panic!("the constructions are a select");
         };
-        assert!(fit.contains(&"offset"));
-        assert!(!fit.contains(&"midpoint"));
+        let enabled = |method: &str| options.iter().find(|o| o.value == method).unwrap().enabled;
+        assert!(enabled("offset"));
+        assert!(!enabled("midpoint"));
+    }
+
+    /// Picking in the viewport adds to the selection, and again takes out;
+    /// the construction follows what fits.
+    #[test]
+    fn picks_build_the_selection() {
+        let part = Part::<S>::new();
+        let args = AddDatum.new_args(&part);
+        // The origin's ball, from above, a thousandth of a unit per pixel.
+        let click = Event::Click {
+            pointer: Pointer {
+                origin: [0.0, 0.0, 10.0],
+                dir: [0.0, 0.0, -1.0],
+                right: [1.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+                pixel: PixelScale {
+                    at_origin: 0.001,
+                    per_distance: 0.0,
+                },
+            },
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        };
+        let once = edited(&part, args.clone(), std::slice::from_ref(&click));
+        assert_eq!(once.args.selection, [EntityRef::Origin]);
+        assert!(once.presentation.pickable.contains(&Target::Origin));
+        let twice = edited(&part, args, &[click.clone(), click]);
+        assert!(twice.args.selection.is_empty());
     }
 }

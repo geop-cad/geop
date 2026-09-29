@@ -9,13 +9,14 @@ use geop_core_math::{
 };
 use geop_core_sketch::{CurveId, CurveKind, Positions, ProfileLoop};
 use geop_ops::{
-    Namer, Part,
-    operation::{Operation, OperationArgs},
+    EditContext, Edited, Namer, Part,
+    operation::{EntityRef, Operation},
+    ui::{Choice, Dialog, DialogValue, Event, Presentation, SelectStyle, Tone},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use super::extrude::sketch_profile;
+use super::{SweepSession, extrude::sketch_profile, pick_sketch, pickable, sketch_field};
 use crate::revolve::revolve_at_oriented;
 
 /// Revolves every region of a sketch a full turn around one of its lines,
@@ -41,25 +42,142 @@ use crate::revolve::revolve_at_oriented;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Revolve;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, OperationArgs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RevolveArgs {
     /// The sketch to revolve.
-    #[arg(Sketch)]
     pub sketch: String,
     /// The line of that sketch to revolve around. The profile must touch it
     /// along an edge.
-    #[arg(SketchLine { sketch: "sketch" })]
     pub axis: CurveId,
     /// Keep the solid as a new body, or combine it with another solid.
     #[serde(default)]
-    #[arg(Combine { sign: None })]
     pub combine: Combine,
 }
 
-impl<S: Scalar> Operation<S> for Revolve {
-    type Args = RevolveArgs;
+/// The lines of the sketch named `sketch` in `part`: `(id, construction)`.
+fn lines<S: Scalar>(part: &Part<S>, sketch: &str) -> Vec<(CurveId, bool)> {
+    let Some(placed) = part.sketch_id(sketch).and_then(|id| part.sketch(id)).ok() else {
+        return Vec::new();
+    };
+    placed
+        .sketch
+        .curves
+        .iter()
+        .filter(|(_, c)| matches!(c.kind, CurveKind::Line { .. }))
+        .map(|(&id, c)| (id, c.construction))
+        .collect()
+}
 
-    fn apply(
+/// The line of `sketch` to revolve around by default: its first
+/// construction line — what an axis is usually drawn as — else its first
+/// line.
+fn default_axis<S: Scalar>(part: &Part<S>, sketch: &str) -> CurveId {
+    let lines = lines(part, sketch);
+    lines
+        .iter()
+        .find(|(_, construction)| *construction)
+        .or(lines.first())
+        .map_or(CurveId(0), |&(id, _)| id)
+}
+
+impl Operation for Revolve {
+    type Args = RevolveArgs;
+    type Session = SweepSession;
+
+    /// The newest sketch around its axis line, joined to the newest solid
+    /// if there is one.
+    fn new_args<S: Scalar>(&self, before: &Part<S>) -> RevolveArgs {
+        let sketch = before.sketch_names().pop().unwrap_or_default();
+        RevolveArgs {
+            axis: default_axis(before, &sketch),
+            sketch,
+            combine: Combine::new_for(before),
+        }
+    }
+
+    /// The sketch, picked — its axis then back to its default — and the
+    /// axis among its lines.
+    fn edit<S: Scalar>(
+        &self,
+        ctx: &EditContext<S>,
+        mut args: RevolveArgs,
+        mut s: SweepSession,
+        event: Option<&Event>,
+    ) -> Edited<RevolveArgs, SweepSession> {
+        if let Some(event) = event {
+            match event.dialog() {
+                Some(("sketch", _)) => s.pick.toggle("sketch"),
+                Some(("axis", DialogValue::Choice(id))) => {
+                    if let Ok(id) = id.parse() {
+                        args.axis = CurveId(id);
+                    }
+                }
+                _ => {}
+            }
+            args.combine.event(ctx.view, event, &mut s.pick);
+            if let Some(sketch) = pick_sketch(ctx.view, event, &mut s.pick) {
+                args.axis = default_axis(ctx.part, &sketch);
+                args.sketch = sketch;
+            }
+        }
+        let mut d = Dialog::new();
+        sketch_field(&mut d, ctx.part, &args.sketch, &s.pick);
+        let lines = lines(ctx.part, &args.sketch);
+        if lines.is_empty() {
+            d.text(
+                "axis",
+                "The sketch has no line to revolve around.",
+                Tone::Hint,
+            );
+        } else {
+            d.select(
+                "axis",
+                "axis",
+                args.axis.0.to_string(),
+                lines
+                    .iter()
+                    .map(|(id, construction)| {
+                        let label = if *construction {
+                            format!("Line {id} (construction)")
+                        } else {
+                            format!("Line {id}")
+                        };
+                        Choice::new(id.0.to_string(), label)
+                    })
+                    .collect(),
+                SelectStyle::Dropdown,
+            );
+        }
+        args.combine.show(&mut d, &s.pick);
+        let presentation = Presentation {
+            dialog: d,
+            highlights: s.pick.hover.clone().into_iter().collect(),
+            pickable: pickable(&s.pick),
+            ..Presentation::default()
+        };
+        Edited {
+            args,
+            session: s,
+            presentation,
+        }
+    }
+
+    fn summary(&self, args: &RevolveArgs) -> String {
+        format!(
+            "sketch={}, axis={}, combine={}",
+            args.sketch,
+            args.axis,
+            args.combine.summary()
+        )
+    }
+
+    fn references(&self, args: &RevolveArgs) -> Vec<EntityRef> {
+        vec![EntityRef::Sketch {
+            name: args.sketch.clone(),
+        }]
+    }
+
+    fn apply<S: Scalar>(
         &self,
         mut part: Part<S>,
         operation_id: &str,

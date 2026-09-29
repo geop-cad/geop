@@ -95,8 +95,10 @@ currently compiled.
 
 `Extrude` and `Revolve` are the operations a program uses (see
 [geop-ops](./geop-ops.md#operations)): they sweep a sketch of the part into
-a solid, name everything after the sketch's elements, and offer the extrude
-distance as a handle. Both take a `Combine` from
+a solid, and name everything after the sketch's elements. Editing one, the
+sketch is picked in the viewport and the extrude's distance is a handle on
+the end cap; until the user chooses how to combine, a positive distance
+joins and a negative one cuts. Both take a `Combine` from
 [geop-ops-booleans](./geop-ops-booleans.md): keep the result as a
 `NewBody`, or immediately unite, intersect or subtract it with a `target`
 solid — which is why this crate depends on the booleans, not the other way

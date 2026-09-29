@@ -60,6 +60,23 @@ impl<S: Scalar> Part<S> {
         })
     }
 
+    /// Every solid's name, oldest first.
+    pub fn solid_names(&self) -> Vec<String> {
+        let mut solids: Vec<SolidId> = self.topology().solids.keys().copied().collect();
+        solids.sort_by_key(|s| s.0);
+        solids
+            .into_iter()
+            .filter_map(|s| self.name_of(s).map(str::to_string))
+            .collect()
+    }
+
+    /// Every sketch's name, oldest first.
+    pub fn sketch_names(&self) -> Vec<String> {
+        self.sketches()
+            .filter_map(|(id, _)| self.name_of(id).map(str::to_string))
+            .collect()
+    }
+
     pub fn datum_id(&self, name: &str) -> GeopResult<DatumId> {
         self.named(name, "datum", |r| match r {
             RefId::Datum(id) => Some(id),

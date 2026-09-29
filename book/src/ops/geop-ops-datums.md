@@ -21,6 +21,10 @@ the ways CAD systems commonly offer (`Construction`):
 A coordinate system is used as a point, its origin, and by its axes, like
 the origin itself: a point offset from it goes along them.
 
-`inspect_selection` tells an editor which constructions fit a selection,
-using exactly the matching a step applies; it is also what `AddDatum`'s
-dialog reports.
+`inspect_selection` says which constructions fit a selection, using
+exactly the matching a step applies. `AddDatum`'s dialog is built on it:
+the selection is picked in the viewport — anything but solids and
+sketches — each entity listed with what it can be used as; only the
+constructions that fit can be chosen, and a construction that stops fitting
+gives way to the first that does. Offsets are handles: an offset plane's
+distance along its normal, an offset point's `x`, `y`, `z` along its axes.

@@ -1,7 +1,7 @@
 //! Programs of the editor's operations: edited, read back, and run.
 
 use geop_core_math::scalars::ScalInF64 as S;
-use geop_ops::{Part, PartDescription, StepHandle};
+use geop_ops::{EntityRef, Part, PartDescription};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::ExtrudeArgs;
 
@@ -145,44 +145,21 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     );
 }
 
-/// Every step's handles, placed where the part as that step saw it puts
-/// them: the box's distance at its top, the hole's at its bottom, and a
-/// handle for every sketch point.
+/// The runner says what the steps it built build on — what an editor
+/// hides once it is used.
 #[test]
-fn runner_provides_every_handle() {
-    use geop_ops::operation::{HandleGroup, HandleMotion};
+fn runner_reports_what_steps_build_on() {
     let mut runner = ProgramRunner::<S>::new();
     runner.run(&box_with_drill_hole(), None);
-    let handles = runner.handles().unwrap();
-    let feature: Vec<&StepHandle> = handles
-        .iter()
-        .filter(|h| h.handle.group == HandleGroup::Feature)
-        .collect();
-    assert_eq!(feature.len(), 2);
-    let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9);
-    let (boxed, hole) = (feature[0], feature[1]);
-    assert_eq!(boxed.step, "box");
-    assert!(close(boxed.handle.position, [1.0, 1.0, 1.0]), "{boxed:?}");
-    assert_eq!(hole.step, "hole");
-    assert!(close(hole.handle.position, [1.0, 1.0, 0.5]), "{hole:?}");
-    let HandleMotion::Linear {
-        direction,
-        arg,
-        value,
-        scale,
-    } = &hole.handle.motion
-    else {
-        panic!("{hole:?}")
-    };
-    assert!(close(*direction, [0.0, 0.0, 1.0]));
-    assert_eq!(arg, &["distance"]);
-    assert_eq!((*value, *scale), (-0.5, 1.0));
-    // 4 corners of the outline, the circle's center.
-    let sketch = handles.len() - feature.len();
-    assert_eq!(sketch, 5);
-    let json = serde_json::to_value(&handles[0]).unwrap();
-    assert_eq!(json["step"], "outline");
-    assert_eq!(json["motion"], "planar");
+    let references = runner.references();
+    for sketch in ["outline", "hole_sketch"] {
+        assert!(references.contains(&EntityRef::Sketch {
+            name: sketch.into()
+        }));
+    }
+    assert!(references.contains(&EntityRef::Face {
+        name: "extrude(box,end)".into()
+    }));
 }
 
 /// A step that fails ends the run there, reported by id; the part is
@@ -210,54 +187,4 @@ fn runner_reports_the_failing_step() {
     assert_eq!(last.id, "hole");
     assert!(last.error.as_deref().unwrap().contains("extrude(nothing)"));
     assert!(runner.part().solid_id("extrude(box)").is_ok());
-}
-
-/// Every step the run covered has a dialog, made with the part before it —
-/// the failing step's too, since a dialog is what helps fix it.
-#[test]
-fn runner_provides_every_dialog() {
-    use geop_ops::operation::{ArgDialog, Role};
-    let mut program = crate::examples::boss_on_reference_plane();
-    let mut runner = ProgramRunner::<S>::new();
-    runner.run(&program, None);
-    let dialogs = runner.dialogs();
-    let steps: Vec<&str> = program.steps.iter().map(|s| s.id.as_str()).collect();
-    let with_dialog: Vec<&str> = dialogs.iter().map(|d| d.step.as_str()).collect();
-    assert_eq!(with_dialog, steps);
-    let lifted = dialogs.iter().find(|d| d.step == "lifted").unwrap();
-    assert_eq!(
-        lifted.dialog.args["selection"],
-        ArgDialog::Selection {
-            roles: vec![vec![Role::Plane]]
-        }
-    );
-    let ArgDialog::Options { fit } = &lifted.dialog.args["construction"] else {
-        panic!("the constructions are options");
-    };
-    assert!(fit.contains(&"offset"));
-    assert!(
-        dialogs
-            .iter()
-            .all(|d| d.step == "lifted" || d.dialog.args.is_empty())
-    );
-
-    // Point the datum at a face that is not there: the step fails, and its
-    // dialog says so.
-    let index = program.index_of("lifted").unwrap();
-    let PartOperation::AddDatum(args) = &mut program.steps[index].operation else {
-        panic!("`lifted` adds a datum");
-    };
-    args.selection = vec![geop_ops::EntityRef::Face {
-        name: "nowhere".into(),
-    }];
-    runner.run(&program, None);
-    assert!(runner.results()[index].error.is_some());
-    let dialogs = runner.dialogs();
-    assert_eq!(dialogs.len(), index + 1);
-    assert_eq!(
-        dialogs[index].dialog.args["selection"],
-        ArgDialog::Selection {
-            roles: vec![vec![]]
-        }
-    );
 }

@@ -40,7 +40,7 @@ fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-/// Something picked to build on.
+/// Something picked in the viewport, to build on or to use.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EntityRef {
@@ -72,6 +72,31 @@ pub enum EntityRef {
     Datum {
         name: String,
     },
+    /// A solid, as a whole.
+    Solid {
+        name: String,
+    },
+    /// A sketch: its plane.
+    Sketch {
+        name: String,
+    },
+}
+
+impl EntityRef {
+    /// How the entity is shown: `Z plane`, or its name.
+    pub fn label(&self) -> String {
+        match self {
+            EntityRef::Origin => "Origin".into(),
+            EntityRef::Axis { axis } => format!("{axis:?} axis"),
+            EntityRef::Plane { normal } => format!("{normal:?} plane"),
+            EntityRef::Vertex { name }
+            | EntityRef::Edge { name }
+            | EntityRef::Face { name }
+            | EntityRef::Datum { name }
+            | EntityRef::Solid { name }
+            | EntityRef::Sketch { name } => name.clone(),
+        }
+    }
 }
 
 impl std::fmt::Display for EntityRef {
@@ -84,6 +109,8 @@ impl std::fmt::Display for EntityRef {
             EntityRef::Edge { name } => write!(f, "edge {name:?}"),
             EntityRef::Face { name } => write!(f, "face {name:?}"),
             EntityRef::Datum { name } => write!(f, "datum {name:?}"),
+            EntityRef::Solid { name } => write!(f, "solid {name:?}"),
+            EntityRef::Sketch { name } => write!(f, "sketch {name:?}"),
         }
     }
 }
@@ -269,6 +296,16 @@ impl EntityRef {
                     DatumKind::Frame => g.point = Some(*frame.origin()),
                 }
                 g.frame = Some(frame);
+            }
+            // A solid as a whole is none of these.
+            EntityRef::Solid { name } => {
+                part.solid_id(name).with_context(ctx)?;
+            }
+            EntityRef::Sketch { name } => {
+                let id = part.sketch_id(name).with_context(ctx)?;
+                let plane = part.sketch(id).with_context(ctx)?.plane.clone();
+                g.plane = Some(plane.clone());
+                g.frame = Some(plane);
             }
         }
         Ok(g)

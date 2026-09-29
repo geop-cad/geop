@@ -3,19 +3,17 @@
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::Scalar,
-    vector::Vector2,
     with_context,
 };
 use geop_core_sketch::Sketch;
+use geop_ops::{
+    EditContext, Edited, Part, PlacedSketch, WorldAxis,
+    operation::{EntityRef, Operation, resolve_plane},
+    ui::Event,
+};
 use serde::{Deserialize, Serialize};
 
-use geop_ops::{
-    Part, PlacedSketch,
-    operation::{
-        EntityRef, Handle, HandleGroup, HandleMotion, Operation, OperationArgs, arg_path,
-        resolve_plane, to_f64,
-    },
-};
+use crate::editor::{self, SketchSession};
 
 /// Adds a sketch on a plane to the part, named by the operation's id: a base
 /// plane, a planar face or a datum plane (see [`EntityRef`]). The plane is
@@ -24,20 +22,29 @@ use geop_ops::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddSketch;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, OperationArgs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AddSketchArgs {
     /// The plane to sketch on: a base plane, a planar face or a datum plane.
-    #[arg(Plane)]
     pub plane: EntityRef,
     /// The sketch as drawn; solve it first for its constraints to hold.
-    #[arg(Drawing { plane: "plane" })]
     pub sketch: Sketch,
 }
 
-impl<S: Scalar> Operation<S> for AddSketch {
+impl Operation for AddSketch {
     type Args = AddSketchArgs;
+    type Session = SketchSession;
 
-    fn apply(
+    /// An empty sketch on the `Z` plane.
+    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddSketchArgs {
+        AddSketchArgs {
+            plane: EntityRef::Plane {
+                normal: WorldAxis::Z,
+            },
+            sketch: Sketch::new(),
+        }
+    }
+
+    fn apply<S: Scalar>(
         &self,
         mut part: Part<S>,
         operation_id: &str,
@@ -54,30 +61,27 @@ impl<S: Scalar> Operation<S> for AddSketch {
         Ok(part)
     }
 
-    /// Every point, as a handle that slides in the sketch plane.
-    fn handles(&self, before: &Part<S>, args: &AddSketchArgs) -> GeopResult<Vec<Handle>> {
-        let plane = resolve_plane(before, &args.plane)?;
-        let (u, v) = (to_f64(plane.u()), to_f64(plane.v()));
-        Ok(args
-            .sketch
-            .points
-            .iter()
-            .map(|(id, p)| {
-                let at = plane.uv_to_xyz(&Vector2::from_array([p.x, p.y].map(S::from_f64)));
-                let path = |c: &str| arg_path(&["sketch", "points", &id.0.to_string(), c]);
-                Handle {
-                    label: id.to_string(),
-                    group: HandleGroup::Sketch,
-                    position: to_f64(&at),
-                    motion: HandleMotion::Planar {
-                        u,
-                        v,
-                        x: path("x"),
-                        y: path("y"),
-                        value: [p.x, p.y],
-                    },
-                }
-            })
-            .collect())
+    /// Choosing the plane, then drawing in it: see [`crate::editor`].
+    fn edit<S: Scalar>(
+        &self,
+        ctx: &EditContext<S>,
+        args: AddSketchArgs,
+        session: SketchSession,
+        event: Option<&Event>,
+    ) -> Edited<AddSketchArgs, SketchSession> {
+        editor::edit(ctx, args, session, event)
+    }
+
+    fn summary(&self, args: &AddSketchArgs) -> String {
+        let n = args.sketch.curves.len();
+        format!(
+            "plane={}, {n} curve{}",
+            args.plane.label(),
+            if n == 1 { "" } else { "s" }
+        )
+    }
+
+    fn references(&self, args: &AddSketchArgs) -> Vec<EntityRef> {
+        vec![args.plane.clone()]
     }
 }

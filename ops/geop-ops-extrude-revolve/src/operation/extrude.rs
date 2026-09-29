@@ -5,17 +5,18 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::Vector2,
     with_context,
 };
 use geop_core_sketch::{ProfilePiece, Sketch, profile::curve_polyline};
 use geop_ops::{
-    Namer, Part,
-    operation::{Handle, HandleGroup, HandleMotion, Operation, OperationArgs, arg_path, to_f64},
+    EditContext, Edited, Namer, Part,
+    operation::{EntityRef, Operation},
+    ui::{Dialog, DialogValue, Dragging, Event, Frame, Presentation, Shape, Style, Visual},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
+use super::{SweepSession, pick_sketch, pickable, sketch_field};
 use crate::{
     common::Profile,
     extrude::{ExtrudeNames, extrude_from_plane},
@@ -48,29 +49,143 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Extrude;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, OperationArgs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtrudeArgs {
     /// The sketch to extrude.
-    #[arg(Sketch)]
     pub sketch: String,
     /// How far, along the sketch plane's normal; backwards if negative.
-    #[arg(Number { default: 1.0, min: -10.0, max: 10.0 })]
     pub distance: f64,
     /// Centre the solid on the sketch plane: extrude half the distance to
     /// either side.
     #[serde(default)]
-    #[arg(Bool { default: false })]
     pub symmetric: bool,
     /// Keep the solid as a new body, or combine it with another solid.
     #[serde(default)]
-    #[arg(Combine { sign: Some("distance") })]
     pub combine: Combine,
 }
 
-impl<S: Scalar> Operation<S> for Extrude {
-    type Args = ExtrudeArgs;
+/// The distance, as a handle at the centre of the end cap that slides along
+/// the sketch plane's normal — and how far the handle moves per unit of
+/// distance. None while the sketch cannot be found.
+fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<(Visual, f64)> {
+    let placed = before.sketch(before.sketch_id(&args.sketch).ok()?).ok()?;
+    let center = sketch_center(&placed.sketch)?;
+    let plane = Frame::of(&placed.plane);
+    let at = plane.to_world(center);
+    // A symmetric extrude's end cap is half the distance off the plane.
+    let scale = if args.symmetric { 0.5 } else { 1.0 };
+    let offset = args.distance * scale;
+    let handle = Visual::new(
+        "distance",
+        Shape::Handle {
+            at: [0, 1, 2].map(|k| at[k] + plane.normal[k] * offset),
+            direction: Some(plane.normal),
+        },
+        Style::Handle,
+    );
+    Some((handle, scale))
+}
 
-    fn apply(
+impl Operation for Extrude {
+    type Args = ExtrudeArgs;
+    type Session = SweepSession;
+
+    /// The newest sketch, a unit up, joined to the newest solid if there is
+    /// one.
+    fn new_args<S: Scalar>(&self, before: &Part<S>) -> ExtrudeArgs {
+        ExtrudeArgs {
+            sketch: before.sketch_names().pop().unwrap_or_default(),
+            distance: 1.0,
+            symmetric: false,
+            combine: Combine::new_for(before),
+        }
+    }
+
+    /// The sketch, picked; the distance, typed or dragged as a handle —
+    /// joining when it is positive and cutting when negative, until the
+    /// user chooses how to combine.
+    fn edit<S: Scalar>(
+        &self,
+        ctx: &EditContext<S>,
+        mut args: ExtrudeArgs,
+        mut s: SweepSession,
+        event: Option<&Event>,
+    ) -> Edited<ExtrudeArgs, SweepSession> {
+        if let Some(event) = event {
+            let mut distance = None;
+            match event.dialog() {
+                Some(("sketch", _)) => s.pick.toggle("sketch"),
+                Some(("distance", DialogValue::Number(v))) => distance = Some(*v),
+                Some(("symmetric", DialogValue::Bool(b))) => args.symmetric = *b,
+                _ => {}
+            }
+            if args.combine.event(ctx.view, event, &mut s.pick) {
+                s.combine_touched = true;
+            }
+            if let Some(sketch) = pick_sketch(ctx.view, event, &mut s.pick) {
+                args.sketch = sketch;
+            }
+            let handles: Vec<Visual> = distance_handle(ctx.part, &args)
+                .map(|(h, _)| h)
+                .into_iter()
+                .collect();
+            let scale = distance_handle(ctx.part, &args).map_or(1.0, |(_, scale)| scale);
+            if let Some((_, v)) = s
+                .drag
+                .linear(&handles, event, |_| Some((args.distance, scale)))
+            {
+                distance = Some(v);
+            }
+            if let Some(v) = distance {
+                args.distance = v;
+                if !s.combine_touched {
+                    args.combine.follow_sign(v);
+                }
+            }
+            if let Event::Hover { pointer } = event {
+                s.over_handle = Dragging::over_handle(&handles, pointer);
+            }
+        }
+        let mut d = Dialog::new();
+        sketch_field(&mut d, ctx.part, &args.sketch, &s.pick);
+        d.slider("distance", "distance", args.distance, -10.0, 10.0);
+        d.checkbox("symmetric", "symmetric", args.symmetric);
+        args.combine.show(&mut d, &s.pick);
+        let presentation = Presentation {
+            dialog: d,
+            visuals: distance_handle(ctx.part, &args)
+                .map(|(h, _)| h)
+                .into_iter()
+                .collect(),
+            highlights: s.pick.hover.clone().into_iter().collect(),
+            pickable: pickable(&s.pick),
+            focus: None,
+            grab: s.over_handle,
+        };
+        Edited {
+            args,
+            session: s,
+            presentation,
+        }
+    }
+
+    fn summary(&self, args: &ExtrudeArgs) -> String {
+        format!(
+            "sketch={}, distance={:.2}, symmetric={}, combine={}",
+            args.sketch,
+            args.distance,
+            if args.symmetric { "yes" } else { "no" },
+            args.combine.summary()
+        )
+    }
+
+    fn references(&self, args: &ExtrudeArgs) -> Vec<EntityRef> {
+        vec![EntityRef::Sketch {
+            name: args.sketch.clone(),
+        }]
+    }
+
+    fn apply<S: Scalar>(
         &self,
         mut part: Part<S>,
         operation_id: &str,
@@ -147,33 +262,6 @@ impl<S: Scalar> Operation<S> for Extrude {
             .apply(&mut part, &namer, operation_id, built)
             .with_context(ctx)?;
         Ok(part)
-    }
-
-    /// The distance, as a handle at the centre of the end cap that slides
-    /// along the sketch plane's normal.
-    fn handles(&self, before: &Part<S>, args: &ExtrudeArgs) -> GeopResult<Vec<Handle>> {
-        let placed = before.sketch(before.sketch_id(&args.sketch)?)?;
-        let Some(center) = sketch_center(&placed.sketch) else {
-            return Ok(Vec::new());
-        };
-        let plane = &placed.plane;
-        let at = plane.uv_to_xyz(&Vector2::from_array(center.map(S::from_f64)));
-        let normal = to_f64(plane.w());
-        // A symmetric extrude's end cap is half the distance off the plane.
-        let scale = if args.symmetric { 0.5 } else { 1.0 };
-        let offset = args.distance * scale;
-        let at = to_f64(&at);
-        Ok(vec![Handle {
-            label: "distance".into(),
-            group: HandleGroup::Feature,
-            position: [0, 1, 2].map(|k| at[k] + normal[k] * offset),
-            motion: HandleMotion::Linear {
-                direction: normal,
-                arg: arg_path(&["distance"]),
-                value: args.distance,
-                scale,
-            },
-        }])
     }
 }
 

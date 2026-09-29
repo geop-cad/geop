@@ -45,6 +45,15 @@ impl GeopError {
         }
     }
 
+    /// What went wrong at the root, without the context it was reported
+    /// through: what a user is shown.
+    pub fn root_message(&self) -> &str {
+        match self {
+            GeopError::Root { message, .. } => message,
+            GeopError::Context { inner, .. } => inner.root_message(),
+        }
+    }
+
     /// Walk the chain and collect labels of all attached scenes, root-first.
     pub fn scene_labels(&self) -> Vec<&str> {
         match self {

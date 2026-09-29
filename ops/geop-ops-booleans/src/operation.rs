@@ -8,8 +8,12 @@ use geop_core_math::{
 };
 use geop_core_topology::SolidId;
 use geop_ops::{
-    Namer, Part,
-    operation::{Operation, OperationArgs},
+    EditContext, Edited, Namer, Part,
+    operation::{EntityRef, Operation},
+    ui::{
+        Choice, Dialog, DialogValue, Event, PartView, Picked, Picking, Presentation, SelectStyle,
+        Target, Tone,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,23 +36,131 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Boolean;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, OperationArgs)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BooleanArgs {
     /// The first solid; for a difference, the one cut from.
-    #[arg(Solid)]
     pub a: String,
     /// The second solid; for a difference, the one cut away.
-    #[arg(Solid)]
     pub b: String,
     /// How to combine them.
-    #[arg(Choice { options: &["union", "intersection", "difference"], default: "difference" })]
     pub op: BooleanOp,
 }
 
-impl<S: Scalar> Operation<S> for Boolean {
-    type Args = BooleanArgs;
+/// The boolean operations, as a dialog offers them: `(op, value, label)`.
+const OPS: [(BooleanOp, &str, &str); 3] = [
+    (BooleanOp::Union, "union", "Union"),
+    (BooleanOp::Intersection, "intersection", "Intersection"),
+    (BooleanOp::Difference, "difference", "Difference"),
+];
 
-    fn apply(
+/// The temporary state of editing a boolean step: which solid is being
+/// picked.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BooleanSession {
+    pick: Picking,
+}
+
+/// A button that picks a solid for `key`, showing the one picked.
+fn solid_field(d: &mut Dialog, key: &str, solid: &str, pick: &Picking) {
+    let shown = if solid.is_empty() {
+        "pick a solid…"
+    } else {
+        solid
+    };
+    d.pick_button(key, format!("{key}: {shown}"), pick.is(key));
+}
+
+impl Operation for Boolean {
+    type Args = BooleanArgs;
+    type Session = BooleanSession;
+
+    /// The difference of the two newest solids: the older cut by the one
+    /// just built as a tool.
+    fn new_args<S: Scalar>(&self, before: &Part<S>) -> BooleanArgs {
+        let solids = before.solid_names();
+        let newest = |back: usize| {
+            solids
+                .len()
+                .checked_sub(back)
+                .map(|i| solids[i].clone())
+                .unwrap_or_default()
+        };
+        BooleanArgs {
+            a: newest(2),
+            b: newest(1),
+            op: BooleanOp::Difference,
+        }
+    }
+
+    fn edit<S: Scalar>(
+        &self,
+        ctx: &EditContext<S>,
+        mut args: BooleanArgs,
+        mut s: BooleanSession,
+        event: Option<&Event>,
+    ) -> Edited<BooleanArgs, BooleanSession> {
+        if let Some(event) = event {
+            match event.dialog() {
+                Some((key @ ("a" | "b"), _)) => s.pick.toggle(key),
+                Some(("op", DialogValue::Choice(value))) => {
+                    if let Some(&(op, ..)) = OPS.iter().find(|o| o.1 == value) {
+                        args.op = op;
+                    }
+                }
+                _ => {}
+            }
+            if let Picked::Picked {
+                field,
+                entity: EntityRef::Solid { name },
+                ..
+            } = s.pick.handle(ctx.view, event, &[Target::Solid])
+            {
+                if field == "a" {
+                    args.a = name;
+                } else {
+                    args.b = name;
+                }
+                s.pick.disarm();
+            }
+        }
+        let mut d = Dialog::new();
+        solid_field(&mut d, "a", &args.a, &s.pick);
+        solid_field(&mut d, "b", &args.b, &s.pick);
+        d.select(
+            "op",
+            "op",
+            OPS.iter().find(|o| o.0 == args.op).map_or("", |o| o.1),
+            OPS.iter()
+                .map(|&(_, value, label)| Choice::new(value, label))
+                .collect(),
+            SelectStyle::Dropdown,
+        );
+        if s.pick.field.is_some() {
+            d.text("pick_hint", "Click a solid in the viewport…", Tone::Hint);
+        }
+        let presentation = Presentation {
+            dialog: d,
+            highlights: s.pick.hover.clone().into_iter().collect(),
+            pickable: if s.pick.field.is_some() {
+                vec![Target::Solid]
+            } else {
+                Vec::new()
+            },
+            ..Presentation::default()
+        };
+        Edited {
+            args,
+            session: s,
+            presentation,
+        }
+    }
+
+    fn summary(&self, args: &BooleanArgs) -> String {
+        let op = OPS.iter().find(|o| o.0 == args.op).map_or("", |o| o.1);
+        format!("a={}, b={}, op={op}", args.a, args.b)
+    }
+
+    fn apply<S: Scalar>(
         &self,
         mut part: Part<S>,
         operation_id: &str,
@@ -89,7 +201,145 @@ pub enum Combine {
     },
 }
 
+/// How each combine mode is offered: `(value, label)`.
+const MODES: [(&str, &str); 4] = [
+    ("new_body", "New body"),
+    ("union", "Join"),
+    ("difference", "Cut"),
+    ("intersection", "Intersect"),
+];
+
+/// The dialog key of a [`Combine`]'s target.
+const TARGET: &str = "combine_target";
+
 impl Combine {
+    /// The mode, as it serializes: `new_body`, `union`.
+    pub fn mode(&self) -> &'static str {
+        match self {
+            Combine::NewBody => "new_body",
+            Combine::Union { .. } => "union",
+            Combine::Intersection { .. } => "intersection",
+            Combine::Difference { .. } => "difference",
+        }
+    }
+
+    /// The solid it combines with, if any.
+    pub fn target(&self) -> Option<&str> {
+        match self {
+            Combine::NewBody => None,
+            Combine::Union { target }
+            | Combine::Intersection { target }
+            | Combine::Difference { target } => Some(target),
+        }
+    }
+
+    /// The mode `mode` (as it serializes) with `target`.
+    fn with_mode(mode: &str, target: String) -> Option<Self> {
+        Some(match mode {
+            "new_body" => Combine::NewBody,
+            "union" => Combine::Union { target },
+            "intersection" => Combine::Intersection { target },
+            "difference" => Combine::Difference { target },
+            _ => return None,
+        })
+    }
+
+    /// The default for a step after `before`: joining the newest solid, if
+    /// there is one — building onto what is there is the common case.
+    pub fn new_for<S: Scalar>(before: &Part<S>) -> Self {
+        match before.solid_names().pop() {
+            Some(target) => Combine::Union { target },
+            None => Combine::NewBody,
+        }
+    }
+
+    /// Joins for a positive `value`, cuts for a negative one: what an
+    /// extrude up out of a face, or down into it, means — unless it builds
+    /// a new body.
+    pub fn follow_sign(&mut self, value: f64) {
+        let Some(target) = self.target().map(str::to_string) else {
+            return;
+        };
+        if value > 0.0 {
+            *self = Combine::Union { target };
+        } else if value < 0.0 {
+            *self = Combine::Difference { target };
+        }
+    }
+
+    /// Its fields in a dialog: the mode, and the target to pick.
+    pub fn show(&self, d: &mut Dialog, pick: &Picking) {
+        d.select(
+            "combine",
+            "combine",
+            self.mode(),
+            MODES
+                .iter()
+                .map(|&(value, label)| Choice::new(value, label))
+                .collect(),
+            SelectStyle::Dropdown,
+        );
+        if let Some(target) = self.target() {
+            let shown = if target.is_empty() {
+                "pick a solid…"
+            } else {
+                target
+            };
+            d.pick_button(TARGET, format!("target: {shown}"), pick.is(TARGET));
+        }
+    }
+
+    /// Applies `event` to its fields (see [`Combine::show`]): choosing a
+    /// mode — the target, if it had none, the newest solid of `view` — or
+    /// picking the target. Returns whether the user chose the mode, which
+    /// from then on is theirs.
+    pub fn event(&mut self, view: &PartView, event: &Event, pick: &mut Picking) -> bool {
+        match event.dialog() {
+            Some(("combine", DialogValue::Choice(mode))) => {
+                let target = self
+                    .target()
+                    .map(str::to_string)
+                    .or_else(|| view.solids.last().cloned())
+                    .unwrap_or_default();
+                if let Some(next) = Combine::with_mode(mode, target) {
+                    *self = next;
+                }
+                return true;
+            }
+            Some((TARGET, _)) => pick.toggle(TARGET),
+            _ => {}
+        }
+        if pick.is(TARGET)
+            && let Picked::Picked {
+                entity: EntityRef::Solid { name },
+                ..
+            } = pick.handle(view, event, &[Target::Solid])
+        {
+            if let Some(next) = Combine::with_mode(self.mode(), name) {
+                *self = next;
+            }
+            pick.disarm();
+        }
+        false
+    }
+
+    /// What a click picks for it now, if it is waiting for one.
+    pub fn pickable(pick: &Picking) -> Option<Target> {
+        pick.is(TARGET).then_some(Target::Solid)
+    }
+
+    /// It in a few words: `join extrude(box)`.
+    pub fn summary(&self) -> String {
+        let label = MODES
+            .iter()
+            .find(|m| m.0 == self.mode())
+            .map_or("", |m| m.1);
+        match self.target() {
+            None => label.into(),
+            Some(target) => format!("{} {target}", label.to_lowercase()),
+        }
+    }
+
     /// The name the built solid gets: the step's own as a new body, or a
     /// name within the step for a tool the combination consumes.
     pub fn built_name(&self, namer: &Namer) -> String {

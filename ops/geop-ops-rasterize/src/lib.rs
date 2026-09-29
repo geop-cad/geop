@@ -47,7 +47,7 @@ pub fn face_triangles_uv<S: Scalar>(
 ///
 /// This is the single place the crate turns topology into sampled geometry
 /// — [`PrimitiveScene`] rendering (`rasterize_model`) and ray picking
-/// (`geop_cad_base::pick`) both build on top of it, rather than each walking
+/// (`geop_ops::ui::PartView`) both build on top of it, rather than each walking
 /// `Model` and sampling curves/surfaces on their own. That matters beyond
 /// not repeating code: it guarantees a pick can never disagree with what
 /// the viewer actually drew, because both read the same triangles.

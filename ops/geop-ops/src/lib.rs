@@ -9,25 +9,27 @@
 //! - [`Part`]: a complete CAD part — a [`geop_core_topology::Model`], the
 //!   sketches and datums used to build it, and a stable name for every
 //!   entity in it (see [Topological naming](#topological-naming)).
-//! - [`operation`]: what an operation is. An operation maps a part and its
-//!   arguments to a new part, together with what an editor needs to edit
-//!   the step interactively:
+//! - [`operation`]: what an operation is. Built, a step maps a part and
+//!   its arguments to a new part; edited, every user action maps
 //!
 //!   ```text
-//!   (part, args) -> (part, dialog, handles)
+//!   (part, args, session, event) -> (args, session, presentation)
 //!   ```
 //!
-//!   The arguments ([`OperationArgs`]) are plain, serializable design data:
-//!   numbers, choices, sketches, and references to entities of the part by
-//!   name ([`EntityRef`]). Their schema ([`ArgSchema`]) tells an editor how
-//!   each can be entered — a slider, a choice, a pick in the viewport — and
-//!   algebraic types (a datum's [`Construction`](ArgKind::Construction), a
-//!   [`Combine`](ArgKind::Combine))
-//!   make it a dialog whose fields follow what was chosen. The [`Dialog`]
-//!   adds what only the part can tell: which of the choices fit what is
-//!   selected in it, what a picked entity can be used as. The [`Handle`]s
-//!   are the step's values placed in the 3-D view: how each can be dragged,
-//!   and which argument that changes.
+//!   The arguments are plain, serializable design data: numbers, choices,
+//!   sketches, and references to entities of the part by name
+//!   ([`EntityRef`]). The session is the temporary state of an edit — a
+//!   tool in hand, a half-drawn line, a pick waiting for a click — and is
+//!   never saved.
+//! - [`ui`]: what that exchange is made of — the [`Event`](ui::Event)s an
+//!   editor sends (a dialog control used, a click or a drag as a ray in the
+//!   viewport, a key), and the [`Presentation`](ui::Presentation) it gets
+//!   back: a [`Dialog`](ui::Dialog) of simple controls and the
+//!   [`Visual`](ui::Visual)s to draw. And the helpers that make operations
+//!   answer events consistently: hit tests against visuals and against the
+//!   part as drawn ([`PartView`](ui::PartView)), picking an entity for an
+//!   argument, dragging a handle. An editor only renders primitives and
+//!   forwards raw input; every decision is made here.
 //! - [`Operations`]: a set of operations a program can use, as one
 //!   serializable enum; `#[derive(Operations)]` writes it. Which operations
 //!   an application offers is its own choice, so the set is defined there,
@@ -88,6 +90,7 @@ mod part;
 mod program;
 mod resolve;
 mod sketch;
+pub mod ui;
 
 pub use describe::{EdgeDescription, FaceDescription, PartDescription};
 pub use ids::{DatumId, RefId, SketchId};
@@ -96,7 +99,17 @@ pub use part::Part;
 pub use sketch::PlacedSketch;
 
 pub use operation::{
-    ArgKind, ArgSchema, Dialog, EntityRef, Handle, Operation, OperationArgs, OperationSchema,
-    Operations, WorldAxis,
+    EditContext, Edited, EntityRef, Operation, OperationInfo, Operations, WorldAxis,
 };
-pub use program::{Program, ProgramEdit, ProgramRunner, Step, StepDialog, StepHandle, StepResult};
+pub use program::{Program, ProgramEdit, ProgramRunner, Step, StepResult};
+
+#[doc(hidden)]
+/// What `#[derive(Operations)]` writes refers to, so a crate using it needs
+/// no dependencies of its own for it.
+pub mod __private {
+    pub use geop_core_math::{
+        geop_error::{GeopError, GeopResult},
+        scalars::Scalar,
+    };
+    pub use serde_json::Value;
+}

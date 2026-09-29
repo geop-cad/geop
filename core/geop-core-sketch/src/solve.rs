@@ -38,7 +38,7 @@ use geop_core_math::{
 /// `f64` — see the module docs.
 type S = ScalInF64;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Maps sketch entities to solver variables.
@@ -611,7 +611,7 @@ impl<'a> Problem<'a> {
 const RELATIVE_TOLERANCE: f64 = 1e-9;
 
 /// The outcome of a solve.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SolveReport {
     /// Every constraint holds (to [`RELATIVE_TOLERANCE`] of the sketch size).
     pub converged: bool,

@@ -8,6 +8,4 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-ops.workspace = true
 serde.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true

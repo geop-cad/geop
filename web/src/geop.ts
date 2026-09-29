@@ -7,17 +7,21 @@
 // the wasm module: it never changes the program itself, but sends each
 // change as a `ProgramEdit` through [[updateProgram]] — the same edits,
 // applied by the same code, as every other editor of these programs.
+//
+// A step is edited through [[editStep]]: the app sends what the user did —
+// a dialog control used, a click or a drag in the viewport as a ray, a
+// key — and draws what comes back. Which operations exist, what their
+// dialogs hold, what a click picks or snaps to: all of it is decided in the
+// kernel (see `geop_ops::ui`), none of it here.
 import init, {
+  describe_program,
+  edit_step,
   example_programs,
   init_panic_hook,
-  inspect_selection_fit,
-  operation_schemas,
-  pick_ray,
+  operation_infos,
   preview_program,
   program,
   run_program,
-  sketch_plane,
-  solve_sketch,
   update_program,
 } from "./wasm/pkg/geop.js";
 
@@ -61,15 +65,33 @@ export interface Scene {
   edge_names: string[];
 }
 
-/**
- * An entity to draw highlighted: one a step can refer to (see
- * [[EntityRef]]), a whole solid — every face of it — or a sketch's curves.
- */
-export type Highlight = EntityRef | { type: "Solid"; name: string } | { type: "Sketch"; name: string };
+export type WorldAxis = "X" | "Y" | "Z";
 
-/** Whether two entities (or highlights) are the same one. */
-export function sameEntity(a: Highlight, b: Highlight): boolean {
+/**
+ * Something picked in the viewport (see `geop_ops::EntityRef`): the
+ * origin, a world axis, a base plane through the origin named by its normal
+ * (`Z` is normal to the z axis), or an entity of the part by name.
+ */
+export type EntityRef =
+  | { type: "Origin" }
+  | { type: "Axis"; axis: WorldAxis }
+  | { type: "Plane"; normal: WorldAxis }
+  | { type: "Vertex" | "Edge" | "Face" | "Datum" | "Solid" | "Sketch"; name: string };
+
+/** Whether two entities are the same one. */
+export function sameEntity(a: EntityRef, b: EntityRef): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** What a datum stands for. */
+export type DatumKind = "point" | "axis" | "plane" | "frame";
+
+/** A plane with axes: `(x, y)` in it lies at `origin + x u + y v`. */
+export interface Frame {
+  origin: Vec3;
+  u: Vec3;
+  v: Vec3;
+  normal: Vec3;
 }
 
 let ready: Promise<void> | null = null;
@@ -84,99 +106,20 @@ export function loadGeop(): Promise<void> {
   return ready;
 }
 
-// ── operations ───────────────────────────────────────────────────────────────
-//
-// Mirrors `geop_ops::OperationSchema`: what every operation takes, so
-// the app builds its forms from these instead of knowing operations by hand.
+// ── programs ─────────────────────────────────────────────────────────────────
 
-/** What kind of value an argument holds, and so how it is entered. */
-export type ArgKind =
-  | { type: "number"; default: number; min: number; max: number }
-  | { type: "bool"; default: boolean }
-  /** The name of a solid, picked in the viewport. */
-  | { type: "solid" }
-  /** The name of a face, picked in the viewport. */
-  | { type: "face" }
-  /** The name of a sketch of the part, picked in the viewport. */
-  | { type: "sketch" }
-  /** The id of a line of the sketch named by the argument `sketch`. */
-  | { type: "sketch_line"; sketch: string }
-  | { type: "choice"; options: string[]; default: string }
-  /** A plane to sketch on, as an [[EntityRef]]: a base plane, a planar face or a datum plane. */
-  | { type: "plane" }
-  /** [[EntityRef]]s to build on — points, edges, faces, datums — picked in the viewport, in order. */
-  | { type: "selection" }
-  /**
-   * A [[Construction]]: how to build a datum from the entities of the
-   * argument `selection`, one of `options` — each of which fits only some
-   * selections (see [[inspectSelection]]).
-   */
-  | { type: "construction"; selection: string; options: ConstructionSchema[] }
-  /** A [[Sketch]], drawn on the plane given by the argument `plane`. */
-  | { type: "drawing"; plane: string }
-  /**
-   * A [[Combine]]: a new body, or a boolean with a target solid picked in
-   * the viewport. Until the user picks a mode, the sign of the number
-   * argument `sign` (if any) picks it: join when positive, cut when negative.
-   */
-  | { type: "combine"; sign: string | null };
-
-/**
- * What an extrude or revolve does with the solid it builds: keep it as a
- * new body, or combine it with `target` (which that consumes). The result
- * is named after the step either way.
- */
-export type Combine =
-  | { mode: "new_body" }
-  | { mode: "union" | "intersection" | "difference"; target: string | null };
-
-/** What a datum stands for. */
-export type DatumKind = "point" | "axis" | "plane" | "frame";
-
-/** What a construction needs an input to be — see `geop_ops::operation::Role`. */
-export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round";
-
-/** One way to build a datum: what it builds, what it needs selected, and the values it takes besides. */
-export interface ConstructionSchema {
-  method: string;
-  label: string;
-  doc: string;
-  result: DatumKind;
-  inputs: Role[];
-  params: ArgSchema[];
-}
-
-/** A chosen construction: its method, and a value for each of its params. */
-export type Construction = { method: string } & Record<string, unknown>;
-
-/** What a selection can be used as and built into — see [[inspectSelection]]. */
-export interface SelectionFit {
-  /** Per selected entity: the roles it can fill. None for one the part does not have. */
-  roles: Role[][];
-  /** The methods of the constructions that fit. */
-  fits: string[];
-}
-
-export interface ArgSchema {
-  name: string;
-  doc: string;
-  kind: ArgKind;
-}
-
-export interface OperationSchema {
-  /** How a step spells the operation: `extrude`. */
+/** An operation the editor offers — see `geop_ops::OperationInfo`. */
+export interface OperationInfo {
+  /** How a step spells it: `extrude`. */
   kind: string;
   label: string;
   doc: string;
-  args: ArgSchema[];
 }
-
-export type Args = Record<string, unknown>;
 
 /** An operation with its arguments: `{operation: "extrude", args: {...}}`. */
 export interface Operation {
   operation: string;
-  args: Args;
+  args: unknown;
 }
 
 export interface Step extends Operation {
@@ -185,6 +128,15 @@ export interface Step extends Operation {
 
 export interface Program {
   steps: Step[];
+}
+
+/** A step as a list of steps shows it. */
+export interface StepInfo {
+  id: string;
+  kind: string;
+  label: string;
+  /** Its arguments in one line. */
+  summary: string;
 }
 
 /** A change to the program — see `geop_ops::ProgramEdit`. */
@@ -200,49 +152,6 @@ export interface StepResult {
   error: string | null;
 }
 
-/** Where a handle writes in its step: field names into the step's arguments. */
-export type ArgPath = string[];
-
-/**
- * A draggable value of a step (see `geop_ops::operation::Handle`):
- * where it is, how it moves, and which argument(s) it writes. Every run
- * returns every step's handles; `group` says whether a handle belongs to a
- * feature or to a sketch, for choosing which to offer.
- */
-export type StepHandle = {
-  step: string;
-  label: string;
-  group: "feature" | "sketch";
-  position: Vec3;
-} & (
-  | { motion: "linear"; direction: Vec3; arg: ArgPath; value: number; scale: number }
-  | { motion: "planar"; u: Vec3; v: Vec3; x: ArgPath; y: ArgPath; value: [number, number] }
-);
-
-/**
- * What the part makes of one argument's value (see
- * `geop_ops::operation::ArgDialog`): per picked entity, what it can be used
- * as; or which of a choice's options fit.
- */
-export type ArgDialog = { type: "selection"; roles: Role[][] } | { type: "options"; fit: string[] };
-
-/**
- * A step's dialog (see `geop_ops::operation::Dialog`): what the part before
- * it makes of its arguments, per argument that has anything to say. Every
- * run returns the dialog of every step it covered, the failing one included.
- */
-export interface StepDialog {
-  step: string;
-  args: Record<string, ArgDialog>;
-}
-
-/** A sketch of the built part. */
-export interface SketchInfo {
-  name: string;
-  lines: { id: Id; construction: boolean }[];
-  frame: Frame;
-}
-
 /** A datum of the built part: reference geometry, drawn and pickable. */
 export interface DatumInfo {
   name: string;
@@ -250,27 +159,36 @@ export interface DatumInfo {
   frame: Frame;
 }
 
+/** Where the drawing is and how big: datum planes and axes are drawn this big around the point of them nearest its center. */
+export interface Extent {
+  center: Vec3;
+  size: number;
+}
+
 /** What a run built. */
 export interface RunResult {
   /** One per step that ran; the last may be the failure that stopped it. */
   results: StepResult[];
   scene: Scene;
-  /** Solid names, oldest first. */
-  solids: string[];
-  sketches: SketchInfo[];
   /** Datums, oldest first. */
   datums: DatumInfo[];
-  handles: StepHandle[];
-  dialogs: StepDialog[];
+  extent: Extent;
+  /** The sketches and datums the steps that ran build on — hidden, since what was made from them shows them now. */
+  references: EntityRef[];
 }
 
-export function operationSchemas(): OperationSchema[] {
-  return JSON.parse(operation_schemas()) as OperationSchema[];
+export function operationInfos(): OperationInfo[] {
+  return JSON.parse(operation_infos()) as OperationInfo[];
 }
 
 /** The program being edited. */
 export function currentProgram(): Program {
   return JSON.parse(program()) as Program;
+}
+
+/** Every step of the program, as a list of steps shows it. */
+export function describeProgram(): StepInfo[] {
+  return JSON.parse(describe_program()) as StepInfo[];
 }
 
 /** Apply `edit` to the program — the only way it changes. Throws if it is rejected; returns the id of the step it touched. */
@@ -280,7 +198,7 @@ export function updateProgram(edit: ProgramEdit): string | null {
 
 /**
  * Build the program's first `stop` steps (all, if `null`). The built part
- * is what [[pickRay]] and [[sketchPlane]] see.
+ * is what [[editStep]] edits against.
  */
 export function runProgram(stop: number | null): RunResult {
   return JSON.parse(run_program(JSON.stringify(stop))) as RunResult;
@@ -295,179 +213,152 @@ export function examplePrograms(): { name: string; program: Program }[] {
   return JSON.parse(example_programs()) as { name: string; program: Program }[];
 }
 
-// ── picking ──────────────────────────────────────────────────────────────────
-
-/** What a pick looks for: one kind of entity, or `"any"` — the smallest visible vertex, edge or face under the ray. */
-export type PickFilter = "vertex" | "edge" | "face" | "solid" | "sketch" | "any";
-
-export type PickKind = "vertex" | "edge" | "face" | "solid" | "sketch";
-
-export interface PickHit {
-  kind: PickKind;
-  /** The name of what was hit — what a step refers to it by. */
-  name: string;
-  point: Vec3;
-  t: number;
-  /** For a face or solid hit, the name of the solid it belongs to. */
-  solid: string | null;
-}
-
-/**
- * Cast a ray against the part of the most recent [[runProgram]] (never a
- * preview's). `tolerance` is a world-space distance, only meaningful for
- * `"vertex"`/`"edge"` and a sketch's curves — a `"sketch"` is also hit
- * anywhere inside its closed regions.
- */
-export function pickRay(origin: Vec3, dir: Vec3, filter: PickFilter, tolerance: number): PickHit | null {
-  const json = pick_ray(origin[0], origin[1], origin[2], dir[0], dir[1], dir[2], filter, tolerance);
-  return JSON.parse(json) as PickHit | null;
-}
-
-// ── sketching ────────────────────────────────────────────────────────────────
+// ── editing a step ───────────────────────────────────────────────────────────
 //
-// Mirrors `geop_core_sketch::Sketch` (serialized as-is by the wasm crate):
-// every point, curve and constraint keyed by a stable id — a JSON object key —
-// that is handed out once and never reused, so curves, constraints and the
-// kernel's names of what is built from a sketch (`extrude(op4,op3,c7)`) keep
-// referring to the same entity however the sketch is edited around it.
+// Mirrors `geop_ops::ui`.
 
-/** A sketch entity's id. Unique per kind; `Sketch.next_id` is above all of them. */
-export type Id = number;
-
-export type WorldAxis = "X" | "Y" | "Z";
-
-/**
- * Something a step builds on (see `geop_ops::EntityRef`): the
- * origin, a world axis, a base plane through the origin named by its normal
- * (`Z` is normal to the z axis), or a vertex, edge, face or datum of the
- * part by name.
- */
-export type EntityRef =
-  | { type: "Origin" }
-  | { type: "Axis"; axis: WorldAxis }
-  | { type: "Plane"; normal: WorldAxis }
-  | { type: "Vertex" | "Edge" | "Face" | "Datum"; name: string };
-
-/** How an entity is shown: `Z plane`, or its name. */
-export function entityLabel(entity: EntityRef): string {
-  switch (entity.type) {
-    case "Origin":
-      return "Origin";
-    case "Axis":
-      return `${entity.axis} axis`;
-    case "Plane":
-      return `${entity.normal} plane`;
-    default:
-      return entity.name;
-  }
+/** How big a screen pixel is along a pointer's ray: `at_origin + per_distance * t` world units at distance `t`. */
+export interface PixelScale {
+  at_origin: number;
+  per_distance: number;
 }
 
-/** An argument's value as the entities it holds — none if it has none yet. */
-export function entities(value: unknown): EntityRef[] {
-  return Array.isArray(value) ? (value as EntityRef[]) : [];
-}
-
-/** Which kind of datum an entity of the origin gizmo is — see `originGizmo.ts`. */
-export function baseDatumKind(entity: EntityRef): DatumKind | null {
-  return entity.type === "Origin" ? "point" : entity.type === "Axis" ? "axis" : entity.type === "Plane" ? "plane" : null;
-}
-
-export interface SketchPoint {
-  x: number;
-  y: number;
-}
-
-export type CurveKind =
-  | { type: "Line"; start: number; end: number }
-  /** Turns counter-clockwise by `sweep` radians (clockwise if negative). */
-  | { type: "Arc"; start: number; end: number; sweep: number }
-  | { type: "Circle"; center: number; radius: number }
-  | { type: "Spline"; control_points: number[] };
-
-export type SketchCurve = CurveKind & { construction: boolean };
-
-export type Constraint =
-  | { type: "Coincident"; a: number; b: number }
-  | { type: "PointOnCurve"; point: number; curve: number }
-  | { type: "Horizontal"; line: number }
-  | { type: "Vertical"; line: number }
-  | { type: "Parallel"; a: number; b: number }
-  | { type: "Perpendicular"; a: number; b: number }
-  | { type: "Collinear"; a: number; b: number }
-  | { type: "Tangent"; a: number; b: number }
-  | { type: "Equal"; a: number; b: number }
-  | { type: "Concentric"; a: number; b: number }
-  | { type: "Midpoint"; point: number; curve: number }
-  | { type: "Symmetric"; a: number; b: number; line: number }
-  | { type: "Fix"; point: number; x: number; y: number }
-  | { type: "Distance"; a: number; b: number; value: number }
-  | { type: "DistanceX"; a: number; b: number; value: number }
-  | { type: "DistanceY"; a: number; b: number; value: number }
-  | { type: "PointLineDistance"; point: number; line: number; value: number }
-  | { type: "Length"; curve: number; value: number }
-  | { type: "Radius"; curve: number; value: number }
-  | { type: "Angle"; a: number; b: number; value: number };
-
-export interface Sketch {
-  points: Record<Id, SketchPoint>;
-  curves: Record<Id, SketchCurve>;
-  constraints: Record<Id, Constraint>;
-  /** The id the next added entity gets. */
-  next_id: number;
-}
-
-export const EMPTY_SKETCH: Sketch = { points: {}, curves: {}, constraints: {}, next_id: 0 };
-
-/** Every `[id, entity]` of an id-keyed record, in id order. */
-export function entries<T>(record: Record<Id, T>): [Id, T][] {
-  return Object.entries(record)
-    .map(([id, value]) => [Number(id), value] as [Id, T])
-    .sort((a, b) => a[0] - b[0]);
-}
-
-export interface SolveReport {
-  converged: boolean;
-  max_residual: number;
-  iterations: number;
-  dof: number;
-  free_points: Record<Id, boolean>;
-  free_curves: Record<Id, boolean>;
-  failed_constraints: Id[];
-}
-
-export interface SolveResult {
-  sketch: Sketch;
-  report: SolveReport;
-  /** Per region: `[outer, ...holes]`, each a polyline in sketch coordinates. */
-  regions: [number, number][][][];
-  regions_error: string | null;
-}
-
-/** A sketch plane: sketch `(x, y)` lies at `origin + x u + y v`. */
-export interface Frame {
+/** Where the pointer is: the ray through it, and what a screen pixel measures along it. */
+export interface Pointer {
   origin: Vec3;
-  u: Vec3;
-  v: Vec3;
-  normal: Vec3;
+  /** Unit length. */
+  dir: Vec3;
+  /** The screen's right and up, as unit world directions. */
+  right: Vec3;
+  up: Vec3;
+  pixel: PixelScale;
 }
 
-/** Solve `sketch`, pulling each `[pointId, x, y]` of `drags` towards its target. */
-export function solveSketch(sketch: Sketch, drags: [number, number, number][] = []): SolveResult {
-  return JSON.parse(solve_sketch(JSON.stringify(sketch), JSON.stringify(drags))) as SolveResult;
+export type DialogValue =
+  | { type: "press" }
+  | { type: "remove" }
+  | { type: "bool"; value: boolean }
+  | { type: "number"; value: number }
+  | { type: "choice"; value: string };
+
+/** One thing the user did in the viewport. */
+export type PointerEvent_ =
+  | { type: "hover"; pointer: Pointer }
+  | { type: "leave" }
+  | { type: "click"; pointer: Pointer; button: "primary" | "secondary"; double: boolean; shift: boolean }
+  | { type: "drag"; from: Pointer; to: Pointer; done: boolean };
+
+/** One thing the user did while editing a step. */
+export type EditEvent =
+  | { type: "dialog"; key: string; value: DialogValue }
+  | { type: "key"; key: string }
+  | PointerEvent_;
+
+export type Tone = "normal" | "hint" | "error" | "success";
+
+export interface ButtonItem {
+  key: string;
+  label: string;
+  title: string | null;
+  active: boolean;
+  enabled: boolean;
 }
 
-/** Resolve `plane` against the part of the most recent [[runProgram]]. Throws if it is not planar. */
-export function sketchPlane(plane: EntityRef): Frame {
-  return JSON.parse(sketch_plane(JSON.stringify(plane))) as Frame;
+export interface Choice {
+  value: string;
+  label: string;
+  enabled: boolean;
+  title: string | null;
+  group: string | null;
 }
 
-// ── datums ───────────────────────────────────────────────────────────────────
+export interface ListItem {
+  key: string;
+  label: string;
+  detail: string | null;
+  tone: Tone;
+  selected: boolean;
+  removable: boolean;
+  value: number | null;
+}
+
+/** A dialog primitive. */
+export type Control =
+  | { type: "heading"; text: string }
+  | { type: "text"; text: string; tone: Tone }
+  | { type: "button"; label: string; title: string | null; active: boolean; enabled: boolean; primary: boolean }
+  | { type: "buttons"; buttons: ButtonItem[] }
+  | { type: "checkbox"; label: string; value: boolean }
+  | { type: "number"; label: string; value: number; slider: [number, number] | null; step: number }
+  | { type: "select"; label: string; value: string; options: Choice[]; style: "dropdown" | "radio" }
+  | { type: "list"; items: ListItem[]; empty: string };
+
+/** A control, under the key the events it sends carry. */
+export type Field = { key: string } & Control;
+
+export type Shape =
+  | { shape: "point"; at: Vec3 }
+  | { shape: "polyline"; points: Vec3[] }
+  | { shape: "triangles"; triangles: [Vec3, Vec3, Vec3][] }
+  /** Moved on screen by `offset` pixels (right, up). */
+  | { shape: "label"; at: Vec3; text: string; offset: [number, number] }
+  | { shape: "handle"; at: Vec3; direction: Vec3 | null };
+
+export type Style =
+  | "free"
+  | "fixed"
+  | "selected"
+  | "hover"
+  | "failed"
+  | "construction"
+  | "draft"
+  | "region"
+  | "guide"
+  | "handle";
+
+export type Visual = { key: string; style: Style } & Shape;
+
+/** What a click picks: a kind of entity. */
+export type Target =
+  | "vertex"
+  | "edge"
+  | "face"
+  | "solid"
+  | "sketch"
+  | "origin"
+  | "axis"
+  | "base_plane"
+  | { datum: DatumKind };
+
+/** What an operation shows for a step. */
+export interface Presentation {
+  dialog: Field[];
+  visuals: Visual[];
+  /** Entities of the part to draw lit. */
+  highlights: EntityRef[];
+  /** What a click picks right now. */
+  pickable: Target[];
+  /** A plane to work in, head on. */
+  focus: Frame | null;
+  /** Whether a press where the pointer last hovered starts a drag. */
+  grab: boolean;
+}
+
+/** A step being edited: the step as it now is, the session to send back, and what to show. */
+export interface Edited {
+  operation: Operation;
+  session: unknown;
+  presentation: Presentation;
+}
 
 /**
- * What each entity of `selection` can be used as in the part of the most
- * recent [[runProgram]], and which datum constructions fit it — by the very
- * matching a step applies.
+ * Edit a step against the part of the most recent [[runProgram]]: `event`
+ * applied to `operation` with `session` (from the last call, or `null` to
+ * start afresh) — or, without an event, only what to show. `{kind}` in
+ * place of an operation starts a new step of that kind.
  */
-export function inspectSelection(selection: EntityRef[]): SelectionFit {
-  return JSON.parse(inspect_selection_fit(JSON.stringify(selection))) as SelectionFit;
+export function editStep(
+  request: { operation: Operation; session: unknown; event?: EditEvent } | { kind: string },
+): Edited {
+  return JSON.parse(edit_step(JSON.stringify(request))) as Edited;
 }
