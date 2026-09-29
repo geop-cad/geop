@@ -18,6 +18,8 @@ mod datum_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
 mod set_tests;
 #[cfg(test)]
 mod tests;

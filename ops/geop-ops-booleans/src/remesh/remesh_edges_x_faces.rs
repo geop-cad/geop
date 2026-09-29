@@ -85,6 +85,14 @@ struct TracingStartPoint {
 /// no vertex), so a constant keeps tracing reproducible run to run.
 const FACE_CONTAINS_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
+/// The fewest legs a traced intersection curve is fitted through (see
+/// `trace_one_side`): a cubic interpolant needs points enough to follow
+/// the branch, however few strides the march took along it. Like
+/// `STEPS_PER_REVOLUTION` this bounds effort — every extra leg is one more
+/// corrector — and decides how *wide* the traced curve's enclosure is, not
+/// whether it holds.
+const MIN_TRACED_LEGS: usize = 8;
+
 /// How many marching steps to spend on a full revolution of the tighter of
 /// the two surfaces' curvature. A step has to be short compared to how fast
 /// the curve is turning, or the straight-line predictor leaves the surface
@@ -1488,19 +1496,32 @@ fn trace_one_side<S: Scalar>(
                 )?;
                 Ok((p, (na, va, nb, vb)))
             };
-            // First each leg's midpoint joins the polyline: the march's stride
-            // leaves a cubic through its points drifting ~1e-5 from the
-            // branch, and a branch crossed in a single stride would be a
-            // straight line, off by the arc's whole sagitta. Halving every leg
-            // cuts a cubic's drift ~16x for one corrector per leg.
-            let half = S::from_ratio(1, 2).with_context(&ctx)?;
+            // First every leg is split, on the branch, into `pieces`: the
+            // march's stride leaves a cubic through its points drifting ~1e-5
+            // from the branch, and halving every leg cuts that ~16x for one
+            // corrector per leg. A branch crossed in only a stride or two
+            // needs more than halving, though: it would be left with too few
+            // points for a cubic at all — a single stride, halved, is three,
+            // and a quadratic through three points of an ellipse drifts ~4e-6
+            // from it. That drift is enclosed as width, honestly, but only in
+            // the directions it points in, and a pcurve fitted by projecting
+            // the curve onto a surface tilted against them inherits it as an
+            // offset its own width does not cover. So every branch gets at
+            // least `MIN_TRACED_LEGS` legs.
+            let strides = points.len() - 1;
+            let pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
             let mut dense = vec![points[0]];
             let mut dense_params = vec![params[0]];
-            for i in 0..points.len() - 1 {
-                let (mid, mid_params) =
-                    on_branch(points[i], params[i], points[i + 1], half).with_context(&ctx)?;
-                dense.extend([mid, points[i + 1]]);
-                dense_params.extend([mid_params, params[i + 1]]);
+            for i in 0..strides {
+                for k in 1..pieces {
+                    let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                    let (p, p_params) =
+                        on_branch(points[i], params[i], points[i + 1], frac).with_context(&ctx)?;
+                    dense.push(p);
+                    dense_params.push(p_params);
+                }
+                dense.push(points[i + 1]);
+                dense_params.push(params[i + 1]);
             }
             let (points, params) = (dense, dense_params);
             // Then the branch inside each of the new legs, which

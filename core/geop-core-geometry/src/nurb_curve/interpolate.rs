@@ -210,12 +210,19 @@ fn solve_interpolation_system<S: Scalar, const C: usize, const D: usize>(
 ///
 /// One point, in the middle, for an interior interval — that is where a
 /// cubic interpolant's drift peaks, and it keeps the extra work at one
-/// projection per interval. The two end intervals get three: next to a
-/// clamped end the drift is lopsided, and on a circle sampled in 8 intervals
-/// a single midpoint there left a true point unenclosed.
+/// projection per interval. The two end intervals get seven, at eighths:
+/// next to a clamped end the drift is lopsided and several times larger than
+/// inside, so it sets the width of the whole enclosure, and its peak lies
+/// wherever the end conditions put it. Measured at quarters, a smooth hump
+/// can peak between the points by ~10% of its height: on a traced
+/// plane × cylinder branch that left the branch 1.36e-8 from its curve,
+/// widened to 1.25e-8 (see
+/// `cylinder_joined_over_a_hole` in `geop-cad-base`). At eighths the
+/// shortfall is ~2%, and on a circle sampled in 8 intervals a single midpoint
+/// there left a true point unenclosed.
 pub fn true_point_fractions(i: usize, intervals: usize) -> &'static [(i64, i64)] {
     if i == 0 || i + 1 == intervals {
-        &[(1, 4), (1, 2), (3, 4)]
+        &[(1, 8), (1, 4), (3, 8), (1, 2), (5, 8), (3, 4), (7, 8)]
     } else {
         &[(1, 2)]
     }

@@ -2,14 +2,13 @@
 //! half-plane clipping and both used by [`super::grid`] once per uv grid
 //! cell:
 //!
-//! - [`clip_to_rect`]: clip an arbitrary (possibly non-convex) polygon to
-//!   an axis-aligned rectangle. Sutherland–Hodgman only requires the
-//!   *clip* region be convex — which a rectangle trivially is — regardless
-//!   of how complex the subject polygon is; that's what makes it simpler
-//!   and more robust here than the reverse (clipping a simple rectangle by
-//!   an arbitrary polygon, which — because the *clip* side would then be
-//!   the complex one — needs general polygon-polygon clipping, with all
-//!   its well-known degenerate-touching-edge fragility).
+//! - [`clip_to_rect`]: clip a polygon to an axis-aligned rectangle.
+//!   Sutherland–Hodgman only requires the *clip* region be convex — which a
+//!   rectangle trivially is — and that makes it simpler and more robust
+//!   here than the reverse (clipping a rectangle by an arbitrary polygon,
+//!   which needs general polygon-polygon clipping, with all its well-known
+//!   degenerate-touching-edge fragility). Its result is a simple polygon
+//!   only for a convex subject, though: see its own doc comment.
 //! - [`subtract_convex`]: remove a convex region from a polygon, via the
 //!   same half-plane primitive applied per edge (see its own doc comment)
 //!   — used for holes, since a face's trim can have several.
@@ -66,7 +65,15 @@ fn clip_half_plane(poly: &[Point], side: impl Fn(Point) -> f64) -> Vec<Point> {
     out
 }
 
-/// Clip `subject` (any simple polygon) to `[u0, u1] x [v0, v1]`.
+/// Clip `subject` to `[u0, u1] x [v0, v1]`.
+///
+/// For a convex `subject` the result is its exact intersection with the
+/// rectangle: one convex polygon, or none. A concave one can enter the
+/// rectangle more than once, and then the separate pieces come back as one
+/// polygon, joined by zero-width bridges along the rectangle's edge — the
+/// right area, but not a simple polygon, and triangulating it may cover
+/// the gaps between the pieces. Split a concave subject into convex parts
+/// first (see `grid::triangulate_region`).
 pub fn clip_to_rect(subject: &[Point], u0: f64, u1: f64, v0: f64, v1: f64) -> Vec<Point> {
     let mut poly = subject.to_vec();
     poly = clip_half_plane(&poly, |p| p[0] - u0);

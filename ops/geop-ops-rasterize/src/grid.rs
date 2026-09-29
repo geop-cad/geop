@@ -21,14 +21,14 @@
 //!    tolerance of the true surface (so a flat face stays coarse and a
 //!    curved one gets whatever resolution its curvature actually needs —
 //!    still simple, just not spatially varying the way a quadtree would).
-//! 3. Clip the outer boundary to each grid cell
-//!    ([`super::clip::clip_to_rect`]: `[]` if it misses the cell entirely,
-//!    the cell unchanged if it's fully inside, an exact clipped polygon
-//!    otherwise), then subtract each hole
-//!    ([`super::clip::subtract_convex`]) the same way, and ear-clip
-//!    whatever's left.
+//! 3. Split the outer boundary and every hole into convex parts — itself,
+//!    if it is convex, else its triangles — and clip each part to the grid
+//!    cells it overlaps ([`super::clip::clip_to_rect`], exact for a convex
+//!    part: one convex piece, or none). Then in each cell subtract the
+//!    holes' pieces from the outer boundary's
+//!    ([`super::clip::subtract_convex`]), and ear-clip whatever's left.
 //!
-//!    Two earlier versions of this step turned out wrong. The first
+//!    Three earlier versions of this step turned out wrong. The first
 //!    globally merged outer+holes into one ring (via a zero-width "slit"
 //!    bridge — see `polygon_triangulate::merge_outer_and_holes`) and
 //!    clipped *that* per cell: a slit is one specific pair of edges,
@@ -44,6 +44,13 @@
 //!    has no bridge/visibility step to get wrong: it computes the exact
 //!    complement of a convex hole directly, via the same half-plane
 //!    primitive `clip_to_rect` itself is built from.
+//!
+//!    A third clipped the (possibly concave) outer boundary to each cell
+//!    directly, subtracting holes the same way: Sutherland–Hodgman returns a
+//!    boundary that enters a cell twice as one polygon, its two pieces
+//!    joined by a zero-width bridge along the cell's edge, and ear-clipping
+//!    that covered the gap between them — a face whose trim went around a
+//!    hole was drawn across it.
 //!
 //! Plain `f64` throughout — see [`super::clip`]'s doc comment for why
 //! that's the right call for a rendering-only algorithm even in an
@@ -321,78 +328,303 @@ pub(crate) fn triangulate_face<S: Scalar>(
     }
     let (nu, nv) = (cells[0], cells[1]);
 
-    let mut triangles = Vec::new();
-    for i in 0..nu {
-        let u0 = min[0] + (max[0] - min[0]) * i as f64 / nu as f64;
-        let u1 = min[0] + (max[0] - min[0]) * (i + 1) as f64 / nu as f64;
-        for j in 0..nv {
-            let v0 = min[1] + (max[1] - min[1]) * j as f64 / nv as f64;
-            let v1 = min[1] + (max[1] - min[1]) * (j + 1) as f64 / nv as f64;
+    let to_uv = |p: Point| {
+        let p = domain.clamp(p);
+        Vector2::from_array([S::from_f64(p[0]), S::from_f64(p[1])])
+    };
+    Ok(triangulate_region(&outer_f64, &holes_f64, min, max, nu, nv)
+        .into_iter()
+        .map(|[a, b, c]| (to_uv(a), to_uv(b), to_uv(c)))
+        .collect())
+}
 
-            // Clip the outer boundary to this cell's rectangle — not the
-            // other way around — so an arbitrarily concave trim clips
-            // correctly against the always-convex cell (see `clip`'s
-            // module doc comment) — then subtract each hole the same way.
-            let outer_piece = clip_to_rect(&outer_f64, u0, u1, v0, v1);
-            if outer_piece.is_empty() {
-                continue;
-            }
-            let mut pieces = vec![outer_piece];
-            for hole in &holes_f64 {
-                let hole_piece = clip_to_rect(hole, u0, u1, v0, v1);
-                if hole_piece.len() < 3 {
-                    continue;
-                }
-                pieces = pieces
-                    .iter()
-                    .flat_map(|piece| {
-                        if is_convex(&hole_piece) {
-                            subtract_convex(piece, &hole_piece)
-                        } else {
-                            // A hole boundary concave within this one cell
-                            // is rare (it needs a grid coarser than the
-                            // hole's own local curvature), but it still has
-                            // to come out exactly: cut the fragment into
-                            // triangles and subtract those, since a triangle
-                            // is convex and their union is the fragment.
-                            // The alternative — classifying the whole piece
-                            // by its centroid — keeps or drops a whole cell
-                            // at a time, which is what a flap of surface
-                            // hanging across a hole looks like.
-                            ear_clip(&hole_piece)
-                                .iter()
-                                .map(|t| [hole_piece[t[0]], hole_piece[t[1]], hole_piece[t[2]]])
-                                .fold(vec![piece.clone()], |acc, triangle| {
-                                    acc.iter()
-                                        .flat_map(|p| subtract_convex(p, &triangle))
-                                        .collect()
-                                })
-                        }
-                    })
-                    .collect();
-            }
+/// The region inside `outer` and outside every one of `holes`, cut along a
+/// `nu` x `nv` grid over `[min, max]` into triangles that each lie in one
+/// cell.
+fn triangulate_region(
+    outer: &[Point],
+    holes: &[Vec<Point>],
+    min: Point,
+    max: Point,
+    nu: usize,
+    nv: usize,
+) -> Vec<[Point; 3]> {
+    let cell_u = |i: usize| min[0] + (max[0] - min[0]) * i as f64 / nu as f64;
+    let cell_v = |j: usize| min[1] + (max[1] - min[1]) * j as f64 / nv as f64;
+    // The cells `[lo, hi]` spans along one axis, one either side to spare:
+    // a point on a cell line may round into either cell, and clipping
+    // exactly discards a cell it only touches.
+    let span = |lo: f64, hi: f64, start: f64, end: f64, n: usize| {
+        let at = |x: f64| ((x - start) / (end - start) * n as f64).floor() as isize;
+        let first = (at(lo) - 1).clamp(0, n as isize - 1) as usize;
+        let last = (at(hi) + 1).clamp(0, n as isize - 1) as usize;
+        first..=last
+    };
 
-            for piece in &pieces {
-                for tri in ear_clip(piece) {
-                    let to_uv = |p: Point| {
-                        let p = domain.clamp(p);
-                        Vector2::from_array([S::from_f64(p[0]), S::from_f64(p[1])])
-                    };
-                    triangles.push((
-                        to_uv(piece[tri[0]]),
-                        to_uv(piece[tri[1]]),
-                        to_uv(piece[tri[2]]),
-                    ));
+    // Every boundary is split once into convex parts, and each part is
+    // clipped to the cells it overlaps. Sutherland–Hodgman clips a convex
+    // polygon to a cell exactly, into one convex piece. A concave one it
+    // returns as one polygon however often the boundary enters the cell,
+    // joining its separate pieces by zero-width bridges along the cell's
+    // edge, and ear-clipping that — no longer a simple polygon — may cover
+    // the gap between them. So a concave boundary is split into triangles,
+    // once, as the simple polygon it is, and a convex one stays whole: its
+    // pieces then have no seams inside them, where rounding would leave
+    // hairline slivers.
+    let into_cells = |polygon: &[Point], cells: &mut [Vec<Vec<Point>>]| {
+        let parts: Vec<Vec<Point>> = if is_convex(polygon) {
+            vec![polygon.to_vec()]
+        } else {
+            ear_clip(polygon)
+                .into_iter()
+                .map(|t| vec![polygon[t[0]], polygon[t[1]], polygon[t[2]]])
+                .collect()
+        };
+        for part in parts {
+            let (lo, hi) = part.iter().fold(
+                ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+                |(lo, hi), p| {
+                    (
+                        [lo[0].min(p[0]), lo[1].min(p[1])],
+                        [hi[0].max(p[0]), hi[1].max(p[1])],
+                    )
+                },
+            );
+            for i in span(lo[0], hi[0], min[0], max[0], nu) {
+                for j in span(lo[1], hi[1], min[1], max[1], nv) {
+                    let piece =
+                        clip_to_rect(&part, cell_u(i), cell_u(i + 1), cell_v(j), cell_v(j + 1));
+                    if piece.len() >= 3 {
+                        cells[i * nv + j].push(piece);
+                    }
                 }
             }
         }
+    };
+    let mut inside: Vec<Vec<Vec<Point>>> = vec![Vec::new(); nu * nv];
+    into_cells(outer, &mut inside);
+    let mut cut: Vec<Vec<Vec<Point>>> = vec![Vec::new(); nu * nv];
+    for hole in holes {
+        into_cells(hole, &mut cut);
     }
 
-    Ok(triangles)
+    // In each cell, every hole's convex pieces are subtracted from the outer
+    // boundary's: what is left of a convex piece is convex pieces again,
+    // which ear-clip exactly.
+    let mut triangles = Vec::new();
+    for (pieces, holes) in inside.into_iter().zip(cut) {
+        let pieces = holes.iter().fold(pieces, |pieces, hole| {
+            pieces
+                .iter()
+                .flat_map(|piece| subtract_convex(piece, hole))
+                .collect()
+        });
+        for piece in &pieces {
+            for tri in ear_clip(piece) {
+                triangles.push([piece[tri[0]], piece[tri[1]], piece[tri[2]]]);
+            }
+        }
+    }
+    triangles
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// The area the triangles of `triangulate_region` cover.
+    fn covered(triangles: &[[Point; 3]]) -> f64 {
+        triangles
+            .iter()
+            .map(|[a, b, c]| {
+                ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).abs() / 2.0
+            })
+            .sum()
+    }
+
+    /// A trim that enters a cell twice leaves the cell two separate
+    /// pieces, with what lies between them outside the trim: a U whose two
+    /// arms cross the upper cell. Covering the gap between the arms is
+    /// what drew a face across a hole it went around (see
+    /// `cylinder_joined_over_a_hole` in `geop-cad-base`).
+    #[test]
+    fn a_trim_entering_a_cell_twice_leaves_the_gap_uncovered() {
+        let u = [
+            [0.0, 0.0],
+            [3.0, 0.0],
+            [3.0, 3.0],
+            [2.0, 3.0],
+            [2.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 3.0],
+            [0.0, 3.0],
+        ];
+        for (nu, nv) in [(1, 2), (1, 3), (2, 2), (3, 4)] {
+            let triangles = triangulate_region(&u, &[], [0.0, 0.0], [3.0, 3.0], nu, nv);
+            let area = covered(&triangles);
+            assert!(
+                (area - 7.0).abs() < 1e-9,
+                "{nu} x {nv} cells cover {area}, not 7"
+            );
+        }
+    }
+
+    /// A round hole takes out itself, and leaves nothing inside it, on a
+    /// grid of any fineness.
+    #[test]
+    fn a_round_hole_leaves_nothing_inside_it() {
+        let square = [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
+        // A 32-gon of radius 1 around (2, 2), clockwise.
+        let hole: Vec<Point> = (0..32)
+            .rev()
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / 32.0;
+                [2.0 + a.cos(), 2.0 + a.sin()]
+            })
+            .collect();
+        let hole_area = 16.0 * (std::f64::consts::TAU / 32.0).sin();
+        for n in [1, 2, 3, 4, 8, 13] {
+            let triangles =
+                triangulate_region(&square, std::slice::from_ref(&hole), [0.0, 0.0], [4.0, 4.0], n, n);
+            let inside: Vec<_> = triangles
+                .iter()
+                .filter(|t| {
+                    let c = [0, 1].map(|k| (t[0][k] + t[1][k] + t[2][k]) / 3.0);
+                    (c[0] - 2.0).hypot(c[1] - 2.0) < 0.95 && covered(&[**t]) > 1e-12
+                })
+                .collect();
+            assert!(
+                inside.is_empty(),
+                "{n} x {n} cells: {} triangles inside the hole, e.g. {:?}",
+                inside.len(),
+                inside.first()
+            );
+            let area = covered(&triangles);
+            assert!(
+                (area - (16.0 - hole_area)).abs() < 1e-9,
+                "{n} x {n} cells cover {area}, not 16 - {hole_area}"
+            );
+        }
+    }
+
+    /// A round hole whose quarter points lie on the cell lines — as an
+    /// extruded cap's is sampled, where the grid halves the face right
+    /// through them: a rounding error off them in plain `f64`, and exactly
+    /// on them in fixed point.
+    #[test]
+    fn a_hole_touching_cell_lines_leaves_nothing_inside_it() {
+        let square = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let samplings: [Vec<Point>; 2] = [
+            vec![
+                [0.7499999999999996, 0.49999999999999983],
+                [0.744503716533199, 0.44786620480482087],
+                [0.7268208044051963, 0.39486997246752176],
+                [0.6963909975788529, 0.3453048931931495],
+                [0.6546951068068501, 0.3036090024211465],
+                [0.6051300275324778, 0.2731791955948034],
+                [0.5521337951951788, 0.25549628346680053],
+                [0.49999999999999983, 0.24999999999999994],
+                [0.44786620480482087, 0.2554962834668005],
+                [0.39486997246752176, 0.2731791955948034],
+                [0.3453048931931495, 0.3036090024211465],
+                [0.3036090024211465, 0.34530489319314944],
+                [0.2731791955948034, 0.39486997246752187],
+                [0.25549628346680053, 0.44786620480482087],
+                [0.24999999999999994, 0.4999999999999999],
+                [0.2554962834668005, 0.5521337951951787],
+                [0.2731791955948034, 0.6051300275324778],
+                [0.3036090024211465, 0.6546951068068501],
+                [0.34530489319314944, 0.6963909975788529],
+                [0.39486997246752187, 0.7268208044051963],
+                [0.44786620480482087, 0.7445037165331991],
+                [0.4999999999999999, 0.7499999999999996],
+                [0.5521337951951787, 0.744503716533199],
+                [0.6051300275324778, 0.7268208044051963],
+                [0.6546951068068501, 0.6963909975788529],
+                [0.6963909975788529, 0.6546951068068501],
+                [0.7268208044051963, 0.6051300275324778],
+                [0.7445037165331991, 0.5521337951951788],
+            ],
+            vec![
+                [0.75, 0.5],
+                [0.744503716705367, 0.4478662048932165],
+                [0.7268208044115454, 0.39486997248604894],
+                [0.6963909976184368, 0.3453048930969089],
+                [0.6546951066702604, 0.30360900214873254],
+                [0.6051300275139511, 0.2731791955884546],
+                [0.5521337951067835, 0.25549628329463303],
+                [0.5, 0.25],
+                [0.4478662048932165, 0.2554962835274637],
+                [0.39486997248604894, 0.27317919535562396],
+                [0.3453048930969089, 0.3036090023815632],
+                [0.30360900214873254, 0.34530489332973957],
+                [0.2731791955884546, 0.39486997248604894],
+                [0.25549628329463303, 0.44786620466038585],
+                [0.25, 0.5],
+                [0.2554962835274637, 0.5521337951067835],
+                [0.27317919535562396, 0.6051300275139511],
+                [0.3036090023815632, 0.6546951066702604],
+                [0.34530489332973957, 0.6963909973856062],
+                [0.39486997248604894, 0.7268208044115454],
+                [0.44786620466038585, 0.7445037164725363],
+                [0.5, 0.75],
+                [0.5521337951067835, 0.744503716705367],
+                [0.6051300275139511, 0.7268208044115454],
+                [0.6546951066702604, 0.6963909976184368],
+                [0.6963909973856062, 0.6546951066702604],
+                [0.7268208044115454, 0.6051300275139511],
+                [0.7445037164725363, 0.5521337951067835],
+            ],
+        ];
+        for hole in samplings {
+            let hole_area: f64 = (0..hole.len())
+                .map(|i| {
+                    let (a, b) = (hole[i], hole[(i + 1) % hole.len()]);
+                    a[0] * b[1] - b[0] * a[1]
+                })
+                .sum::<f64>()
+                .abs()
+                / 2.0;
+            for n in [1, 2, 3, 4, 8] {
+                let triangles =
+                    triangulate_region(&square, std::slice::from_ref(&hole), [0.0, 0.0], [1.0, 1.0], n, n);
+                let area = covered(&triangles);
+                assert!(
+                    (area - (1.0 - hole_area)).abs() < 1e-9,
+                    "{n} x {n} cells cover {area}, not 1 - {hole_area}"
+                );
+            }
+        }
+    }
+
+    /// The same for a hole: one that enters a cell twice takes out only
+    /// itself, not what lies between its arms.
+    #[test]
+    fn a_hole_entering_a_cell_twice_takes_out_only_itself() {
+        let square = [[-1.0, -1.0], [4.0, -1.0], [4.0, 4.0], [-1.0, 4.0]];
+        // The U, clockwise, as a hole's boundary runs.
+        let hole: Vec<Point> = [
+            [0.0, 0.0],
+            [3.0, 0.0],
+            [3.0, 3.0],
+            [2.0, 3.0],
+            [2.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 3.0],
+            [0.0, 3.0],
+        ]
+        .into_iter()
+        .rev()
+        .collect();
+        for (nu, nv) in [(1, 1), (1, 2), (2, 3), (5, 5)] {
+            let triangles =
+                triangulate_region(&square, std::slice::from_ref(&hole), [-1.0, -1.0], [4.0, 4.0], nu, nv);
+            let area = covered(&triangles);
+            assert!(
+                (area - 18.0).abs() < 1e-9,
+                "{nu} x {nv} cells cover {area}, not 25 - 7"
+            );
+        }
+    }
     use super::*;
     use geop_core_math::{for_all_scalars, vector::Vector3};
     use geop_ops::Part;
