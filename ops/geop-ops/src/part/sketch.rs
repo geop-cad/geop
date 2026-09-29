@@ -8,8 +8,8 @@ use geop_core_math::{
 };
 use geop_core_sketch::Sketch;
 
-use crate::ids::SketchId;
-use crate::part::Part;
+use super::Part;
+use super::ids::SketchId;
 
 /// A sketch together with the plane it lies on: `plane.u`/`plane.v` are the
 /// sketch's `x`/`y` (unit, orthogonal), `plane.w = u x v` its unit normal.

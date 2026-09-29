@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use geop_ops::{
     EditContext, Edited, Part,
-    operation::{EntityRef, Geometry, Operation, Role, frame_along, world_frame},
+    operation::{EntityRef, Geometry, Operation, Role, frame_along},
     ui::Event,
 };
 
@@ -400,14 +400,16 @@ impl Construction {
                 let p = point(0);
                 let base = match &inputs[0].frame {
                     Some(frame) => frame.clone(),
-                    None => world_frame(p)?,
+                    None => CoordinateSystem::world_at(p),
                 };
                 let offset = base.to_xyz(&Vector3::from_array([*x, *y, *z].map(S::from_f64)));
                 moved(&base, offset)
             }
-            Construction::Midpoint {} => {
-                world_frame(Vector3::interpolate(&point(0), &point(1), half))
-            }
+            Construction::Midpoint {} => Ok(CoordinateSystem::world_at(Vector3::interpolate(
+                &point(0),
+                &point(1),
+                half,
+            ))),
             Construction::EdgePoint { position } => {
                 let (p, tangent) = along_edge(&inputs[0], *position)?;
                 frame_along(p, &tangent)
@@ -438,7 +440,7 @@ impl Construction {
             }
             Construction::ThreePlanes {} => {
                 let meet = plane(0).intersect_plane(&plane(1))?;
-                world_frame(plane(2).intersect_axis(&meet)?)
+                Ok(CoordinateSystem::world_at(plane(2).intersect_axis(&meet)?))
             }
             Construction::TwoPoints {} => {
                 let (a, b) = (point(0), point(1));
@@ -644,8 +646,8 @@ impl Operation for AddDatum {
         ctx: &EditContext<S>,
         args: AddDatumArgs,
         session: DatumSession,
-        event: Option<&Event>,
-    ) -> Edited<AddDatumArgs, DatumSession> {
+        event: Option<&Event<S>>,
+    ) -> Edited<AddDatumArgs, DatumSession, S> {
         editor::edit(ctx, args, session, event)
     }
 
@@ -665,11 +667,14 @@ impl Operation for AddDatum {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::scalars::ScalInF64 as S;
+    use geop_core_math::{
+        primitives::{DatumComponent, FrameAxis, Ray},
+        scalars::ScalInF64 as S,
+    };
 
     use geop_ops::{
-        WorldAxis,
-        ui::{Button, Control, PartView, PixelScale, Pointer, Shape, Target},
+        ORIGIN,
+        ui::{Button, Control, PartView, Pointer, Reach, Shape, Target},
     };
 
     use super::*;
@@ -677,11 +682,26 @@ mod tests {
     fn edge(name: &str) -> EntityRef {
         EntityRef::Edge { name: name.into() }
     }
-    fn axis(axis: WorldAxis) -> EntityRef {
-        EntityRef::Axis { axis }
+    fn origin() -> EntityRef {
+        EntityRef::datum(ORIGIN)
     }
-    fn base(normal: WorldAxis) -> EntityRef {
-        EntityRef::Plane { normal }
+    fn axis(axis: FrameAxis) -> EntityRef {
+        EntityRef::datum_component(ORIGIN, DatumComponent::Axis(axis))
+    }
+    fn base(normal: FrameAxis) -> EntityRef {
+        EntityRef::datum_component(ORIGIN, DatumComponent::Plane(normal))
+    }
+    fn v(p: [f64; 3]) -> Vector3<S> {
+        Vector3::from_array(p.map(S::from_f64))
+    }
+    /// A pointer from `origin` along `dir`, reaching a hundredth of a unit.
+    fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
+        Pointer {
+            ray: Ray::try_new(v(origin), v(dir)).unwrap(),
+            reach: Reach::Tube {
+                radius: S::from_f64(0.01),
+            },
+        }
     }
 
     /// Every construction serializes under its own method, with exactly the
@@ -707,7 +727,7 @@ mod tests {
     #[test]
     fn a_selection_that_does_not_fit_says_what_it_needs() {
         let args = AddDatumArgs {
-            selection: vec![EntityRef::Origin],
+            selection: vec![origin()],
             construction: Construction::Offset { distance: 1.0 },
         };
         let Err(e) = AddDatum.apply(Part::<S>::new(), "d", &args) else {
@@ -720,7 +740,7 @@ mod tests {
     #[test]
     fn degenerate_selections_fail() {
         let part = Part::<S>::new();
-        let origin = EntityRef::Origin;
+        let origin = origin();
         let err = |selection: Vec<EntityRef>, construction: Construction| {
             let args = AddDatumArgs {
                 selection,
@@ -740,21 +760,21 @@ mod tests {
         );
         assert!(
             err(
-                vec![base(WorldAxis::Z), base(WorldAxis::Z)],
+                vec![base(FrameAxis::Z), base(FrameAxis::Z)],
                 Construction::PlanePlane {}
             )
             .contains("parallel")
         );
         assert!(
             err(
-                vec![origin.clone(), axis(WorldAxis::X)],
+                vec![origin.clone(), axis(FrameAxis::X)],
                 Construction::PerpendicularToLine {}
             )
             .contains("lies on the line")
         );
         assert!(
             err(
-                vec![base(WorldAxis::Z), axis(WorldAxis::Z)],
+                vec![base(FrameAxis::Z), axis(FrameAxis::Z)],
                 Construction::Angle { angle: 10.0 }
             )
             .contains("perpendicular")
@@ -767,8 +787,8 @@ mod tests {
     fn edited(
         part: &Part<S>,
         args: AddDatumArgs,
-        events: &[Event],
-    ) -> Edited<AddDatumArgs, DatumSession> {
+        events: &[Event<S>],
+    ) -> Edited<AddDatumArgs, DatumSession, S> {
         let view = PartView::of(part).unwrap();
         let ctx = EditContext { part, view: &view };
         let mut edited = AddDatum.edit(&ctx, args, DatumSession::default(), None);
@@ -783,7 +803,7 @@ mod tests {
     #[test]
     fn offsets_are_dragged() {
         let args = AddDatumArgs {
-            selection: vec![EntityRef::Origin],
+            selection: vec![origin()],
             construction: Construction::Point {
                 x: 1.0,
                 y: 2.0,
@@ -797,22 +817,10 @@ mod tests {
         let Shape::Handle { at, direction } = handles[2].shape else {
             panic!("a handle");
         };
-        assert_eq!(direction, Some([0.0, 0.0, 1.0]));
-        let off = (0..3)
-            .map(|k| (at[k] - [1.0, 2.0, 3.3][k]).abs())
-            .fold(0.0, f64::max);
-        assert!(off < 1e-9, "{at:?}");
+        assert_eq!(direction, Some(v([0.0, 0.0, 1.0])));
+        assert!(at.could_be_equal(&v([1.0, 2.0, 3.3])), "{at:?}");
         // Seen from the side, dragged half a unit up.
-        let side = |z: f64| Pointer {
-            origin: [1.0, -10.0, z],
-            dir: [0.0, 1.0, 0.0],
-            right: [1.0, 0.0, 0.0],
-            up: [0.0, 0.0, 1.0],
-            pixel: PixelScale {
-                at_origin: 0.001,
-                per_distance: 0.0,
-            },
-        };
+        let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
         let drag = Event::Drag {
             from: side(3.3),
             to: side(3.8),
@@ -835,7 +843,7 @@ mod tests {
     #[test]
     fn dialogs_say_what_a_selection_fits() {
         let args = AddDatumArgs {
-            selection: vec![EntityRef::Origin, edge("nowhere")],
+            selection: vec![origin(), edge("nowhere")],
             construction: Construction::Offset { distance: 1.0 },
         };
         let part = Part::<S>::new();
@@ -849,7 +857,7 @@ mod tests {
         assert!(dialog.get("construction_needs").is_some());
 
         let args = AddDatumArgs {
-            selection: vec![base(WorldAxis::Z)],
+            selection: vec![base(FrameAxis::Z)],
             ..args
         };
         let dialog = edited(&part, args, &[]).presentation.dialog;
@@ -867,25 +875,20 @@ mod tests {
     fn picks_build_the_selection() {
         let part = Part::<S>::new();
         let args = AddDatum.new_args(&part);
-        // The origin's ball, from above, a thousandth of a unit per pixel.
+        // The origin's ball, from above.
         let click = Event::Click {
-            pointer: Pointer {
-                origin: [0.0, 0.0, 10.0],
-                dir: [0.0, 0.0, -1.0],
-                right: [1.0, 0.0, 0.0],
-                up: [0.0, 1.0, 0.0],
-                pixel: PixelScale {
-                    at_origin: 0.001,
-                    per_distance: 0.0,
-                },
-            },
+            pointer: pointer([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]),
             button: Button::Primary,
             double: false,
             shift: false,
         };
         let once = edited(&part, args.clone(), std::slice::from_ref(&click));
-        assert_eq!(once.args.selection, [EntityRef::Origin]);
-        assert!(once.presentation.pickable.contains(&Target::Origin));
+        assert_eq!(once.args.selection, [origin()]);
+        assert!(
+            once.presentation
+                .pickable
+                .contains(&Target::Datum(DatumKind::Frame))
+        );
         let twice = edited(&part, args, &[click.clone(), click]);
         assert!(twice.args.selection.is_empty());
     }

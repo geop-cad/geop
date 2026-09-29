@@ -23,7 +23,8 @@ use geop_cad_base::{PartOperation, Program, ProgramEdit, ProgramRunner, examples
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Color10,
-    scalars::scal_in_f64::ScalInF64,
+    scalars::{Scalar, scal_in_f64::ScalInF64},
+    vector::Vector3,
 };
 use geop_ops::{
     EditContext, EntityRef, Operations, StepResult,
@@ -45,7 +46,7 @@ thread_local! {
     /// How the part of `COMMITTED`'s most recent run is drawn: made once per
     /// run, and what every pick tests against — so a pick is cheap enough
     /// for hovering, and hits exactly what is on screen.
-    static VIEW: RefCell<Option<PartView>> = const { RefCell::new(None) };
+    static VIEW: RefCell<Option<PartView<S>>> = const { RefCell::new(None) };
     /// Builds previews: the program with one edit not made yet. Its own
     /// cache, so re-previewing as a slider moves replays only the edited
     /// step.
@@ -108,7 +109,7 @@ struct SceneJson {
 }
 
 /// `view` as scene JSON, tagged with the names of what it shows.
-fn scene_of(view: &PartView) -> SceneJson {
+fn scene_of(view: &PartView<S>) -> SceneJson {
     let mut scene = SceneJson {
         points: Vec::new(),
         point_names: Vec::new(),
@@ -123,19 +124,25 @@ fn scene_of(view: &PartView) -> SceneJson {
         edge_names: Vec::new(),
     };
     let hex = |c: Color10| c.to_hex() as f64;
+    let xyz = |p: &Vector3<S>| [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()];
     for v in &view.vertices {
-        let [x, y, z] = v.at;
+        let [x, y, z] = xyz(&v.at);
         scene.points.push([x, y, z, hex(Color10::DarkGray)]);
         scene.point_names.push(v.name.clone());
     }
-    let push_line =
-        |scene: &mut SceneJson, a: [f64; 3], b: [f64; 3], color: f64, sketch: i32, edge: i32| {
-            scene
-                .lines
-                .push([a[0], a[1], a[2], b[0], b[1], b[2], color]);
-            scene.line_sketches.push(sketch);
-            scene.line_edges.push(edge);
-        };
+    let push_line = |scene: &mut SceneJson,
+                     a: Vector3<S>,
+                     b: Vector3<S>,
+                     color: f64,
+                     sketch: i32,
+                     edge: i32| {
+        let (a, b) = (xyz(&a), xyz(&b));
+        scene
+            .lines
+            .push([a[0], a[1], a[2], b[0], b[1], b[2], color]);
+        scene.line_sketches.push(sketch);
+        scene.line_edges.push(edge);
+    };
     for e in &view.edges {
         let index = scene.edge_names.len() as i32;
         scene.edge_names.push(e.name.clone());
@@ -149,7 +156,9 @@ fn scene_of(view: &PartView) -> SceneJson {
             name: f.name.clone(),
             solid: f.solid.clone(),
         });
-        for ([a, b, c], n) in f.triangles.iter().zip(&f.normals) {
+        for (triangle, normals) in f.triangles.iter().zip(&f.normals) {
+            let [a, b, c] = triangle.map(|p| xyz(&p));
+            let n = normals.map(|p| xyz(&p));
             scene.triangles.push([
                 a[0],
                 a[1],
@@ -178,7 +187,7 @@ fn scene_of(view: &PartView) -> SceneJson {
                 SKETCH_COLOR
             } as f64;
             for w in curve.polyline.windows(2) {
-                let (a, b) = (sketch.plane.to_world(w[0]), sketch.plane.to_world(w[1]));
+                let (a, b) = (sketch.plane.uv_to_xyz(&w[0]), sketch.plane.uv_to_xyz(&w[1]));
                 push_line(&mut scene, a, b, color, index, -1);
             }
         }
@@ -273,16 +282,16 @@ struct RunJson<'a> {
     results: &'a [StepResult],
     scene: SceneJson,
     /// The part's datums, oldest first.
-    datums: &'a [geop_ops::ui::view::ViewDatum],
+    datums: &'a [geop_ops::ui::view::ViewDatum<S>],
     /// Where the drawing is and how big: datum planes and axes are drawn
     /// this big around the point of them nearest its center.
-    extent: Extent,
+    extent: Extent<S>,
     /// The sketches and datums the steps that ran build on: an editor hides
     /// them, since what was made from them shows them now.
     references: Vec<EntityRef>,
 }
 
-fn run_json(runner: &ProgramRunner<S>, view: &PartView) -> GeopResult<String> {
+fn run_json(runner: &ProgramRunner<S>, view: &PartView<S>) -> GeopResult<String> {
     to_json(&RunJson {
         results: runner.results(),
         scene: scene_of(view),
@@ -350,7 +359,7 @@ struct EditRequest {
     session: serde_json::Value,
     /// What the user did; `null` for only what to show.
     #[serde(default)]
-    event: Option<Event>,
+    event: Option<Event<S>>,
 }
 
 /// What [`edit_step`] answers.
@@ -359,7 +368,7 @@ struct EditResponse {
     /// The step's operation with its new arguments: `{operation, args}`.
     operation: PartOperation,
     session: serde_json::Value,
-    presentation: Presentation,
+    presentation: Presentation<S>,
 }
 
 fn edit_step_inner(request_json: &str) -> GeopResult<String> {
@@ -505,13 +514,12 @@ mod tests {
     fn datums_come_with_runs() {
         load(&examples::boss_on_reference_plane());
         let run = json(&run_program_inner("null").unwrap());
-        let lifted = &run["datums"][0];
+        assert_eq!(run["datums"][0]["name"], "origin");
+        assert_eq!(run["datums"][0]["kind"], "frame");
+        let lifted = &run["datums"][1];
         assert_eq!(lifted["name"], "lifted");
         assert_eq!(lifted["kind"], "plane");
-        assert_eq!(
-            lifted["frame"]["normal"],
-            serde_json::json!([0.0, 0.0, 1.0])
-        );
+        assert_eq!(lifted["frame"]["w"], serde_json::json!([0.0, 0.0, 1.0]));
         assert!(run["extent"]["size"].as_f64().unwrap() >= 1.0);
     }
 
@@ -540,7 +548,7 @@ mod tests {
         let drawing =
             send(serde_json::json!({"type": "dialog", "key": "draw", "value": {"type": "press"}}));
         assert_eq!(
-            drawing["presentation"]["focus"]["normal"],
+            drawing["presentation"]["focus"]["w"],
             serde_json::json!([0.0, 0.0, 1.0])
         );
         send(serde_json::json!({"type": "key", "key": "l"}));
@@ -548,9 +556,8 @@ mod tests {
             serde_json::json!({
                 "type": "click",
                 "pointer": {
-                    "origin": [x, y, 10.0], "dir": [0.0, 0.0, -1.0],
-                    "right": [1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0],
-                    "pixel": {"at_origin": 0.001, "per_distance": 0.0},
+                    "ray": {"origin": [x, y, 10.0], "dir": [0.0, 0.0, -1.0]},
+                    "reach": {"type": "tube", "radius": 0.009},
                 },
             })
         };

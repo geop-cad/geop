@@ -1,258 +1,142 @@
-//! Hit tests: which [`Visual`] a [`Pointer`] is over, and the ray geometry
-//! behind it, shared by every operation so a click means the same thing
-//! whatever is being edited.
+//! Hit tests: which [`Visual`] a [`Pointer`] is over, shared by every
+//! operation so a click means the same thing whatever is being edited.
 //!
-//! Tolerances are in screen pixels, turned into world units where along the
-//! ray the thing is (see [`super::PixelScale`]), so "near" means near on
-//! screen however far away or zoomed in the view is. This is UI geometry in
-//! plain `f64`, like the visuals themselves: how close a click has to land
-//! is a question about the screen, not one the kernel's interval arithmetic
-//! answers.
+//! What counts as over something is measured in the pointer's reach (see
+//! [`super::Reach`]), so "near" means near on screen however far away or
+//! zoomed in the view is. The geometry itself — how near a ray passes to a
+//! point, a segment, a triangle — is [`geop_core_math::primitives::Ray`]'s.
+
+use std::cmp::Ordering;
+
+use geop_core_math::scalars::Scalar;
 
 use super::{Pointer, Shape, Visual};
 
-/// How near a point or a curve a click has to land, in pixels.
-pub const HIT_PX: f64 = 9.0;
-/// A handle's radius on screen, in pixels; its arrows reach three times as
-/// far along its direction.
-pub const HANDLE_PX: f64 = 7.0;
-/// Half the width and height of a label's box on screen, in pixels.
-pub const LABEL_PX: [f64; 2] = [12.0, 9.0];
+/// A handle's radius, in reaches; its arrows reach three times as far along
+/// its direction.
+pub const HANDLE: f64 = 0.8;
+/// How near a label's center a click has to land, in reaches.
+pub const LABEL: f64 = 1.2;
 
-pub(crate) fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-pub(crate) fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-pub(crate) fn scale(a: [f64; 3], s: f64) -> [f64; 3] {
-    [a[0] * s, a[1] * s, a[2] * s]
-}
-
-pub(crate) fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-pub(crate) fn norm(a: [f64; 3]) -> f64 {
-    dot(a, a).sqrt()
-}
-
-impl Pointer {
-    /// The point `t` along the ray.
-    pub fn at(&self, t: f64) -> [f64; 3] {
-        add(self.origin, scale(self.dir, t))
-    }
-
-    /// `pixels` screen pixels, in world units, at distance `t` along the ray.
-    pub fn pixels(&self, pixels: f64, t: f64) -> f64 {
-        pixels * self.pixel.at(t)
-    }
-}
-
-/// How far the ray passes from `p`, and the distance along it (never
-/// behind its origin) where it comes closest.
-pub fn ray_point(pointer: &Pointer, p: [f64; 3]) -> (f64, f64) {
-    let t = dot(sub(p, pointer.origin), pointer.dir).max(0.0);
-    (norm(sub(pointer.at(t), p)), t)
-}
-
-/// How far the ray passes from the segment `a..b`, and the distance along
-/// the ray where it comes closest.
-pub fn ray_segment(pointer: &Pointer, a: [f64; 3], b: [f64; 3]) -> (f64, f64) {
-    let d = sub(b, a);
-    let r = sub(pointer.origin, a);
-    let e = dot(d, d);
-    if e == 0.0 {
-        return ray_point(pointer, a);
-    }
-    let b_ = dot(pointer.dir, d);
-    let c = dot(pointer.dir, r);
-    let f = dot(d, r);
-    // `pointer.dir` is unit length, so `dot(dir, dir) = 1`.
-    let denom = e - b_ * b_;
-    let mut t = if denom > 0.0 {
-        ((b_ * f - c * e) / denom).max(0.0)
-    } else {
-        0.0
-    };
-    let mut u = (b_ * t + f) / e;
-    if !(0.0..=1.0).contains(&u) {
-        u = u.clamp(0.0, 1.0);
-        t = dot(sub(add(a, scale(d, u)), pointer.origin), pointer.dir).max(0.0);
-    }
-    (norm(sub(pointer.at(t), add(a, scale(d, u)))), t)
-}
-
-/// Where the ray enters the triangle `a, b, c`, if it does
-/// (Möller–Trumbore).
-pub fn ray_triangle(pointer: &Pointer, a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Option<f64> {
-    let e1 = sub(b, a);
-    let e2 = sub(c, a);
-    let h = cross(pointer.dir, e2);
-    let det = dot(e1, h);
-    if det == 0.0 {
-        return None;
-    }
-    let s = sub(pointer.origin, a);
-    let u = dot(s, h) / det;
-    let q = cross(s, e1);
-    let v = dot(pointer.dir, q) / det;
-    let t = dot(e2, q) / det;
-    (u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t >= 0.0).then_some(t)
-}
-
-/// Where the ray meets the plane through `origin` normal to `normal`, and
-/// how far along it: `None` if it runs along the plane or away from it.
-pub fn ray_plane(pointer: &Pointer, origin: [f64; 3], normal: [f64; 3]) -> Option<(f64, [f64; 3])> {
-    let denom = dot(pointer.dir, normal);
-    if denom == 0.0 {
-        return None;
-    }
-    let t = dot(sub(origin, pointer.origin), normal) / denom;
-    (t >= 0.0).then(|| (t, pointer.at(t)))
-}
-
-/// The parameter `s` of the point `at + s direction` of a line nearest the
-/// ray — where along its track a handle is grabbed. `None` when looking
-/// straight along the line, where no point of it is nearer than another.
-pub fn line_parameter(pointer: &Pointer, at: [f64; 3], direction: [f64; 3]) -> Option<f64> {
-    let w0 = sub(at, pointer.origin);
-    let b = dot(direction, pointer.dir);
-    let dd = dot(direction, direction);
-    let denom = dd - b * b;
-    if denom <= 1e-12 * dd {
-        return None;
-    }
-    Some((b * dot(pointer.dir, w0) - dot(direction, w0)) / denom)
+/// Orders two distances for picking the nearest. Which of two overlapping
+/// enclosures is "nearer" is no geometric claim, only which of two things
+/// under the pointer to prefer, so their midpoints decide.
+pub fn nearer<S: Scalar>(a: S, b: S) -> Ordering {
+    a.to_f64().total_cmp(&b.to_f64())
 }
 
 /// A visual the pointer is over.
 #[derive(Clone, Copy, Debug)]
-pub struct VisualHit<'a> {
-    pub visual: &'a Visual,
+pub struct VisualHit<'a, S: Scalar> {
+    pub visual: &'a Visual<S>,
     /// How far along the ray.
-    pub t: f64,
+    pub t: S,
 }
 
-/// How near the pointer is to `visual`, in pixels, and where along the ray
-/// — `None` if not near enough to count. `rank` orders kinds of shapes:
+/// How near the pointer is to `visual`, in reaches, and where along the
+/// ray — `None` if not near enough to count. `rank` orders kinds of shapes:
 /// what is drawn small and on top wins over what is drawn large.
-fn distance(pointer: &Pointer, visual: &Visual) -> Option<(u8, f64, f64)> {
-    let within = |dist: f64, t: f64, px: f64| {
-        let pixels = dist / pointer.pixel.at(t);
-        (pixels <= px).then_some((pixels, t))
+fn distance<S: Scalar>(pointer: &Pointer<S>, visual: &Visual<S>) -> Option<(u8, S, S)> {
+    let ray = &pointer.ray;
+    let within = |dist: S, t: S, reaches: f64| {
+        pointer
+            .within(dist, t, reaches)
+            .then(|| (dist.div(pointer.reach.at(t)).unwrap_or(S::ZERO), t))
     };
     match &visual.shape {
         Shape::Handle { at, direction } => {
-            let (_, t) = ray_point(pointer, *at);
-            let radius = pointer.pixels(HANDLE_PX, t);
-            let (dist, t) = match direction {
+            let radius = pointer.reach_at(HANDLE, ray.closest_to_point(at));
+            let (dist, t) = match direction.and_then(|d| d.normalize().ok()) {
                 Some(d) => {
-                    let reach = scale(*d, 3.0 * radius / norm(*d));
-                    ray_segment(pointer, sub(*at, reach), add(*at, reach))
+                    let reach = d.prod_scalar(radius.mul(S::from_f64(3.0)));
+                    ray.distance_to_segment(&at.sub(&reach), &at.add(&reach))
                 }
-                None => ray_point(pointer, *at),
+                None => ray.distance_to_point(at),
             };
-            within(dist, t, HANDLE_PX).map(|(p, t)| (0, p, t))
+            within(dist, t, HANDLE).map(|(p, t)| (0, p, t))
         }
         Shape::Label { at, offset, .. } => {
-            let (_, t) = ray_point(pointer, *at);
-            let px = pointer.pixel.at(t);
-            let center = add(
-                *at,
-                add(
-                    scale(pointer.right, offset[0] * px),
-                    scale(pointer.up, offset[1] * px),
-                ),
-            );
-            let (_, t) = ray_point(pointer, center);
-            let d = sub(pointer.at(t), center);
-            let (dx, dy) = (dot(d, pointer.right) / px, dot(d, pointer.up) / px);
-            (dx.abs() <= LABEL_PX[0] && dy.abs() <= LABEL_PX[1]).then_some((0, dx.hypot(dy), t))
+            let center = at.add(&offset.prod_scalar(pointer.reach.at(ray.closest_to_point(at))));
+            let (dist, t) = ray.distance_to_point(&center);
+            within(dist, t, LABEL).map(|(p, t)| (0, p, t))
         }
         Shape::Point { at } => {
-            let (dist, t) = ray_point(pointer, *at);
-            within(dist, t, HIT_PX).map(|(p, t)| (1, p, t))
+            let (dist, t) = ray.distance_to_point(at);
+            within(dist, t, 1.0).map(|(p, t)| (1, p, t))
         }
         Shape::Polyline { points } => points
             .windows(2)
             .filter_map(|w| {
-                let (dist, t) = ray_segment(pointer, w[0], w[1]);
-                within(dist, t, HIT_PX)
+                let (dist, t) = ray.distance_to_segment(&w[0], &w[1]);
+                within(dist, t, 1.0)
             })
-            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .min_by(|a, b| nearer(a.0, b.0))
             .map(|(p, t)| (2, p, t)),
         Shape::Triangles { triangles } => triangles
             .iter()
-            .filter_map(|[a, b, c]| ray_triangle(pointer, *a, *b, *c))
-            .min_by(f64::total_cmp)
-            .map(|t| (3, 0.0, t)),
+            .filter_map(|[a, b, c]| ray.intersect_triangle(a, b, c))
+            .min_by(|&a, &b| nearer(a, b))
+            .map(|t| (3, S::ZERO, t)),
     }
 }
 
 /// The visual among those `accept` takes that the pointer is over: handles
 /// and labels first, then points, curves and areas — within each, the one
 /// nearest the pointer on screen.
-pub fn hit_visuals<'a>(
-    visuals: &'a [Visual],
-    pointer: &Pointer,
-    accept: impl Fn(&Visual) -> bool,
-) -> Option<VisualHit<'a>> {
+pub fn hit_visuals<'a, S: Scalar>(
+    visuals: &'a [Visual<S>],
+    pointer: &Pointer<S>,
+    accept: impl Fn(&Visual<S>) -> bool,
+) -> Option<VisualHit<'a, S>> {
     visuals
         .iter()
         .filter(|v| accept(v))
-        .filter_map(|v| distance(pointer, v).map(|(rank, pixels, t)| (rank, pixels, t, v)))
-        .min_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)))
+        .filter_map(|v| distance(pointer, v).map(|(rank, reaches, t)| (rank, reaches, t, v)))
+        .min_by(|a, b| a.0.cmp(&b.0).then(nearer(a.1, b.1)))
         .map(|(_, _, t, visual)| VisualHit { visual, t })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::ui::{PixelScale, Style};
+    use geop_core_math::{primitives::Ray, scalars::ScalInF64, vector::Vector3};
 
-    /// Looking straight down `-z` from `(x, y, 10)`, one pixel a hundredth
-    /// of a unit wherever it looks.
-    fn down(x: f64, y: f64) -> Pointer {
+    use super::*;
+    use crate::ui::{Reach, Style};
+
+    type S = ScalInF64;
+
+    fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
+        Vector3::from_array([x, y, z].map(S::from_f64))
+    }
+
+    /// Looking straight down `-z` from `(x, y, 10)`, reaching a tenth of a
+    /// unit wherever it looks.
+    fn down(x: f64, y: f64) -> Pointer<S> {
         Pointer {
-            origin: [x, y, 10.0],
-            dir: [0.0, 0.0, -1.0],
-            right: [1.0, 0.0, 0.0],
-            up: [0.0, 1.0, 0.0],
-            pixel: PixelScale {
-                at_origin: 0.01,
-                per_distance: 0.0,
+            ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
+            reach: Reach::Tube {
+                radius: S::from_f64(0.1),
             },
         }
     }
 
-    fn point(key: &str, at: [f64; 3]) -> Visual {
+    fn point(key: &str, at: Vector3<S>) -> Visual<S> {
         Visual::new(key, Shape::Point { at }, Style::Free)
     }
 
-    /// A point wins over the curve it lies on, within a few pixels of it;
-    /// further along, the curve is hit.
+    /// A point wins over the curve it lies on, within reach of it; further
+    /// along, the curve is hit.
     #[test]
     fn points_win_over_curves() {
         let visuals = [
             Visual::new(
                 "line",
                 Shape::Polyline {
-                    points: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    points: vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)],
                 },
                 Style::Free,
             ),
-            point("end", [1.0, 0.0, 0.0]),
+            point("end", v(1.0, 0.0, 0.0)),
         ];
         let key = |x: f64, y: f64| {
             hit_visuals(&visuals, &down(x, y), |_| true).map(|h| h.visual.key.clone())
@@ -262,15 +146,16 @@ mod tests {
         assert_eq!(key(0.5, 0.2), None);
     }
 
-    /// A label is hit in its box, which is moved on screen by its offset.
+    /// A label is hit where it is drawn: moved from its point by its
+    /// offset, in reaches.
     #[test]
     fn labels_are_hit_where_they_are_drawn() {
         let visuals = [Visual::new(
             "k1",
             Shape::Label {
-                at: [0.0, 0.0, 0.0],
+                at: v(0.0, 0.0, 0.0),
                 text: "H".into(),
-                offset: [20.0, 10.0],
+                offset: v(2.0, 1.0, 0.0),
             },
             Style::Free,
         )];
@@ -278,23 +163,17 @@ mod tests {
         assert!(hit_visuals(&visuals, &down(0.0, 0.0), |_| true).is_none());
     }
 
-    /// Dragging along a handle's direction: the grab parameter follows the
-    /// pointer's projection onto its line.
+    /// In perspective, what is further away is hit from further off.
     #[test]
-    fn line_parameters_follow_the_pointer() {
-        // Seen from the side: the line runs along z through the origin.
-        let side = |z: f64| Pointer {
-            origin: [5.0, 0.0, z],
-            dir: [-1.0, 0.0, 0.0],
-            right: [0.0, 1.0, 0.0],
-            up: [0.0, 0.0, 1.0],
-            pixel: PixelScale {
-                at_origin: 0.01,
-                per_distance: 0.0,
+    fn cones_widen_with_distance() {
+        let visuals = [point("p", v(0.3, 0.0, 0.0))];
+        let from = |z: f64| Pointer {
+            ray: Ray::try_new(v(0.0, 0.0, z), v(0.0, 0.0, -1.0)).unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.01),
             },
         };
-        let s = line_parameter(&side(0.7), [0.0, 0.0, 0.0], [0.0, 0.0, 2.0]).unwrap();
-        assert!((s - 0.35).abs() < 1e-12);
-        assert!(line_parameter(&down(0.0, 0.0), [0.0; 3], [0.0, 0.0, 1.0]).is_none());
+        assert!(hit_visuals(&visuals, &from(10.0), |_| true).is_none());
+        assert!(hit_visuals(&visuals, &from(40.0), |_| true).is_some());
     }
 }

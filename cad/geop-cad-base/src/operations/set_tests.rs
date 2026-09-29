@@ -1,7 +1,10 @@
 //! The editor's operations as one set: offered, started and edited through
 //! it, sessions and all as JSON.
 
-use geop_core_math::scalars::ScalInF64 as S;
+use geop_core_math::{
+    scalars::{ScalInF64 as S, Scalar},
+    vector::Vector3,
+};
 use geop_ops::{
     EditContext, Operations,
     ui::{DialogValue, Event, PartView, Shape},
@@ -80,9 +83,9 @@ fn steps_are_edited_through_the_set() {
     else {
         panic!("{handle:?}");
     };
-    let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9);
-    assert!(close(at, [1.0, 1.0, 0.5]), "{at:?}");
-    assert!(close(direction, [0.0, 0.0, 1.0]));
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+    assert!(at.could_be_equal(&v([1.0, 1.0, 0.5])), "{at:?}");
+    assert!(direction.could_be_equal(&v([0.0, 0.0, 1.0])));
 
     let edited = shown.args.edit(
         &ctx,

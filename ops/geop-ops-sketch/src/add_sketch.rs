@@ -2,12 +2,13 @@
 
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
+    primitives::{DatumComponent, FrameAxis},
     scalars::Scalar,
     with_context,
 };
 use geop_core_sketch::Sketch;
 use geop_ops::{
-    EditContext, Edited, Part, PlacedSketch, WorldAxis,
+    EditContext, Edited, ORIGIN, Part, PlacedSketch,
     operation::{EntityRef, Operation, resolve_plane},
     ui::Event,
 };
@@ -15,8 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::editor::{self, SketchSession};
 
-/// Adds a sketch on a plane to the part, named by the operation's id: a base
-/// plane, a planar face or a datum plane (see [`EntityRef`]). The plane is
+/// Adds a sketch on a plane to the part, named by the operation's id: a
+/// planar face, a datum plane or a frame's plane (see [`EntityRef`]). The plane is
 /// resolved when the sketch is added: a sketch on a face stays where the
 /// face was, whatever later operations do to the face.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -24,7 +25,8 @@ pub struct AddSketch;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AddSketchArgs {
-    /// The plane to sketch on: a base plane, a planar face or a datum plane.
+    /// The plane to sketch on: a planar face, a datum plane or a frame's
+    /// plane.
     pub plane: EntityRef,
     /// The sketch as drawn; solve it first for its constraints to hold.
     pub sketch: Sketch,
@@ -34,12 +36,10 @@ impl Operation for AddSketch {
     type Args = AddSketchArgs;
     type Session = SketchSession;
 
-    /// An empty sketch on the `Z` plane.
+    /// An empty sketch on the origin's `xy` plane.
     fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddSketchArgs {
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: Sketch::new(),
         }
     }
@@ -67,8 +67,8 @@ impl Operation for AddSketch {
         ctx: &EditContext<S>,
         args: AddSketchArgs,
         session: SketchSession,
-        event: Option<&Event>,
-    ) -> Edited<AddSketchArgs, SketchSession> {
+        event: Option<&Event<S>>,
+    ) -> Edited<AddSketchArgs, SketchSession, S> {
         editor::edit(ctx, args, session, event)
     }
 

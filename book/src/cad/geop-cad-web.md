@@ -63,8 +63,9 @@ an event, and what comes back replaces all three:
   primitives alone.
 - **The viewport** (`web/src/SceneViewer.tsx`) sends hovers (once a frame),
   clicks — primary or secondary, double or not — and drags, each as a
-  `Pointer`: the ray through the cursor, the screen's right and up, and what
-  a pixel measures along the ray. A press starts a drag only where the last
+  `Pointer`: the ray from the eye through the cursor, and how far from it
+  the pointer reaches — `REACH_PX` pixels, as a cone from the eye in
+  perspective or a tube in an orthographic view. A press starts a drag only where the last
   presentation offered a `grab`; anywhere else it moves the camera.
 - **Keys** go to the step unless a field is being typed into.
 

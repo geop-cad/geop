@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { CAMERA_FOV, DEFAULT_POSE, type CameraPose, type Projection } from "./camera";
+import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, type CameraPose, type Projection } from "./camera";
 import { DatumLayer } from "./datums3d";
 import {
   sameEntity,
@@ -13,11 +13,11 @@ import {
   type Frame,
   type Pointer,
   type PointerEvent_,
+  type Reach,
   type Scene,
   type Target,
   type Visual,
 } from "./geop";
-import { buildGizmo, updateGizmo } from "./originGizmo";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 
@@ -25,13 +25,6 @@ import { VisualLayer } from "./visuals3d";
 const CLICK_PX = 4;
 /** How soon, in milliseconds, a second click makes a double click. */
 const DOUBLE_MS = 350;
-
-/** The kinds of the origin gizmo's parts a click can pick, among `targets`. */
-function gizmoKinds(targets: Target[]): DatumKind[] {
-  return targets.flatMap((t): DatumKind[] =>
-    t === "origin" ? ["point"] : t === "axis" ? ["axis"] : t === "base_plane" ? ["plane"] : [],
-  );
-}
 
 /** The kinds of datum a click can pick, among `targets`. */
 function datumKinds(targets: Target[]): DatumKind[] {
@@ -387,8 +380,6 @@ export function SceneViewer({
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(5, 8, 6);
     threeScene.add(dirLight);
-    const gizmo = buildGizmo();
-    threeScene.add(gizmo);
     const datumLayer = new DatumLayer();
     threeScene.add(datumLayer.group);
     const visualLayer = new VisualLayer();
@@ -441,21 +432,22 @@ export function SceneViewer({
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(container);
 
-    /** The pointer at `(x, y)`, in client coordinates: the ray through it, and what a pixel measures along it. */
+    /**
+     * The pointer at `(x, y)`, in client coordinates: the ray through it,
+     * reaching [[REACH_PX]] pixels — a cone from the eye in perspective, a
+     * tube in an orthographic view.
+     */
     const pointerAt = (x: number, y: number): Pointer => {
       const rect = container.getBoundingClientRect();
       const ndc = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
       const raycaster = new THREE.Raycaster();
       raycaster.setFromCamera(ndc, camera);
-      camera.updateMatrixWorld();
-      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
       const height = Math.max(container.clientHeight, 1);
-      const pixel =
+      const reach: Reach =
         camera instanceof THREE.OrthographicCamera
-          ? { at_origin: (camera.top - camera.bottom) / camera.zoom / height, per_distance: 0 }
-          : { at_origin: 0, per_distance: (2 * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2)) / height };
-      return { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction), right: arr(right), up: arr(up), pixel };
+          ? { type: "tube", radius: (REACH_PX * (camera.top - camera.bottom)) / camera.zoom / height }
+          : { type: "cone", slope: (REACH_PX * 2 * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2)) / height };
+      return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach };
     };
     const send = (event: PointerEvent_) => onPointerRef.current?.(event);
 
@@ -566,7 +558,6 @@ export function SceneViewer({
       renderer.domElement.style.cursor = press?.grabbed ? "grabbing" : grabRef.current ? "grab" : "";
 
       const lit = highlightsRef.current;
-      updateGizmo(gizmo, camera, height, gizmoKinds(pickableRef.current), lit);
       const hidden = hiddenRef.current.filter((name) => !lit.some((l) => sameEntity(l, { type: "Datum", name })));
       datumLayer.sync(datumsRef.current, hidden, extentRef.current.size, vec(extentRef.current.center));
       datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);

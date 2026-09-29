@@ -7,8 +7,8 @@ use geop_core_math::{
 };
 use geop_core_topology::{CoedgeId, EdgeId, FaceId, Sense, SolidId, VertexId};
 
-use crate::ids::{DatumId, RefId, SketchId};
-use crate::part::Part;
+use super::Part;
+use super::ids::{DatumId, RefId, SketchId};
 
 impl<S: Scalar> Part<S> {
     /// `name`'s id, checked to be the particular kind `extract` accepts.

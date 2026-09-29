@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
-use crate::ids::RefId;
+use super::ids::RefId;
 
 /// A two-way `RefId <-> String` mapping. Every entity a [`crate::Part`]
 /// exposes — a vertex, edge, face, solid or sketch — has exactly one live

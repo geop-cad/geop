@@ -9,7 +9,11 @@
 //! horizontal or vertical gets that constraint. Proximity only suggests;
 //! the constraint is what the sketch then holds.
 
-use geop_core_math::scalars::Scalar;
+use geop_core_math::{
+    primitives::CoordinateSystem,
+    scalars::Scalar,
+    vector::{Vector2, Vector3},
+};
 use geop_core_sketch::{
     Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch, SolveReport,
     profile::curve_polyline,
@@ -18,8 +22,8 @@ use geop_ops::{
     EditContext, Edited, EntityRef,
     operation::resolve_plane,
     ui::{
-        Button, ButtonItem, DialogValue, Event, Frame, ListItem, Picked, Picking, Pointer,
-        Presentation, Shape, Style, Target, Tone, Visual, hit::hit_visuals,
+        Button, ButtonItem, DialogValue, Event, ListItem, Picked, Picking, Pointer, Presentation,
+        Shape, Style, Target, Tone, Visual, hit::hit_visuals,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -34,7 +38,6 @@ use crate::{
 const PLANE_TARGETS: &[Target] = &[
     Target::Face,
     Target::Datum(geop_core_math::primitives::DatumKind::Plane),
-    Target::BasePlane,
 ];
 
 /// Lines drawn within this slope of horizontal or vertical get that
@@ -179,9 +182,9 @@ fn glyph_key(key: &str) -> Option<ConstraintId> {
 /// The key of the visual among `visuals` the pointer is over, trying the
 /// kinds `stages` accept in order: a point drawn on the origin is that
 /// point, not the origin.
-fn hit_key(
-    visuals: &[Visual],
-    pointer: &Pointer,
+fn hit_key<S: Scalar>(
+    visuals: &[Visual<S>],
+    pointer: &Pointer<S>,
     stages: &[&dyn Fn(&str) -> bool],
 ) -> Option<String> {
     stages.iter().find_map(|accept| {
@@ -211,10 +214,15 @@ fn pt(sketch: &Sketch, id: PointId) -> P2 {
 }
 
 /// The edit in progress: what it works on, and where the plane is.
-struct Editing<'a> {
+struct Editing<'a, S: Scalar> {
     args: &'a mut AddSketchArgs,
     s: &'a mut SketchSession,
-    frame: Frame,
+    frame: CoordinateSystem<S>,
+}
+
+/// `p` of the sketch, in `frame`'s plane.
+fn to_world<S: Scalar>(frame: &CoordinateSystem<S>, p: P2) -> Vector3<S> {
+    frame.uv_to_xyz(&Vector2::from_array(p.map(S::from_f64)))
 }
 
 /// Solves `sketch`, pulling `drags` towards their targets, and records how
@@ -228,9 +236,16 @@ fn solve(sketch: &mut Sketch, s: &mut SketchSession, drags: &[(PointId, P2)]) {
     });
 }
 
-impl Editing<'_> {
+impl<S: Scalar> Editing<'_, S> {
     fn sketch(&self) -> &Sketch {
         &self.args.sketch
+    }
+
+    /// Where `pointer`'s ray meets the plane, in the sketch's coordinates,
+    /// and how far along the ray.
+    fn in_plane(&self, pointer: &Pointer<S>) -> Option<(P2, S)> {
+        let (t, p) = pointer.ray.intersect_uv_plane(&self.frame)?;
+        Some(([p[0].to_f64(), p[1].to_f64()], t))
     }
 
     /// Makes `next` the sketch, solved.
@@ -240,14 +255,14 @@ impl Editing<'_> {
     }
 
     /// What is drawn now: hit tests use these.
-    fn visuals(&self) -> Vec<Visual> {
+    fn visuals(&self) -> Vec<Visual<S>> {
         visuals(self.sketch(), self.s, &self.frame)
     }
 
     /// The point to use where `pointer` is, at `p` in the plane: the point
     /// drawn there, or a new one — fixed if placed on the origin,
     /// constrained onto a curve it is placed on.
-    fn place_point(&self, sketch: &mut Sketch, pointer: &Pointer, p: P2) -> PointId {
+    fn place_point(&self, sketch: &mut Sketch, pointer: &Pointer<S>, p: P2) -> PointId {
         let visuals = visuals(sketch, self.s, &self.frame);
         let hit = hit_key(&visuals, pointer, &[&is_point, &is_origin, &is_curve]);
         if let Some(existing) = hit.as_deref().and_then(point_key) {
@@ -284,7 +299,7 @@ impl Editing<'_> {
     }
 
     /// A click at `p` in the plane, `t` along the pointer's ray.
-    fn click(&mut self, pointer: &Pointer, p: P2, t: f64, shift: bool) {
+    fn click(&mut self, pointer: &Pointer<S>, p: P2, t: S, shift: bool) {
         let mut next = self.sketch().clone();
         match (self.s.tool, self.s.draft.clone()) {
             (Tool::Select, _) => self.select_at(pointer, shift),
@@ -316,7 +331,7 @@ impl Editing<'_> {
             }
             (Tool::Rectangle, Some(Draft::Rectangle { corner })) => {
                 let first = pt(&next, corner);
-                let tolerance = pointer.pixels(geop_ops::ui::hit::HIT_PX, t);
+                let tolerance = pointer.reach_at(1.0, t).to_f64();
                 if (p[0] - first[0]).abs() <= tolerance || (p[1] - first[1]).abs() <= tolerance {
                     return;
                 }
@@ -404,7 +419,7 @@ impl Editing<'_> {
     /// A click with the select tool: a constraint's glyph selects the
     /// constraint; a point or a curve joins the selection, or leaves it; the
     /// origin gets a point fixed there, selected, to constrain others to.
-    fn select_at(&mut self, pointer: &Pointer, shift: bool) {
+    fn select_at(&mut self, pointer: &Pointer<S>, shift: bool) {
         let visuals = self.visuals();
         let hit = hit_key(
             &visuals,
@@ -449,10 +464,8 @@ impl Editing<'_> {
 
     /// A drag with the select tool, grabbed at `from`: what was grabbed
     /// follows the pointer, as far as the constraints let it.
-    fn drag(&mut self, from: &Pointer, to: &Pointer, done: bool) {
-        let (Some((grab, _)), Some((p, _))) =
-            (self.frame.at_pointer(from), self.frame.at_pointer(to))
-        else {
+    fn drag(&mut self, from: &Pointer<S>, to: &Pointer<S>, done: bool) {
+        let (Some((grab, _)), Some((p, _))) = (self.in_plane(from), self.in_plane(to)) else {
             return;
         };
         if self.s.drag.is_none() {
@@ -642,8 +655,8 @@ impl Editing<'_> {
     }
 
     /// Where the pointer is over: what a click there would take.
-    fn hover(&mut self, pointer: &Pointer) {
-        self.s.cursor = self.frame.at_pointer(pointer).map(|(p, _)| p);
+    fn hover(&mut self, pointer: &Pointer<S>) {
+        self.s.cursor = self.in_plane(pointer).map(|(p, _)| p);
         let visuals = self.visuals();
         self.s.hover = if self.s.tool == Tool::Select {
             hit_key(
@@ -656,7 +669,7 @@ impl Editing<'_> {
         };
     }
 
-    fn event(&mut self, event: &Event) {
+    fn event(&mut self, event: &Event<S>) {
         match event {
             Event::Dialog { key, value } => self.dialog(key, value),
             Event::Key { key } => self.key(key),
@@ -673,7 +686,7 @@ impl Editing<'_> {
             } => match button {
                 Button::Secondary => self.finish_draft(),
                 Button::Primary => {
-                    if let Some((p, t)) = self.frame.at_pointer(pointer) {
+                    if let Some((p, t)) = self.in_plane(pointer) {
                         self.s.cursor = Some(p);
                         self.click(pointer, p, t, *shift);
                     }
@@ -694,7 +707,11 @@ impl Editing<'_> {
 
 /// What the sketch looks like in its plane `frame`, with what is selected,
 /// hovered and being drawn in `s`.
-fn visuals(sketch: &Sketch, s: &SketchSession, frame: &Frame) -> Vec<Visual> {
+fn visuals<S: Scalar>(
+    sketch: &Sketch,
+    s: &SketchSession,
+    frame: &CoordinateSystem<S>,
+) -> Vec<Visual<S>> {
     let report = match &s.solved {
         Some(Solved::Solved { report }) => Some(report),
         _ => None,
@@ -710,7 +727,7 @@ fn visuals(sketch: &Sketch, s: &SketchSession, frame: &Frame) -> Vec<Visual> {
     let failed_points: Vec<PointId> = failed.iter().flat_map(|c| c.points()).collect();
     let failed_curves: Vec<CurveId> = failed.iter().flat_map(|c| c.curves()).collect();
     let hovered = |key: &str| s.hover.as_deref() == Some(key);
-    let world = |p: P2| frame.to_world(p);
+    let world = |p: P2| to_world(frame, p);
     let positions = sketch.positions();
     let mut out = Vec::new();
 
@@ -727,17 +744,21 @@ fn visuals(sketch: &Sketch, s: &SketchSession, frame: &Frame) -> Vec<Visual> {
     ));
     if let Ok(regions) = sketch.regions() {
         for (i, region) in regions.iter().enumerate() {
-            let outer = region.outer.polyline(sketch, &positions);
+            let uv = |polyline: Vec<P2>| -> Vec<Vector2<S>> {
+                polyline
+                    .into_iter()
+                    .map(|p| Vector2::from_array(p.map(S::from_f64)))
+                    .collect()
+            };
+            let outer = uv(region.outer.polyline(sketch, &positions));
             let holes: Vec<_> = region
                 .holes
                 .iter()
-                .map(|h| h.polyline(sketch, &positions))
+                .map(|h| uv(h.polyline(sketch, &positions)))
                 .collect();
             out.push(Visual::new(
                 format!("region{i}"),
-                Shape::Triangles {
-                    triangles: frame.region(&outer, &holes),
-                },
+                Shape::region(frame, &outer, &holes),
                 Style::Region,
             ));
         }
@@ -830,7 +851,10 @@ fn visuals(sketch: &Sketch, s: &SketchSession, frame: &Frame) -> Vec<Visual> {
             Shape::Label {
                 at: world(at),
                 text,
-                offset: [14.0 + 22.0 * stack as f64, 12.0],
+                offset: frame
+                    .u()
+                    .prod_scalar(S::from_f64(1.5 + 2.5 * stack as f64))
+                    .add(&frame.v().prod_scalar(S::from_f64(1.3))),
             },
             style,
         ));
@@ -1026,8 +1050,8 @@ pub(crate) fn edit<S: Scalar>(
     ctx: &EditContext<S>,
     mut args: AddSketchArgs,
     mut s: SketchSession,
-    event: Option<&Event>,
-) -> Edited<AddSketchArgs, SketchSession> {
+    event: Option<&Event<S>>,
+) -> Edited<AddSketchArgs, SketchSession, S> {
     if s.mode.is_none() {
         // A new sketch starts by picking its plane, an existing one in the
         // drawing.
@@ -1040,12 +1064,11 @@ pub(crate) fn edit<S: Scalar>(
     if s.solved.is_none() {
         solve(&mut args.sketch, &mut s, &[]);
     }
-    let plane = resolve_plane(ctx.part, &args.plane).map(|p| Frame::of(&p));
+    let plane = resolve_plane(ctx.part, &args.plane);
 
     if let Some(event) = event {
-        match (s.mode, &plane) {
+        match (s.mode, plane) {
             (Some(Mode::Draw), Ok(frame)) => {
-                let frame = *frame;
                 Editing {
                     args: &mut args,
                     s: &mut s,
@@ -1057,7 +1080,7 @@ pub(crate) fn edit<S: Scalar>(
         }
     }
 
-    let plane = resolve_plane(ctx.part, &args.plane).map(|p| Frame::of(&p));
+    let plane = resolve_plane(ctx.part, &args.plane);
     let presentation = match (s.mode, plane) {
         (Some(Mode::Draw), Ok(frame)) => {
             let visuals = visuals(&args.sketch, &s, &frame);
@@ -1089,7 +1112,7 @@ fn setup_event<S: Scalar>(
     ctx: &EditContext<S>,
     args: &mut AddSketchArgs,
     s: &mut SketchSession,
-    event: &Event,
+    event: &Event<S>,
 ) {
     match event.dialog() {
         Some(("plane", _)) => s.pick.toggle("plane"),
@@ -1115,11 +1138,11 @@ fn setup_event<S: Scalar>(
 }
 
 /// What is shown while the plane is being chosen.
-fn setup_presentation(
+fn setup_presentation<S: Scalar>(
     args: &AddSketchArgs,
     s: &SketchSession,
     plane_error: Option<String>,
-) -> Presentation {
+) -> Presentation<S> {
     let mut d = geop_ops::ui::Dialog::new();
     let picking = s.pick.is("plane");
     d.pick_button("plane", format!("plane: {}", args.plane.label()), picking);
@@ -1166,11 +1189,14 @@ fn setup_presentation(
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::scalars::ScalInF64 as S;
+    use geop_core_math::{
+        primitives::{DatumComponent, FrameAxis, Ray},
+        scalars::ScalInF64 as S,
+    };
     use geop_ops::{
-        Part,
+        ORIGIN, Part,
         operation::Operation,
-        ui::{Control, PartView, PixelScale},
+        ui::{Control, PartView, Reach},
     };
 
     use super::*;
@@ -1179,10 +1205,10 @@ mod tests {
     /// A sketch step being edited on an empty part, as an editor drives it.
     struct Editor {
         part: Part<S>,
-        view: PartView,
+        view: PartView<S>,
         args: AddSketchArgs,
         session: SketchSession,
-        presentation: Presentation,
+        presentation: Presentation<S>,
     }
 
     impl Editor {
@@ -1201,7 +1227,7 @@ mod tests {
             editor
         }
 
-        fn send(&mut self, event: Option<Event>) {
+        fn send(&mut self, event: Option<Event<S>>) {
             let ctx = EditContext {
                 part: &self.part,
                 view: &self.view,
@@ -1252,19 +1278,23 @@ mod tests {
         }
     }
 
-    /// Straight down onto the `Z` plane at `(x, y)`, a thousandth of a unit
-    /// per pixel.
-    fn down(x: f64, y: f64) -> Pointer {
+    fn v(p: [f64; 3]) -> Vector3<S> {
+        Vector3::from_array(p.map(S::from_f64))
+    }
+
+    /// A pointer from `origin` along `dir`, reaching 0.009 units.
+    fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
         Pointer {
-            origin: [x, y, 10.0],
-            dir: [0.0, 0.0, -1.0],
-            right: [1.0, 0.0, 0.0],
-            up: [0.0, 1.0, 0.0],
-            pixel: PixelScale {
-                at_origin: 0.001,
-                per_distance: 0.0,
+            ray: Ray::try_new(v(origin), v(dir)).unwrap(),
+            reach: Reach::Tube {
+                radius: S::from_f64(0.009),
             },
         }
+    }
+
+    /// Straight down onto the `xy` plane at `(x, y)`.
+    fn down(x: f64, y: f64) -> Pointer<S> {
+        pointer([x, y, 10.0], [0.0, 0.0, -1.0])
     }
 
     /// Straight into drawing on the default plane.
@@ -1285,19 +1315,14 @@ mod tests {
         let mut e = Editor::new();
         assert!(e.session.pick.is("plane"));
         assert!(e.presentation.focus.is_none());
-        assert!(e.presentation.pickable.contains(&Target::BasePlane));
-        // The Y plane's square on the origin's gizmo, 90 pixels of a
-        // thousandth each: seen from the front, at (0.04, 0, 0.04).
-        let front = Pointer {
-            origin: [0.04, -10.0, 0.04],
-            dir: [0.0, 1.0, 0.0],
-            right: [1.0, 0.0, 0.0],
-            up: [0.0, 0.0, 1.0],
-            pixel: PixelScale {
-                at_origin: 0.001,
-                per_distance: 0.0,
-            },
-        };
+        assert!(
+            e.presentation
+                .pickable
+                .contains(&Target::Datum(geop_core_math::primitives::DatumKind::Plane))
+        );
+        // The origin's zx plane's square, ten reaches of 0.009 from the
+        // origin: seen from the front, at (0.04, 0, 0.04).
+        let front = pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]);
         e.send(Some(Event::Click {
             pointer: front,
             button: Button::Primary,
@@ -1306,12 +1331,10 @@ mod tests {
         }));
         assert_eq!(
             e.args.plane,
-            EntityRef::Plane {
-                normal: geop_ops::WorldAxis::Y
-            }
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y))
         );
         let focus = e.presentation.focus.expect("drawing faces the plane");
-        assert_eq!(focus.normal, [0.0, 1.0, 0.0]);
+        assert_eq!(*focus.w(), v([0.0, 1.0, 0.0]));
     }
 
     /// Lines chain; one drawn nearly horizontal is constrained horizontal,

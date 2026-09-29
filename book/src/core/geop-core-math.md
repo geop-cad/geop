@@ -174,4 +174,11 @@ iteration of a search.
 stands for — its origin (`Point`), the line along its `w` (`Axis`), the
 plane normal to it (`Plane`), or the whole frame (`Frame`, a coordinate
 system). Every datum carries the whole frame whatever its kind, so anything
-built on it has axes to be built along.
+built on it has axes to be built along. A frame's axes and the planes
+between them can each be used on their own: `Datum::component` gives the
+`DatumComponent` — an axis, or the plane normal to one — as a datum of its
+own.
+
+`Ray` is a half-line from a point along a unit direction, and how near it
+passes to what it might hit: a point, a segment, a triangle, a plane, the
+nearest point of a line — what picking in a viewer is built on.

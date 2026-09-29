@@ -13,8 +13,8 @@ format itself.
 ## The part
 
 
-A `Part<S>` holds a topology `Model`, the `PlacedSketch`es and `Datum`s
-used to build it, and a `NameRegistry` mapping every vertex, edge, face,
+The `part` module. A `Part<S>` holds a topology `Model`, the
+`PlacedSketch`es and `Datum`s used to build it, and a `NameRegistry` mapping every vertex, edge, face,
 solid, sketch and datum to exactly one name, and every name to exactly one
 entity.
 
@@ -33,7 +33,10 @@ construction, not by the diligence of each caller.
   systems the part is built *with*, not *of* (the `Datum` of
   [geop-core-math](../core/geop-core-math.md#render-primitives)). Every datum
   carries a full right-handed frame, so anything built on it has axes to be
-  built along.
+  built along. Every part starts with one: the coordinate system `origin`
+  (`geop_ops::ORIGIN`), the world's origin and axes. A coordinate system
+  stands for its origin, its three axes and the three planes between them,
+  each usable on its own (`DatumComponent`).
 - **Lookups by name** (`vertex_id`, `edge_id`, `face_id`, `solid_id`,
   `sketch_id`, `datum_id`, and `coedge_id(edge, face)`) are what every
   operation that refers to existing entities is built on.
@@ -100,8 +103,10 @@ one-line `summary`, and the sketches and datums a step builds on
   half-drawn curve, which field waits for a pick, what the pointer is over.
   It is never saved, and starts afresh whenever an editor opens a step.
 - **The event** is what the user did: a dialog control used, a hover, a
-  click or a drag in the viewport — each a `Pointer`, the ray through the
-  cursor with what a screen pixel measures along it — or a key.
+  click or a drag in the viewport — each a `Pointer`: the `Ray` from the eye
+  through the cursor, and its `Reach`, how far from the ray it counts as
+  under it (a cone from the eye in perspective, a tube in an orthographic
+  view) — or a key. The kernel knows nothing else of the viewport.
 - **The presentation** is what to show: a `Dialog` — an ordered list of
   keyed primitives: headings, texts, buttons, checkboxes, sliders, selects,
   lists — and `Visual`s to draw in the viewport: points, polylines, filled
@@ -116,20 +121,26 @@ Rust, where it can be tested. The `ui` module holds the helpers that make
 operations answer consistently:
 
 - **Hit tests** against visuals (`hit::hit_visuals`) and against the part
-  as drawn (`PartView::pick`): tolerances in screen pixels, the smallest
-  entity under the pointer winning — a vertex over an edge over a face, the
-  origin over an axis over a base plane. `PartView` is the part as the
-  viewport draws it — its rasterization, sketch outlines, datums and the
-  origin's gizmo, laid out by the same sizes the viewer draws them at — so a
-  pick cannot disagree with what is on screen.
+  as drawn (`PartView::pick`): near means within the pointer's reach, and
+  the smallest entity under it wins — a vertex over an edge over a face, a
+  coordinate system's origin over its axes over its planes. What the viewer
+  draws at a constant size on screen — handles, labels, coordinate systems —
+  is laid out in reaches. `PartView` is the part as the viewport draws it —
+  its rasterization, sketch outlines and datums, laid out by the same sizes
+  the viewer draws them at — so a pick cannot disagree with what is on
+  screen. The ray geometry itself — how near a ray passes to a point, a
+  segment, a triangle, a plane — is `geop_core_math::primitives::Ray`'s, and
+  all of it is in the part's scalar type.
 - **`Picking`**: a dialog field waiting for an entity; a hover finds what a
   click would pick, a click picks it.
 - **`Dragging`**: a handle dragged along its direction, the value following
-  the pointer's projection onto the handle's track.
+  how far the pointer has moved along the handle's track, from the ray where
+  the drag started to the ray where it is now.
 
 **Entity references.** A step that builds on existing geometry names it
-with an `EntityRef`: the `Origin`, a world `Axis`, a base `Plane`, or a
-`Vertex`, `Edge`, `Face`, `Solid`, `Sketch` or datum of the part by name.
+with an `EntityRef`: a `Vertex`, `Edge`, `Face`, `Solid`, `Sketch` or
+`Datum` of the part by name — for a coordinate system, perhaps only one of
+its axes or planes.
 What an entity *is* (its `Geometry`: a point, a line, a plane, an arc,
 something round) is decided by its shape, not its kind, using
 `geop-core-geometry`'s shape recognition: a straight edge is a line, a
@@ -160,7 +171,7 @@ operation, so the set carries a step's session as JSON.
 
 ## Programs
 
-`Program`, `ProgramEdit` and `ProgramRunner` are generic over the operation
+The `program` module. `Program`, `ProgramEdit` and `ProgramRunner` are generic over the operation
 set a program is written in.
 
 A `Program` is an ordered list of `Step`s, each an operation with its
@@ -174,7 +185,7 @@ name.
 ```rust,ignore
 let mut program = Program::new();
 program.push("outline", AddSketchArgs {
-    plane: EntityRef::Plane { normal: WorldAxis::Z },
+    plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
     sketch: solved(outline),
 });
 program.push("box", ExtrudeArgs {

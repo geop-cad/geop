@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_core_topology::{CoedgeGeometry, Sense, boundary::BoundaryType};
 use serde::{Deserialize, Serialize};
 
-use crate::{ids::RefId, part::Part};
+use super::{Part, ids::RefId};
 
 /// A face's boundary loops, each as the coedges it runs through: `+E` / `-E`
 /// for edge `E` traversed forwards / backwards, `@V` for a degenerate

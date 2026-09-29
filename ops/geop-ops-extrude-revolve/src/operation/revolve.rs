@@ -102,8 +102,8 @@ impl Operation for Revolve {
         ctx: &EditContext<S>,
         mut args: RevolveArgs,
         mut s: SweepSession,
-        event: Option<&Event>,
-    ) -> Edited<RevolveArgs, SweepSession> {
+        event: Option<&Event<S>>,
+    ) -> Edited<RevolveArgs, SweepSession, S> {
         if let Some(event) = event {
             match event.dialog() {
                 Some(("sketch", _)) => s.pick.toggle("sketch"),

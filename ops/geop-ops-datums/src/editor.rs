@@ -2,13 +2,13 @@
 //! the constructions that fit that, setting the values the construction
 //! takes — and dragging offsets as handles.
 
-use geop_core_math::{primitives::DatumKind, scalars::Scalar};
+use geop_core_math::{primitives::DatumKind, scalars::Scalar, vector::Vector3};
 use geop_ops::{
     EditContext, Edited, Part,
     operation::EntityRef,
     ui::{
-        Choice, Dialog, DialogValue, Dragging, Event, Frame, ListItem, Picked, Picking,
-        Presentation, SelectStyle, Shape, Style, Target, Tone, Visual,
+        Choice, Dialog, DialogValue, Dragging, Event, ListItem, Picked, Picking, Presentation,
+        SelectStyle, Shape, Style, Target, Tone, Visual,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -27,9 +27,6 @@ const SELECTION_TARGETS: &[Target] = &[
     Target::Datum(DatumKind::Axis),
     Target::Datum(DatumKind::Plane),
     Target::Datum(DatumKind::Frame),
-    Target::Origin,
-    Target::Axis,
-    Target::BasePlane,
 ];
 
 /// How far out along its axis an offset point's handle sits, in world
@@ -72,30 +69,29 @@ fn needs(construction: &ConstructionSchema) -> String {
 /// plane's distance on the plane, sliding along its normal; an offset
 /// point's `x`, `y`, `z` a little out along each axis, sliding along it.
 /// None for a step that does not build.
-fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Vec<Visual> {
+fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Vec<Visual<S>> {
     let Ok(built) = args
         .inputs(part)
         .and_then(|inputs| args.construction.build(&inputs))
     else {
         return Vec::new();
     };
-    let f = Frame::of(&built);
-    let handle = |key: &str, d: [f64; 3], out: f64| {
+    let handle = |key: &str, d: &Vector3<S>, out: f64| {
         Visual::new(
             key,
             Shape::Handle {
-                at: [0, 1, 2].map(|k| f.origin[k] + d[k] * out),
-                direction: Some(d),
+                at: built.origin().add(&d.prod_scalar(S::from_f64(out))),
+                direction: Some(*d),
             },
             Style::Handle,
         )
     };
     match args.construction {
-        Construction::Offset { .. } => vec![handle("distance", f.normal, 0.0)],
+        Construction::Offset { .. } => vec![handle("distance", built.w(), 0.0)],
         Construction::Point { .. } => vec![
-            handle("x", f.u, POINT_HANDLE_OUT),
-            handle("y", f.v, POINT_HANDLE_OUT),
-            handle("z", f.normal, POINT_HANDLE_OUT),
+            handle("x", built.u(), POINT_HANDLE_OUT),
+            handle("y", built.v(), POINT_HANDLE_OUT),
+            handle("z", built.w(), POINT_HANDLE_OUT),
         ],
         _ => Vec::new(),
     }
@@ -116,7 +112,7 @@ fn event<S: Scalar>(
     ctx: &EditContext<S>,
     args: &mut AddDatumArgs,
     s: &mut DatumSession,
-    event: &Event,
+    event: &Event<S>,
 ) {
     match event.dialog() {
         Some(("selection", _)) => s.pick.toggle("selection"),
@@ -288,8 +284,8 @@ pub(crate) fn edit<S: Scalar>(
     ctx: &EditContext<S>,
     mut args: AddDatumArgs,
     mut s: DatumSession,
-    event_: Option<&Event>,
-) -> Edited<AddDatumArgs, DatumSession> {
+    event_: Option<&Event<S>>,
+) -> Edited<AddDatumArgs, DatumSession, S> {
     if !s.started {
         s.started = true;
         if args.selection.is_empty() {

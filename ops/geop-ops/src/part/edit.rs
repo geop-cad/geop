@@ -5,7 +5,7 @@
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 use geop_core_topology::{Edge, EdgeId, FaceId, SolidId, Vertex, VertexId};
 
-use crate::part::Part;
+use super::Part;
 
 impl<S: Scalar> Part<S> {
     /// Forwards to [`geop_core_topology::Model::insert_vertex`]: a vertex on

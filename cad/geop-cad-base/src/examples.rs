@@ -4,8 +4,9 @@
 //! the recipe it is: `extrude(box,end)` is the end cap of the step `box`,
 //! whatever internal id it happens to get.
 
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_sketch::{Constraint, CurveId, PointId, Sketch};
-use geop_ops::{EntityRef, WorldAxis};
+use geop_ops::{EntityRef, ORIGIN};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
@@ -94,9 +95,7 @@ pub fn box_with_drill_hole() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: solved(outline),
         },
     );
@@ -150,9 +149,7 @@ pub fn bracket() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: solved(outline),
         },
     );
@@ -251,9 +248,7 @@ pub fn cross_drilled_shaft() -> Program {
     program.push(
         "section",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::X,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::X)),
             sketch: solved(section),
         },
     );
@@ -273,9 +268,7 @@ pub fn cross_drilled_shaft() -> Program {
     program.push(
         "bore_sketch",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Y,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
             sketch: solved(bore),
         },
     );
@@ -304,9 +297,7 @@ pub fn two_plates() -> Program {
     program.push(
         "plates_sketch",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: solved(plates),
         },
     );
@@ -334,9 +325,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: solved(outline),
         },
     );
@@ -363,9 +352,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "boss_sketch",
         AddSketchArgs {
-            plane: EntityRef::Datum {
-                name: "lifted".into(),
-            },
+            plane: EntityRef::datum("lifted"),
             sketch: solved(boss),
         },
     );
@@ -435,9 +422,7 @@ pub fn handle_with_hole() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: solved(outline),
         },
     );
@@ -457,9 +442,7 @@ pub fn handle_with_hole() -> Program {
     program.push(
         "hole_sketch",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Y,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
             sketch: solved(hole),
         },
     );
@@ -534,9 +517,7 @@ pub fn luggage_tag() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: solved(outline),
         },
     );
@@ -765,7 +746,7 @@ mod tests {
             description.solids.keys().collect::<Vec<_>>(),
             ["extrude(boss)"]
         );
-        assert_eq!(description.datums, ["lifted"]);
+        assert_eq!(description.datums, ["lifted", "origin"]);
         // The boss stands on the box: from the box's top up to the plane.
         assert_eq!(
             inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),

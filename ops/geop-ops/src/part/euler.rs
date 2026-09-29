@@ -15,7 +15,7 @@ use geop_core_math::{
 };
 use geop_core_topology::{CoedgeId, EdgeId, FaceId, SolidId, VertexId, boundary::BoundaryType};
 
-use crate::part::Part;
+use super::Part;
 
 impl<S: Scalar> Part<S> {
     /// Forwards to [`geop_core_topology::Model::mvfs`], naming the new

@@ -161,8 +161,8 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 &self,
                 ctx: &::geop_ops::operation::EditContext<S>,
                 session: #private::Value,
-                event: ::std::option::Option<&::geop_ops::ui::Event>,
-            ) -> ::geop_ops::operation::Edited<Self, #private::Value> {
+                event: ::std::option::Option<&::geop_ops::ui::Event<S>>,
+            ) -> ::geop_ops::operation::Edited<Self, #private::Value, S> {
                 match self {
                     #(#edit_arms)*
                 }

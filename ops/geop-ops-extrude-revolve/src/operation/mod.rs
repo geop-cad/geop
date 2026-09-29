@@ -44,7 +44,11 @@ fn sketch_field<S: Scalar>(d: &mut Dialog, before: &Part<S>, sketch: &str, pick:
 }
 
 /// The sketch `event` picks, if the sketch field is waiting for a pick.
-fn pick_sketch(view: &PartView, event: &Event, pick: &mut Picking) -> Option<String> {
+fn pick_sketch<S: Scalar>(
+    view: &PartView<S>,
+    event: &Event<S>,
+    pick: &mut Picking,
+) -> Option<String> {
     if !pick.is("sketch") {
         return None;
     }

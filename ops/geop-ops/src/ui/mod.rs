@@ -2,7 +2,7 @@
 //!
 //! An editor never edits a step's arguments itself. It sends what the user
 //! did — an [`Event`]: a dialog control used, a click or a drag in the 3-D
-//! viewport, a key — to [`crate::Operation::edit`], which answers with new
+//! viewport as a ray from the eye, a key — to [`crate::Operation::edit`], which answers with new
 //! arguments, a new session (the temporary state of the edit: a tool in
 //! hand, a half-drawn line, what is being picked) and a [`Presentation`]:
 //! the [`Dialog`] to show and the [`Visual`]s to draw. The editor reruns the
@@ -24,7 +24,7 @@ pub mod view;
 mod visual;
 
 pub use dialog::{ButtonItem, Choice, Control, Dialog, Field, ListItem, SelectStyle, Tone};
-pub use event::{Button, DialogValue, Event, PixelScale, Pointer};
+pub use event::{Button, DialogValue, Event, Pointer, Reach};
 pub use interaction::{DRAG_SNAP, Dragging, Picked, Picking};
 pub use view::{Extent, PartHit, PartView, Target};
-pub use visual::{Frame, Presentation, Shape, Style, Visual};
+pub use visual::{Presentation, Shape, Style, Visual};

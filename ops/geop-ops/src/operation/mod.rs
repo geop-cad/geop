@@ -31,7 +31,7 @@
 
 mod entity;
 
-pub use entity::{EntityRef, Geometry, Role, WorldAxis, frame_along, resolve_plane, world_frame};
+pub use entity::{EntityRef, Geometry, Role, frame_along, resolve_plane};
 
 pub use geop_ops_derive::Operations;
 
@@ -48,21 +48,21 @@ use crate::{
 /// picking.
 pub struct EditContext<'a, S: Scalar> {
     pub part: &'a Part<S>,
-    pub view: &'a PartView,
+    pub view: &'a PartView<S>,
 }
 
 /// What an edit gives: the step's new arguments, the edit's new session,
 /// and what to show.
 #[derive(Clone, Debug)]
-pub struct Edited<A, T> {
+pub struct Edited<A, T, S: Scalar> {
     pub args: A,
     pub session: T,
-    pub presentation: Presentation,
+    pub presentation: Presentation<S>,
 }
 
-impl<A, T> Edited<A, T> {
+impl<A, T, S: Scalar> Edited<A, T, S> {
     /// The same edit, with its arguments turned into `f(args)`.
-    pub fn map_args<B>(self, f: impl FnOnce(A) -> B) -> Edited<B, T> {
+    pub fn map_args<B>(self, f: impl FnOnce(A) -> B) -> Edited<B, T, S> {
         Edited {
             args: f(self.args),
             session: self.session,
@@ -116,8 +116,8 @@ pub trait Operation {
         ctx: &EditContext<S>,
         args: Self::Args,
         session: Self::Session,
-        event: Option<&Event>,
-    ) -> Edited<Self::Args, Self::Session>;
+        event: Option<&Event<S>>,
+    ) -> Edited<Self::Args, Self::Session, S>;
 
     /// The arguments in one line, for a list of steps:
     /// `sketch=outline, distance=1.00`.
@@ -139,8 +139,8 @@ pub fn edit_json<S: Scalar, O: Operation>(
     ctx: &EditContext<S>,
     args: O::Args,
     session: serde_json::Value,
-    event: Option<&Event>,
-) -> Edited<O::Args, serde_json::Value> {
+    event: Option<&Event<S>>,
+) -> Edited<O::Args, serde_json::Value, S> {
     let session = serde_json::from_value(session).unwrap_or_default();
     let edited = op.edit(ctx, args, session, event);
     Edited {
@@ -176,8 +176,8 @@ pub trait Operations: Clone + std::fmt::Debug + PartialEq + Serialize + Deserial
         &self,
         ctx: &EditContext<S>,
         session: serde_json::Value,
-        event: Option<&Event>,
-    ) -> Edited<Self, serde_json::Value>;
+        event: Option<&Event<S>>,
+    ) -> Edited<Self, serde_json::Value, S>;
 
     /// See [`Operation::summary`].
     fn summary(&self) -> String;

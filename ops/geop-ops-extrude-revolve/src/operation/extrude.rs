@@ -5,13 +5,14 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
+    vector::Vector2,
     with_context,
 };
 use geop_core_sketch::{ProfilePiece, Sketch, profile::curve_polyline};
 use geop_ops::{
     EditContext, Edited, Namer, Part,
     operation::{EntityRef, Operation},
-    ui::{Dialog, DialogValue, Dragging, Event, Frame, Presentation, Shape, Style, Visual},
+    ui::{Dialog, DialogValue, Dragging, Event, Presentation, Shape, Style, Visual},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
@@ -67,19 +68,18 @@ pub struct ExtrudeArgs {
 /// The distance, as a handle at the centre of the end cap that slides along
 /// the sketch plane's normal — and how far the handle moves per unit of
 /// distance. None while the sketch cannot be found.
-fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<(Visual, f64)> {
+fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<(Visual<S>, f64)> {
     let placed = before.sketch(before.sketch_id(&args.sketch).ok()?).ok()?;
-    let center = sketch_center(&placed.sketch)?;
-    let plane = Frame::of(&placed.plane);
-    let at = plane.to_world(center);
+    let plane = &placed.plane;
+    let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?);
     // A symmetric extrude's end cap is half the distance off the plane.
     let scale = if args.symmetric { 0.5 } else { 1.0 };
-    let offset = args.distance * scale;
+    let normal = *plane.w();
     let handle = Visual::new(
         "distance",
         Shape::Handle {
-            at: [0, 1, 2].map(|k| at[k] + plane.normal[k] * offset),
-            direction: Some(plane.normal),
+            at: center.add(&normal.prod_scalar(S::from_f64(args.distance * scale))),
+            direction: Some(normal),
         },
         Style::Handle,
     );
@@ -109,8 +109,8 @@ impl Operation for Extrude {
         ctx: &EditContext<S>,
         mut args: ExtrudeArgs,
         mut s: SweepSession,
-        event: Option<&Event>,
-    ) -> Edited<ExtrudeArgs, SweepSession> {
+        event: Option<&Event<S>>,
+    ) -> Edited<ExtrudeArgs, SweepSession, S> {
         if let Some(event) = event {
             let mut distance = None;
             match event.dialog() {
@@ -125,7 +125,7 @@ impl Operation for Extrude {
             if let Some(sketch) = pick_sketch(ctx.view, event, &mut s.pick) {
                 args.sketch = sketch;
             }
-            let handles: Vec<Visual> = distance_handle(ctx.part, &args)
+            let handles: Vec<Visual<S>> = distance_handle(ctx.part, &args)
                 .map(|(h, _)| h)
                 .into_iter()
                 .collect();
@@ -293,7 +293,7 @@ pub(crate) fn sketch_profile<S: Scalar>(
 
 /// The centre of the box around what `sketch` draws — its profile curves,
 /// or its points if it has none — in sketch coordinates.
-fn sketch_center(sketch: &Sketch) -> Option<[f64; 2]> {
+fn sketch_center<S: Scalar>(sketch: &Sketch) -> Option<Vector2<S>> {
     let positions = sketch.positions();
     let mut drawn: Vec<[f64; 2]> = sketch
         .curves
@@ -304,14 +304,12 @@ fn sketch_center(sketch: &Sketch) -> Option<[f64; 2]> {
     if drawn.is_empty() {
         drawn = positions.into_values().collect();
     }
-    let (lo, hi) = drawn.iter().fold(
-        ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
-        |(lo, hi), p| {
-            (
-                [lo[0].min(p[0]), lo[1].min(p[1])],
-                [hi[0].max(p[0]), hi[1].max(p[1])],
-            )
-        },
-    );
-    (!drawn.is_empty()).then(|| [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0])
+    let hull = drawn
+        .into_iter()
+        .map(|p| Vector2::from_array(p.map(S::from_f64)))
+        .reduce(|a, b| a.union(&b))?;
+    Some(Vector2::from_array([
+        hull[0].midpoint(),
+        hull[1].midpoint(),
+    ]))
 }

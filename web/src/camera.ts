@@ -25,6 +25,14 @@ export const CAMERA_FOV = 50;
  */
 export type Projection = "perspective" | "orthographic";
 
+/**
+ * How far the pointer reaches, in pixels: what counts as under it (see
+ * `geop_ops::ui::Reach`). Whatever is drawn at a constant size on screen is
+ * laid out in reaches in the kernel, and drawn here as this many pixels
+ * each.
+ */
+export const REACH_PX = 9;
+
 /** What one screen pixel measures, in world units, at `at` — for a viewport `height` pixels tall. */
 export function worldPerPixel(camera: THREE.Camera, at: THREE.Vector3, height: number): number {
   if (camera instanceof THREE.OrthographicCamera) return (camera.top - camera.bottom) / camera.zoom / Math.max(height, 1);
@@ -37,7 +45,7 @@ export const DEFAULT_POSE: CameraPose = { position: [3, 2, 4], target: [0, 0, 0]
 /** A point of the plane `frame`, `height` above it, in world coordinates. */
 function planeToWorld(frame: Frame, p: [number, number], height = 0): Vec3 {
   return [0, 1, 2].map(
-    (k) => frame.origin[k] + p[0] * frame.u[k] + p[1] * frame.v[k] + height * frame.normal[k],
+    (k) => frame.origin[k] + p[0] * frame.u[k] + p[1] * frame.v[k] + height * frame.w[k],
   ) as Vec3;
 }
 

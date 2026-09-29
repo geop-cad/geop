@@ -1,19 +1,34 @@
+//! [`Part`]: the topology, sketches and datums of a part, each named, and
+//! the names themselves ([`NameRegistry`], [`Namer`]) — changed only through
+//! `Part`'s own methods, so no entity is ever without a name.
+
 use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::Datum,
+    primitives::{CoordinateSystem, Datum, DatumKind},
     scalars::Scalar,
+    vector::Vector3,
 };
 use geop_core_topology::Model;
 
-use crate::ids::{DatumId, RefId, SketchId};
-use crate::names::NameRegistry;
-use crate::sketch::PlacedSketch;
+mod datum;
+mod describe;
+mod edit;
+mod euler;
+mod ids;
+mod names;
+mod resolve;
+mod sketch;
+
+pub use describe::{EdgeDescription, FaceDescription, PartDescription};
+pub use ids::{DatumId, RefId, SketchId};
+pub use names::{NameRegistry, Namer, validate_operation_id};
+pub use sketch::PlacedSketch;
 
 /// A complete, editable CAD part: its boundary-representation topology, the
-/// sketches and datums used to build it, and a name for every one of those
-/// entities.
+/// sketches and datums used to build it — starting with the frame
+/// [`ORIGIN`] — and a name for every one of those entities.
 ///
 /// The fields are private: the only way to change a part is through its
 /// methods, each of which forwards straight to the identically named
@@ -33,15 +48,28 @@ pub struct Part<S: Scalar> {
     next_id: u64,
 }
 
+/// The name of the frame datum every part starts with: the world's origin
+/// and axes, and the three planes between them (see
+/// [`geop_core_math::primitives::DatumComponent`]).
+pub const ORIGIN: &str = "origin";
+
 impl<S: Scalar> Part<S> {
+    /// A part with nothing in it but the frame [`ORIGIN`].
     pub fn new() -> Self {
-        Self {
+        let mut part = Self {
             topology: Model::new(),
             names: NameRegistry::new(),
             sketches: BTreeMap::new(),
             datums: BTreeMap::new(),
             next_id: 1,
-        }
+        };
+        let origin = Datum {
+            kind: DatumKind::Frame,
+            frame: CoordinateSystem::world_at(Vector3::zero()),
+        };
+        part.add_datum(origin, ORIGIN)
+            .expect("a new part has no names taken");
+        part
     }
 
     /// The part's topology, to query. Changing it goes through `Part`'s own
@@ -145,7 +173,6 @@ mod tests {
     use geop_core_sketch::Sketch;
 
     use super::*;
-    use crate::PlacedSketch;
 
     fn origin() -> Vector3<ScalInF64> {
         Vector3::from_array([ScalInF64::from_f64(0.0); 3])

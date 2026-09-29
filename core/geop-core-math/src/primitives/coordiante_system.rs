@@ -10,7 +10,7 @@ use core::fmt::Display;
 /// letting a caller convert a point's coordinates between this frame
 /// (`uvw` space, relative to `origin`) and the ambient `xyz` space it was
 /// itself expressed in.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CoordinateSystem<S: Scalar> {
     origin: Vector3<S>,
     u: Vector3<S>,
@@ -56,6 +56,12 @@ impl<S: Scalar> CoordinateSystem<S> {
         })
     }
 
+    /// The world's own axes `x`, `y` and `z`, at `origin`.
+    pub fn world_at(origin: Vector3<S>) -> Self {
+        Self::try_new(origin, Vector3::axis(0), Vector3::axis(1), Vector3::axis(2))
+            .expect("the world's axes are independent")
+    }
+
     pub fn origin(&self) -> &Vector3<S> {
         &self.origin
     }
@@ -97,6 +103,19 @@ impl<S: Scalar> CoordinateSystem<S> {
             p.prod_dot(&self.v_star),
             p.prod_dot(&self.w_star),
         ])
+    }
+}
+
+/// Serializes as `{origin, u, v, w}`, for a viewer.
+impl<S: Scalar> serde::Serialize for CoordinateSystem<S> {
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("CoordinateSystem", 4)?;
+        s.serialize_field("origin", &self.origin)?;
+        s.serialize_field("u", &self.u)?;
+        s.serialize_field("v", &self.v)?;
+        s.serialize_field("w", &self.w)?;
+        s.end()
     }
 }
 

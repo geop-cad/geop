@@ -1,40 +1,61 @@
 //! [`Event`]: what the user did, as an operation receives it.
 
+use geop_core_math::{
+    primitives::Ray,
+    scalars::{Scalar, as_f64},
+};
 use serde::{Deserialize, Serialize};
 
-/// How big a screen pixel is along a [`Pointer`]'s ray: at distance `t`
-/// from its origin, `at_origin + per_distance * t` world units. A
-/// perspective view has `at_origin = 0`, an orthographic one
-/// `per_distance = 0`.
-///
-/// Plain `f64`, like everything an editor sends: it is a UI tolerance
-/// derived from screen pixels, not a geometric quantity the kernel reasons
-/// about.
+/// How far from its ray a [`Pointer`] reaches: what counts as under it, at
+/// any distance along the ray. Everything a viewer draws at a constant size
+/// on screen — a handle, a label, a frame datum — is laid out in reaches,
+/// so it is hit where it is drawn however far away or zoomed in the view is.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PixelScale {
-    pub at_origin: f64,
-    pub per_distance: f64,
+#[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
+pub enum Reach<S: Scalar> {
+    /// Seen in perspective: a cone around the ray, from its origin — the
+    /// eye — widening by `slope` per unit of distance.
+    Cone {
+        #[serde(with = "as_f64")]
+        slope: S,
+    },
+    /// Seen orthographically: a tube of `radius` around the ray.
+    Tube {
+        #[serde(with = "as_f64")]
+        radius: S,
+    },
 }
 
-impl PixelScale {
-    /// World units per pixel at distance `t` along the ray.
-    pub fn at(&self, t: f64) -> f64 {
-        self.at_origin + self.per_distance * t.max(0.0)
+impl<S: Scalar> Reach<S> {
+    /// How far from the ray it reaches, `t` along it.
+    pub fn at(&self, t: S) -> S {
+        match *self {
+            Reach::Cone { slope } => slope.mul(t),
+            Reach::Tube { radius } => radius,
+        }
     }
 }
 
-/// Where the pointer is: the ray from the eye through it, and enough about
-/// the view to turn screen pixels into world units along it.
+/// Where the pointer is: the ray from the eye through it, and how far from
+/// that ray it reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Pointer {
-    pub origin: [f64; 3],
-    /// Unit length, so a distance along the ray is a distance in the world.
-    pub dir: [f64; 3],
-    /// The screen's right and up, as unit directions in the world: what an
-    /// offset on screen measures there.
-    pub right: [f64; 3],
-    pub up: [f64; 3],
-    pub pixel: PixelScale,
+#[serde(bound = "S: Scalar")]
+pub struct Pointer<S: Scalar> {
+    pub ray: Ray<S>,
+    pub reach: Reach<S>,
+}
+
+impl<S: Scalar> Pointer<S> {
+    /// `reaches` of the pointer's reach, `t` along its ray.
+    pub fn reach_at(&self, reaches: f64, t: S) -> S {
+        self.reach.at(t).mul(S::from_f64(reaches))
+    }
+
+    /// Whether something `dist` from the ray, `t` along it, could lie within
+    /// `reaches` of it.
+    pub fn within(&self, dist: S, t: S, reaches: f64) -> bool {
+        !dist.definitely_greater(self.reach_at(reaches, t))
+    }
 }
 
 /// Which mouse button.
@@ -62,17 +83,17 @@ pub enum DialogValue {
 
 /// One thing the user did while editing a step.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Event {
+#[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
+pub enum Event<S: Scalar> {
     /// The dialog control `key` was used.
     Dialog { key: String, value: DialogValue },
     /// The pointer moved over the viewport with no button held.
-    Hover { pointer: Pointer },
+    Hover { pointer: Pointer<S> },
     /// The pointer left the viewport.
     Leave,
     /// A click in the viewport: a press and release without moving.
     Click {
-        pointer: Pointer,
+        pointer: Pointer<S>,
         #[serde(default)]
         button: Button,
         /// The second click of a double click.
@@ -85,8 +106,8 @@ pub enum Event {
     /// presentation offered a grab (see [`super::Presentation::grab`]): from
     /// where it went down to where the pointer is now. `done` on release.
     Drag {
-        from: Pointer,
-        to: Pointer,
+        from: Pointer<S>,
+        to: Pointer<S>,
         #[serde(default)]
         done: bool,
     },
@@ -94,7 +115,7 @@ pub enum Event {
     Key { key: String },
 }
 
-impl Event {
+impl<S: Scalar> Event<S> {
     /// The dialog control this event uses, and its value.
     pub fn dialog(&self) -> Option<(&str, &DialogValue)> {
         match self {
@@ -105,7 +126,7 @@ impl Event {
 
     /// Where the pointer is, for any event that has one — for a drag, where
     /// it is now.
-    pub fn pointer(&self) -> Option<&Pointer> {
+    pub fn pointer(&self) -> Option<&Pointer<S>> {
         match self {
             Event::Hover { pointer } | Event::Click { pointer, .. } => Some(pointer),
             Event::Drag { to, .. } => Some(to),

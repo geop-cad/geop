@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { worldPerPixel } from "./camera";
+import { REACH_PX, worldPerPixel } from "./camera";
 import type { Style, Visual } from "./geop";
 
 /** How each style is drawn. */
@@ -28,8 +28,8 @@ const DASHED: Style[] = ["construction", "draft", "guide"];
 
 /** How big a point is on screen, in pixels. */
 const POINT_PX = 7;
-/** How big a handle's ball is on screen, in pixels — `geop_ops::ui::hit::HANDLE_PX`. */
-const HANDLE_PX = 7;
+/** How big a handle's ball is on screen, in pixels — `geop_ops::ui::hit::HANDLE` reaches. */
+const HANDLE_PX = 0.8 * REACH_PX;
 
 /** Drawn over the model: what is being edited must be seen wherever it is. */
 function overlay<M extends THREE.Material>(material: M): M {
@@ -68,15 +68,13 @@ function build(visual: Visual): THREE.Object3D {
       return new THREE.Mesh(geometry, material);
     }
     case "label": {
-      // The element is placed by the renderer; its child is moved on
-      // screen by the offset, which the renderer's transform leaves alone.
-      const outer = document.createElement("div");
-      const inner = document.createElement("div");
-      inner.className = `visual-label ${visual.style}`;
-      inner.textContent = visual.text;
-      inner.style.transform = `translate(${visual.offset[0]}px, ${-visual.offset[1]}px)`;
-      outer.appendChild(inner);
-      const label = new CSS2DObject(outer);
+      // Centred where the kernel hit-tests it: its point, moved by its
+      // offset in reaches — placed every frame, as a reach's size changes.
+      const element = document.createElement("div");
+      element.className = `visual-label ${visual.style}`;
+      element.textContent = visual.text;
+      const label = new CSS2DObject(element);
+      label.userData.label = { at: vec(visual.at), offset: vec(visual.offset) };
       label.position.set(...visual.at);
       return label;
     }
@@ -124,14 +122,19 @@ export class VisualLayer {
   }
 
   /**
-   * Keep handles and dashes the same size on screen for `camera` in a
-   * viewport `height` pixels tall; dashes are measured at `target`, where
-   * the camera looks.
+   * Keep handles, label offsets and dashes the same size on screen for
+   * `camera` in a viewport `height` pixels tall; dashes are measured at
+   * `target`, where the camera looks.
    */
   update(camera: THREE.Camera, height: number, target: THREE.Vector3) {
     const px = worldPerPixel(camera, target, height);
     for (const child of this.group.children) {
       if (child.userData.handle) child.scale.setScalar(worldPerPixel(camera, child.position, height) * HANDLE_PX);
+      const label = child.userData.label as { at: THREE.Vector3; offset: THREE.Vector3 } | undefined;
+      if (label) {
+        const reach = worldPerPixel(camera, label.at, height) * REACH_PX;
+        child.position.copy(label.at).addScaledVector(label.offset, reach);
+      }
       if (child.userData.dashed) {
         const material = (child as THREE.Line).material as THREE.LineDashedMaterial;
         material.dashSize = 6 * px;

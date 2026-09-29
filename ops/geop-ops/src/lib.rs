@@ -6,9 +6,10 @@
 //! extrude and revolve in `geop-ops-extrude-revolve`, booleans in
 //! `geop-ops-booleans`.
 //!
-//! - [`Part`]: a complete CAD part — a [`geop_core_topology::Model`], the
-//!   sketches and datums used to build it, and a stable name for every
-//!   entity in it (see [Topological naming](#topological-naming)).
+//! - [`part`]: a complete CAD [`Part`] — a [`geop_core_topology::Model`],
+//!   the sketches and datums used to build it, starting with the frame
+//!   [`ORIGIN`], and a stable name for every entity in it (see
+//!   [Topological naming](#topological-naming)).
 //! - [`operation`]: what an operation is. Built, a step maps a part and
 //!   its arguments to a new part; edited, every user action maps
 //!
@@ -22,8 +23,8 @@
 //!   tool in hand, a half-drawn line, a pick waiting for a click — and is
 //!   never saved.
 //! - [`ui`]: what that exchange is made of — the [`Event`](ui::Event)s an
-//!   editor sends (a dialog control used, a click or a drag as a ray in the
-//!   viewport, a key), and the [`Presentation`](ui::Presentation) it gets
+//!   editor sends (a dialog control used, a click or a drag as a ray from
+//!   the eye, a key), and the [`Presentation`](ui::Presentation) it gets
 //!   back: a [`Dialog`](ui::Dialog) of simple controls and the
 //!   [`Visual`](ui::Visual)s to draw. And the helpers that make operations
 //!   answer events consistently: hit tests against visuals and against the
@@ -34,13 +35,13 @@
 //!   serializable enum; `#[derive(Operations)]` writes it. Which operations
 //!   an application offers is its own choice, so the set is defined there,
 //!   not here.
-//! - [`Program`]: an ordered list of steps, each an operation with its
-//!   arguments and an id of its own, that builds a part from scratch. A
-//!   program is design data: it serializes to JSON and back without losing
-//!   anything, and rebuilding the read-back program gives the same part,
-//!   name for name. It changes only through [`Program::update`], and
-//!   [`ProgramRunner`] builds it incrementally, stopping wherever an editor
-//!   asks.
+//! - [`program`]: a [`Program`], an ordered list of steps, each an
+//!   operation with its arguments and an id of its own, that builds a part
+//!   from scratch. A program is design data: it serializes to JSON and
+//!   back without losing anything, and rebuilding the read-back program
+//!   gives the same part, name for name. It changes only through
+//!   [`Program::update`], and [`ProgramRunner`] builds it incrementally,
+//!   stopping wherever an editor asks.
 //!
 //! # Parts
 //!
@@ -79,28 +80,17 @@
 // to resolve inside it too.
 extern crate self as geop_ops;
 
-mod datum;
-mod describe;
-mod edit;
-mod euler;
-mod ids;
-mod names;
 pub mod operation;
-mod part;
-mod program;
-mod resolve;
-mod sketch;
+pub mod part;
+pub mod program;
 pub mod ui;
 
-pub use describe::{EdgeDescription, FaceDescription, PartDescription};
-pub use ids::{DatumId, RefId, SketchId};
-pub use names::{NameRegistry, Namer, validate_operation_id};
-pub use part::Part;
-pub use sketch::PlacedSketch;
-
-pub use operation::{
-    EditContext, Edited, EntityRef, Operation, OperationInfo, Operations, WorldAxis,
+pub use part::{
+    DatumId, EdgeDescription, FaceDescription, NameRegistry, Namer, ORIGIN, Part, PartDescription,
+    PlacedSketch, RefId, SketchId, validate_operation_id,
 };
+
+pub use operation::{EditContext, Edited, EntityRef, Operation, OperationInfo, Operations};
 pub use program::{Program, ProgramEdit, ProgramRunner, Step, StepResult};
 
 #[doc(hidden)]

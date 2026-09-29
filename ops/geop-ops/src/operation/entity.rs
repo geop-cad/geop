@@ -1,6 +1,5 @@
 //! [`EntityRef`]: how a step refers to geometry it builds on — a vertex,
-//! edge, face or datum of the part by name, or the origin, a world axis or
-//! a base plane — and [`Geometry`], what such an entity is: a point, a
+//! edge, face, datum, solid or sketch of the part, by name — and [`Geometry`], what such an entity is: a point, a
 //! line, a plane, an arc, something round, a curve — or several of these at
 //! once. Which of them an entity is decides what can be built on it.
 
@@ -11,51 +10,17 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{CoordinateSystem, DatumKind},
+    primitives::{CoordinateSystem, DatumComponent, DatumKind},
     scalars::Scalar,
     vector::Vector3,
     with_context,
 };
 use serde::{Deserialize, Serialize};
 
-/// One of the world's three axes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WorldAxis {
-    X,
-    Y,
-    Z,
-}
-
-impl WorldAxis {
-    fn unit<S: Scalar>(self) -> Vector3<S> {
-        match self {
-            WorldAxis::X => v3(1., 0., 0.),
-            WorldAxis::Y => v3(0., 1., 0.),
-            WorldAxis::Z => v3(0., 0., 1.),
-        }
-    }
-}
-
-fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
-
 /// Something picked in the viewport, to build on or to use.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EntityRef {
-    /// The world origin.
-    Origin,
-    /// A world axis, through the origin.
-    Axis {
-        axis: WorldAxis,
-    },
-    /// A base plane through the origin, named by its normal: the `Z` plane
-    /// is normal to the `z` axis. A sketch's `x`/`y` on it run along world
-    /// `y`/`z` (`X`), `x`/`-z` (`Y`) or `x`/`y` (`Z`).
-    Plane {
-        normal: WorldAxis,
-    },
     Vertex {
         name: String,
     },
@@ -69,8 +34,13 @@ pub enum EntityRef {
     Face {
         name: String,
     },
+    /// A datum — or, of a frame, one of its axes or planes (see
+    /// [`geop_core_math::primitives::Datum::component`]). Every part has
+    /// the frame [`ORIGIN`](crate::ORIGIN).
     Datum {
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        component: Option<DatumComponent>,
     },
     /// A solid, as a whole.
     Solid {
@@ -83,16 +53,33 @@ pub enum EntityRef {
 }
 
 impl EntityRef {
-    /// How the entity is shown: `Z plane`, or its name.
+    /// A datum, as a whole.
+    pub fn datum(name: impl Into<String>) -> Self {
+        EntityRef::Datum {
+            name: name.into(),
+            component: None,
+        }
+    }
+
+    /// A component of the frame datum `name`.
+    pub fn datum_component(name: impl Into<String>, component: DatumComponent) -> Self {
+        EntityRef::Datum {
+            name: name.into(),
+            component: Some(component),
+        }
+    }
+
+    /// How the entity is shown: its name, and which component of a frame.
     pub fn label(&self) -> String {
         match self {
-            EntityRef::Origin => "Origin".into(),
-            EntityRef::Axis { axis } => format!("{axis:?} axis"),
-            EntityRef::Plane { normal } => format!("{normal:?} plane"),
+            EntityRef::Datum {
+                name,
+                component: Some(component),
+            } => format!("{name} {component}"),
             EntityRef::Vertex { name }
             | EntityRef::Edge { name }
             | EntityRef::Face { name }
-            | EntityRef::Datum { name }
+            | EntityRef::Datum { name, .. }
             | EntityRef::Solid { name }
             | EntityRef::Sketch { name } => name.clone(),
         }
@@ -102,13 +89,17 @@ impl EntityRef {
 impl std::fmt::Display for EntityRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EntityRef::Origin => write!(f, "the origin"),
-            EntityRef::Axis { axis } => write!(f, "the {axis:?} axis"),
-            EntityRef::Plane { normal } => write!(f, "the {normal:?} plane"),
             EntityRef::Vertex { name } => write!(f, "vertex {name:?}"),
             EntityRef::Edge { name } => write!(f, "edge {name:?}"),
             EntityRef::Face { name } => write!(f, "face {name:?}"),
-            EntityRef::Datum { name } => write!(f, "datum {name:?}"),
+            EntityRef::Datum {
+                name,
+                component: None,
+            } => write!(f, "datum {name:?}"),
+            EntityRef::Datum {
+                name,
+                component: Some(component),
+            } => write!(f, "the {component} of datum {name:?}"),
             EntityRef::Solid { name } => write!(f, "solid {name:?}"),
             EntityRef::Sketch { name } => write!(f, "sketch {name:?}"),
         }
@@ -132,8 +123,7 @@ pub struct Geometry<S: Scalar> {
     pub round: Option<Axis<S>>,
     /// An edge's curve, whatever its shape.
     pub curve: Option<NurbCurve3D<S>>,
-    /// Its own axes, if it has any: a datum's frame, the world's for the
-    /// origin, axes and base planes.
+    /// Its own axes, if it has any: a datum's frame.
     pub frame: Option<CoordinateSystem<S>>,
 }
 
@@ -163,11 +153,11 @@ impl<S: Scalar> Geometry<S> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
-    /// A vertex, a datum point, the origin.
+    /// A vertex, a datum point, a frame's origin.
     Point,
-    /// A straight edge, a datum axis, a world axis.
+    /// A straight edge, a datum axis, a frame's axis.
     Line,
-    /// A planar face, a datum plane, a base plane.
+    /// A planar face, a datum plane, a frame's plane.
     Plane,
     /// Any edge.
     Edge,
@@ -218,45 +208,12 @@ pub fn frame_along<S: Scalar>(
     CoordinateSystem::try_new(origin, u, v, n)
 }
 
-/// The world's own axes, moved to `origin`.
-pub fn world_frame<S: Scalar>(origin: Vector3<S>) -> GeopResult<CoordinateSystem<S>> {
-    CoordinateSystem::try_new(origin, v3(1., 0., 0.), v3(0., 1., 0.), v3(0., 0., 1.))
-}
-
-/// The frame of the base plane normal to `normal`.
-fn base_plane<S: Scalar>(normal: WorldAxis) -> GeopResult<CoordinateSystem<S>> {
-    let origin = Vector3::zero();
-    match normal {
-        WorldAxis::X => {
-            CoordinateSystem::try_new(origin, v3(0., 1., 0.), v3(0., 0., 1.), v3(1., 0., 0.))
-        }
-        WorldAxis::Y => {
-            CoordinateSystem::try_new(origin, v3(1., 0., 0.), v3(0., 0., -1.), v3(0., 1., 0.))
-        }
-        WorldAxis::Z => world_frame(origin),
-    }
-}
-
 impl EntityRef {
     /// What the entity is in `part`. Fails if the part has no such entity.
     pub fn resolve<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Geometry<S>> {
         let ctx = with_context!("resolving {self}");
         let mut g = Geometry::none();
         match self {
-            EntityRef::Origin => {
-                g.point = Some(Vector3::zero());
-                g.frame = Some(world_frame(Vector3::zero())?);
-            }
-            EntityRef::Axis { axis } => {
-                let direction = axis.unit();
-                g.line = Some(Axis::try_new(Vector3::zero(), direction)?);
-                g.frame = Some(frame_along(Vector3::zero(), &direction)?);
-            }
-            EntityRef::Plane { normal } => {
-                let frame = base_plane(*normal)?;
-                g.plane = Some(frame.clone());
-                g.frame = Some(frame);
-            }
             EntityRef::Vertex { name } => {
                 let id = part.vertex_id(name).with_context(ctx)?;
                 g.point = Some(part.topology().get_vertex(id).with_context(ctx)?.point);
@@ -283,9 +240,12 @@ impl EntityRef {
                 }
                 g.round = surface.axis_of_revolution().with_context(ctx)?;
             }
-            EntityRef::Datum { name } => {
+            EntityRef::Datum { name, component } => {
                 let id = part.datum_id(name).with_context(ctx)?;
-                let datum = part.datum(id).with_context(ctx)?;
+                let mut datum = part.datum(id).with_context(ctx)?.clone();
+                if let Some(component) = component {
+                    datum = datum.component(*component).with_context(ctx)?;
+                }
                 let frame = datum.frame.clone();
                 match datum.kind {
                     DatumKind::Point => g.point = Some(*frame.origin()),

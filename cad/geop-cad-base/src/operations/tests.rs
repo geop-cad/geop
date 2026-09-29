@@ -3,11 +3,12 @@
 
 use std::f64::consts::PI;
 
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_sketch::{Constraint, PointId, Sketch};
 use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::Part;
-use geop_ops::{EntityRef, WorldAxis};
+use geop_ops::{EntityRef, ORIGIN};
 use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
 use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
 use geop_ops_sketch::AddSketchArgs;
@@ -57,9 +58,7 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
     program.push(
         "square",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             s,
         ),
     );
@@ -97,9 +96,7 @@ fn extrude_slot_plate_with_hole() {
     program.push(
         "slot",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             s,
         ),
     );
@@ -127,9 +124,7 @@ fn boss_on_block_top_face() {
     program.push(
         "base",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             block,
         ),
     );
@@ -186,9 +181,7 @@ fn revolve_rectangle_about_construction_axis() {
     program.push(
         "profile",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Y,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
             s,
         ),
     );
@@ -219,9 +212,7 @@ fn revolve_half_disc_is_sphere() {
     program.push(
         "half_disc",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::X,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::X)),
             s,
         ),
     );
@@ -253,9 +244,7 @@ fn revolve_across_axis_fails() {
     program.push(
         "profile",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             s,
         ),
     );
@@ -279,9 +268,7 @@ fn extrude_of_non_sketch_fails() {
     program.push(
         "square",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             s,
         ),
     );
@@ -306,9 +293,7 @@ fn extrude_combines_with_its_target() {
     program.push(
         "base",
         sketch(
-            EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             block,
         ),
     );

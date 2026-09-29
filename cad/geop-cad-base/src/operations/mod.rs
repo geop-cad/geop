@@ -31,7 +31,8 @@ mod view_tests;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
 #[serde(tag = "operation", content = "args", rename_all = "snake_case")]
 pub enum PartOperation {
-    /// Draw a sketch on a base plane or on a planar face.
+    /// Draw a sketch on a plane of a coordinate system, a datum plane or a
+    /// planar face.
     #[operation(label = "Sketch")]
     AddSketch(AddSketchArgs),
     /// Sweep a sketch's regions along its plane's normal into a solid.

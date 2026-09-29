@@ -333,14 +333,17 @@ function App() {
   /**
    * The sketches and datums a shown step has used: the viewer hides them,
    * since what was made from them shows them now. None of a kind while that
-   * kind is being picked: then any can be chosen, used or not.
+   * kind is being picked: then any can be chosen, used or not. A frame one
+   * of whose planes or axes was used stays: the rest of it still can be.
    */
   function hidden(): string[] {
     const pickable = presentation?.pickable ?? [];
     const pickingSketch = pickable.includes("sketch");
     const pickingDatum = pickable.some((t) => typeof t === "object");
     return (displayResult?.references ?? []).flatMap((r) =>
-      (r.type === "Sketch" && !pickingSketch) || (r.type === "Datum" && !pickingDatum) ? [r.name] : [],
+      (r.type === "Sketch" && !pickingSketch) || (r.type === "Datum" && !r.component && !pickingDatum)
+        ? [r.name]
+        : [],
     );
   }
 

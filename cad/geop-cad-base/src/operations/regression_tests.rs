@@ -1,6 +1,7 @@
 //! Programs from bug reports, with the coordinates they were reported with:
 //! a "clean" equivalent may not carry the same numerical case at all.
 
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_sketch::{Constraint, Sketch};
 use geop_core_topology::{
@@ -8,7 +9,7 @@ use geop_core_topology::{
     loop_sampling::sample_loop_to_polygon,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{EntityRef, Part, WorldAxis};
+use geop_ops::{EntityRef, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::ExtrudeArgs;
@@ -139,9 +140,7 @@ fn cylinder_joined_over_a_hole() {
     program.push(
         "sketch1",
         AddSketchArgs {
-            plane: EntityRef::Plane {
-                normal: WorldAxis::Z,
-            },
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
             sketch: plate,
         },
     );
@@ -174,9 +173,7 @@ fn cylinder_joined_over_a_hole() {
     program.push(
         "sketch2",
         AddSketchArgs {
-            plane: EntityRef::Datum {
-                name: "reference1".into(),
-            },
+            plane: EntityRef::datum("reference1"),
             sketch: boss,
         },
     );

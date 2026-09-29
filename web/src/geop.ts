@@ -65,18 +65,24 @@ export interface Scene {
   edge_names: string[];
 }
 
-export type WorldAxis = "X" | "Y" | "Z";
+/** One of a frame's own axes: `x` is its `u`, `y` its `v`, `z` its `w`. */
+export type FrameAxis = "x" | "y" | "z";
 
 /**
- * Something picked in the viewport (see `geop_ops::EntityRef`): the
- * origin, a world axis, a base plane through the origin named by its normal
- * (`Z` is normal to the z axis), or an entity of the part by name.
+ * A part of a frame datum used on its own (see
+ * `geop_core_math::primitives::DatumComponent`): one of its axes, or the
+ * plane normal to one — `{plane: "z"}` is its xy plane.
+ */
+export type DatumComponent = { axis: FrameAxis } | { plane: FrameAxis };
+
+/**
+ * Something picked in the viewport (see `geop_ops::EntityRef`): an entity
+ * of the part by name — for a frame datum, perhaps one of its axes or
+ * planes. Every part has the frame datum `origin`.
  */
 export type EntityRef =
-  | { type: "Origin" }
-  | { type: "Axis"; axis: WorldAxis }
-  | { type: "Plane"; normal: WorldAxis }
-  | { type: "Vertex" | "Edge" | "Face" | "Datum" | "Solid" | "Sketch"; name: string };
+  | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch"; name: string }
+  | { type: "Datum"; name: string; component?: DatumComponent };
 
 /** Whether two entities are the same one. */
 export function sameEntity(a: EntityRef, b: EntityRef): boolean {
@@ -86,12 +92,12 @@ export function sameEntity(a: EntityRef, b: EntityRef): boolean {
 /** What a datum stands for. */
 export type DatumKind = "point" | "axis" | "plane" | "frame";
 
-/** A plane with axes: `(x, y)` in it lies at `origin + x u + y v`. */
+/** A frame: `(x, y, z)` in it lies at `origin + x u + y v + z w`; as a plane, its `u`/`v` plane. */
 export interface Frame {
   origin: Vec3;
   u: Vec3;
   v: Vec3;
-  normal: Vec3;
+  w: Vec3;
 }
 
 let ready: Promise<void> | null = null;
@@ -217,21 +223,23 @@ export function examplePrograms(): { name: string; program: Program }[] {
 //
 // Mirrors `geop_ops::ui`.
 
-/** How big a screen pixel is along a pointer's ray: `at_origin + per_distance * t` world units at distance `t`. */
-export interface PixelScale {
-  at_origin: number;
-  per_distance: number;
+/** A ray from the eye, through the pointer. */
+export interface Ray {
+  origin: Vec3;
+  dir: Vec3;
 }
 
-/** Where the pointer is: the ray through it, and what a screen pixel measures along it. */
+/**
+ * How far from its ray a pointer reaches: a cone from the eye in
+ * perspective, a tube in an orthographic view. Everything drawn at a
+ * constant size on screen is laid out in reaches (see [[REACH_PX]]).
+ */
+export type Reach = { type: "cone"; slope: number } | { type: "tube"; radius: number };
+
+/** Where the pointer is, and how far it reaches. */
 export interface Pointer {
-  origin: Vec3;
-  /** Unit length. */
-  dir: Vec3;
-  /** The screen's right and up, as unit world directions. */
-  right: Vec3;
-  up: Vec3;
-  pixel: PixelScale;
+  ray: Ray;
+  reach: Reach;
 }
 
 export type DialogValue =
@@ -300,8 +308,8 @@ export type Shape =
   | { shape: "point"; at: Vec3 }
   | { shape: "polyline"; points: Vec3[] }
   | { shape: "triangles"; triangles: [Vec3, Vec3, Vec3][] }
-  /** Moved on screen by `offset` pixels (right, up). */
-  | { shape: "label"; at: Vec3; text: string; offset: [number, number] }
+  /** Moved by `offset`, in reaches (see [[REACH_PX]]). */
+  | { shape: "label"; at: Vec3; text: string; offset: Vec3 }
   | { shape: "handle"; at: Vec3; direction: Vec3 | null };
 
 export type Style =
@@ -325,9 +333,7 @@ export type Target =
   | "face"
   | "solid"
   | "sketch"
-  | "origin"
-  | "axis"
-  | "base_plane"
+  /** A datum of the kind — or a frame's axis or plane, or a frame as a whole for a point. */
   | { datum: DatumKind };
 
 /** What an operation shows for a step. */

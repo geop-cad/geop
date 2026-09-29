@@ -172,3 +172,50 @@ mod tests {
         assert!(v[2].could_be_equal(0.into()));
     }
 }
+
+/// A vector serializes as the array of its components' midpoints — how it
+/// travels to a viewer, which draws points, not enclosures — and reads back
+/// from an array of plain numbers, each a sharp scalar.
+impl<S: Scalar, const N: usize> serde::Serialize for Vector<S, N> {
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        use serde::ser::SerializeTuple;
+        let mut tuple = serializer.serialize_tuple(N)?;
+        for x in &self.data {
+            tuple.serialize_element(&x.to_f64())?;
+        }
+        tuple.end()
+    }
+}
+
+impl<'de, S: Scalar, const N: usize> serde::Deserialize<'de> for Vector<S, N> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Components<S, const N: usize>(std::marker::PhantomData<S>);
+
+        impl<'de, S: Scalar, const N: usize> serde::de::Visitor<'de> for Components<S, N> {
+            type Value = Vector<S, N>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "an array of {N} numbers")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut out = Vector::zero();
+                for k in 0..N {
+                    let x: f64 = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(k, &self))?;
+                    out[k] = S::from_f64(x);
+                }
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(N + 1, &self));
+                }
+                Ok(out)
+            }
+        }
+
+        deserializer.deserialize_tuple(N, Components(std::marker::PhantomData))
+    }
+}

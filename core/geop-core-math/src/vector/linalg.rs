@@ -105,6 +105,24 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
             .collect())
     }
 
+    /// How far `self` is from the segment `a..b`.
+    pub fn distance_to_segment(&self, a: &Self, b: &Self) -> S {
+        let ab = b.sub(a);
+        let along = self
+            .sub(a)
+            .prod_dot(&ab)
+            .div(ab.norm_sq())
+            .unwrap_or(S::ZERO);
+        let along = if along.definitely_less(S::ZERO) {
+            S::ZERO
+        } else if along.definitely_greater(S::ONE) {
+            S::ONE
+        } else {
+            along
+        };
+        self.sub(&a.add(&ab.prod_scalar(along))).norm()
+    }
+
     /// True if every component `could_be_equal` `other`'s.
     pub fn could_be_equal(&self, other: &Self) -> bool {
         (0..self.size()).all(|i| self[i].could_be_equal(other[i]))

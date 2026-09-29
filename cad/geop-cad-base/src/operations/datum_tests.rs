@@ -2,11 +2,11 @@
 
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
-    primitives::{CoordinateSystem, Datum, DatumKind},
+    primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{EntityRef, Operation, Part, WorldAxis, operation::Role};
+use geop_ops::{EntityRef, ORIGIN, Operation, Part, operation::Role};
 use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, inspect_selection};
 
 use crate::examples;
@@ -24,11 +24,11 @@ fn edge(name: &str) -> EntityRef {
 fn vertex(name: &str) -> EntityRef {
     EntityRef::Vertex { name: name.into() }
 }
-fn axis(axis: WorldAxis) -> EntityRef {
-    EntityRef::Axis { axis }
+fn axis(axis: FrameAxis) -> EntityRef {
+    EntityRef::datum_component(ORIGIN, DatumComponent::Axis(axis))
 }
-fn base(normal: WorldAxis) -> EntityRef {
-    EntityRef::Plane { normal }
+fn base(normal: FrameAxis) -> EntityRef {
+    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(normal))
 }
 
 /// The 2 x 2 x 1 box with a hole of radius 0.4 drilled 0.5 deep into
@@ -99,7 +99,7 @@ fn selections_fit_by_shape() {
     assert!(!rim.contains(&"along_line"), "{rim:?}");
     // In any order.
     let point_plane = fits(vec![
-        base(WorldAxis::Z),
+        base(FrameAxis::Z),
         vertex("extrude(box,outline,p2,end)"),
     ]);
     for method in ["project_on_plane", "perpendicular", "parallel_plane"] {
@@ -107,9 +107,9 @@ fn selections_fit_by_shape() {
     }
     assert!(
         fits(vec![
-            EntityRef::Origin,
-            EntityRef::Origin,
-            EntityRef::Origin
+            EntityRef::datum(ORIGIN),
+            EntityRef::datum(ORIGIN),
+            EntityRef::datum(ORIGIN)
         ])
         .contains(&"three_points")
     );
@@ -149,9 +149,7 @@ fn points() {
     // Offset from a datum point: along its own axes.
     let d = datum(
         &with_point,
-        vec![EntityRef::Datum {
-            name: "on_edge".into(),
-        }],
+        vec![EntityRef::datum("on_edge")],
         Construction::Point {
             x: 0.0,
             y: 0.0,
@@ -162,7 +160,7 @@ fn points() {
 
     let d = datum(
         &part,
-        vec![EntityRef::Origin, corner.clone()],
+        vec![EntityRef::datum(ORIGIN), corner.clone()],
         Construction::Midpoint {},
     );
     assert_at(&d.frame, [1.0, 1.0, 0.5], [0., 0., 1.]);
@@ -174,25 +172,25 @@ fn points() {
     assert_at(&d.frame, [1.0, 1.0, 1.0], [0., 0., 1.]);
     let d = datum(
         &part,
-        vec![corner.clone(), base(WorldAxis::Z)],
+        vec![corner.clone(), base(FrameAxis::Z)],
         Construction::ProjectOnPlane {},
     );
     assert_at(&d.frame, [2.0, 2.0, 0.0], [0., 0., 1.]);
     let d = datum(
         &part,
-        vec![axis(WorldAxis::X), corner.clone()],
+        vec![axis(FrameAxis::X), corner.clone()],
         Construction::ProjectOnLine {},
     );
     assert_at(&d.frame, [2.0, 0.0, 0.0], [1., 0., 0.]);
     let d = datum(
         &part,
-        vec![edge("extrude(box,outline,p2)"), base(WorldAxis::Z)],
+        vec![edge("extrude(box,outline,p2)"), base(FrameAxis::Z)],
         Construction::LinePlane {},
     );
     assert_at(&d.frame, [2.0, 2.0, 0.0], [0., 0., 1.]);
     let d = datum(
         &part,
-        vec![axis(WorldAxis::Z), edge("extrude(box,outline,c4,start)")],
+        vec![axis(FrameAxis::Z), edge("extrude(box,outline,c4,start)")],
         Construction::LineLine {},
     );
     assert_at(&d.frame, [0.0, 0.0, 0.0], [0., -1., 0.]);
@@ -214,7 +212,7 @@ fn axes() {
     let corner = vertex("extrude(box,outline,p2,end)");
     let d = datum(
         &part,
-        vec![EntityRef::Origin, corner.clone()],
+        vec![EntityRef::datum(ORIGIN), corner.clone()],
         Construction::TwoPoints {},
     );
     assert_eq!(d.kind, DatumKind::Axis);
@@ -234,38 +232,38 @@ fn axes() {
     assert!(datum_line(&d).could_contain(&v(1., 1., 7.)));
     let d = datum(
         &part,
-        vec![base(WorldAxis::X), base(WorldAxis::Y)],
+        vec![base(FrameAxis::X), base(FrameAxis::Y)],
         Construction::PlanePlane {},
     );
     assert_at(&d.frame, [0., 0., 0.], [0., 0., 1.]);
-    // The perpendicular dropped from the corner onto the base plane.
+    // The perpendicular dropped from the corner onto the xy plane.
     let d = datum(
         &part,
-        vec![corner.clone(), base(WorldAxis::Z)],
+        vec![corner.clone(), base(FrameAxis::Z)],
         Construction::Perpendicular {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., 0., 1.]);
     let d = datum(
         &part,
-        vec![corner.clone(), axis(WorldAxis::X)],
+        vec![corner.clone(), axis(FrameAxis::X)],
         Construction::Parallel {},
     );
     assert_at(&d.frame, [2., 2., 1.], [1., 0., 0.]);
     let d = datum(
         &part,
-        vec![corner.clone(), axis(WorldAxis::X)],
+        vec![corner.clone(), axis(FrameAxis::X)],
         Construction::PerpendicularToLine {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., -2., -1.]);
     let d = datum(
         &part,
-        vec![axis(WorldAxis::X), axis(WorldAxis::Y)],
+        vec![axis(FrameAxis::X), axis(FrameAxis::Y)],
         Construction::Bisector { other: false },
     );
     assert_at(&d.frame, [0., 0., 0.], [1., 1., 0.]);
     let d = datum(
         &part,
-        vec![axis(WorldAxis::X), axis(WorldAxis::Y)],
+        vec![axis(FrameAxis::X), axis(FrameAxis::Y)],
         Construction::Bisector { other: true },
     );
     assert_at(&d.frame, [0., 0., 0.], [1., -1., 0.]);
@@ -324,12 +322,7 @@ fn planes() {
         .unwrap();
     let d = datum(
         &lifted,
-        vec![
-            top.clone(),
-            EntityRef::Datum {
-                name: "lifted".into(),
-            },
-        ],
+        vec![top.clone(), EntityRef::datum("lifted")],
         Construction::Midplane { other: false },
     );
     assert!(on_plane(&d.frame, [5., 5., 1.5]));
@@ -346,7 +339,7 @@ fn planes() {
     let d = datum(
         &part,
         vec![
-            EntityRef::Origin,
+            EntityRef::datum(ORIGIN),
             vertex("extrude(box,outline,p1,start)"),
             vertex("extrude(box,outline,p2,end)"),
         ],
@@ -367,7 +360,7 @@ fn planes() {
     assert!(on_plane(&d.frame, [0.5, 0., 0.]) && on_plane(&d.frame, [0.5, 0., 7.]));
     let d = datum(
         &part,
-        vec![axis(WorldAxis::Z), vertex("extrude(box,outline,p1,start)")],
+        vec![axis(FrameAxis::Z), vertex("extrude(box,outline,p1,start)")],
         Construction::LinePoint {},
     );
     assert!(on_plane(&d.frame, [5., 0., 3.]));
@@ -382,13 +375,13 @@ fn planes() {
     assert!(on_plane(&d.frame, [1., 1., 3.]));
     let d = datum(
         &part,
-        vec![top.clone(), EntityRef::Origin],
+        vec![top.clone(), EntityRef::datum(ORIGIN)],
         Construction::ParallelPlane {},
     );
     assert_at(&d.frame, [0., 0., 0.], [0., 0., 1.]);
     let d = datum(
         &part,
-        vec![axis(WorldAxis::Y), vertex("extrude(box,outline,p2,end)")],
+        vec![axis(FrameAxis::Y), vertex("extrude(box,outline,p2,end)")],
         Construction::NormalToLine {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., 1., 0.]);
@@ -436,12 +429,12 @@ fn frames() {
     assert_at(&d.frame, [2., 0., 1.], [-1., 0., 2.]);
     assert!(d.frame.u().sub(&v(0., 1., 0.)).norm().to_f64() < 1e-9);
 
-    let fit = inspect_selection(&part, &[EntityRef::Datum { name: "cs".into() }]);
+    let fit = inspect_selection(&part, &[EntityRef::datum("cs")]);
     assert_eq!(fit.roles, [vec![Role::Point]]);
     // Its axes carry an offset point, as a datum point's do.
     let d = datum(
         &part,
-        vec![EntityRef::Datum { name: "cs".into() }],
+        vec![EntityRef::datum("cs")],
         Construction::Point {
             x: 1.0,
             y: 0.0,
@@ -453,8 +446,8 @@ fn frames() {
     // The first two points coincide: there is no x to go by.
     let args = AddDatumArgs {
         selection: vec![
-            EntityRef::Origin,
-            EntityRef::Origin,
+            EntityRef::datum(ORIGIN),
+            EntityRef::datum(ORIGIN),
             vertex("extrude(box,outline,p2,end)"),
         ],
         ..args

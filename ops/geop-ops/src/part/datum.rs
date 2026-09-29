@@ -9,8 +9,8 @@ use geop_core_math::{
     scalars::Scalar,
 };
 
-use crate::ids::DatumId;
-use crate::part::Part;
+use super::Part;
+use super::ids::DatumId;
 
 impl<S: Scalar> Part<S> {
     /// Adds `datum` to the part under `name`. Fails, leaving the part

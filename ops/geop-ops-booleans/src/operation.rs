@@ -97,8 +97,8 @@ impl Operation for Boolean {
         ctx: &EditContext<S>,
         mut args: BooleanArgs,
         mut s: BooleanSession,
-        event: Option<&Event>,
-    ) -> Edited<BooleanArgs, BooleanSession> {
+        event: Option<&Event<S>>,
+    ) -> Edited<BooleanArgs, BooleanSession, S> {
         if let Some(event) = event {
             match event.dialog() {
                 Some((key @ ("a" | "b"), _)) => s.pick.toggle(key),
@@ -293,7 +293,12 @@ impl Combine {
     /// mode — the target, if it had none, the newest solid of `view` — or
     /// picking the target. Returns whether the user chose the mode, which
     /// from then on is theirs.
-    pub fn event(&mut self, view: &PartView, event: &Event, pick: &mut Picking) -> bool {
+    pub fn event<S: Scalar>(
+        &mut self,
+        view: &PartView<S>,
+        event: &Event<S>,
+        pick: &mut Picking,
+    ) -> bool {
         match event.dialog() {
             Some(("combine", DialogValue::Choice(mode))) => {
                 let target = self
