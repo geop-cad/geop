@@ -19,7 +19,6 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::scal_in_f64::ScalInF64,
 };
-use geop_ops::Part;
 use geop_ops_rasterize::{
     rasterize,
     stl::{StlFormat, stl_triangles, write_stl},
@@ -117,7 +116,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     };
     let json = std::fs::read_to_string(&args.program).map_err(io_err("reading", &args.program))?;
     let program = Program::from_json(&json)?;
-    let part = program.apply(Part::<S>::new())?;
+    let part = program.build::<S>()?;
     let model = part.topology();
 
     // The solids to write, in name order so the file does not depend on

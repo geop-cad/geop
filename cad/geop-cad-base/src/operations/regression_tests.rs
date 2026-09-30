@@ -22,7 +22,7 @@ use crate::Program;
 /// the failure, one per line — and is drawn as it is (see
 /// [`assert_draws_its_trims`]).
 fn assert_builds_valid(program: &Program) {
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
         panic!(

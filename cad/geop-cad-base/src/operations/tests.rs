@@ -63,7 +63,7 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
         ),
     );
     program.push("slab", extrude("square", 1.0, true));
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     assert_valid(&part);
     for v in part.topology().vertices.values() {
         assert!(
@@ -101,7 +101,7 @@ fn extrude_slot_plate_with_hole() {
         ),
     );
     program.push("plate", extrude("slot", 0.5, false));
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     assert_valid(&part);
     // 2 caps + 6 outer walls (the half circles are split in quarters) + 4
     // hole walls.
@@ -147,7 +147,7 @@ fn boss_on_block_top_face() {
             op: BooleanOp::Union,
         },
     );
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
     // The boss sits on top of the block, not below the sketch plane.
@@ -193,7 +193,7 @@ fn revolve_rectangle_about_construction_axis() {
             combine: Combine::NewBody,
         },
     );
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     assert_valid(&part);
     // Three profile edges off the axis, a quadrant face each per 90°.
     assert_eq!(part.topology().faces.len(), 12);
@@ -224,7 +224,7 @@ fn revolve_half_disc_is_sphere() {
             combine: Combine::NewBody,
         },
     );
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     assert_valid(&part);
     // The half circle is split into two quarters.
     assert_eq!(part.topology().faces.len(), 8);
@@ -256,7 +256,7 @@ fn revolve_across_axis_fails() {
             combine: Combine::NewBody,
         },
     );
-    assert!(program.apply(Part::<S>::new()).is_err());
+    assert!(program.build::<S>().is_err());
 }
 
 /// Extrude refers to a sketch by name; naming a solid instead is an error.
@@ -274,7 +274,7 @@ fn extrude_of_non_sketch_fails() {
     );
     program.push("slab", extrude("square", 1.0, false));
     program.push("again", extrude("extrude(slab)", 1.0, false));
-    assert!(program.apply(Part::<S>::new()).is_err());
+    assert!(program.build::<S>().is_err());
 }
 
 /// The boss again, joined to the block by its own extrude: the result is
@@ -316,7 +316,7 @@ fn extrude_combines_with_its_target() {
             ..extrude("boss_sketch", 0.4, false)
         },
     );
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.solid_id("extrude(boss)").is_ok());

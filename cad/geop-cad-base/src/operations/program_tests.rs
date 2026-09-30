@@ -17,7 +17,7 @@ fn extrude(sketch: &str, distance: f64) -> PartOperation {
     .into()
 }
 
-/// A runner builds what [`Program::apply`] builds; stopping early builds
+/// A runner builds what [`Program::build`] builds; stopping early builds
 /// just the steps before the stop; and a run after an edit starts from
 /// the last unchanged step.
 #[test]
@@ -30,7 +30,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     assert!(runner.results().iter().all(|r| r.error.is_none()));
     assert_eq!(
         describe(runner.part()),
-        describe(&program.apply(Part::new()).unwrap())
+        describe(&program.build().unwrap())
     );
 
     // Back in time: only the box.
@@ -51,7 +51,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     assert!(runner.results().iter().all(|r| r.error.is_none()));
     assert_eq!(
         describe(runner.part()),
-        describe(&edited.apply(Part::new()).unwrap())
+        describe(&edited.build().unwrap())
     );
 }
 

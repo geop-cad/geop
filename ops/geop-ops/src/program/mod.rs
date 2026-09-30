@@ -90,17 +90,19 @@ impl<O: Operations> Program<O> {
         Ok(())
     }
 
-    /// Runs every step in order, starting from `part` (typically
-    /// [`Part::new`]), and returns the part the whole program builds — or
-    /// the first error any step raises, at which point the steps after it
-    /// never run.
+    /// Runs every step in order, starting from an empty part, and returns
+    /// the part the whole program builds — or the first error any step
+    /// raises, at which point the steps after it never run. A program
+    /// always starts from nothing: its names are only guaranteed to be
+    /// unique, and to mean the same thing on every run, when every entity
+    /// was created by one of its own steps.
     ///
     /// After each step, every entity of the part must have a name — an
     /// operation that leaves one unnamed has broken the one guarantee a
     /// program relies on.
-    pub fn apply<S: Scalar>(&self, part: Part<S>) -> GeopResult<Part<S>> {
+    pub fn build<S: Scalar>(&self) -> GeopResult<Part<S>> {
         self.validate()?;
-        let mut part = part;
+        let mut part = Part::new();
         for (index, step) in self.steps.iter().enumerate() {
             part = run_step(part, index, step)?;
         }

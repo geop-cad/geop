@@ -34,7 +34,7 @@ fn base(normal: FrameAxis) -> EntityRef {
 /// The 2 x 2 x 1 box with a hole of radius 0.4 drilled 0.5 deep into
 /// the middle of its top.
 fn drilled_box() -> Part<S> {
-    examples::box_with_drill_hole().apply(Part::new()).unwrap()
+    examples::box_with_drill_hole().build().unwrap()
 }
 
 /// The datum built from `selection` by `construction` in `part`.
@@ -398,7 +398,7 @@ fn planes() {
 #[test]
 fn sketches_go_on_datum_planes() {
     let program = examples::boss_on_reference_plane();
-    let part = program.apply(Part::<S>::new()).unwrap();
+    let part = program.build::<S>().unwrap();
     part.check_names().unwrap();
     let placed = part.sketch(part.sketch_id("boss_sketch").unwrap()).unwrap();
     let lifted = part.datum(part.datum_id("lifted").unwrap()).unwrap();

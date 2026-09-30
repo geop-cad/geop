@@ -590,7 +590,7 @@ mod tests {
     /// the very same part: every name, every piece of topology between
     /// names, and every bit of geometry.
     fn build_and_round_trip(name: &str, program: &Program) -> Part<S> {
-        let part = program.apply(Part::<S>::new()).unwrap();
+        let part = program.build::<S>().unwrap();
         let validation = ValidationParameters::default();
         if let Err(errors) = validate(&validation, part.topology()) {
             panic!(
@@ -626,7 +626,7 @@ mod tests {
             "{name}: JSON is not stable"
         );
 
-        let rebuilt = read_back.apply(Part::<S>::new()).unwrap();
+        let rebuilt = read_back.build::<S>().unwrap();
         assert_eq!(
             PartDescription::of(&rebuilt).unwrap(),
             description,
@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn names_survive_a_change_of_dimensions() {
         let names = |program: &Program| {
-            let part = program.apply(Part::<S>::new()).unwrap();
+            let part = program.build::<S>().unwrap();
             let description = PartDescription::of(&part).unwrap();
             (
                 description.faces.keys().cloned().collect::<Vec<_>>(),
@@ -840,7 +840,7 @@ mod tests {
         args.plane = EntityRef::Face {
             name: "extrude(box,side)".into(),
         };
-        let Err(err) = program.apply(Part::<S>::new()) else {
+        let Err(err) = program.build::<S>() else {
             panic!("a sketch on a face that doesn't exist was placed somewhere");
         };
         assert!(format!("{err:?}").contains("extrude(box,side)"), "{err:?}");
@@ -852,7 +852,7 @@ mod tests {
     fn duplicate_step_ids_are_rejected() {
         let mut program = box_with_drill_hole();
         program.steps[3].id = "box".into();
-        assert!(program.apply(Part::<S>::new()).is_err());
+        assert!(program.build::<S>().is_err());
     }
 
     /// Reproduces the real bug report described on `handle_with_hole`.

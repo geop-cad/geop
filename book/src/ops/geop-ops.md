@@ -208,7 +208,7 @@ program.push("hole", ExtrudeArgs {
 });
 ```
 
-`Program::apply` builds a part from scratch and checks after every step that
+`Program::build` builds a part from scratch and checks after every step that
 every entity has a name. `ProgramRunner` builds incrementally for an editor:
 `run(program, stop)` runs the first `stop` steps, reuses whatever earlier
 runs built that still applies, and stops at the first failing step, since
