@@ -483,8 +483,14 @@ mod tests {
             .collect();
         let hole_area = 16.0 * (std::f64::consts::TAU / 32.0).sin();
         for n in [1, 2, 3, 4, 8, 13] {
-            let triangles =
-                triangulate_region(&square, std::slice::from_ref(&hole), [0.0, 0.0], [4.0, 4.0], n, n);
+            let triangles = triangulate_region(
+                &square,
+                std::slice::from_ref(&hole),
+                [0.0, 0.0],
+                [4.0, 4.0],
+                n,
+                n,
+            );
             let inside: Vec<_> = triangles
                 .iter()
                 .filter(|t| {
@@ -585,8 +591,14 @@ mod tests {
                 .abs()
                 / 2.0;
             for n in [1, 2, 3, 4, 8] {
-                let triangles =
-                    triangulate_region(&square, std::slice::from_ref(&hole), [0.0, 0.0], [1.0, 1.0], n, n);
+                let triangles = triangulate_region(
+                    &square,
+                    std::slice::from_ref(&hole),
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    n,
+                    n,
+                );
                 let area = covered(&triangles);
                 assert!(
                     (area - (1.0 - hole_area)).abs() < 1e-9,
@@ -616,8 +628,14 @@ mod tests {
         .rev()
         .collect();
         for (nu, nv) in [(1, 1), (1, 2), (2, 3), (5, 5)] {
-            let triangles =
-                triangulate_region(&square, std::slice::from_ref(&hole), [-1.0, -1.0], [4.0, 4.0], nu, nv);
+            let triangles = triangulate_region(
+                &square,
+                std::slice::from_ref(&hole),
+                [-1.0, -1.0],
+                [4.0, 4.0],
+                nu,
+                nv,
+            );
             let area = covered(&triangles);
             assert!(
                 (area - 18.0).abs() < 1e-9,

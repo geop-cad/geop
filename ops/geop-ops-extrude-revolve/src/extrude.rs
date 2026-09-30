@@ -52,8 +52,8 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_ops::{Namer, Part};
 use geop_core_topology::{CoedgeId, FaceId, SolidId, VertexId};
+use geop_ops::{Namer, Part};
 
 /// Where the profile sits in `(u, v)`, and the pcurves and surfaces that
 /// follow from that: the two flat caps span the profile's bounding box, so a

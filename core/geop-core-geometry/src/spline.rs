@@ -11,7 +11,12 @@ use geop_core_math::{
 /// The knot span containing `t`: the last index `k` in `[degree, n]` with
 /// `knots[k] <= t < knots[k+1]`, where `n + 1` is the number of control
 /// points.
-pub(crate) fn find_span<S: Scalar>(degree: usize, knots: &[S], n: usize, t: S) -> GeopResult<usize> {
+pub(crate) fn find_span<S: Scalar>(
+    degree: usize,
+    knots: &[S],
+    n: usize,
+    t: S,
+) -> GeopResult<usize> {
     let p = degree;
     if t.definitely_less(knots[p]) || t.definitely_greater(knots[n + 1]) {
         return Err(GeopError::new(format!(
@@ -153,10 +158,16 @@ mod tests {
     use geop_core_math::{scalars::Scalar, vector::Vector};
 
     /// The whole-curve hodograph: degree `p − 1`, knots without the ends.
-    fn hodograph<S: Scalar>(p: usize, knots: &[S], c: &[Vector<S, 1>]) -> (Vec<S>, Vec<Vector<S, 1>>) {
+    fn hodograph<S: Scalar>(
+        p: usize,
+        knots: &[S],
+        c: &[Vector<S, 1>],
+    ) -> (Vec<S>, Vec<Vector<S, 1>>) {
         let pts = (0..c.len() - 1)
             .map(|i| {
-                let scale = S::from_i64(p as i64).div(knots[i + p + 1].sub(knots[i + 1])).unwrap();
+                let scale = S::from_i64(p as i64)
+                    .div(knots[i + p + 1].sub(knots[i + 1]))
+                    .unwrap();
                 c[i + 1].sub(&c[i]).prod_scalar(scale)
             })
             .collect();
@@ -182,8 +193,16 @@ mod tests {
                 de_boor(deg, k, pts, t, find_span(deg, k, pts.len() - 1, t).unwrap())[0]
             };
             assert!(ders[0][0].could_be_equal(at(p, &knots, &c)), "t={t:?}");
-            assert!(ders[1][0].could_be_equal(at(p - 1, &k1, &h1)), "t={t:?}: {:?}", ders[1]);
-            assert!(ders[2][0].could_be_equal(at(p - 2, &k2, &h2)), "t={t:?}: {:?}", ders[2]);
+            assert!(
+                ders[1][0].could_be_equal(at(p - 1, &k1, &h1)),
+                "t={t:?}: {:?}",
+                ders[1]
+            );
+            assert!(
+                ders[2][0].could_be_equal(at(p - 2, &k2, &h2)),
+                "t={t:?}: {:?}",
+                ders[2]
+            );
         }
     }
     #[test]

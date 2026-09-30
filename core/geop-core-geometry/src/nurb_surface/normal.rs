@@ -17,7 +17,12 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// differentiates along its own direction, so each is the curve case
     /// ([`homogeneous_derivatives`], then [`rational_derivatives`]) run
     /// across the local rows (columns), each first evaluated at `v` (`u`).
-    fn pure_derivatives(&self, u: S, v: S, n: usize) -> GeopResult<(Vec<Vector3<S>>, Vec<Vector3<S>>)> {
+    fn pure_derivatives(
+        &self,
+        u: S,
+        v: S,
+        n: usize,
+    ) -> GeopResult<(Vec<Vector3<S>>, Vec<Vector3<S>>)> {
         let (p, q) = (self.degree_u, self.degree_v);
         let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
         let nv = self.num_v;
@@ -107,9 +112,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
             .collect();
         let turning = spokes
             .windows(2)
-            .fold(Vector3::zero(), |acc: Vector3<S>, e| acc.add(&e[0].prod_cross(&e[1])));
+            .fold(Vector3::zero(), |acc: Vector3<S>, e| {
+                acc.add(&e[0].prod_cross(&e[1]))
+            });
         let result = turning.normalize().and_then(|t| {
-            if !spokes.iter().all(|e| e.prod_dot(&t).could_be_equal(S::ZERO)) {
+            if !spokes
+                .iter()
+                .all(|e| e.prod_dot(&t).could_be_equal(S::ZERO))
+            {
                 return Err(GeopError::new(format!(
                     "the spokes {spokes:?} are not coplanar: an apex has no single normal"
                 )));
@@ -280,7 +290,10 @@ mod tests {
         let n = disc.normal(every_u, f(0.)).unwrap();
         let off = disc.normal(f(0.5), f(0.5)).unwrap();
         assert!(n.could_be_equal(&off), "{n:?} vs {off:?}");
-        assert!(n[2].abs().could_be_equal(S::ONE) && n[0].could_be_equal(S::ZERO), "{n:?}");
+        assert!(
+            n[2].abs().could_be_equal(S::ONE) && n[0].could_be_equal(S::ZERO),
+            "{n:?}"
+        );
     }
     #[test]
     fn disc_centre_normal() {
@@ -324,10 +337,16 @@ mod tests {
         )
         .unwrap();
         let n = sphere.normal(f(0.).union(f(1.)), f(1.)).unwrap();
-        assert!(n[0].could_be_equal(S::ZERO) && n[1].could_be_equal(S::ZERO), "{n:?}");
+        assert!(
+            n[0].could_be_equal(S::ZERO) && n[1].could_be_equal(S::ZERO),
+            "{n:?}"
+        );
         // Same orientation as the regular normal just below the pole.
         let below = sphere.normal(f(0.5), f(0.9)).unwrap();
-        assert!(n[2].mul(below[2]).definitely_greater(S::ZERO), "{n:?} vs {below:?}");
+        assert!(
+            n[2].mul(below[2]).definitely_greater(S::ZERO),
+            "{n:?} vs {below:?}"
+        );
     }
     #[test]
     fn sphere_pole_normal() {

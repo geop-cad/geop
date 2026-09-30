@@ -2,8 +2,8 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_ops::Part;
 use geop_core_topology::{Model, SolidId, VertexId};
+use geop_ops::Part;
 
 /// The first `(vertex_a, vertex_b)` pair — `vertex_a` from `solid_a`,
 /// `vertex_b` from `solid_b`, distinct ids — whose points coincide, if any.

@@ -13,8 +13,8 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_ops::{Namer, Part};
 use geop_core_topology::SolidId;
+use geop_ops::{Namer, Part};
 
 /// Which axis a cylinder's own axis runs parallel to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

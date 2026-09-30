@@ -46,8 +46,8 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
-use geop_ops::{Namer, Part};
 use geop_core_topology::{CoedgeId, SolidId};
+use geop_ops::{Namer, Part};
 
 /// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole row
 /// it touches on its `v = 0` (top) side — the row's two meridian edges meet

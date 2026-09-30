@@ -32,8 +32,8 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_ops::{Namer, Part, RefId};
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
+use geop_ops::{Namer, Part, RefId};
 
 /// What a created entity was made from — everything its final name derives
 /// from (see the module docs).

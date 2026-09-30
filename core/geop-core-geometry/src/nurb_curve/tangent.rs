@@ -12,11 +12,22 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// `[C(t), C'(t), …, C⁽ⁿ⁾(t)]`, with `C = D − 1`. Evaluated directly,
     /// without building any derivative curve ([`homogeneous_derivatives`],
     /// then the quotient rule [`rational_derivatives`]).
-    fn cartesian_derivatives<const C: usize>(&self, t: S, n: usize) -> GeopResult<Vec<Vector<S, C>>> {
+    fn cartesian_derivatives<const C: usize>(
+        &self,
+        t: S,
+        n: usize,
+    ) -> GeopResult<Vec<Vector<S, C>>> {
         let p = self.degree;
         let span = find_span(p, &self.knot_vector, self.control_points.len() - 1, t)?;
         let local = &self.control_points[span - p..=span];
-        rational_derivatives(&homogeneous_derivatives(p, &self.knot_vector, local, span, t, n))
+        rational_derivatives(&homogeneous_derivatives(
+            p,
+            &self.knot_vector,
+            local,
+            span,
+            t,
+            n,
+        ))
     }
 }
 
@@ -159,7 +170,9 @@ mod tests {
             let d2 = c.second_derivative(f(t)).unwrap();
             assert!(p.prod_dot(&d1).could_be_equal(S::ZERO), "t={t}");
             assert!(
-                p.prod_dot(&d2).add(d1.prod_dot(&d1)).could_be_equal(S::ZERO),
+                p.prod_dot(&d2)
+                    .add(d1.prod_dot(&d1))
+                    .could_be_equal(S::ZERO),
                 "t={t}: {d1:?} {d2:?}"
             );
             assert!(d1.norm().definitely_greater(S::ZERO));

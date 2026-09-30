@@ -28,10 +28,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
 
     runner.run(&program, None);
     assert!(runner.results().iter().all(|r| r.error.is_none()));
-    assert_eq!(
-        describe(runner.part()),
-        describe(&program.build().unwrap())
-    );
+    assert_eq!(describe(runner.part()), describe(&program.build().unwrap()));
 
     // Back in time: only the box.
     runner.run(&program, Some(2));
@@ -49,10 +46,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     edited.steps[hole].operation = extrude("hole_sketch", -0.25);
     runner.run(&edited, None);
     assert!(runner.results().iter().all(|r| r.error.is_none()));
-    assert_eq!(
-        describe(runner.part()),
-        describe(&edited.build().unwrap())
-    );
+    assert_eq!(describe(runner.part()), describe(&edited.build().unwrap()));
 }
 
 /// A step that fails ends the run there, reported by id; the part is

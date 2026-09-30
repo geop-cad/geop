@@ -4,8 +4,8 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops::Part;
 use geop_core_topology::{EdgeId, Model, SolidId, VertexId};
+use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
 

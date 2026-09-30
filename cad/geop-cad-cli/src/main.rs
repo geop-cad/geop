@@ -190,16 +190,13 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
         args.only
             .iter()
             .map(|name| {
-                all.iter()
-                    .find(|(n, _)| n == name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        let known: Vec<_> = all.iter().map(|(n, _)| *n).collect();
-                        GeopError::new(format!(
-                            "no example named {name:?}; the built-in examples are: {}",
-                            known.join(", ")
-                        ))
-                    })
+                all.iter().find(|(n, _)| n == name).cloned().ok_or_else(|| {
+                    let known: Vec<_> = all.iter().map(|(n, _)| *n).collect();
+                    GeopError::new(format!(
+                        "no example named {name:?}; the built-in examples are: {}",
+                        known.join(", ")
+                    ))
+                })
             })
             .collect::<GeopResult<_>>()?
     };
@@ -238,7 +235,11 @@ fn main() -> ExitCode {
             for c in &compiled {
                 eprintln!("{} triangles -> {}", c.triangles, c.output.display());
             }
-            eprintln!("{} example(s) -> {}", compiled.len(), args.out_dir.display());
+            eprintln!(
+                "{} example(s) -> {}",
+                compiled.len(),
+                args.out_dir.display()
+            );
         }),
     };
     match result {

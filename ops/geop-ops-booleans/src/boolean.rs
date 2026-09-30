@@ -20,7 +20,6 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops::{Namer, Part};
 use geop_core_topology::{
     FaceId, Model, ShellId, SolidId,
     contains::{
@@ -28,6 +27,7 @@ use geop_core_topology::{
         shell::{PointClassification as ShellPoint, shell_contains},
     },
 };
+use geop_ops::{Namer, Part};
 use serde::{Deserialize, Serialize};
 
 use crate::remesh::remesh::{RemeshParams, remesh};
@@ -350,11 +350,11 @@ mod tests {
     use super::{BooleanOp, FaceClassification, boolean, classify_face};
     use crate::{remesh::remesh::RemeshParams, scenes::all_scenes};
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
-    use geop_ops::Namer;
     use geop_core_topology::{
         contains::rng::Rng,
         validation::{ValidationParameters, validate_fast},
     };
+    use geop_ops::Namer;
 
     fn scene(name: &str) -> crate::scenes::TestScene<ScalInF64> {
         all_scenes::<ScalInF64>()
@@ -751,7 +751,8 @@ mod tests {
     fn sphere(part: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
         let [x, y, z] = center;
         let r = ScalInF64::from_f64(r);
-        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(part, &fresh_id(), v(x, y, z), r).unwrap()
+        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(part, &fresh_id(), v(x, y, z), r)
+            .unwrap()
     }
 
     /// `CreateCylinder(offset, r, h, axis)`: `offset` is the bottom cap's centre.

@@ -49,11 +49,11 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
-use geop_ops::Part;
 use geop_core_topology::{
     CoedgeGeometry, Edge, EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
 };
+use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
 
@@ -1207,7 +1207,11 @@ fn trace_one_side<S: Scalar>(
         })
         .with_context(&ctx)?;
     let at = |which: &'static str, u: S, v: S| {
-        move |e: GeopError| e.with_context(format!("normal of {which} at point={point:?}, (u, v)=({u:?}, {v:?})"))
+        move |e: GeopError| {
+            e.with_context(format!(
+                "normal of {which} at point={point:?}, (u, v)=({u:?}, {v:?})"
+            ))
+        }
     };
     // The normals are taken over the honest boxes, not sharpened ones: at a
     // pole only the box still touches the collapsed row, which is what
@@ -1701,8 +1705,8 @@ mod splice_regression_tests {
         scenes::all_scenes,
     };
     use geop_core_math::scalars::ScalInF64;
-    use geop_ops::Namer;
     use geop_core_topology::validation::{ValidationParameters, validate, validate_fast};
+    use geop_ops::Namer;
 
     fn namer() -> Namer {
         Namer::new("boolean", "ab").unwrap()

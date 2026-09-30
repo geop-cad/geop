@@ -2,8 +2,8 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_ops::{Namer, Part};
 use geop_core_topology::SolidId;
+use geop_ops::{Namer, Part};
 
 use crate::naming::BooleanNaming;
 use crate::remesh::{
