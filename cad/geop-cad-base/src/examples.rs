@@ -533,6 +533,81 @@ pub fn luggage_tag() -> Program {
     program
 }
 
+/// A box with a round hole through it, and a triangle sketched on its side
+/// face, revolved around one of its own edges and joined to the box: a double
+/// cone whose axis lies in the side face, so that both apexes sit on it and
+/// half the cone stands out of the box.
+///
+/// Reproduces a real user bug report (2026-09-30) with the exact reported
+/// coordinates and sketch ids: the `revolve1` union failed in
+/// `remesh_edges_x_faces` with "the spokes ... are not coplanar: an apex has
+/// no single normal" from `NurbSurface::pole_normal`: `trace_one_side` asked
+/// for the cone's normal at its apex, to find which way a curve leaves it.
+pub fn revolved_cone_on_box() -> Program {
+    let mut program = Program::new();
+
+    let mut outline = Sketch::new();
+    let p0 = outline.add_point(-2.046526714311965, 1.182776884816516);
+    let p1 = outline.add_point(2.2456482324612383, -1.2774916901086213);
+    let p2 = outline.add_point(2.2456482324612383, 1.182776884816516);
+    let p3 = outline.add_point(-2.046526714311965, -1.2774916901086213);
+    let top = outline.add_line(p0, p2);
+    outline.constrain(Constraint::Horizontal { line: top });
+    let right = outline.add_line(p2, p1);
+    outline.constrain(Constraint::Vertical { line: right });
+    let bottom = outline.add_line(p1, p3);
+    outline.constrain(Constraint::Horizontal { line: bottom });
+    let left = outline.add_line(p3, p0);
+    outline.constrain(Constraint::Vertical { line: left });
+    let center = outline.add_point(-0.6692695471128323, 0.04905776553659026);
+    outline.add_circle(center, 0.771466957205246);
+    program.push(
+        "sketch1",
+        AddSketchArgs {
+            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            sketch: outline,
+        },
+    );
+    program.push(
+        "extrude1",
+        ExtrudeArgs {
+            sketch: "sketch1".into(),
+            distance: 1.8900000000000001,
+            symmetric: false,
+            combine: Combine::NewBody,
+        },
+    );
+
+    let mut triangle = Sketch::new();
+    let q0 = triangle.add_point(-0.2654953575323612, 1.4039697276195047);
+    let q1 = triangle.add_point(-0.8683910652620968, 0.8073854454124275);
+    let axis = triangle.add_line(q0, q1);
+    let q3 = triangle.add_point(1.9210929721682684, 0.8073854454124275);
+    let base = triangle.add_line(q1, q3);
+    triangle.constrain(Constraint::Horizontal { line: base });
+    triangle.add_line(q3, q0);
+    program.push(
+        "sketch2",
+        AddSketchArgs {
+            plane: EntityRef::Face {
+                name: format!("extrude(extrude1,sketch1,{right})"),
+            },
+            sketch: triangle,
+        },
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: "sketch2".into(),
+            axis,
+            combine: Combine::Union {
+                target: "extrude(extrude1)".into(),
+            },
+        },
+    );
+    program
+}
+
 /// Every example, by name.
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
@@ -543,6 +618,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("boss_on_reference_plane", boss_on_reference_plane()),
         ("handle_with_hole", handle_with_hole()),
         ("luggage_tag", luggage_tag()),
+        ("revolved_cone_on_box", revolved_cone_on_box()),
     ]
 }
 
@@ -872,5 +948,23 @@ mod tests {
     #[test]
     fn luggage_tag_round_trips() {
         build_and_round_trip("luggage_tag", &luggage_tag());
+    }
+
+    /// Reproduces the real bug report described on `revolved_cone_on_box`.
+    #[test]
+    fn revolved_cone_on_box_round_trips() {
+        let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());
+        // The side face is the plane x = 2.2456, with sketch x along world y
+        // and sketch y along world z. The triangle's centroid, turned a
+        // quarter around the axis, lies 0.654 off that plane on either side.
+        for (p, expected) in [
+            ([2.9, -0.198, 1.471], PointClassification::Inside),
+            ([1.59, -0.198, 1.471], PointClassification::Inside),
+            ([2.9, 1.0, 0.3], PointClassification::Outside),
+            ([-0.669, 0.049, 1.0], PointClassification::Outside),
+            ([1.5, -1.0, 1.0], PointClassification::Inside),
+        ] {
+            assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
+        }
     }
 }
