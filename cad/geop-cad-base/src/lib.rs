@@ -1,4 +1,11 @@
-//! What an interactive CAD editor needs from the kernel beyond building
-//! parts (which `geop_ops_parts` does): picking entities in the viewport.
+//! The CAD engine: which operations the editor offers, and the programs
+//! written in them ([`operations`]); editing such a program, as one state
+//! machine an editor drives ([`editor`]); and example programs
+//! ([`examples`]).
 
-pub mod pick;
+pub mod editor;
+pub mod examples;
+pub mod operations;
+
+pub use editor::{Command, Editor, Update};
+pub use operations::{PartOperation, Program, ProgramRunner, Step};

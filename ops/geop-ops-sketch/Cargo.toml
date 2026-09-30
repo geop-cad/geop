@@ -1,0 +1,13 @@
+[package]
+name = "geop-ops-sketch"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-sketch.workspace = true
+geop-ops.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

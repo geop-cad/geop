@@ -1,7 +1,7 @@
 //! `geop`: the kernel on the command line.
 //!
 //! `geop compile part.program.json` builds a program — the JSON the web
-//! editor saves (see `geop_ops_parts::Program`) — and writes the part it
+//! editor saves (see `geop_cad_base::Program`) — and writes the part it
 //! makes as an STL mesh. The mesh is the one the editor draws (see
 //! `geop_ops_rasterize::stl`), so a compiled file looks exactly like the
 //! part on screen.
@@ -14,14 +14,13 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use geop_cad_base::Program;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::scal_in_f64::ScalInF64,
 };
-use geop_core_part::Part;
-use geop_ops_parts::Program;
 use geop_ops_rasterize::{
-    rasterize_model_tagged,
+    rasterize,
     stl::{StlFormat, stl_triangles, write_stl},
 };
 
@@ -46,7 +45,7 @@ struct Cli {
 enum Command {
     /// Build a program (the JSON the web editor saves) and write its part as an STL mesh.
     Compile(CompileArgs),
-    /// Write every built-in example (see `geop_ops_parts::examples`) as a program and an STL mesh.
+    /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
     Examples(ExamplesArgs),
 }
 
@@ -117,7 +116,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     };
     let json = std::fs::read_to_string(&args.program).map_err(io_err("reading", &args.program))?;
     let program = Program::from_json(&json)?;
-    let part = program.apply(Part::<S>::new())?;
+    let part = program.build::<S>()?;
     let model = part.topology();
 
     // The solids to write, in name order so the file does not depend on
@@ -149,7 +148,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         faces.extend(of_solid);
     }
 
-    let raster = rasterize_model_tagged(model, usize::from(args.quality))?;
+    let raster = rasterize(model, usize::from(args.quality))?;
     let triangles = stl_triangles(&raster, &faces);
 
     let output = args
@@ -184,23 +183,20 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
 fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     std::fs::create_dir_all(&args.out_dir)
         .map_err(|e| GeopError::new(format!("creating {}: {e}", args.out_dir.display())))?;
-    let all = geop_ops_parts::examples::all();
+    let all = geop_cad_base::examples::all();
     let selected: Vec<_> = if args.only.is_empty() {
         all
     } else {
         args.only
             .iter()
             .map(|name| {
-                all.iter()
-                    .find(|(n, _)| n == name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        let known: Vec<_> = all.iter().map(|(n, _)| *n).collect();
-                        GeopError::new(format!(
-                            "no example named {name:?}; the built-in examples are: {}",
-                            known.join(", ")
-                        ))
-                    })
+                all.iter().find(|(n, _)| n == name).cloned().ok_or_else(|| {
+                    let known: Vec<_> = all.iter().map(|(n, _)| *n).collect();
+                    GeopError::new(format!(
+                        "no example named {name:?}; the built-in examples are: {}",
+                        known.join(", ")
+                    ))
+                })
             })
             .collect::<GeopResult<_>>()?
     };
@@ -239,7 +235,11 @@ fn main() -> ExitCode {
             for c in &compiled {
                 eprintln!("{} triangles -> {}", c.triangles, c.output.display());
             }
-            eprintln!("{} example(s) -> {}", compiled.len(), args.out_dir.display());
+            eprintln!(
+                "{} example(s) -> {}",
+                compiled.len(),
+                args.out_dir.display()
+            );
         }),
     };
     match result {
@@ -253,7 +253,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use geop_ops_parts::examples;
+    use geop_cad_base::examples;
 
     use super::*;
 

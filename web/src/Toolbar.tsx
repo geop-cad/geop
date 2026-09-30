@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { entityLabel, type EntityRef, type Program, type RunResult } from "./geop";
+import type { Program } from "./geop";
 import { BugReport } from "./BugReport";
 import { Privacy } from "./Privacy";
 
@@ -16,10 +16,10 @@ interface Props {
   onRedo: () => void;
   /** The operation-buttons row, rendered once in App and placed here (desktop) and in MobileBottom. */
   operationButtons: ReactNode;
-  /** The plane being sketched on, if sketching. */
-  sketchingOn: EntityRef | null;
-  committed: RunResult | null;
-  committedError: string | null;
+  /** What the editor is in the middle of, when it is working in a plane. */
+  badge: string | null;
+  /** Why the last command was refused, if it was. */
+  error: string | null;
   program: Program;
   stepCount: number;
   triangleCount: number;
@@ -42,9 +42,8 @@ export function Toolbar({
   canRedo,
   onRedo,
   operationButtons,
-  sketchingOn,
-  committed,
-  committedError,
+  badge,
+  error,
   program,
   stepCount,
   triangleCount,
@@ -94,16 +93,16 @@ export function Toolbar({
         </button>
       </div>
       <div className="tools desktop-only">{operationButtons}</div>
-      {sketchingOn && <span className="mode-badge">Sketching on {entityLabel(sketchingOn)}</span>}
+      {badge && <span className="mode-badge">{badge}</span>}
       <BugReport
         program={program}
-        committedError={committedError}
+        committedError={error}
         panelHost={bugReportHost}
         onOpen={onBugReportOpen}
         onClose={onBugReportClose}
       />
       <Privacy />
-      {committed && (
+      {!busy && (
         <span className="stats">
           {stepCount} step{stepCount === 1 ? "" : "s"} · {triangleCount} tris
         </span>

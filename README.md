@@ -77,7 +77,8 @@ every sketch entity keyed by its id, so edits show up as small diffs:
 {
   "steps": [
     { "id": "outline", "operation": "add_sketch",
-      "args": { "plane": { "type": "Plane", "normal": "Z" }, "sketch": { "points": { ... }, "curves": { ... }, "constraints": { ... } } } },
+      "args": { "plane": { "type": "Datum", "name": "origin", "component": { "plane": "z" } },
+                "sketch": { "points": { ... }, "curves": { ... }, "constraints": { ... } } } },
     { "id": "box", "operation": "extrude",
       "args": { "sketch": "outline", "distance": 1.0, "symmetric": false,
                 "combine": { "mode": "new_body" } } },
@@ -91,11 +92,14 @@ every sketch entity keyed by its id, so edits show up as small diffs:
 ```
 
 Whatever a step builds on directly — a sketch's plane, what a reference is
-built from — is an *entity reference*: `{"type": "Origin"}`, `{"type":
-"Axis", "axis": "X"}`, a base plane `{"type": "Plane", "normal": "Z"}`, or a
-`Vertex`, `Edge`, `Face` or `Datum` of the part `{"type": "Face", "name":
-"..."}`.
+built from — is an *entity reference*: a `Vertex`, `Edge`, `Face`, `Solid`,
+`Sketch` or `Datum` of the part by name, `{"type": "Face", "name": "..."}`.
+Every part starts with the coordinate-system datum `origin`, and one of a
+coordinate system's axes or planes is referred to on its own by a
+`component`: `{"type": "Datum", "name": "origin", "component": {"axis":
+"x"}}`, or its xy plane, normal to its z axis, `{"type": "Datum", "name":
+"origin", "component": {"plane": "z"}}`.
 
 "Save" in the web app downloads the program as `part.program.json`, and
 "Load" reads one back. `outputs/parts/` has the examples of
-`ops/geop-ops-parts/src/examples.rs` as program files.
+`cad/geop-cad-base/src/examples.rs` as program files.

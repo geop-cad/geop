@@ -2,11 +2,11 @@
 
 > Brief overview only — full documentation is coming later.
 
-Extrude and revolve operations, plus the sample primitive shapes (cube,
-sphere, cylinder, torus, ...) built from them.
+Extrude and revolve operations, plus basic shapes (cube, sphere,
+cylinder, ...) for tests to be written against.
 
 Every solid here is built entirely from the Euler operators of
-[geop-core-part](../core/geop-core-part.md) (`mvfs`, `mve`, `mef`, `mer`,
+[geop-ops](./geop-ops.md) `Part` (`mvfs`, `mve`, `mef`, `mer`,
 `replace_face`, ...), so it is valid by construction and every entity gets a
 stable name as it is created.
 
@@ -80,6 +80,10 @@ angles `a0..a3`: `N(X,q)` for the face swept by curve `X` through quadrant
 
 ## Basic shapes
 
+The `shapes` module builds basic solids directly. It is only compiled for
+tests: this crate's own, and other crates' through the `test-shapes`
+feature, which their dev-dependencies turn on.
+
 | Function                          | Shape                                                    |
 | --------------------------------- | -------------------------------------------------------- |
 | `cube_solid`                      | an axis-aligned box, extruded from its top face          |
@@ -88,5 +92,15 @@ angles `a0..a3`: `N(X,q)` for the face swept by curve `X` through quadrant
 | `extruded_cylinder`               | an `n`-gon prism approximating a cylinder                |
 | `figure8_profile`                 | a dumbbell outline with two holes, extruded              |
 
-The torus (a 4×4 grid of NURBS patches) exists in `torus.rs` but is not
-currently compiled.
+## The operations
+
+`Extrude` and `Revolve` are the operations a program uses (see
+[geop-ops](./geop-ops.md#operations)): they sweep a sketch of the part into
+a solid, and name everything after the sketch's elements. Editing one, the
+sketch is picked in the viewport and the extrude's distance is a handle on
+the end cap; until the user chooses how to combine, a positive distance
+joins and a negative one cuts. Both take a `Combine` from
+[geop-ops-booleans](./geop-ops-booleans.md): keep the result as a
+`NewBody`, or immediately unite, intersect or subtract it with a `target`
+solid — which is why this crate depends on the booleans, not the other way
+round.

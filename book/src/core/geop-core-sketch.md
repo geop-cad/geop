@@ -8,7 +8,8 @@ profile extraction. Sketches are what get extruded or revolved into solids.
 ## Entities and constraints
 
 A `Sketch` is plain `f64` design data, serializable with serde, so a part
-program stores it verbatim and the web app sends it as is.
+program stores it verbatim and the web app sends it as is. Positions are
+`point::P2` (`[x, y]`), with the arithmetic on them in the same module.
 
 Points are the only entities with positions of their own. Curves refer to
 points by `PointId`, so two curves sharing an endpoint share the *same*

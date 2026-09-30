@@ -52,8 +52,8 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_core_part::{Namer, Part};
 use geop_core_topology::{CoedgeId, FaceId, SolidId, VertexId};
+use geop_ops::{Namer, Part};
 
 /// Where the profile sits in `(u, v)`, and the pcurves and surfaces that
 /// follow from that: the two flat caps span the profile's bounding box, so a
@@ -191,7 +191,7 @@ impl<'a, S: Scalar> Caps<'a, S> {
 }
 
 /// The names one extrude gives to what it builds from one region, following
-/// `geop_core_part`'s scheme: `N` is the operation's [`Namer`], `X` a profile
+/// `geop_ops`'s scheme: `N` is the operation's [`Namer`], `X` a profile
 /// curve's name and `P` a joint's (see [`Profile`]).
 ///
 /// | entity | name |
@@ -899,7 +899,7 @@ mod naming_tests {
         .unwrap();
         part.check_names().unwrap();
 
-        let description = geop_core_part::PartDescription::of(&part).unwrap();
+        let description = geop_ops::PartDescription::of(&part).unwrap();
         assert_eq!(description.solids.len(), 1);
         assert_eq!(description.solids["extrude(box)"][0].len(), 6);
         let mut side = description.faces["extrude(box,c0)"].outer.clone();

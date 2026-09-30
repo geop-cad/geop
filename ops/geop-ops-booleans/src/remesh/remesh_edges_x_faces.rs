@@ -49,11 +49,11 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
-use geop_core_part::Part;
 use geop_core_topology::{
     CoedgeGeometry, Edge, EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
 };
+use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
 
@@ -84,6 +84,14 @@ struct TracingStartPoint {
 /// returns is seed-independent (it retries until it finds a ray that grazes
 /// no vertex), so a constant keeps tracing reproducible run to run.
 const FACE_CONTAINS_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// The fewest legs a traced intersection curve is fitted through (see
+/// `trace_one_side`): a cubic interpolant needs points enough to follow
+/// the branch, however few strides the march took along it. Like
+/// `STEPS_PER_REVOLUTION` this bounds effort — every extra leg is one more
+/// corrector — and decides how *wide* the traced curve's enclosure is, not
+/// whether it holds.
+const MIN_TRACED_LEGS: usize = 8;
 
 /// How many marching steps to spend on a full revolution of the tighter of
 /// the two surfaces' curvature. A step has to be short compared to how fast
@@ -1199,7 +1207,11 @@ fn trace_one_side<S: Scalar>(
         })
         .with_context(&ctx)?;
     let at = |which: &'static str, u: S, v: S| {
-        move |e: GeopError| e.with_context(format!("normal of {which} at point={point:?}, (u, v)=({u:?}, {v:?})"))
+        move |e: GeopError| {
+            e.with_context(format!(
+                "normal of {which} at point={point:?}, (u, v)=({u:?}, {v:?})"
+            ))
+        }
     };
     // The normals are taken over the honest boxes, not sharpened ones: at a
     // pole only the box still touches the collapsed row, which is what
@@ -1488,19 +1500,32 @@ fn trace_one_side<S: Scalar>(
                 )?;
                 Ok((p, (na, va, nb, vb)))
             };
-            // First each leg's midpoint joins the polyline: the march's stride
-            // leaves a cubic through its points drifting ~1e-5 from the
-            // branch, and a branch crossed in a single stride would be a
-            // straight line, off by the arc's whole sagitta. Halving every leg
-            // cuts a cubic's drift ~16x for one corrector per leg.
-            let half = S::from_ratio(1, 2).with_context(&ctx)?;
+            // First every leg is split, on the branch, into `pieces`: the
+            // march's stride leaves a cubic through its points drifting ~1e-5
+            // from the branch, and halving every leg cuts that ~16x for one
+            // corrector per leg. A branch crossed in only a stride or two
+            // needs more than halving, though: it would be left with too few
+            // points for a cubic at all — a single stride, halved, is three,
+            // and a quadratic through three points of an ellipse drifts ~4e-6
+            // from it. That drift is enclosed as width, honestly, but only in
+            // the directions it points in, and a pcurve fitted by projecting
+            // the curve onto a surface tilted against them inherits it as an
+            // offset its own width does not cover. So every branch gets at
+            // least `MIN_TRACED_LEGS` legs.
+            let strides = points.len() - 1;
+            let pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
             let mut dense = vec![points[0]];
             let mut dense_params = vec![params[0]];
-            for i in 0..points.len() - 1 {
-                let (mid, mid_params) =
-                    on_branch(points[i], params[i], points[i + 1], half).with_context(&ctx)?;
-                dense.extend([mid, points[i + 1]]);
-                dense_params.extend([mid_params, params[i + 1]]);
+            for i in 0..strides {
+                for k in 1..pieces {
+                    let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                    let (p, p_params) =
+                        on_branch(points[i], params[i], points[i + 1], frac).with_context(&ctx)?;
+                    dense.push(p);
+                    dense_params.push(p_params);
+                }
+                dense.push(points[i + 1]);
+                dense_params.push(params[i + 1]);
             }
             let (points, params) = (dense, dense_params);
             // Then the branch inside each of the new legs, which
@@ -1568,8 +1593,8 @@ mod tests {
         remesh_vertices_x_edges::remesh_vertices_x_edges,
     };
     use geop_core_math::{scalars::ScalInF64, vector::Vector3};
-    use geop_core_part::Namer;
-    use geop_ops_extrude_revolve::cube::cube_solid;
+    use geop_ops::Namer;
+    use geop_ops_extrude_revolve::shapes::cube_solid;
 
     const MAX_NODES: usize = 20000;
     const MAX_EDGE_INTERSECTIONS: usize = 17;
@@ -1664,7 +1689,7 @@ mod tests {
         );
 
         std::fs::create_dir_all("outputs").unwrap();
-        match geop_ops_rasterize::rasterize_topology(model, 12) {
+        match geop_ops_rasterize::debug::rasterize_topology(model, 12) {
             Ok(render) => render
                 .save_to_file("outputs/remesh_edges_x_faces_box_grid_offset_x_half.html")
                 .unwrap(),
@@ -1680,8 +1705,8 @@ mod splice_regression_tests {
         scenes::all_scenes,
     };
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_part::Namer;
     use geop_core_topology::validation::{ValidationParameters, validate, validate_fast};
+    use geop_ops::Namer;
 
     fn namer() -> Namer {
         Namer::new("boolean", "ab").unwrap()

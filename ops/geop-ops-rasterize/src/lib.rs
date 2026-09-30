@@ -1,5 +1,7 @@
-//! Turn a [`Model`] into a renderable [`PrimitiveScene`]: one triangle mesh
-//! (faces), line list (edges), and point list (vertices).
+//! Turn a [`Model`] into sampled geometry — [`rasterize`]: a point per
+//! vertex, a polyline per edge, triangles per face, each tagged with the
+//! entity it came from — to draw it, pick in it, write it as STL ([`stl`]),
+//! or render it for debugging ([`debug`]).
 //!
 //! Every face — trimmed or not — has its outer boundary (and any holes)
 //! sampled from their pcurves into `(u, v)` polygons, then triangulated by
@@ -11,28 +13,25 @@
 //! real trim and follows its true curvature.
 
 mod clip;
+pub mod debug;
 mod grid;
 pub mod polygon_triangulate;
 pub mod stl;
-mod topology_debug;
 
 use std::collections::HashMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::{Color10, PrimitiveScene, TriangleFace},
+    primitives::TriangleFace,
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{EdgeId, Face, FaceId, Model, VertexId};
 
-pub use topology_debug::rasterize_topology;
-
 /// Triangulate `face`'s trimmed region in `(u, v)` space — see
 /// [`grid::triangulate_face`] for the actual (curvature-sized grid, clipped
 /// to the trim) algorithm; this just forwards to it. Kept as its own
-/// name/doc entry point since it's `pub` API several other crates
-/// (`geop-cad-base::pick`, this module's own `rasterize_model`) call by
+/// name/doc entry point since it's `pub` API other crates' tests call by
 /// name.
 pub fn face_triangles_uv<S: Scalar>(
     model: &Model<S>,
@@ -46,8 +45,8 @@ pub fn face_triangles_uv<S: Scalar>(
 /// kept alongside the id of the entity it came from.
 ///
 /// This is the single place the crate turns topology into sampled geometry
-/// — [`PrimitiveScene`] rendering (`rasterize_model`) and ray picking
-/// (`geop_cad_base::pick`) both build on top of it, rather than each walking
+/// — drawing and ray picking (`geop_ops::ui::PartView`), STL, and debug
+/// rendering ([`debug`]) all build on top of it, rather than each walking
 /// `Model` and sampling curves/surfaces on their own. That matters beyond
 /// not repeating code: it guarantees a pick can never disagree with what
 /// the viewer actually drew, because both read the same triangles.
@@ -136,12 +135,9 @@ fn dist_point_to_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
 /// `n` is a quality: how finely a curve or surface that actually curves is
 /// approximated (see [`sample_curve`] and [`grid::triangulate_face`]), not
 /// a fixed sample count — a straight edge or flat face stays cheap.
-pub fn rasterize_model_tagged<S: Scalar>(
-    model: &Model<S>,
-    n: usize,
-) -> GeopResult<RasterizedModel<S>> {
+pub fn rasterize<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<RasterizedModel<S>> {
     if n < 2 {
-        return Err(GeopError::new("rasterize_model_tagged: n must be >= 2"));
+        return Err(GeopError::new("rasterize: n must be >= 2"));
     }
 
     let vertices = model
@@ -197,89 +193,19 @@ pub fn rasterize_model_tagged<S: Scalar>(
     })
 }
 
-/// Rasterize `model` into a [`PrimitiveScene`]: `points` (one per vertex),
-/// `lines` (one per edge), and `triangles` (one mesh per face, `n` samples
-/// per parametric direction / edge_loop segment). Untrimmed (no-hole) faces
-/// are drawn in blue, holed faces in olive.
-pub fn rasterize_model<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<PrimitiveScene<S>> {
-    rasterize_model_impl(model, n, false, &default_face_color)
-}
-
-/// Like `rasterize_model`, but draws each face as a wireframe of its
-/// triangulation instead of filled/shaded triangles — useful when overlaying
-/// traced intersection curves on top of the faces, since a solid mesh can
-/// occlude or visually blend with the curves.
-pub fn rasterize_model_wireframe<S: Scalar>(
-    model: &Model<S>,
-    n: usize,
-) -> GeopResult<PrimitiveScene<S>> {
-    rasterize_model_impl(model, n, true, &default_face_color)
-}
-
-/// Like `rasterize_model`, but `face_color` picks each face's color
-/// directly (by `FaceId`) instead of the default blue/olive
-/// untrimmed/holed convention — e.g. coloring by which solid a face
-/// belongs to, regardless of whether that face happens to have a hole.
-pub fn rasterize_model_with_face_color<S: Scalar>(
-    model: &Model<S>,
-    n: usize,
-    face_color: impl Fn(FaceId) -> Color10,
-) -> GeopResult<PrimitiveScene<S>> {
-    rasterize_model_impl(model, n, false, &move |id, _face| face_color(id))
-}
-
-fn default_face_color<S: Scalar>(_id: FaceId, _face: &Face<S>) -> Color10 {
-    Color10::Blue
-}
-
-fn rasterize_model_impl<S: Scalar>(
-    model: &Model<S>,
-    n: usize,
-    wireframe: bool,
-    face_color: &dyn Fn(FaceId, &Face<S>) -> Color10,
-) -> GeopResult<PrimitiveScene<S>> {
-    let rasterized = rasterize_model_tagged(model, n)?;
-    let mut scene = PrimitiveScene::new();
-
-    for point in rasterized.vertices.into_values() {
-        scene.add_point(point, Color10::DarkGray);
-    }
-
-    for polyline in rasterized.edges.into_values() {
-        scene.add_polyline(&polyline, Color10::Gray);
-    }
-
-    for (face_id, tris) in rasterized.faces {
-        let face = model.get_face(face_id)?;
-        let color = face_color(face_id, face);
-        for t in tris {
-            if wireframe {
-                for (p, q) in [(t.a, t.b), (t.b, t.c), (t.c, t.a)] {
-                    if let Ok(l) = geop_core_math::primitives::Line::try_new(p, q) {
-                        scene.add_line(l, color);
-                    }
-                }
-            } else {
-                scene.add_triangle(t, color);
-            }
-        }
-    }
-
-    Ok(scene)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debug::Color10;
     use geop_core_math::for_all_scalars;
     use geop_core_math::primitives::TriangleFace;
-    use geop_core_part::Part;
-    use geop_ops_extrude_revolve::{cube_solid, sphere::sphere_solid};
+    use geop_ops::Part;
+    use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to
     /// `outputs/<name>.html` for visual inspection.
     fn rasterize_and_save<S: Scalar>(model: &Model<S>, name: &str) {
-        let scene = rasterize_model(model, 8).unwrap();
+        let scene = rasterize(model, 8).unwrap().scene(|_| Color10::Blue);
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles.is_empty());
@@ -304,10 +230,6 @@ mod tests {
         for_all_scalars!(check_rasterize_cube);
     }
 
-    // `tetrahedron_solid`/`figure8_profile`/`revolve` are currently
-    // unavailable (disabled/removed in `basic_shapes` during the ongoing
-    // euler-op rewrite) — re-add their rasterize tests once they're back.
-
     /// On a unit sphere the surface normal at a point *is* that point, so a
     /// mesh carrying the kernel's normals can be checked exactly — and a
     /// renderer shading with them gets the sphere, not its facets.
@@ -315,7 +237,7 @@ mod tests {
         let mut part = Part::<S>::new();
         sphere_solid(&mut part, "t3", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
-        let scene = rasterize_model(&model, 24).unwrap();
+        let scene = rasterize(&model, 24).unwrap().scene(|_| Color10::Blue);
         assert!(!scene.triangles.is_empty());
         let mut with_normals = 0;
         for (t, _) in &scene.triangles {
@@ -350,7 +272,7 @@ mod tests {
     /// segments around it, for nothing.
     fn check_cylinder_wall_is_refined_only_around<S: Scalar>() {
         let mut part = Part::<S>::new();
-        geop_ops_extrude_revolve::cylinder::revolved_cylinder(
+        geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder(
             &mut part,
             "t5",
             Vector3::zero(),
@@ -359,7 +281,7 @@ mod tests {
         )
         .unwrap();
         let model = part.topology();
-        let rasterized = rasterize_model_tagged(&model, 24).unwrap();
+        let rasterized = rasterize(&model, 24).unwrap();
         // The wall quadrants are the faces whose triangles are all off-axis.
         let walls: Vec<&Vec<TriangleFace<S>>> = rasterized
             .faces
@@ -401,7 +323,7 @@ mod tests {
             Vector3::from_array([S::ONE; 3]),
         )
         .unwrap();
-        let cube_edges = rasterize_model_tagged(part.topology(), 24).unwrap().edges;
+        let cube_edges = rasterize(part.topology(), 24).unwrap().edges;
         for polyline in cube_edges.values() {
             assert_eq!(polyline.len(), 2, "a straight edge is a single segment");
         }
@@ -409,7 +331,7 @@ mod tests {
         let mut part = Part::<S>::new();
         sphere_solid(&mut part, "t4", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
-        let sphere_edges = rasterize_model_tagged(&model, 24).unwrap().edges;
+        let sphere_edges = rasterize(&model, 24).unwrap().edges;
         for polyline in sphere_edges.values() {
             // A quarter circle of radius 1 within `1 / (4 * 24²)` of the arc
             // needs 16 segments (its sagitta falls off with the square).

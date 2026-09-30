@@ -1,81 +1,146 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { CAMERA_FOV, DEFAULT_POSE, scaleForDistance, worldPerPixel, type CameraPose, type Projection } from "./camera";
-import { DatumLayer, type DatumHit } from "./datums3d";
+import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, type CameraPose, type Projection } from "./camera";
+import { DatumLayer } from "./datums3d";
 import {
   sameEntity,
-  type DatumInfo,
   type DatumKind,
   type EntityRef,
-  type Highlight,
-  type Scene,
-  type StepHandle,
+  type Frame,
+  type PartView,
+  type Pointer,
+  type PointerEvent_,
+  type Reach,
+  type Target,
   type Vec3,
+  type Visual,
 } from "./geop";
-import { HandleLayer, dragEdits, startDrag, type HandleDrag, type HandleEdit } from "./handles3d";
-import { buildGizmo, pickGizmo, updateGizmo } from "./originGizmo";
+import { PlaneGrid } from "./planeGrid";
+import { VisualLayer } from "./visuals3d";
 
-export interface Marker {
-  point: Vec3;
-  color: number;
-}
+/** How far, in pixels, a press may move and still be a click. */
+const CLICK_PX = 4;
+/** How soon, in milliseconds, a second click makes a double click. */
+const DOUBLE_MS = 350;
 
-/** A ray from the camera through the cursor, and what a pick along it needs to know. */
-export interface ViewRay {
-  origin: Vec3;
-  /** Unit length: a distance along the ray is a distance in the world. */
-  dir: Vec3;
-  /** What one screen pixel measures, in world units, around where the camera looks. */
-  pixel: number;
-  /** The nearest datum of a pickable kind the ray hits, if any. */
-  datum: DatumHit | null;
+/** The kinds of datum a click can pick, among `targets`. */
+function datumKinds(targets: Target[]): DatumKind[] {
+  return targets.flatMap((t) => (typeof t === "object" ? [t.datum] : []));
 }
 
 /** How long a [[Props.focus]] move takes, in milliseconds. */
 const FOCUS_MS = 550;
 
+/** How the part's entities are colored. */
+const VERTEX_COLOR = 0x3c3c3c;
+const EDGE_COLOR = 0x808080;
+const FACE_COLOR = 0x4472c4;
+/** Sketch curves: profile geometry and construction geometry. */
+const SKETCH_COLOR = 0xffa040;
+const CONSTRUCTION_COLOR = 0x808080;
+
+/**
+ * A part as flat buffers, each element colored and tagged with the name of
+ * what it draws — what three.js takes, and what highlighting by name needs.
+ */
+interface Scene {
+  /** `[x, y, z, colorHex]` per point, and the name of the vertex each draws. */
+  points: [number, number, number, number][];
+  point_names: string[];
+  /** `[x0, y0, z0, x1, y1, z1, colorHex]` per line segment. */
+  lines: [number, number, number, number, number, number, number][];
+  /** Per line: the sketch it belongs to, or the edge it draws. */
+  line_sketches: (string | null)[];
+  line_edges: (string | null)[];
+  /** Per triangle: its corners, its color, its corners' normals, and the index in `faces` of its face. */
+  triangles: [Vec3, Vec3, Vec3, number][];
+  normals: [Vec3, Vec3, Vec3][];
+  triangle_faces: number[];
+  faces: { name: string; solid: string | null }[];
+}
+
+/** The point `(x, y)` of `plane`. */
+function inPlane(plane: Frame, [x, y]: [number, number]): Vec3 {
+  return [0, 1, 2].map((k) => plane.origin[k] + x * plane.u[k] + y * plane.v[k]) as Vec3;
+}
+
+/** `part` as a [[Scene]]. */
+function flatten(part: PartView): Scene {
+  const scene: Scene = {
+    points: [],
+    point_names: [],
+    lines: [],
+    line_sketches: [],
+    line_edges: [],
+    triangles: [],
+    normals: [],
+    triangle_faces: [],
+    faces: [],
+  };
+  for (const v of part.vertices) {
+    scene.points.push([...v.at, VERTEX_COLOR]);
+    scene.point_names.push(v.name);
+  }
+  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, edge: string | null) => {
+    scene.lines.push([...a, ...b, color]);
+    scene.line_sketches.push(sketch);
+    scene.line_edges.push(edge);
+  };
+  for (const e of part.edges) {
+    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, e.name);
+  }
+  part.faces.forEach((f, index) => {
+    scene.faces.push({ name: f.name, solid: f.solid });
+    f.triangles.forEach(([a, b, c], i) => {
+      scene.triangles.push([a, b, c, FACE_COLOR]);
+      scene.normals.push(f.normals[i]);
+      scene.triangle_faces.push(index);
+    });
+  });
+  for (const sketch of part.sketches) {
+    for (const curve of sketch.curves) {
+      const color = curve.construction ? CONSTRUCTION_COLOR : SKETCH_COLOR;
+      const points = curve.polyline.map((p) => inPlane(sketch.plane, p));
+      for (let i = 1; i < points.length; i++) line(points[i - 1], points[i], color, sketch.name, null);
+    }
+  }
+  return scene;
+}
+
 interface Props {
-  scene: Scene;
-  /** Small colored spheres overlaid on the scene, e.g. current picks. */
-  markers?: Marker[];
-  /** Fired on a plain click (not a drag-to-orbit) with the ray under the cursor. */
-  onPick?: (ray: ViewRay) => void;
-  /** Which kinds of datum a click can pick right now — on the origin gizmo, or among [[Props.datums]]; none by default. */
-  pickable?: DatumKind[];
-  /** Fired instead of [[Props.onPick]] when a click hits a pickable part of the origin gizmo. */
-  onPickEntity?: (entity: EntityRef, point: Vec3) => void;
-  /**
-   * Fired as the pointer moves (at most once a frame, never while dragging)
-   * with the ray under it — or `null` when there is nothing to show: the
-   * pointer left, is dragging, or is over the origin gizmo, which shows its
-   * own hover.
-   */
-  onHover?: (ray: ViewRay | null) => void;
-  /** What to draw highlighted — what a click would pick, what is picked already. */
-  highlights?: Highlight[];
-  /** The part's datums, drawn as reference geometry. */
-  datums?: DatumInfo[];
+  /** The part to draw, with its datums. */
+  part: PartView;
+  /** What the step being edited shows, drawn over the model. */
+  visuals?: Visual[];
+  /** What to draw highlighted — what is picked, what a click would pick. */
+  highlights?: EntityRef[];
+  /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
+  pickable?: Target[];
   /** Sketches and datums, by name, not to draw. */
   hidden?: string[];
-  /** The handles to offer: drawn on top, and draggable. */
-  handles?: StepHandle[];
-  /** A handle is being dragged: `edits` are its new values. Called as the drag goes, at most once a frame. */
-  onHandleDrag?: (handle: StepHandle, edits: HandleEdit[]) => void;
+  /**
+   * A plane to work in: no orbiting — dragging pans — and a grid on it.
+   * Facing it is the caller's, through [[Props.focus]].
+   */
+  plane?: Frame | null;
+  /** Whether a press where the pointer hovers starts a drag, sent to [[Props.onPointer]], rather than moving the camera. */
+  grab?: boolean;
+  /** What the user does with the pointer: hovers, clicks, drags — as rays. */
+  onPointer?: (event: PointerEvent_) => void;
   /** How the view projects; switching keeps the view (see [[Projection]]). */
   projection: Projection;
-  /** While set (and no [[Props.focus]] move runs), the camera is held here: a sketch editor drawn over the view drives it. */
-  heldPose?: CameraPose | null;
   /** A pose to glide to; set it to move the camera, `null` to leave it alone. */
   focus?: CameraPose | null;
-  /** Fired when a [[Props.focus]] move finishes, with the pose reached and the viewport's scale there. */
-  onFocusReached?: (reached: { pose: CameraPose; pixelsPerUnit: number; height: number }) => void;
+  /** Fired when a [[Props.focus]] move finishes, with the pose reached. */
+  onFocusReached?: (pose: CameraPose) => void;
   /** Fired whenever the user finishes moving the camera, so a caller can come back to it later. */
   onPose?: (pose: CameraPose) => void;
 }
 
-const vec = (v: Vec3) => new THREE.Vector3(v[0], v[1], v[2]);
-const arr = (v: THREE.Vector3): Vec3 => [v.x, v.y, v.z];
+const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
+const arr = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
 /** Smoothstep: starts and ends at rest, so the move has no visible kick. */
 const ease = (t: number) => t * t * (3 - 2 * t);
@@ -113,12 +178,11 @@ function buildSceneGroup(scene: Scene): THREE.Group {
   if (scene.triangles.length > 0) {
     const positions = new Float32Array(scene.triangles.length * 9);
     const colors = new Float32Array(scene.triangles.length * 9);
-    const hasNormals = scene.normals?.length === scene.triangles.length;
-    const normals = hasNormals ? new Float32Array(scene.triangles.length * 9) : null;
-    scene.triangles.forEach(([ax, ay, az, bx, by, bz, cx, cy, cz, hex], i) => {
+    const normals = new Float32Array(scene.triangles.length * 9);
+    scene.triangles.forEach(([a, b, c, hex], i) => {
       const o = i * 9;
-      positions.set([ax, ay, az, bx, by, bz, cx, cy, cz], o);
-      normals?.set(scene.normals[i], o);
+      positions.set([...a, ...b, ...c], o);
+      normals.set(scene.normals[i].flat(), o);
       const color = new THREE.Color(hex);
       for (let v = 0; v < 3; v++) {
         colors.set([color.r, color.g, color.b], o + v * 3);
@@ -127,12 +191,11 @@ function buildSceneGroup(scene: Scene): THREE.Group {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    // The kernel's own normals where it has them: averaging the mesh's
-    // facet normals (computeVertexNormals) cannot, since every triangle
-    // here has its own three vertices — that is what made curved faces
-    // look faceted however finely they were tessellated.
-    if (normals) geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-    else geometry.computeVertexNormals();
+    // The kernel's own normals: averaging the mesh's facet normals
+    // (computeVertexNormals) cannot, since every triangle here has its own
+    // three vertices — that is what made curved faces look faceted however
+    // finely they were tessellated.
+    geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,
@@ -152,9 +215,9 @@ function buildSceneGroup(scene: Scene): THREE.Group {
   // the model's edges), so a sketch can be highlighted on its own.
   const byOwner = new Map<string, { hex: number; sketch: string | null; coords: number[] }>();
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1, hex], i) => {
-    const owner = scene.line_sketches[i] ?? -1;
-    const key = `${owner}:${hex}`;
-    const entry = byOwner.get(key) ?? { hex, sketch: owner >= 0 ? scene.sketch_names[owner] : null, coords: [] };
+    const sketch = scene.line_sketches[i];
+    const key = `${sketch ?? ""}:${hex}`;
+    const entry = byOwner.get(key) ?? { hex, sketch, coords: [] };
     entry.coords.push(x0, y0, z0, x1, y1, z1);
     byOwner.set(key, entry);
   });
@@ -197,8 +260,8 @@ function tint(colors: Float32Array, k: number) {
  * everything else as built. Lit edges and vertices are drawn again on top,
  * so they can be seen wherever they are.
  */
-function applyHighlight(group: THREE.Group, scene: Scene, highlights: Highlight[], hidden: string[]) {
-  const named = (type: Highlight["type"]) =>
+function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[], hidden: string[]) {
+  const named = (type: EntityRef["type"]) =>
     new Set(highlights.flatMap((h) => (h.type === type && "name" in h ? [h.name] : [])));
   const [faces, solids, sketches, edges, vertices] = (["Face", "Solid", "Sketch", "Edge", "Vertex"] as const).map(named);
   const tags = group.userData.triangles as TriangleTags | undefined;
@@ -235,8 +298,8 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: Highlight[
   overlay.userData.overlay = true;
   const coords: number[] = [];
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1], i) => {
-    const edge = scene.line_edges[i] ?? -1;
-    if (edge >= 0 && edges.has(scene.edge_names[edge])) coords.push(x0, y0, z0, x1, y1, z1);
+    const edge = scene.line_edges[i];
+    if (edge != null && edges.has(edge)) coords.push(x0, y0, z0, x1, y1, z1);
   });
   if (coords.length) {
     const geometry = new THREE.BufferGeometry();
@@ -253,13 +316,6 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: Highlight[
   group.add(overlay);
 }
 
-/** Where the scene is and how big: the center and diagonal (at least 1) of the box around it. */
-function sceneExtent(group: THREE.Group): { center: THREE.Vector3; size: number } {
-  const box = new THREE.Box3().setFromObject(group);
-  if (box.isEmpty()) return { center: new THREE.Vector3(), size: 1 };
-  return { center: box.getCenter(new THREE.Vector3()), size: Math.max(1, box.getSize(new THREE.Vector3()).length()) };
-}
-
 /** Free every geometry and material a group owns. */
 function disposeGroup(group: THREE.Object3D) {
   group.traverse((o) => {
@@ -273,56 +329,51 @@ function disposeGroup(group: THREE.Object3D) {
 }
 
 /**
- * Renders a [[Scene]] (points/lines/triangles from the wasm crate) with three.js.
+ * Renders a part (a [[PartView]] from the wasm crate) with three.js, and
+ * what the step being edited shows over it.
  *
  * The renderer, camera and controls are created once and kept: a new scene
  * (a committed op, or a preview updating under a slider) only swaps the
  * geometry group, so the view the user has orbited to stays exactly where
  * it was.
+ *
+ * It picks nothing itself: hovers, clicks and drags go to
+ * [[Props.onPointer]] as rays, with how far they reach, and the kernel
+ * decides what they hit.
  */
 export function SceneViewer({
-  scene,
-  markers,
-  onPick,
-  pickable,
-  onPickEntity,
-  onHover,
+  part,
+  visuals,
   highlights,
-  datums,
+  pickable,
   hidden,
-  handles,
-  onHandleDrag,
+  plane,
+  grab,
+  onPointer,
   projection,
-  heldPose,
   focus,
   onFocusReached,
   onPose,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  // Read inside the effects via refs so a marker/callback change doesn't
-  // tear down anything.
-  const onPickRef = useRef(onPick);
-  onPickRef.current = onPick;
-  const pickableRef = useRef(pickable ?? []);
-  pickableRef.current = pickable ?? [];
-  const onPickEntityRef = useRef(onPickEntity);
-  onPickEntityRef.current = onPickEntity;
-  const onHoverRef = useRef(onHover);
-  onHoverRef.current = onHover;
-  const handlesRef = useRef(handles ?? []);
-  handlesRef.current = handles ?? [];
-  const onHandleDragRef = useRef(onHandleDrag);
-  onHandleDragRef.current = onHandleDrag;
+  // Read inside the effects via refs so a prop change doesn't tear down
+  // anything.
+  const visualsRef = useRef(visuals ?? []);
+  visualsRef.current = visuals ?? [];
   const highlightsRef = useRef(highlights ?? []);
   highlightsRef.current = highlights ?? [];
+  const pickableRef = useRef(pickable ?? []);
+  pickableRef.current = pickable ?? [];
+  const partRef = useRef(part);
+  partRef.current = part;
   const hiddenRef = useRef(hidden ?? []);
   hiddenRef.current = hidden ?? [];
-  const datumsRef = useRef(datums ?? []);
-  datumsRef.current = datums ?? [];
-  /** Where the scene is and how big: where and how big datum planes and axes are drawn. */
-  const extentRef = useRef({ center: new THREE.Vector3(), size: 1 });
-  const markersRef = useRef(markers);
-  markersRef.current = markers;
+  const planeRef = useRef(plane ?? null);
+  planeRef.current = plane ?? null;
+  const grabRef = useRef(grab ?? false);
+  grabRef.current = grab ?? false;
+  const onPointerRef = useRef(onPointer);
+  onPointerRef.current = onPointer;
   const sceneRef = useRef<THREE.Scene | null>(null);
   const groupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
@@ -341,8 +392,6 @@ export function SceneViewer({
   onPoseRef.current = onPose;
   const projectionRef = useRef(projection);
   projectionRef.current = projection;
-  const heldPoseRef = useRef(heldPose ?? null);
-  heldPoseRef.current = heldPose ?? null;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -351,6 +400,11 @@ export function SceneViewer({
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
+    // Labels are HTML over the canvas: crisp text, and they never catch
+    // the pointer.
+    const labelRenderer = new CSS2DRenderer();
+    Object.assign(labelRenderer.domElement.style, { position: "absolute", top: "0", left: "0", pointerEvents: "none" });
+    container.appendChild(labelRenderer.domElement);
 
     const threeScene = new THREE.Scene();
     threeScene.background = new THREE.Color(0x1a1a1a);
@@ -368,11 +422,11 @@ export function SceneViewer({
 
     // `OrbitControls` reads `camera.up` once, when it is made, and orbits
     // about that axis from then on. A focus move can turn the camera's up
-    // (to face a sketch plane head on), so the controls are made afresh
-    // whenever one lands: orbiting about a stale up is what turned a
-    // vertical drag sideways. Making them afresh also drops any momentum
-    // left over from before the move.
-    // The same holds for the camera itself: the controls are made for one.
+    // (to face a plane head on), so the controls are made afresh whenever
+    // one lands: orbiting about a stale up is what turned a vertical drag
+    // sideways. Making them afresh also drops any momentum left over from
+    // before the move. The same holds for the camera itself: the controls
+    // are made for one.
     const makeControls = (target: THREE.Vector3): OrbitControls => {
       const made = new OrbitControls(camera, renderer.domElement);
       made.enableDamping = true;
@@ -392,23 +446,17 @@ export function SceneViewer({
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(5, 8, 6);
     threeScene.add(dirLight);
-    const gizmo = buildGizmo();
-    threeScene.add(gizmo);
-    const handleLayer = new HandleLayer();
-    threeScene.add(handleLayer.group);
     const datumLayer = new DatumLayer();
     threeScene.add(datumLayer.group);
-
-    // Markers: re-synced every frame from `markersRef`, so they track
-    // selection changes without rebuilding the rest of the scene.
-    const markerGroup = new THREE.Group();
-    threeScene.add(markerGroup);
-    const markerGeometry = new THREE.SphereGeometry(0.035, 12, 12);
-    let markerSignature = "";
+    const visualLayer = new VisualLayer();
+    threeScene.add(visualLayer.group);
+    const grid = new PlaneGrid();
+    threeScene.add(grid.group);
 
     const resize = () => {
       const { clientWidth, clientHeight } = container;
       renderer.setSize(clientWidth, clientHeight);
+      labelRenderer.setSize(clientWidth, clientHeight);
       perspective.aspect = clientWidth / clientHeight;
       perspective.updateProjectionMatrix();
     };
@@ -446,118 +494,101 @@ export function SceneViewer({
       controls = makeControls(target);
       controls.enabled = enabled;
     };
-    /** Whether the camera was held last frame: the controls take over afresh once it is let go. */
-    let wasHeld = false;
     resize();
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(container);
 
-    // Click-to-pick: a plain click (down and up within a small pixel
-    // radius) casts a ray from the camera through the cursor; a drag (an
-    // orbit-control gesture) does not.
-    let downPos: { x: number; y: number } | null = null;
-    /** A ray from the camera through the viewport point `(x, y)`, in client coordinates. */
-    const rayAt = (x: number, y: number): THREE.Raycaster => {
+    /**
+     * The pointer at `(x, y)`, in client coordinates: the ray through it,
+     * reaching [[REACH_PX]] pixels — a cone from the eye in perspective, a
+     * tube in an orthographic view.
+     */
+    const pointerAt = (x: number, y: number): Pointer => {
       const rect = container.getBoundingClientRect();
       const ndc = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
       const raycaster = new THREE.Raycaster();
       raycaster.setFromCamera(ndc, camera);
-      return raycaster;
+      const height = Math.max(container.clientHeight, 1);
+      const reach: Reach =
+        camera instanceof THREE.OrthographicCamera
+          ? { type: "tube", radius: (REACH_PX * (camera.top - camera.bottom)) / camera.zoom / height }
+          : { type: "cone", slope: (REACH_PX * 2 * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2)) / height };
+      return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach };
     };
-    /** What one pixel measures in world units, around where the camera looks. */
-    const pixel = () => worldPerPixel(camera, controls.target, container.clientHeight);
-    /** `raycaster`'s ray as a pick needs it. */
-    const viewRay = (raycaster: THREE.Raycaster): ViewRay => {
-      const { origin: o, direction: d } = raycaster.ray;
-      return {
-        origin: [o.x, o.y, o.z],
-        dir: [d.x, d.y, d.z],
-        pixel: pixel(),
-        datum: datumLayer.pick(raycaster, pickableRef.current, pixel()),
-      };
+    const send = (event: PointerEvent_) => onPointerRef.current?.(event);
+
+    // A press: a click if it does not move, else the camera's — or, where
+    // the hover offered a grab, a drag of what is under it.
+    let press: { x: number; y: number; button: number; grabbed: boolean; from: Pointer; moved: boolean } | null = null;
+    let lastClick: { x: number; y: number; time: number } | null = null;
+    // The latest pointer position, handled once per frame.
+    let pendingHover: { x: number; y: number } | "leave" | null = null;
+    let pendingDrag: { x: number; y: number } | null = null;
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (moveRef.current) return;
+      const grabbed = e.button === 0 && grabRef.current;
+      press = { x: e.clientX, y: e.clientY, button: e.button, grabbed, from: pointerAt(e.clientX, e.clientY), moved: false };
+      if (grabbed) {
+        // The drag is the step's: neither the controls nor a click see it.
+        e.stopPropagation();
+        controls.enabled = false;
+        container.setPointerCapture(e.pointerId);
+      }
     };
-    // Hover: the latest pointer position, handled once per frame.
-    let pendingHover: THREE.Raycaster | "clear" | null = null;
-    let hoveredEntity: EntityRef | null = null;
-    let hoveredHandle: StepHandle | null = null;
-    // A handle drag: the handle as grabbed, and the latest pointer ray.
-    let drag: HandleDrag | null = null;
-    let dragRay: THREE.Ray | null = null;
-    let lastEdits: HandleEdit[] = [];
     const onPointerMove = (e: PointerEvent) => {
-      if (drag) {
-        dragRay = rayAt(e.clientX, e.clientY).ray;
+      if (press) {
+        if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_PX) press.moved = true;
+        if (press.grabbed && press.moved) pendingDrag = { x: e.clientX, y: e.clientY };
         return;
       }
-      pendingHover = e.buttons !== 0 ? "clear" : rayAt(e.clientX, e.clientY);
-    };
-    // Grabbing a handle, in the capture phase: the drag is the handle's,
-    // so neither the orbit controls nor a pick ever see it.
-    const onHandleDown = (e: PointerEvent) => {
-      if (e.button !== 0 || moveRef.current) return;
-      const ray = rayAt(e.clientX, e.clientY);
-      const handle = handleLayer.pick(ray);
-      const grabbed = handle && startDrag(handle, ray.ray);
-      if (!grabbed) return;
-      e.stopPropagation();
-      drag = grabbed;
-      dragRay = null;
-      lastEdits = [];
-      controls.enabled = false;
-      renderer.domElement.setPointerCapture(e.pointerId);
-    };
-    /** Deliver where the drag is now, unless that was already delivered. */
-    const flushDrag = () => {
-      if (!drag || !dragRay) return;
-      const edits = dragEdits(drag, dragRay);
-      dragRay = null;
-      if (edits.length && JSON.stringify(edits) !== JSON.stringify(lastEdits)) {
-        lastEdits = edits;
-        onHandleDragRef.current?.(drag.handle, edits);
-      }
-    };
-    const endDrag = () => {
-      flushDrag();
-      drag = null;
-      dragRay = null;
-      controls.enabled = !moveRef.current;
-    };
-    const onPointerLeave = () => {
-      pendingHover = "clear";
-    };
-    const onPointerDown = (e: PointerEvent) => {
-      downPos = { x: e.clientX, y: e.clientY };
+      if (e.buttons === 0) pendingHover = { x: e.clientX, y: e.clientY };
     };
     const onPointerUp = (e: PointerEvent) => {
-      if (drag) {
-        endDrag();
-        return;
+      const done = press;
+      press = null;
+      if (!done) return;
+      if (done.grabbed) {
+        controls.enabled = !moveRef.current;
+        pendingDrag = null;
+        if (done.moved) {
+          send({ type: "drag", from: done.from, to: pointerAt(e.clientX, e.clientY), done: true });
+          pendingHover = { x: e.clientX, y: e.clientY };
+          return;
+        }
       }
-      const start = downPos;
-      downPos = null;
-      if (!start) return;
-      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return;
-      const raycaster = rayAt(e.clientX, e.clientY);
-      // The gizmo is drawn on top, so it is picked first.
-      const gizmoHit = pickGizmo(gizmo, raycaster, pickableRef.current);
-      if (gizmoHit && onPickEntityRef.current) {
-        onPickEntityRef.current(gizmoHit.entity, gizmoHit.point);
-        return;
-      }
-      onPickRef.current?.(viewRay(raycaster));
+      if (done.moved || (done.button !== 0 && done.button !== 2)) return;
+      const now = performance.now();
+      const double =
+        lastClick != null &&
+        now - lastClick.time < DOUBLE_MS &&
+        Math.hypot(e.clientX - lastClick.x, e.clientY - lastClick.y) <= CLICK_PX;
+      lastClick = double ? null : { x: e.clientX, y: e.clientY, time: now };
+      send({
+        type: "click",
+        pointer: pointerAt(e.clientX, e.clientY),
+        button: done.button === 2 ? "secondary" : "primary",
+        double,
+        shift: e.shiftKey,
+      });
     };
-    container.addEventListener("pointerdown", onHandleDown, { capture: true });
-    renderer.domElement.addEventListener("pointerdown", onPointerDown);
-    renderer.domElement.addEventListener("pointerup", onPointerUp);
-    renderer.domElement.addEventListener("pointermove", onPointerMove);
-    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+    const onPointerLeave = () => {
+      pendingHover = "leave";
+    };
+    const onContextMenu = (e: Event) => e.preventDefault();
+    // In the capture phase: a grab must be taken before the controls see
+    // the press.
+    container.addEventListener("pointerdown", onPointerDown, { capture: true });
+    container.addEventListener("pointermove", onPointerMove);
+    container.addEventListener("pointerup", onPointerUp);
+    container.addEventListener("pointerleave", onPointerLeave);
+    container.addEventListener("contextmenu", onContextMenu);
 
     let frame = requestAnimationFrame(function animate() {
       applyProjection();
       // A focus move drives the camera itself; the controls take over again
-      // the moment it lands. Short of one, a held pose does.
+      // the moment it lands.
       const move = moveRef.current;
-      const held = heldPoseRef.current;
       if (move) {
         const t = Math.min(1, (performance.now() - move.start) / FOCUS_MS);
         const k = ease(t);
@@ -570,88 +601,55 @@ export function SceneViewer({
           moveRef.current = null;
           controls.dispose();
           controls = makeControls(vec(move.to.target));
-          const height = container.clientHeight;
-          const distance = camera.position.distanceTo(controls.target);
-          onFocusReachedRef.current?.({
-            pose: pose(),
-            // What one world unit measures on screen at this distance —
-            // the scale a 2-D view has to start at to continue this one.
-            pixelsPerUnit: scaleForDistance(distance, height),
-            height,
-          });
+          onFocusReachedRef.current?.(pose());
           onPoseRef.current?.(pose());
         }
-      } else if (held) {
-        camera.position.set(...held.position);
-        controls.target.set(...held.target);
-        camera.up.set(...held.up);
-        camera.lookAt(controls.target);
-        controls.enabled = false;
-        wasHeld = true;
       } else {
-        if (wasHeld) {
-          controls.dispose();
-          controls = makeControls(controls.target.clone());
-          wasHeld = false;
-        }
-        // Only here: while a move runs or a pose is held, that alone places
-        // the camera, and the controls' damping would add to it.
+        // Working in a plane, the view stays head on to it: dragging pans.
+        const inPlane = planeRef.current != null;
+        controls.enableRotate = !inPlane;
+        controls.mouseButtons.LEFT = inPlane ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
         controls.update();
       }
       if (camera === orthographic) fitOrthographic();
+      const height = container.clientHeight;
 
-      handleLayer.sync(handlesRef.current);
-      flushDrag();
       const hover = pendingHover;
       pendingHover = null;
-      if (hover === "clear") {
-        hoveredEntity = null;
-        hoveredHandle = null;
-        onHoverRef.current?.(null);
-      } else if (hover) {
-        // Handles are drawn on top of everything, so they are hit first.
-        hoveredHandle = handleLayer.pick(hover);
-        hoveredEntity = hoveredHandle ? null : (pickGizmo(gizmo, hover, pickableRef.current)?.entity ?? null);
-        onHoverRef.current?.(hoveredEntity || hoveredHandle ? null : viewRay(hover));
-        renderer.domElement.style.cursor = hoveredHandle ? "grab" : "";
-      }
-      handleLayer.update(camera, container.clientHeight, drag?.handle ?? hoveredHandle);
-      const lit = hoveredEntity ? [...highlightsRef.current, hoveredEntity] : highlightsRef.current;
-      updateGizmo(gizmo, camera, container.clientHeight, pickableRef.current, lit);
-      datumLayer.sync(datumsRef.current, hiddenRef.current.filter((name) => !lit.some((l) => sameEntity(l, { type: "Datum", name }))), extentRef.current.size, extentRef.current.center);
-      datumLayer.update(camera, container.clientHeight, pickableRef.current, lit);
+      if (hover === "leave") send({ type: "leave" });
+      else if (hover) send({ type: "hover", pointer: pointerAt(hover.x, hover.y) });
+      const drag = pendingDrag;
+      pendingDrag = null;
+      if (drag && press) send({ type: "drag", from: press.from, to: pointerAt(drag.x, drag.y), done: false });
+      renderer.domElement.style.cursor = press?.grabbed ? "grabbing" : grabRef.current ? "grab" : "";
 
-      const current = markersRef.current ?? [];
-      const signature = current.map((m) => `${m.point.join(",")}:${m.color}`).join("|");
-      if (signature !== markerSignature) {
-        markerSignature = signature;
-        markerGroup.clear();
-        for (const marker of current) {
-          const mesh = new THREE.Mesh(
-            markerGeometry,
-            new THREE.MeshBasicMaterial({ color: marker.color, depthTest: false }),
-          );
-          mesh.position.set(...marker.point);
-          mesh.renderOrder = 999;
-          markerGroup.add(mesh);
-        }
-      }
+      const lit = highlightsRef.current;
+      const hidden = hiddenRef.current.filter((name) => !lit.some((l) => sameEntity(l, { type: "Datum", name })));
+      const { datums, extent } = partRef.current;
+      datumLayer.sync(datums, hidden, extent.size, vec(extent.center));
+      datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);
+      visualLayer.sync(visualsRef.current);
+      visualLayer.update(camera, height, controls.target);
+      grid.sync(planeRef.current);
+      grid.update(camera, height, controls.target);
 
       renderer.render(threeScene, camera);
+      labelRenderer.render(threeScene, camera);
       frame = requestAnimationFrame(animate);
     });
 
     return () => {
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
-      container.removeEventListener("pointerdown", onHandleDown, { capture: true });
-      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-      renderer.domElement.removeEventListener("pointerup", onPointerUp);
-      renderer.domElement.removeEventListener("pointermove", onPointerMove);
-      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      container.removeEventListener("pointerdown", onPointerDown, { capture: true });
+      container.removeEventListener("pointermove", onPointerMove);
+      container.removeEventListener("pointerup", onPointerUp);
+      container.removeEventListener("pointerleave", onPointerLeave);
+      container.removeEventListener("contextmenu", onContextMenu);
       controls.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
+      container.removeChild(labelRenderer.domElement);
       sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
@@ -674,7 +672,8 @@ export function SceneViewer({
     };
   }, [focus]);
 
-  // Swap in the current scene's geometry, leaving camera and controls alone.
+  // Swap in the current part's geometry, leaving camera and controls alone.
+  const scene = useMemo(() => flatten(part), [part]);
   useEffect(() => {
     const threeScene = sceneRef.current;
     if (!threeScene) return;
@@ -684,7 +683,6 @@ export function SceneViewer({
     }
     const group = buildSceneGroup(scene);
     groupRef.current = group;
-    extentRef.current = sceneExtent(group);
     threeScene.add(group);
     applyHighlight(group, scene, highlightsRef.current, hiddenRef.current);
   }, [scene]);
@@ -697,5 +695,5 @@ export function SceneViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appearanceKey]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%", minHeight: 0 }} />;
+  return <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", minHeight: 0 }} />;
 }

@@ -6,7 +6,7 @@ on:
     paths:
       - "homepage/**"
       - "cad/geop-cad-cli/**"
-      - "ops/geop-ops-parts/src/examples.rs"
+      - "cad/geop-cad-base/src/examples.rs"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/deploy-landing.yml"

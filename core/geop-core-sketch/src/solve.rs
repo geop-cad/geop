@@ -27,6 +27,7 @@ use crate::{
     bfgs::{BfgsOptions, minimize},
     dual::{Dual, MAX_LOCAL_VARS},
     geometry::{Arc, V, line_distance},
+    point::P2,
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch},
 };
 use geop_core_math::{
@@ -38,7 +39,7 @@ use geop_core_math::{
 /// `f64` — see the module docs.
 type S = ScalInF64;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Maps sketch entities to solver variables.
@@ -232,7 +233,7 @@ struct Problem<'a> {
     scale: f64,
     /// Extra residuals `weight * (point - target)` pulling points towards a
     /// cursor while dragging.
-    drags: Vec<(PointId, [f64; 2], f64)>,
+    drags: Vec<(PointId, P2, f64)>,
 }
 
 impl<'a> Problem<'a> {
@@ -247,7 +248,7 @@ impl<'a> Problem<'a> {
             lo = [lo[0].min(p.x), lo[1].min(p.y)];
             hi = [hi[0].max(p.x), hi[1].max(p.y)];
         }
-        let diagonal = (hi[0] - lo[0]).hypot(hi[1] - lo[1]);
+        let diagonal = crate::point::dist(lo, hi);
         let radii = sketch.curves.values().filter_map(|c| match c.kind {
             CurveKind::Circle { radius, .. } => Some(2.0 * radius.abs()),
             _ => None,
@@ -611,7 +612,7 @@ impl<'a> Problem<'a> {
 const RELATIVE_TOLERANCE: f64 = 1e-9;
 
 /// The outcome of a solve.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SolveReport {
     /// Every constraint holds (to [`RELATIVE_TOLERANCE`] of the sketch size).
     pub converged: bool,
@@ -643,7 +644,7 @@ impl Sketch {
 
     /// Like [`Sketch::solve`], while pulling each `(point, target)` towards
     /// its target as far as the constraints allow — interactive dragging.
-    pub fn solve_with_drag(&mut self, drags: &[(PointId, [f64; 2])]) -> GeopResult<SolveReport> {
+    pub fn solve_with_drag(&mut self, drags: &[(PointId, P2)]) -> GeopResult<SolveReport> {
         let mut problem = Problem::new(self)?;
         let x0 = problem.layout.read(self);
         let mut iterations = 0;

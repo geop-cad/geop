@@ -19,7 +19,7 @@ use geop_core_math::{
 /// A chain of profile curves, with a stable name for every curve and every
 /// joint between them — what extrude and revolve build the names of the
 /// faces, edges and vertices they sweep out of it from (see
-/// `geop_core_part`'s crate docs). For a sketch these are its element ids;
+/// `geop_ops`'s crate docs). For a sketch these are its element ids;
 /// for a shape built in code, positions in the chain ([`Profile::closed`]).
 ///
 /// `joint_names[i]` names the joint where `curves[i]` starts. A closed loop

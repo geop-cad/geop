@@ -11,6 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
+
+use crate::point::{P2, dist};
 use serde::{Deserialize, Serialize};
 
 macro_rules! define_ids {
@@ -81,7 +83,7 @@ pub struct Point {
 }
 
 impl Point {
-    pub fn xy(&self) -> [f64; 2] {
+    pub fn xy(&self) -> P2 {
         [self.x, self.y]
     }
 }
@@ -276,12 +278,35 @@ impl Constraint {
             _ => Vec::new(),
         }
     }
+
+    /// The curves this constraint refers to.
+    pub fn curves(&self) -> Vec<CurveId> {
+        use Constraint::*;
+        match *self {
+            PointOnCurve { curve, .. }
+            | Midpoint { curve, .. }
+            | Length { curve, .. }
+            | Radius { curve, .. } => vec![curve],
+            Horizontal { line }
+            | Vertical { line }
+            | PointLineDistance { line, .. }
+            | Symmetric { line, .. } => vec![line],
+            Parallel { a, b }
+            | Perpendicular { a, b }
+            | Collinear { a, b }
+            | Tangent { a, b }
+            | Equal { a, b }
+            | Concentric { a, b }
+            | Angle { a, b, .. } => vec![a, b],
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// Every point's `[x, y]`, by [`PointId`]: the sketch's own positions
 /// ([`Sketch::positions`]) or a rigid motion of them (see
 /// [`crate::ProfileLoop::to_nurbs`]).
-pub type Positions = BTreeMap<PointId, [f64; 2]>;
+pub type Positions = BTreeMap<PointId, P2>;
 
 /// A constraint sketch.
 ///
@@ -386,9 +411,7 @@ impl Sketch {
     /// exceeds what the chord allows. For a major arc, give the sweep
     /// directly via [`Sketch::add_arc_with_sweep`].
     pub fn add_arc(&mut self, start: PointId, end: PointId, curvature: f64) -> CurveId {
-        let [sx, sy] = self.points[&start].xy();
-        let [ex, ey] = self.points[&end].xy();
-        let chord = (ex - sx).hypot(ey - sy);
+        let chord = dist(self.points[&start].xy(), self.points[&end].xy());
         let sweep = 2.0 * (curvature * chord / 2.0).clamp(-1.0, 1.0).asin();
         self.add_arc_with_sweep(start, end, sweep)
     }
@@ -415,6 +438,53 @@ impl Sketch {
         let id = ConstraintId(self.fresh_id());
         self.constraints.insert(id, constraint);
         id
+    }
+
+    /// Removes `points`, `curves` and `constraints`, and everything that
+    /// depends on them: a curve on a removed point, a constraint on any
+    /// removed entity, and a point nothing uses any more because of it — a
+    /// lone point drawn on purpose stays. Everything else keeps its id.
+    pub fn remove(&mut self, points: &[PointId], curves: &[CurveId], constraints: &[ConstraintId]) {
+        let dead_curves: BTreeSet<CurveId> = self
+            .curves
+            .iter()
+            .filter(|(id, c)| curves.contains(id) || c.points().iter().any(|p| points.contains(p)))
+            .map(|(&id, _)| id)
+            .collect();
+        let dead_constraints: BTreeSet<ConstraintId> = self
+            .constraints
+            .iter()
+            .filter(|(id, c)| {
+                constraints.contains(id)
+                    || c.points().iter().any(|p| points.contains(p))
+                    || c.curves().iter().any(|k| dead_curves.contains(k))
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        let mut used_before = BTreeSet::new();
+        let mut used_after = BTreeSet::new();
+        for (id, c) in &self.curves {
+            for p in c.points() {
+                used_before.insert(p);
+                if !dead_curves.contains(id) {
+                    used_after.insert(p);
+                }
+            }
+        }
+        for (id, c) in &self.constraints {
+            for p in c.points() {
+                used_before.insert(p);
+                if !dead_constraints.contains(id) {
+                    used_after.insert(p);
+                }
+            }
+        }
+        self.points.retain(|p, _| {
+            !points.contains(p) && !(used_before.contains(p) && !used_after.contains(p))
+        });
+        self.curves.retain(|id, _| !dead_curves.contains(id));
+        self.constraints
+            .retain(|id, _| !dead_constraints.contains(id));
     }
 
     /// Check every reference and every constraint's operand kinds, so the

@@ -3,7 +3,7 @@
 //! around a vertical axis, entirely from euler operations — built one
 //! angular quadrant *column* at a time (all `P = profile.len() - 1` row
 //! faces of a given 90-degree wedge, before moving to the next wedge),
-//! exactly the same strategy [`sphere_octants`](super::sphere::sphere_octants)
+//! exactly the same strategy `shapes::sphere::sphere_octants`
 //! uses for its own dedicated (exact, doubly-curved) construction, just
 //! generalized to an arbitrary profile instead of a fixed 2-segment
 //! pole-equator-pole one.
@@ -46,8 +46,8 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
-use geop_core_part::{Namer, Part};
 use geop_core_topology::{CoedgeId, SolidId};
+use geop_ops::{Namer, Part};
 
 /// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole row
 /// it touches on its `v = 0` (top) side — the row's two meridian edges meet
@@ -200,7 +200,7 @@ fn quadrant_patch<S: Scalar>(
 ///
 /// A thin wrapper around [`revolve_at_oriented`] with the identity
 /// (z-axis) coordinate system — see that function to revolve around an
-/// arbitrary axis (e.g. [`super::cylinder::revolved_cylinder_along_axis`]).
+/// arbitrary axis (e.g. `shapes::cylinder::revolved_cylinder_along_axis`).
 pub fn revolve_at<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
@@ -231,7 +231,7 @@ pub fn revolve_at<S: Scalar>(
 /// Everything built is named after the profile's curves `X` and joints `P`
 /// (see [`Profile`]), the angles `a0..a3` at which the meridians lie
 /// (`a0` along `u`, `a1` along `v`, ...), and the quadrants `q0..q3` between
-/// them (`q0` from `a0` to `a1`, ...), following `geop_core_part`'s scheme:
+/// them (`q0` from `a0` to `a1`, ...), following `geop_ops`'s scheme:
 ///
 /// | entity | name |
 /// |---|---|

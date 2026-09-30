@@ -145,7 +145,9 @@ where
 
         let sizes = [extent([seg.control_points.iter().copied()])];
         // The query point's own width counts too, like a second object's.
-        let point_width = (0..C).map(|k| point[k].width().to_f64()).fold(0.0, f64::max);
+        let point_width = (0..C)
+            .map(|k| point[k].width().to_f64())
+            .fold(0.0, f64::max);
         let carried = carried_width(&seg.control_points).max(point_width);
         let halves = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
             Stalled::Converged => None,

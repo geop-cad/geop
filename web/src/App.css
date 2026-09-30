@@ -301,117 +301,6 @@ button.small {
   resize: vertical;
 }
 
-/* ── sketch editor ─────────────────────────────────────────────────────── */
-
-/* The sketch editor lies over the 3-D view, which shows the model head-on
-   behind the drawing; its panel floats on the right. */
-.sketch-editor {
-  position: absolute;
-  inset: 0;
-}
-
-.sketch-canvas {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-}
-
-.sketch-canvas svg {
-  display: block;
-  touch-action: none;
-  cursor: crosshair;
-}
-
-/* Dims the model a little, so the drawing stands out on it. */
-.sketch-bg {
-  fill: rgba(16, 16, 16, 0.35);
-}
-.grid-minor {
-  stroke: rgba(255, 255, 255, 0.05);
-  stroke-width: 1;
-}
-.grid-major {
-  stroke: rgba(255, 255, 255, 0.11);
-  stroke-width: 1;
-}
-.axis-x {
-  stroke: #7a3a3a;
-  stroke-width: 1.5;
-}
-.axis-y {
-  stroke: #3a7a4a;
-  stroke-width: 1.5;
-}
-.sketch-region {
-  fill: rgba(255, 160, 64, 0.13);
-  stroke: none;
-}
-.spline-hull {
-  fill: none;
-  stroke: #4a4a4a;
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-}
-.glyph text {
-  fill: #eee;
-  font-size: 11px;
-  font-family: system-ui, sans-serif;
-  pointer-events: none;
-}
-.glyph-bg {
-  fill: #2a2a2a;
-  stroke: #444;
-}
-.glyph-bg.selected {
-  fill: #6a5a20;
-  stroke: #ffd84a;
-}
-.glyph-bg.failed {
-  fill: #5a2020;
-  stroke: #ff5d5d;
-}
-
-.sketch-coords,
-.sketch-hint {
-  position: absolute;
-  bottom: 0.5rem;
-  font-size: 0.75rem;
-  color: #aaa;
-  background: rgba(20, 20, 20, 0.8);
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  pointer-events: none;
-}
-.sketch-coords {
-  left: 0.5rem;
-  top: 0.5rem;
-  bottom: auto;
-  font-variant-numeric: tabular-nums;
-}
-.sketch-hint {
-  left: 0.5rem;
-}
-
-.sketch-panel {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  /* Clear of the projection toggle below it. */
-  max-height: calc(100% - 4.25rem);
-  box-sizing: border-box;
-  width: 300px;
-  background: #161616ee;
-  backdrop-filter: blur(4px);
-  border: 1px solid #3a3a3a;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  padding: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  overflow-y: auto;
-}
-
 .button-grid {
   display: flex;
   flex-wrap: wrap;
@@ -420,12 +309,6 @@ button.small {
 .button-grid button {
   flex: 1 0 auto;
   text-align: center;
-}
-
-.sketch-panel .hint {
-  font-size: 0.75rem;
-  color: #999;
-  margin: 0;
 }
 
 .status-ok {
@@ -439,7 +322,8 @@ button.small {
   margin: 0;
 }
 
-.constraint-list ol {
+/* A dialog's list: entries to press, remove, or edit a value of in place. */
+.dialog-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -449,10 +333,9 @@ button.small {
   max-height: 16rem;
   overflow-y: auto;
 }
-.constraint-list li {
+.dialog-list li {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.4rem;
   font-size: 0.75rem;
   padding: 0.2rem 0.35rem;
@@ -460,17 +343,28 @@ button.small {
   background: #1e1e1e;
   cursor: pointer;
 }
-.constraint-list li.selected {
+.dialog-list li.hint {
+  background: none;
+  cursor: default;
+}
+.dialog-list li.selected {
   outline: 1px solid #ffd84a;
 }
-.constraint-list li.failed {
+.dialog-list li.failed {
   background: #3a1e1e;
   color: #ff8c8c;
 }
-.constraint-list .constraint-name {
+.dialog-list .item-label {
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.constraint-list .constraint-remove {
+.dialog-list .item-detail {
+  color: #888;
+  font-size: 0.65rem;
+}
+.dialog-list .item-remove {
   flex-shrink: 0;
   padding: 0 4px;
   background: transparent;
@@ -479,10 +373,10 @@ button.small {
   font-size: 0.75rem;
   cursor: pointer;
 }
-.constraint-list .constraint-remove:hover {
+.dialog-list .item-remove:hover {
   color: #ff8080;
 }
-.constraint-list input {
+.dialog-list input {
   width: 5.5rem;
   background: #111;
   color: #eee;
@@ -490,6 +384,36 @@ button.small {
   border-radius: 3px;
   padding: 0.1rem 0.25rem;
   font-size: 0.75rem;
+}
+
+.popup .dialog-heading {
+  font-size: 0.78rem;
+  color: #bbb;
+  margin: 0.35rem 0 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* A label an operation shows in the 3-D view: a constraint's glyph, say. */
+.visual-label {
+  font: 11px system-ui, sans-serif;
+  color: #eee;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.visual-label.selected {
+  background: #6a5a20;
+  border-color: #ffd84a;
+}
+.visual-label.hover {
+  border-color: #ffe0a0;
+}
+.visual-label.failed {
+  background: #5a2020;
+  border-color: #ff5d5d;
 }
 
 .mode-badge {
@@ -666,62 +590,8 @@ button.inline {
   font-size: 0.8em;
 }
 
-/* A selection: the entities picked, in order, each with what it can be
-   used as. */
-.selection {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.selection-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.selection-list li {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.72rem;
-  background: #262626;
-  border: 1px solid #333;
-  border-radius: 4px;
-  padding: 0.15rem 0.2rem 0.15rem 0.4rem;
-}
-.selection-list li.hint {
-  display: block;
-  background: none;
-  border: none;
-  padding: 0;
-}
-.selection-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #ffc94a;
-}
-.selection-roles {
-  color: #888;
-  font-size: 0.65rem;
-}
-.selection-remove {
-  padding: 0 0.3rem;
-  font-size: 0.65rem;
-  background: none;
-  border: none;
-  color: #999;
-}
-.selection-remove:hover:not(:disabled) {
-  color: #ff8080;
-  background: none;
-}
-
-/* The constructions: a radio list per kind of result, those that don't fit
-   the selection greyed out. */
+/* A select shown as radios: a list per group, the options that don't fit
+   greyed out. */
 .constructions {
   display: flex;
   flex-direction: column;
@@ -760,15 +630,11 @@ button.inline {
 .construction.checked {
   color: #7ec9ff;
 }
-.construction-params {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
+
 
 /* ── projection toggle ─────────────────────────────────────────────────── */
 
-/* Always there, over the sketch editor too: it is the view's, not a mode's. */
+/* Always there, while working in a plane too: it is the view's, not a mode's. */
 .projection-toggle {
   position: absolute;
   right: 0.75rem;
@@ -855,19 +721,7 @@ button.inline {
   background: #1e1e1e;
 }
 
-/* Where the sketch editor's Draw/Constrain/Status/Constraints panel
-   portals to on mobile — the drawing canvas itself stays up in the 3-D
-   view, always; only this panel relocates. See SketchEditor's panelHost. */
-.sketch-panel-host {
+/* Where the bug-report form portals to on mobile. */
+.panel-host {
   height: 100%;
-}
-.mobile-tab-content .sketch-panel {
-  position: static;
-  width: 100%;
-  max-height: none;
-  background: transparent;
-  backdrop-filter: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
 }

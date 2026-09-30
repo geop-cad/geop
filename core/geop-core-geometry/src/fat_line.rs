@@ -152,7 +152,8 @@ pub(crate) fn restriction<S: Scalar>(
         .map(|dir| {
             let hat = hats[dir];
             let (a, b) = ranges[dir];
-            hat.width().definitely_less(a.union(b).width().mul(min_progress))
+            hat.width()
+                .definitely_less(a.union(b).width().mul(min_progress))
                 && (inside(hat.lower(), ranges[dir]) || inside(hat.upper(), ranges[dir]))
         })
         .collect();

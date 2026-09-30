@@ -2,43 +2,53 @@
 
 > Brief overview only — full documentation is coming later.
 
-Ray-based picking against kernel geometry: what an interactive CAD editor
-needs from the kernel beyond building parts.
+The CAD engine: which operations the editor offers, editing a program of
+them, and example programs.
 
-## Picking
+## The editor's operations
 
-```rust,ignore
-let hit: Option<PickHit<S>> = pick(&model, &rasterized, ray, PickFilter::Any, tolerance)?;
-```
+`PartOperation` is the set of operations the editor offers (see
+[operation sets](../ops/geop-ops.md#operation-sets)): `AddSketch`,
+`Extrude`, `Revolve`, `Boolean` and `AddDatum`, each defined by the crate
+that builds it. `Program`, `ProgramRunner` and `Step` here are the program
+types of [geop-ops](../ops/geop-ops.md#programs) over that set — what the
+web editor edits and the command-line tool compiles.
 
-`pick` casts a `Ray` (from the camera through the cursor) and returns the
-nearest entity matching the `PickFilter` as a `PickHit`: its kind, its id,
-the hit point and the ray parameter `t`. The caller turns the id into the
-entity's stable name, which is what a program step refers to it by.
+## The editor
 
-| Filter   | Hits                                                            |
-| -------- | --------------------------------------------------------------- |
-| `Vertex` | the nearest vertex within `tolerance` of the ray                |
-| `Edge`   | the nearest edge within `tolerance`                             |
-| `Face`   | the first face the ray enters                                   |
-| `Solid`  | the solid owning the first face hit                             |
-| `Any`    | a vertex, else an edge, else a face: the smallest entity under the cursor that is not hidden behind a face |
+`Editor` is the whole of editing a program, as one state machine: it holds
+the program, its undo and redo, how far it runs (the marker), and the step
+being edited — a `StepEditor` of [geop-ops](../ops/geop-ops.md#operations)
+and the part before the step, as drawn, for picking. An editor drives it
+with `Command`s and draws the `Update` each answers, so it keeps no state of
+its own beyond the camera:
 
-Face hits are exact ray/triangle intersections (Möller–Trumbore). When a
-division cannot be resolved because its divisor could be zero, the hit is
-reported as a miss, which is the honest answer when the enclosure cannot
-rule zero out.
+- **Program commands:** `new` (a step of an operation, inserted where the
+  program runs to), `open` (a step, to edit), `remove`, `move`, `seek`,
+  `load`, `load_example`, `undo`, `redo`. Each is refused, changing
+  nothing, while a step is being edited, or when it would leave the program
+  invalid; an update says why.
+- **Step commands:** `event` (what the user did to the step), `preview`
+  (show the part the step builds, or the part before it), `commit` (put the
+  step into the program — only if it builds) and `cancel`.
 
-Picking works on the `RasterizedModel` the viewer drew (see
-[geop-ops-rasterize](../ops/geop-ops-rasterize.md)) rather than
-re-triangulating, so a pick can never disagree with what is on screen.
-Rasterizing once per build also makes picking cheap enough to run on every
-pointer move, to highlight what a click would pick.
+An update holds the program as a list of steps shows it — each step's
+fields in one line and whether it failed — the part to draw, and the step
+being edited with its presentation and whether it builds. What did not
+change since the last update is left out: a hover sends only the step, and
+the part is sent again only once something ran. The steps are run by one
+`ProgramRunner` — up to and including the step being edited while there is
+one, else as far as the program runs — which keeps the part after every
+step, so the part before the step being edited is always at hand, and a
+change to it replays only that step.
 
-`pick_sketch` does the same for sketches, against `SketchTargets::of(part)`.
-A sketch is hit near one of its curves, or anywhere inside one of its closed
-regions.
+What the shown steps built on — their pick fields' values — is hidden from
+the drawing: sketches and whole datums, since what was made from them shows
+them now; none of a kind while it is being picked.
 
-`tolerance` is the one plain `f64` here. It is a UI fuzziness derived from
-screen pixels, not a geometric quantity the kernel reasons about, so it is
-compared against `to_f64` rather than folded into interval arithmetic.
+## Examples
+
+`examples` holds programs written in Rust (`box_with_drill_hole`,
+`bracket`, `cross_drilled_shaft`, `two_plates`, `boss_on_reference_plane`,
+`handle_with_hole`, `luggage_tag`). The tests use them, and they serve as a
+reference for writing new programs.

@@ -176,6 +176,30 @@ pub trait Scalar: Field + Copy + Display + Default {
     fn is_subset_of(self, other: Self) -> bool;
 }
 
+// ── Serialization ─────────────────────────────────────────────────────────────
+
+/// `#[serde(with = "geop_core_math::scalars::as_f64")]`: a scalar as a plain
+/// number — its midpoint written, a sharp scalar read — the way a
+/// [`crate::vector::Vector`] serializes, for what travels to and from a
+/// viewer.
+pub mod as_f64 {
+    use super::Scalar;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Scalar, Ser: Serializer>(
+        x: &S,
+        serializer: Ser,
+    ) -> Result<Ser::Ok, Ser::Error> {
+        serializer.serialize_f64(x.to_f64())
+    }
+
+    pub fn deserialize<'de, S: Scalar, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<S, D::Error> {
+        f64::deserialize(deserializer).map(S::from_f64)
+    }
+}
+
 // ── Test helper trait ─────────────────────────────────────────────────────────
 
 /// Invoke a generic test function once for each concrete scalar

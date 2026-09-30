@@ -8,13 +8,14 @@
 - [geop-core-geometry](./core/geop-core-geometry.md)
 - [geop-core-topology](./core/geop-core-topology.md)
 - [geop-core-sketch](./core/geop-core-sketch.md)
-- [geop-core-part](./core/geop-core-part.md)
 
 # Ops
 
-- [geop-ops-parts](./ops/geop-ops-parts.md)
-- [geop-ops-extrude-revolve](./ops/geop-ops-extrude-revolve.md)
+- [geop-ops](./ops/geop-ops.md)
+- [geop-ops-sketch](./ops/geop-ops-sketch.md)
+- [geop-ops-datums](./ops/geop-ops-datums.md)
 - [geop-ops-booleans](./ops/geop-ops-booleans.md)
+- [geop-ops-extrude-revolve](./ops/geop-ops-extrude-revolve.md)
 - [geop-ops-rasterize](./ops/geop-ops-rasterize.md)
 
 # CAD

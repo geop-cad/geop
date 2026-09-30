@@ -182,13 +182,7 @@ dependencies = [
  "console_error_panic_hook",
  "geop-cad-base",
  "geop-core-math",
- "geop-core-part",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops-parts",
- "geop-ops-rasterize",
  "getrandom",
- "serde",
  "serde_json",
  "wasm-bindgen",
 ]
@@ -197,12 +191,18 @@ dependencies = [
 name = "geop-cad-base"
 version = "0.1.0"
 dependencies = [
+ "geop-core-geometry",
  "geop-core-math",
- "geop-core-part",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-ops",
+ "geop-ops-booleans",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-rasterize",
+ "geop-ops-sketch",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -210,9 +210,9 @@ name = "geop-cad-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "geop-cad-base",
  "geop-core-math",
- "geop-core-part",
- "geop-ops-parts",
+ "geop-ops",
  "geop-ops-rasterize",
 ]
 
@@ -226,15 +226,7 @@ dependencies = [
 [[package]]
 name = "geop-core-math"
 version = "0.1.0"
-
-[[package]]
-name = "geop-core-part"
-version = "0.1.0"
 dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-sketch",
- "geop-core-topology",
  "serde",
 ]
 
@@ -257,13 +249,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "geop-ops"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-sketch",
+ "geop-core-topology",
+ "geop-ops-derive",
+ "geop-ops-rasterize",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "geop-ops-booleans"
 version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
- "geop-core-part",
  "geop-core-topology",
+ "geop-ops",
  "geop-ops-extrude-revolve",
  "geop-ops-rasterize",
  "rayon",
@@ -271,35 +277,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops-extrude-revolve"
+name = "geop-ops-datums"
 version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
- "geop-core-part",
- "geop-core-topology",
- "geop-ops-rasterize",
-]
-
-[[package]]
-name = "geop-ops-parts"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-part",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops-booleans",
- "geop-ops-extrude-revolve",
- "geop-ops-parts-derive",
- "geop-ops-rasterize",
+ "geop-ops",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "geop-ops-parts-derive"
+name = "geop-ops-derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -308,14 +297,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "geop-ops-extrude-revolve"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-sketch",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-booleans",
+ "geop-ops-rasterize",
+ "serde",
+]
+
+[[package]]
 name = "geop-ops-rasterize"
 version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
- "geop-core-part",
  "geop-core-topology",
+ "geop-ops",
  "geop-ops-extrude-revolve",
+]
+
+[[package]]
+name = "geop-ops-sketch"
+version = "0.1.0"
+dependencies = [
+ "geop-core-math",
+ "geop-core-sketch",
+ "geop-ops",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,11 @@
+[package]
+name = "geop-ops-datums"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-ops.workspace = true
+serde.workspace = true
+serde_json.workspace = true

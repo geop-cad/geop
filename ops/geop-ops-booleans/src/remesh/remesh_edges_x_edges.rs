@@ -4,8 +4,8 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_part::Part;
 use geop_core_topology::{EdgeId, Model, SolidId, VertexId};
+use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
 
@@ -310,7 +310,7 @@ pub fn remesh_edges_x_edges<S: Scalar>(
 mod tests {
     use crate::{remesh::remesh::RemeshParams, scenes::figure8_cylinder_scenes};
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_part::Namer;
+    use geop_ops::Namer;
 
     /// Regression test for a `curve_curve_intersect` bug where two edges
     /// meeting at exactly one shared vertex (here: a genuine, single,

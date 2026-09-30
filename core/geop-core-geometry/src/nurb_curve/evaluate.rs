@@ -10,8 +10,22 @@ use crate::spline::{de_boor, find_span};
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// The homogeneous point `(A(t), W(t))` and the knot span it came from.
     pub(super) fn homogeneous(&self, t: S) -> GeopResult<(Vector<S, D>, usize)> {
-        let span = find_span(self.degree, &self.knot_vector, self.control_points.len() - 1, t)?;
-        Ok((de_boor(self.degree, &self.knot_vector, &self.control_points, t, span), span))
+        let span = find_span(
+            self.degree,
+            &self.knot_vector,
+            self.control_points.len() - 1,
+            t,
+        )?;
+        Ok((
+            de_boor(
+                self.degree,
+                &self.knot_vector,
+                &self.control_points,
+                t,
+                span,
+            ),
+            span,
+        ))
     }
 }
 
@@ -39,12 +53,6 @@ impl<S: Scalar> NurbCurve<S, 4> {
             result[c] = hw[c].mul(inv_w);
         }
         Ok(result)
-    }
-}
-
-impl<S: Scalar> geop_core_math::primitives::scene::RasterizableCurve<S> for NurbCurve<S, 4> {
-    fn eval_at(&self, t: S) -> GeopResult<Vector3<S>> {
-        self.evaluate(t)
     }
 }
 

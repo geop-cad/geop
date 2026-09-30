@@ -1,7 +1,5 @@
 use geop_core_geometry::intersection::{curve_curve_intersect, curve_surface_intersect};
-use geop_core_math::{
-    geop_error::GeopError, scalars::Scalar, vector::Vector3,
-};
+use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
 
 use crate::{
     CoedgeGeometry, EdgeId, Model, VertexId,

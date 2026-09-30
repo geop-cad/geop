@@ -20,7 +20,6 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_part::{Namer, Part};
 use geop_core_topology::{
     FaceId, Model, ShellId, SolidId,
     contains::{
@@ -28,6 +27,7 @@ use geop_core_topology::{
         shell::{PointClassification as ShellPoint, shell_contains},
     },
 };
+use geop_ops::{Namer, Part};
 use serde::{Deserialize, Serialize};
 
 use crate::remesh::remesh::{RemeshParams, remesh};
@@ -350,11 +350,11 @@ mod tests {
     use super::{BooleanOp, FaceClassification, boolean, classify_face};
     use crate::{remesh::remesh::RemeshParams, scenes::all_scenes};
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
-    use geop_core_part::Namer;
     use geop_core_topology::{
         contains::rng::Rng,
         validation::{ValidationParameters, validate_fast},
     };
+    use geop_ops::Namer;
 
     fn scene(name: &str) -> crate::scenes::TestScene<ScalInF64> {
         all_scenes::<ScalInF64>()
@@ -719,8 +719,8 @@ mod tests {
     /// A chain of 3 differences (two axis-aligned slots cut from a block,
     /// then a sphere drilled out of the result) — captured from a browser
     /// session's timeline, exactly like `scenes`' hand-picked
-    /// cases, built here directly from `basic_shapes`/`boolean` rather than
-    /// through `cad::Op`/wasm. Rendered to `outputs/` so the new
+    /// cases, built here directly from `geop_ops_extrude_revolve::shapes`
+    /// and `boolean` rather than through `cad::Op`/wasm. Rendered to `outputs/` so the new
     /// curvature-adaptive rasterizer's output on a real chained-boolean
     /// result (flat cut faces plus the sphere's curved ones) can be
     /// inspected visually, the same way `scenes`' figure8/box
@@ -732,7 +732,7 @@ mod tests {
     // legitimately overlaps the others in space — which the validation would
     // report as edges crossing faces.
 
-    type M = geop_core_part::Part<ScalInF64>;
+    type M = geop_ops::Part<ScalInF64>;
 
     fn v(x: f64, y: f64, z: f64) -> Vector3<ScalInF64> {
         Vector3::from_array([x, y, z].map(ScalInF64::from_f64))
@@ -744,14 +744,15 @@ mod tests {
         let [x, y, z] = offset;
         let [dx, dy, dz] = dims;
         let (min, max) = (v(x, y, z), v(x + dx, y + dy, z + dz));
-        geop_ops_extrude_revolve::cube_solid(part, &fresh_id(), min, max).unwrap()
+        geop_ops_extrude_revolve::shapes::cube_solid(part, &fresh_id(), min, max).unwrap()
     }
 
     /// `CreateSphere(offset, r)`.
     fn sphere(part: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
         let [x, y, z] = center;
         let r = ScalInF64::from_f64(r);
-        geop_ops_extrude_revolve::sphere::sphere_solid(part, &fresh_id(), v(x, y, z), r).unwrap()
+        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(part, &fresh_id(), v(x, y, z), r)
+            .unwrap()
     }
 
     /// `CreateCylinder(offset, r, h, axis)`: `offset` is the bottom cap's centre.
@@ -760,10 +761,10 @@ mod tests {
         base: [f64; 3],
         r: f64,
         h: f64,
-        axis: geop_ops_extrude_revolve::cylinder::Axis,
+        axis: geop_ops_extrude_revolve::shapes::cylinder::Axis,
     ) -> geop_core_topology::SolidId {
         let [x, y, z] = base;
-        geop_ops_extrude_revolve::cylinder::revolved_cylinder_along_axis(
+        geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder_along_axis(
             part,
             &fresh_id(),
             v(x, y, z),
@@ -837,7 +838,7 @@ mod tests {
     /// first result.
     #[test]
     fn bored_cube_plus_inscribed_sphere_minus_half() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
         let bore = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
@@ -864,7 +865,7 @@ mod tests {
                 missing top/bottom corner faces (stale start-point face; a curve shorter than the \
                 tracer's first step never getting a direction)."]
     fn flush_bored_cube_plus_inscribed_sphere_section() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
@@ -899,7 +900,7 @@ mod tests {
     /// The cylinder touches all four side faces along vertical lines.
     #[test]
     fn cube_minus_inscribed_cylinder() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let bore = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
@@ -912,7 +913,7 @@ mod tests {
     /// `flush_bored_cube_plus_inscribed_sphere_section`.
     #[test]
     fn cube_minus_flush_inscribed_cylinder() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
@@ -940,7 +941,7 @@ mod tests {
     /// The cylinder's surface contains the cube's four vertical edges.
     #[test]
     fn cube_intersect_cylinder_through_its_edges() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5f64.sqrt(), 2.0, Axis::Z);
@@ -951,7 +952,7 @@ mod tests {
     /// equator, a whole circle of tangency.
     #[test]
     fn sphere_union_tangent_cylinder() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
         let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
@@ -971,7 +972,7 @@ mod tests {
     /// A cylinder along x lying on the cube's top face: tangent along a line.
     #[test]
     fn cube_union_cylinder_lying_on_top() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let log = cylinder(&mut part, [-1.0, 0.0, 0.75], 0.25, 2.0, Axis::X);
@@ -1018,7 +1019,7 @@ mod tests {
     /// A hole whose caps are flush with the cube's top and bottom.
     #[test]
     fn cube_minus_flush_cylinder() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.3, 1.0, Axis::Z);
@@ -1057,7 +1058,7 @@ mod tests {
     /// curves (two ellipses) cross each other at two singular points.
     #[test]
     fn steinmetz_cylinders_union() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let a = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
         let b = cylinder(&mut part, [-1.0, 0.0, 0.0], 0.5, 2.0, Axis::X);
@@ -1066,7 +1067,7 @@ mod tests {
 
     #[test]
     fn steinmetz_cylinders_intersection() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let a = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
         let b = cylinder(&mut part, [-1.0, 0.0, 0.0], 0.5, 2.0, Axis::X);
@@ -1076,7 +1077,7 @@ mod tests {
     /// A bore along the sphere's axis, through both poles.
     #[test]
     fn sphere_minus_cylinder_through_its_poles() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
         let bore = cylinder(&mut part, [0.0, 0.0, -1.0], 0.2, 2.0, Axis::Z);
@@ -1087,7 +1088,7 @@ mod tests {
     /// equator, which is also where its patches meet.
     #[test]
     fn cylinder_union_sphere_on_its_cap() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 1.0, Axis::Z);
         let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.3);
@@ -1099,7 +1100,7 @@ mod tests {
     /// tangent to the cylinder's side along that same circle.
     #[test]
     fn cylinder_union_equal_sphere_on_its_cap() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 1.0, Axis::Z);
         let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
@@ -1132,7 +1133,7 @@ mod tests {
                 (face_orientation check); not yet investigated. The bores are tangent to the cube's \
                 faces and cross each other at Steinmetz points, the same degeneracies as elsewhere."]
     fn cube_minus_three_inscribed_bores() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
@@ -1146,7 +1147,7 @@ mod tests {
     /// Thinner bores, so the cube keeps its faces: two crossing bores.
     #[test]
     fn cube_minus_two_crossing_bores() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let block = cube(&mut part, CORNER, UNIT);
         let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.3, 1.75, Axis::Z);
@@ -1170,7 +1171,7 @@ mod tests {
     /// equator from inside.
     #[test]
     fn cylinder_minus_inscribed_sphere() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
         let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
@@ -1180,7 +1181,7 @@ mod tests {
     /// Two parallel cylinders touching along a line.
     #[test]
     fn touching_parallel_cylinders_union() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let a = cylinder(&mut part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
         let b = cylinder(&mut part, [1.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
@@ -1201,7 +1202,7 @@ mod tests {
     /// through hole, then a rounded cap on the boss.
     #[test]
     fn plate_with_boss_hole_and_cap() {
-        use geop_ops_extrude_revolve::cylinder::Axis;
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
         let plate = cube(&mut part, [-1.0, -1.0, -0.25], [2.0, 2.0, 0.5]);
         let boss = cylinder(&mut part, [0.0, 0.0, 0.25], 0.5, 0.5, Axis::Z);
@@ -1224,21 +1225,21 @@ mod tests {
 
         let mut part = M::new();
         let (min_a, max_a) = corner(-0.50, -0.50, -0.50, 1.00, 1.00, 1.00);
-        let a = geop_ops_extrude_revolve::cube_solid(&mut part, "a", min_a, max_a).unwrap();
+        let a = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "a", min_a, max_a).unwrap();
         let (min_b, max_b) = corner(-1.13, -0.30, -0.33, 2.25, 0.60, 0.65);
-        let b = geop_ops_extrude_revolve::cube_solid(&mut part, "b", min_b, max_b).unwrap();
+        let b = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "b", min_b, max_b).unwrap();
         let params = RemeshParams::<ScalInF64>::default();
         let c = boolean(&mut part, &namer(), a, b, BooleanOp::Difference, params)
             .unwrap()
             .expect("block minus the first slot must be non-empty");
 
         let (min_d, max_d) = corner(-0.33, -0.28, -1.15, 0.65, 0.55, 2.30);
-        let d = geop_ops_extrude_revolve::cube_solid(&mut part, "d", min_d, max_d).unwrap();
+        let d = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "d", min_d, max_d).unwrap();
         let e = boolean(&mut part, &namer(), c, d, BooleanOp::Difference, params)
             .unwrap()
             .expect("minus the second slot must be non-empty");
 
-        let sphere = geop_ops_extrude_revolve::sphere::sphere_solid(
+        let sphere = geop_ops_extrude_revolve::shapes::sphere::sphere_solid(
             &mut part,
             "s",
             Vector3::zero(),
@@ -1263,7 +1264,9 @@ mod tests {
             panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
         }
 
-        let scene = geop_ops_rasterize::rasterize_model(model, 8).unwrap();
+        let scene = geop_ops_rasterize::rasterize(model, 8)
+            .unwrap()
+            .scene(|_| geop_ops_rasterize::debug::Color10::Blue);
         std::fs::create_dir_all("outputs").unwrap();
         scene
             .save_to_file("outputs/chained_differences_block_with_two_slots_and_a_sphere.html")
@@ -1352,20 +1355,20 @@ mod tests {
     fn cube_minus_z_cylinder_with_coplanar_cap_is_fast_and_correct() {
         let f = ScalInF64::from_f64;
         let mut part = M::new();
-        let a = geop_ops_extrude_revolve::cube_solid(
+        let a = geop_ops_extrude_revolve::shapes::cube_solid(
             &mut part,
             "a",
             Vector3::from_array([f(-0.5), f(-0.5), f(-0.5)]),
             Vector3::from_array([f(0.5), f(0.5), f(0.5)]),
         )
         .unwrap();
-        let b = geop_ops_extrude_revolve::cylinder::revolved_cylinder_along_axis(
+        let b = geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder_along_axis(
             &mut part,
             "b",
             Vector3::from_array([f(0.0), f(0.0), f(-0.5)]),
             f(0.3),
             f(1.0),
-            geop_ops_extrude_revolve::cylinder::Axis::Z,
+            geop_ops_extrude_revolve::shapes::cylinder::Axis::Z,
         )
         .unwrap();
         let params = RemeshParams::<ScalInF64>::default();
@@ -1413,7 +1416,9 @@ mod tests {
             );
         }
 
-        let scene = geop_ops_rasterize::rasterize_model(model, 8).unwrap();
+        let scene = geop_ops_rasterize::rasterize(model, 8)
+            .unwrap()
+            .scene(|_| geop_ops_rasterize::debug::Color10::Blue);
         std::fs::create_dir_all("outputs").unwrap();
         scene
             .save_to_file("outputs/cube_minus_coplanar_cap_cylinder.html")
@@ -1438,12 +1443,12 @@ mod tests {
             [0.0, 0.0, -0.5],
             0.5,
             1.5,
-            geop_ops_extrude_revolve::cylinder::Axis::Z,
+            geop_ops_extrude_revolve::shapes::cylinder::Axis::Z,
         );
         op(&mut part, block, bore, BooleanOp::Difference);
 
-        let scene = geop_ops_rasterize::rasterize_model(part.topology(), 24).unwrap();
-        for (triangle, _) in &scene.triangles {
+        let rasterized = geop_ops_rasterize::rasterize(part.topology(), 24).unwrap();
+        for triangle in rasterized.faces.values().flatten() {
             for p in [triangle.a, triangle.b, triangle.c] {
                 let (x, y, z) = (p[0].to_f64(), p[1].to_f64(), p[2].to_f64());
                 let r = x.hypot(y);

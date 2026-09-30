@@ -14,7 +14,7 @@
 // exactly this; change the two together.
 
 import type { PostHog } from "posthog-js";
-import type { ProgramEdit, RunResult } from "./geop";
+import type { Command, StepInfo } from "./geop";
 
 const KEY = import.meta.env.VITE_POSTHOG_KEY as string | undefined;
 const HOST = "https://eu.i.posthog.com";
@@ -114,11 +114,14 @@ function track(event: string, properties?: Properties) {
   flush();
 }
 
-/** A program edit: what kind, and which operation — nothing the user typed. */
-export function trackEdit(edit: ProgramEdit) {
+/**
+ * A change to the program: which command, and which operation — nothing the
+ * user typed. `operation` is the kind of the step a commit put in.
+ */
+export function trackEdit(command: Command, operation?: string) {
   track("program_edit", {
-    edit: edit.edit,
-    ...("operation" in edit ? { operation: edit.operation } : {}),
+    edit: command.command,
+    ...(operation ? { operation } : {}),
   });
 }
 
@@ -129,16 +132,15 @@ export function trackEdit(edit: ProgramEdit) {
  * goes along: it names what went wrong in the kernel, not what was built.
  */
 const reportedFailures = new Set<string>();
-export function trackFailures(result: RunResult, operations: string[]) {
-  result.results.forEach((step, i) => {
-    if (!step.error) return;
+export function trackFailures(steps: StepInfo[]) {
+  for (const step of steps) {
+    if (!step.error) continue;
     const error = rootError(step.error);
-    const operation = operations[i] ?? "unknown";
-    const key = `${operation}:${error}`;
-    if (reportedFailures.has(key)) return;
+    const key = `${step.kind}:${error}`;
+    if (reportedFailures.has(key)) continue;
     reportedFailures.add(key);
-    track("step_failed", { operation, error });
-  });
+    track("step_failed", { operation: step.kind, error });
+  }
 }
 
 /**

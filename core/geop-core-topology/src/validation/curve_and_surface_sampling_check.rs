@@ -1,5 +1,5 @@
-use geop_core_geometry::contains::curve::curve_could_contain;
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use geop_core_geometry::contains::{curve::curve_could_contain, surface::surface_could_contain};
+use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
 
 use crate::{CoedgeGeometry, Model, validation::ValidationParameters};
 
@@ -66,24 +66,81 @@ pub fn check_curve_and_surface_sampling<S: Scalar>(
                     let t = t0.add(t1.sub(t0).mul(frac));
                     let _ = (u0, u1);
 
-                    let sample_result = (|| -> Result<bool, GeopError> {
+                    let sample_result = (|| -> Result<Option<(Vector3<S>, _)>, GeopError> {
                         let uv = coedge.pcurve.evaluate(t)?;
                         let point = surface.evaluate(uv[0], uv[1])?;
-                        Ok(curve_could_contain(
+                        let on_edge = curve_could_contain(
                             &edge.curve,
                             &point,
                             params.max_nodes,
                             params.min_subdivision_size,
                         )?
-                        .is_some())
+                        .is_some();
+                        Ok((!on_edge).then_some((point, uv)))
                     })();
 
                     match sample_result {
-                        Ok(true) => {}
-                        Ok(false) => {
+                        Ok(None) => {}
+                        Ok(Some((point, uv))) => {
+                            // Whether the stray point lies on the surfaces of
+                            // the edge's other faces tells a pcurve that
+                            // follows the right intersection but the wrong
+                            // stretch of it from one on a curve the other
+                            // face never meets.
+                            let partners: Vec<String> = model
+                                .coedges
+                                .iter()
+                                .filter(|(id, c)| {
+                                    **id != coedge_id && c.geometry == CoedgeGeometry::Edge(edge_id)
+                                })
+                                .map(|(_, c)| {
+                                    let on = model.faces.get(&c.face).map(|f| {
+                                        surface_could_contain(
+                                            &f.surface,
+                                            &point,
+                                            params.max_nodes,
+                                            params.min_subdivision_size,
+                                        )
+                                        .map(|hit| hit.is_some())
+                                    });
+                                    format!("face {} (point on its surface: {on:?})", c.face.0)
+                                })
+                                .collect();
+                            let ends = (edge.curve.evaluate(u0).ok(), edge.curve.evaluate(u1).ok());
+                            // A pcurve that drifted from its edge, and an
+                            // edge curve that is not on this face's surface
+                            // to begin with, fail alike here; the edge's own
+                            // samples tell them apart.
+                            let off_surface: Vec<usize> = (0..params.sample_count)
+                                .filter(|&k| {
+                                    let frac =
+                                        S::from_f64(k as f64 / (params.sample_count - 1) as f64);
+                                    edge.curve
+                                        .evaluate(u0.add(u1.sub(u0).mul(frac)))
+                                        .and_then(|q| {
+                                            surface_could_contain(
+                                                surface,
+                                                &q,
+                                                params.max_nodes,
+                                                params.min_subdivision_size,
+                                            )
+                                        })
+                                        .is_ok_and(|hit| hit.is_none())
+                                })
+                                .collect();
                             errors.push(GeopError::new(format!(
-                                "coedge {}'s pcurve sample {} (t={}) maps through its face's surface to a point that is not on edge {}'s curve at all",
-                                coedge_id.0, i, t, edge_id.0
+                                "coedge {}'s pcurve sample {} (t={}) maps through its face's surface to a point that is not on edge {}'s curve at all \
+                                 (coedge on face {}, (u, v) {uv:?}, point {point:?}, edge from {:?} to {:?}; edge curve samples off this face's surface: {off_surface:?} of {}; the edge's other coedges: {}; pcurve {:?})",
+                                coedge_id.0,
+                                i,
+                                t,
+                                edge_id.0,
+                                coedge.face.0,
+                                ends.0,
+                                ends.1,
+                                params.sample_count,
+                                partners.join(", "),
+                                coedge.pcurve
                             )));
                             break;
                         }

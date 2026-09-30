@@ -3,7 +3,7 @@
 > Brief overview only — full documentation is coming later.
 
 Scalars, interval arithmetic, linear algebra, convex hulls, the kernel's
-shared error type, and render primitives. Every other crate in the workspace
+shared error type, and geometric primitives. Every other crate in the workspace
 builds its numerics on top of this one, and it has no dependency on any
 other Geop crate.
 
@@ -155,16 +155,26 @@ midpoint to three decimals, which hides exactly the width you are trying to
 diagnose.
 
 A frame can also carry any `DebugContext` through `with_scene`. A
-`PrimitiveScene` attached this way is rendered to an HTML file under `/tmp`
+`PrimitiveScene` (from `geop-ops-rasterize`'s `debug` module) attached this
+way is rendered to an HTML file under `/tmp`
 when the error is printed, and the chain links to it, so a failure in a
 geometric search comes with a 3-D picture of what the search was looking at.
 
-## Render primitives
+## Primitives
 
-The `primitives` module holds the kernel's rendering vocabulary: `Line`,
-`TriangleFace`/`TriangleFace2d`, `Color10`, `CoordinateSystem`, and
-`PrimitiveScene`, which collects points, lines, triangles, labels and
-sampled curves and surfaces (through the `RasterizableCurve` and
-`RasterizableSurface` traits) and saves them as an interactive HTML file.
-`PrimitiveSceneRecorder` records a sequence of scenes, for example one per
-iteration of a search.
+The `primitives` module holds `CoordinateSystem`, `TriangleFace` (a mesh
+triangle with the surface normals at its corners), `Ray` and `Datum`.
+
+`Datum` is reference geometry: a right-handed orthonormal
+`CoordinateSystem` and the `DatumKind` saying which part of it the datum
+stands for — its origin (`Point`), the line along its `w` (`Axis`), the
+plane normal to it (`Plane`), or the whole frame (`Frame`, a coordinate
+system). Every datum carries the whole frame whatever its kind, so anything
+built on it has axes to be built along. A frame's axes and the planes
+between them can each be used on their own: `Datum::component` gives the
+`DatumComponent` — an axis, or the plane normal to one — as a datum of its
+own.
+
+`Ray` is a half-line from a point along a unit direction, and how near it
+passes to what it might hit: a point, a segment, a triangle, a plane, the
+nearest point of a line — what picking in a viewer is built on.

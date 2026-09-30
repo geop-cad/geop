@@ -13,7 +13,7 @@ geop compile part.program.json -o out/part.stl
 ## `geop compile`
 
 Builds a program (the JSON the web editor saves, see
-[geop-ops-parts](../ops/geop-ops-parts.md)) and writes the part as an STL
+[geop-ops](../ops/geop-ops.md#programs)) and writes the part as an STL
 mesh. The mesh is the one the editor draws (see
 [geop-ops-rasterize](../ops/geop-ops-rasterize.md)), so a compiled file looks
 exactly like the part on screen.

@@ -41,12 +41,6 @@ impl<S: Scalar> NurbSurface<S, 4> {
     }
 }
 
-impl<S: Scalar> geop_core_math::primitives::scene::RasterizableSurface<S> for NurbSurface<S, 4> {
-    fn eval_at(&self, u: S, v: S) -> GeopResult<Vector3<S>> {
-        self.evaluate(u, v)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::NurbSurface;
