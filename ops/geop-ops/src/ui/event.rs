@@ -3,6 +3,7 @@
 use geop_core_math::{
     primitives::Ray,
     scalars::{Scalar, as_f64},
+    vector::Vector3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,16 +75,21 @@ pub enum Button {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Value {
-    /// A button, or a list item, was pressed.
+    /// A button, a list item or a reference field was pressed.
     Press,
     /// A list item's remove button was pressed.
     Remove,
     Bool(bool),
     Number(f64),
-    /// A select's option, by its value.
+    /// An action, or a select's option, by its value.
     Choice(String),
-    /// An entity picked for a pick field.
-    Entity(EntityRef),
+    /// The entity at this index was taken out of a reference field.
+    RemoveAt(usize),
+    /// Everything was taken out of a reference field.
+    Clear,
+    /// What a reference field holds now: all an operation is ever sent for
+    /// one (see [`super::Reference`]).
+    Entities(Vec<EntityRef>),
 }
 
 /// One thing the user did while editing a step.
@@ -141,4 +147,33 @@ impl<S: Scalar> StepEditEvent<S> {
             _ => None,
         }
     }
+}
+
+/// A pointer or key event the editor passes on to an operation, having
+/// taken what is its own: picks, selecting, dragging handles (see
+/// [`super::StepEditor`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum CanvasEvent<S: Scalar> {
+    /// The pointer moved over the viewport with no button held.
+    Hover { pointer: Pointer<S> },
+    /// The pointer left the viewport.
+    Leave,
+    /// A click that selected nothing: a secondary one, a double one, one
+    /// while the operation has a tool in hand, one on nothing selectable.
+    Click {
+        pointer: Pointer<S>,
+        button: Button,
+        double: bool,
+        shift: bool,
+    },
+    /// The draggable visual `key` dragged in the plane worked in, from
+    /// where it was grabbed to where the pointer is now. `done` on release.
+    Move {
+        key: String,
+        from: Vector3<S>,
+        to: Vector3<S>,
+        done: bool,
+    },
+    /// A key, as the browser names it.
+    Key { key: String },
 }

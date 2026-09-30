@@ -119,17 +119,18 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
         });
         form_arms.push(quote! {
             #name::#op(args) => #operation::form(
-                &#op, before, args, session.downcast_ref::<#session>()#expect,
-            ),
+                &#op, before, args, session.downcast_ref::<#session>()#expect, selection,
+            ).erase(),
         });
         set_arms.push(quote! {
             #name::#op(args) => #operation::set(
-                &#op, before, args, session.downcast_mut::<#session>()#expect, key, value,
+                &#op, before, args, session.downcast_mut::<#session>()#expect, selection, key,
+                value,
             ),
         });
         event_arms.push(quote! {
             #name::#op(args) => #operation::event(
-                &#op, before, args, session.downcast_mut::<#session>()#expect, event,
+                &#op, before, args, session.downcast_mut::<#session>()#expect, selection, event,
             ),
         });
         kind_arms.push(quote! { #name::#op(_) => #kind, });
@@ -177,11 +178,12 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn form<S: #private::Scalar>(
+            fn form<'a, S: #private::Scalar>(
                 &self,
-                before: &::geop_ops::Part<S>,
+                before: &'a ::geop_ops::Part<S>,
                 session: &dyn ::std::any::Any,
-            ) -> ::geop_ops::ui::Form<S> {
+                selection: &[::std::string::String],
+            ) -> ::geop_ops::ui::Form<'a, S> {
                 match self {
                     #(#form_arms)*
                 }
@@ -191,6 +193,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 &mut self,
                 before: &::geop_ops::Part<S>,
                 session: &mut dyn ::std::any::Any,
+                selection: &mut ::std::vec::Vec<::std::string::String>,
                 key: &str,
                 value: ::geop_ops::ui::Value,
             ) {
@@ -203,7 +206,8 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 &mut self,
                 before: &::geop_ops::Part<S>,
                 session: &mut dyn ::std::any::Any,
-                event: &::geop_ops::ui::StepEditEvent<S>,
+                selection: &mut ::std::vec::Vec<::std::string::String>,
+                event: &::geop_ops::ui::CanvasEvent<S>,
             ) {
                 match self {
                     #(#event_arms)*

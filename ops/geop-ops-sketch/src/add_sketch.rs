@@ -1,16 +1,15 @@
 //! [`AddSketch`]: place a sketch in the part.
 
 use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
-    primitives::{DatumComponent, FrameAxis},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
 use geop_core_sketch::Sketch;
 use geop_ops::{
-    ORIGIN, Part, PlacedSketch,
+    Part, PlacedSketch,
     operation::{EntityRef, Operation},
-    ui::{Form, StepEditEvent, Value},
+    ui::{CanvasEvent, Edit, Form},
 };
 use serde::{Deserialize, Serialize};
 
@@ -26,8 +25,9 @@ pub struct AddSketch;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AddSketchArgs {
     /// The plane to sketch on: a planar face, a datum plane or a frame's
-    /// plane.
-    pub plane: EntityRef,
+    /// plane; none yet, for a new sketch waiting for one to be picked.
+    #[serde(default)]
+    pub plane: Option<EntityRef>,
     /// The sketch as drawn; solve it first for its constraints to hold.
     pub sketch: Sketch,
 }
@@ -36,10 +36,11 @@ impl Operation for AddSketch {
     type Args = AddSketchArgs;
     type Session = SketchSession;
 
-    /// An empty sketch on the origin's `xy` plane.
+    /// An empty sketch, on no plane yet: where to sketch is the first thing
+    /// a new sketch asks for.
     fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddSketchArgs {
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: None,
             sketch: Sketch::new(),
         }
     }
@@ -52,7 +53,10 @@ impl Operation for AddSketch {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("add_sketch({operation_id}, plane={:?})", args.plane);
         args.sketch.validate().with_context(ctx)?;
-        let plane = args.plane.resolve_plane(&part).with_context(ctx)?;
+        let Some(plane) = &args.plane else {
+            return Err(GeopError::new("pick a plane to sketch on")).with_context(ctx);
+        };
+        let plane = plane.resolve_plane(&part).with_context(ctx)?;
         let placed = PlacedSketch {
             plane,
             sketch: args.sketch.clone(),
@@ -63,33 +67,29 @@ impl Operation for AddSketch {
 
     /// The plane, picked, and the sketch drawn in it: see
     /// [`crate::editor`].
-    fn form<S: Scalar>(
+    fn form<'a, S: Scalar>(
         &self,
-        before: &Part<S>,
+        before: &'a Part<S>,
         args: &AddSketchArgs,
         s: &SketchSession,
-    ) -> Form<S> {
-        editor::form(before, args, s)
-    }
-
-    fn set<S: Scalar>(
-        &self,
-        before: &Part<S>,
-        args: &mut AddSketchArgs,
-        s: &mut SketchSession,
-        key: &str,
-        value: Value,
-    ) {
-        editor::set(before, args, s, key, value);
+        selection: &[String],
+    ) -> Form<'a, S, AddSketchArgs, SketchSession> {
+        editor::form(before, args, s, selection)
     }
 
     fn event<S: Scalar>(
         &self,
         before: &Part<S>,
         args: &mut AddSketchArgs,
-        s: &mut SketchSession,
-        event: &StepEditEvent<S>,
+        session: &mut SketchSession,
+        selection: &mut Vec<String>,
+        event: &CanvasEvent<S>,
     ) {
-        editor::event(before, args, s, event);
+        let edit = Edit {
+            args,
+            session,
+            selection,
+        };
+        editor::event(before, edit, event);
     }
 }

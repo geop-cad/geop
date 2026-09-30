@@ -30,9 +30,10 @@ use geop_core_sketch::{
 };
 use geop_ops::{
     Part,
+    operation::Role,
     ui::{
-        Button, ButtonItem, Dialog, Form, ListItem, Pointer, Shape, StepEditEvent, Style, Target,
-        Tone, Value, Visual, hit::hit_visuals,
+        Action, Button, CanvasEvent, Edit, Form, ListItem, Pointer, Shape, Style, Tone, Value,
+        Visual, hit::hit_visuals,
     },
 };
 
@@ -41,12 +42,6 @@ use crate::{
     constraints::{self, Selection},
     geometry::sweep_through,
 };
-
-/// What a sketch's plane can be picked from.
-const PLANE_TARGETS: &[Target] = &[
-    Target::Face,
-    Target::Datum(geop_core_math::primitives::DatumKind::Plane),
-];
 
 /// Lines drawn within this slope of horizontal or vertical get that
 /// constraint.
@@ -66,7 +61,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// Every tool, as the palette offers it: `(tool, key, label, shortcut)`.
+    /// Every tool, as the palette offers it: `(tool, name, label, shortcut)`.
     const ALL: [(Tool, &'static str, &'static str, &'static str); 7] = [
         (Tool::Select, "select", "Select", "Escape"),
         (Tool::Line, "line", "Line", "l"),
@@ -77,8 +72,8 @@ impl Tool {
         (Tool::Point, "point", "Point", "p"),
     ];
 
-    fn by_key(key: &str) -> Option<Tool> {
-        Tool::ALL.iter().find(|t| t.1 == key).map(|t| t.0)
+    fn by_name(name: &str) -> Option<Tool> {
+        Tool::ALL.iter().find(|t| t.1 == name).map(|t| t.0)
     }
 
     fn by_shortcut(shortcut: &str) -> Option<Tool> {
@@ -137,17 +132,15 @@ enum Solved {
     },
 }
 
-/// The temporary state of editing a sketch.
+/// The temporary state of editing a sketch. What is selected is the
+/// editor's: the keys of the visuals of the points, curves and constraints
+/// selected.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SketchSession {
     tool: Tool,
     draft: Option<Draft>,
-    selection: Selection,
-    selected_constraint: Option<ConstraintId>,
     /// The pointer, in the plane.
     cursor: Option<P2>,
-    /// The key of the visual the pointer is over.
-    hover: Option<String>,
     drag: Option<Drag>,
     /// Solved once when the edit starts, and after every change.
     solved: Option<Solved>,
@@ -171,6 +164,23 @@ fn glyph_key(key: &str) -> Option<ConstraintId> {
     key_id(key, 'k').map(ConstraintId)
 }
 
+/// What the selection `keys` hold that `sketch` has: its points and curves,
+/// and its constraints.
+fn selected(sketch: &Sketch, keys: &[String]) -> (Selection, Vec<ConstraintId>) {
+    let mut selection = Selection::default();
+    let mut constraints = Vec::new();
+    for key in keys {
+        if let Some(p) = point_key(key).filter(|p| sketch.points.contains_key(p)) {
+            selection.points.push(p);
+        } else if let Some(c) = curve_key(key).filter(|c| sketch.curves.contains_key(c)) {
+            selection.curves.push(c);
+        } else if let Some(k) = glyph_key(key).filter(|k| sketch.constraints.contains_key(k)) {
+            constraints.push(k);
+        }
+    }
+    (selection, constraints)
+}
+
 /// The key of the visual among `visuals` the pointer is over, trying the
 /// kinds `stages` accept in order: a point drawn on the origin is that
 /// point, not the origin.
@@ -192,10 +202,6 @@ fn is_curve(key: &str) -> bool {
     curve_key(key).is_some()
 }
 
-fn is_glyph(key: &str) -> bool {
-    glyph_key(key).is_some()
-}
-
 fn is_origin(key: &str) -> bool {
     key == "origin"
 }
@@ -205,10 +211,12 @@ fn pt(sketch: &Sketch, id: PointId) -> P2 {
     sketch.points[&id].xy()
 }
 
-/// The edit in progress: what it works on, and where the plane is.
+/// The edit in progress: what it works on, what is selected, and where the
+/// plane is.
 struct Editing<'a, S: Scalar> {
     args: &'a mut AddSketchArgs,
     s: &'a mut SketchSession,
+    selection: &'a mut Vec<String>,
     frame: CoordinateSystem<S>,
 }
 
@@ -246,94 +254,91 @@ impl<S: Scalar> Editing<'_, S> {
         self.args.sketch = next;
     }
 
-    /// What is drawn now: hit tests use these.
-    fn visuals(&self) -> Vec<Visual<S>> {
-        visuals(self.sketch(), self.s, &self.frame)
+    /// `p`, a point of the plane, in the sketch's coordinates.
+    fn to_sketch(&self, p: &Vector3<S>) -> P2 {
+        let uvw = self.frame.to_uvw(p);
+        [uvw[0].to_f64(), uvw[1].to_f64()]
     }
 }
 
 /// What a sketch step shows: the plane to pick and, once it is one, the
 /// sketch drawn in it with the tools, constraints and state of the drawing.
-pub(crate) fn form<S: Scalar>(
-    before: &Part<S>,
+pub(crate) fn form<'a, S: Scalar>(
+    before: &'a Part<S>,
     args: &AddSketchArgs,
     s: &SketchSession,
-) -> Form<S> {
+    selection: &[String],
+) -> Form<'a, S, AddSketchArgs, SketchSession> {
     let mut s = s.clone();
     if s.solved.is_none() {
         solve(&mut args.sketch.clone(), &mut s, &[]);
     }
-    let mut d = Dialog::new();
-    d.pick(
+    let mut f = Form::<S, AddSketchArgs, SketchSession>::new();
+    // Only a plane is taken; another one moves the drawing onto it.
+    f.reference(
         "plane",
         "plane",
-        vec![args.plane.clone()],
-        PLANE_TARGETS,
+        args.plane.iter().cloned().collect(),
+        &[Role::Plane],
+        None,
         false,
+        move |edit, picked| {
+            if let [plane] = picked.as_slice()
+                && plane.resolve_plane(before).is_ok()
+            {
+                edit.args.plane = Some(plane.clone());
+                edit.session.draft = None;
+            }
+        },
     );
-    let frame = match args.plane.resolve_plane(before) {
+    let Some(plane) = &args.plane else {
+        return f;
+    };
+    let frame = match plane.resolve_plane(before) {
         Ok(frame) => frame,
         Err(e) => {
-            d.text("plane_error", e.root_message(), Tone::Error);
-            return Form::dialog(d);
+            f.text("plane_error", e.root_message(), Tone::Error);
+            return f;
         }
     };
-    draw_dialog(&mut d, &args.sketch, &s);
-    let grab = s.tool == Tool::Select
-        && s.hover
-            .as_deref()
-            .is_some_and(|k| point_key(k).is_some() || curve_key(k).is_some());
-    Form {
-        dialog: d,
-        visuals: visuals(&args.sketch, &s, &frame),
-        focus: Some(frame),
-        grab,
-    }
-}
-
-/// The field `key` set to `value`: a plane picked — only a plane is taken —
-/// or a field of the drawing.
-pub(crate) fn set<S: Scalar>(
-    before: &Part<S>,
-    args: &mut AddSketchArgs,
-    s: &mut SketchSession,
-    key: &str,
-    value: Value,
-) {
-    match (key, value) {
-        ("plane", Value::Entity(plane)) => {
-            if plane.resolve_plane(before).is_ok() {
-                args.plane = plane;
-                s.draft = None;
-            }
-        }
-        (key, value) => editing(before, args, s, |e| e.dialog(key, &value)),
-    }
+    draw_dialog(&mut f, before, &args.sketch, &s, selection);
+    f.visuals = visuals(&args.sketch, &s, &frame);
+    f.focus = Some(frame);
+    f.tool = s.tool != Tool::Select;
+    f
 }
 
 /// A pointer or key event in the drawing.
 pub(crate) fn event<S: Scalar>(
     before: &Part<S>,
-    args: &mut AddSketchArgs,
-    s: &mut SketchSession,
-    event: &StepEditEvent<S>,
+    edit: Edit<'_, AddSketchArgs, SketchSession>,
+    event: &CanvasEvent<S>,
 ) {
-    editing(before, args, s, |e| e.event(event));
+    editing(before, edit, |e| e.event(event));
 }
 
 /// `f` applied to the drawing, solved first if it is not yet. Nothing, while
 /// the plane is none.
 fn editing<S: Scalar>(
     before: &Part<S>,
-    args: &mut AddSketchArgs,
-    s: &mut SketchSession,
+    edit: Edit<'_, AddSketchArgs, SketchSession>,
     f: impl FnOnce(&mut Editing<S>),
 ) {
-    let Ok(frame) = args.plane.resolve_plane(before) else {
+    let Edit {
+        args,
+        session: s,
+        selection,
+    } = edit;
+    let Some(Ok(frame)) = args.plane.as_ref().map(|p| p.resolve_plane(before)) else {
         return;
     };
     if s.solved.is_none() {
         solve(&mut args.sketch, s, &[]);
     }
-    f(&mut Editing { args, s, frame });
+    f(&mut Editing {
+        args,
+        s,
+        selection,
+        frame,
+    });
 }

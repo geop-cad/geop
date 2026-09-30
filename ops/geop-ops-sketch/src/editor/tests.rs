@@ -7,7 +7,7 @@ use geop_core_math::{
 };
 use geop_ops::{
     EntityRef, ORIGIN, Operations, Part,
-    ui::{Control, PartView, Presentation, Reach, StepEditor},
+    ui::{Control, PartView, Presentation, Reach, StepEditEvent, StepEditor},
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,17 +25,25 @@ enum Ops {
 struct Editor {
     part: Part<S>,
     view: PartView<S>,
-    editor: StepEditor<Ops>,
+    editor: StepEditor<Ops, S>,
     args: AddSketchArgs,
     presentation: Presentation<S>,
 }
 
 impl Editor {
-    /// A new sketch step — or, not `new`, one being edited again.
+    /// A new sketch step — or, not `new`, one on the origin's `xy` plane
+    /// being edited again.
     fn new(new: bool) -> Self {
         let part = Part::new();
         let view = PartView::of(&part).unwrap();
-        let step = Ops::new_step("add_sketch", &part).unwrap();
+        let mut step = Ops::new_step("add_sketch", &part).unwrap();
+        if !new {
+            let Ops::AddSketch(args) = &mut step;
+            args.plane = Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            ));
+        }
         let editor = StepEditor::new(step, &part, new);
         let presentation = editor.presentation(&part);
         let Ops::AddSketch(args) = editor.step().clone();
@@ -66,6 +74,19 @@ impl Editor {
         });
     }
 
+    /// Presses the action `value` of the field `key`.
+    fn act(&mut self, key: &str, value: &str) {
+        self.send(StepEditEvent::Dialog {
+            key: key.into(),
+            value: Value::Choice(value.into()),
+        });
+    }
+
+    /// The keys of the visuals selected.
+    fn selection(&self) -> &[String] {
+        self.editor.selection()
+    }
+
     fn click(&mut self, x: f64, y: f64) {
         self.send(StepEditEvent::Click {
             pointer: down(x, y),
@@ -83,10 +104,10 @@ impl Editor {
         &self.args.sketch
     }
 
-    /// The labels of the constraint buttons the dialog offers.
+    /// The labels of the constraints the dialog offers.
     fn constrain_options(&self) -> Vec<String> {
         match self.presentation.dialog.get("constrain") {
-            Some(Control::Buttons { buttons }) => buttons.iter().map(|b| b.label.clone()).collect(),
+            Some(Control::Actions { actions }) => actions.iter().map(|a| a.label.clone()).collect(),
             _ => Vec::new(),
         }
     }
@@ -120,21 +141,18 @@ fn close(a: P2, b: P2) -> bool {
     dist(a, b) < 1e-6
 }
 
-/// A new sketch starts by picking its plane; picking one goes straight
-/// on to drawing on it, head on.
+/// A new sketch has no plane, and starts by waiting for one to be picked;
+/// picking one goes straight on to drawing on it, head on.
 #[test]
 fn a_new_sketch_picks_its_plane_first() {
     let mut e = Editor::new(true);
+    assert_eq!(e.args.plane, None);
     assert!(matches!(
         e.presentation.dialog.get("plane"),
-        Some(Control::Pick { armed: true, .. })
+        Some(Control::Reference(r)) if r.armed
     ));
     assert!(e.presentation.focus.is_none());
-    assert!(
-        e.presentation
-            .pickable
-            .contains(&Target::Datum(geop_core_math::primitives::DatumKind::Plane))
-    );
+    assert_eq!(e.presentation.pickable, [Role::Plane]);
     // The origin's zx plane's square, ten reaches of 0.009 from the
     // origin: seen from the front, at (0.04, 0, 0.04).
     let front = pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]);
@@ -146,7 +164,10 @@ fn a_new_sketch_picks_its_plane_first() {
     });
     assert_eq!(
         e.args.plane,
-        EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y))
+        Some(EntityRef::datum_component(
+            ORIGIN,
+            DatumComponent::Plane(FrameAxis::Y)
+        ))
     );
     let focus = e.presentation.focus.expect("drawing faces the plane");
     assert_eq!(*focus.w(), v([0.0, 1.0, 0.0]));
@@ -158,7 +179,7 @@ fn a_new_sketch_picks_its_plane_first() {
 #[test]
 fn lines_snap_by_constraint() {
     let mut e = drawing();
-    e.press("tool:line");
+    e.act("tool", "line");
     e.click(0.001, 0.0);
     e.click(1.0, 0.02);
     e.click(1.0, 1.0);
@@ -189,11 +210,11 @@ fn lines_snap_by_constraint() {
 #[test]
 fn points_on_curves_are_constrained_onto_them() {
     let mut e = drawing();
-    e.press("tool:line");
+    e.act("tool", "line");
     e.click(-1.0, -1.0);
     e.click(1.0, 1.0);
     e.key("Escape");
-    e.press("tool:point");
+    e.act("tool", "point");
     e.click(0.302, 0.3);
     let s = e.sketch();
     assert_eq!(s.points.len(), 3);
@@ -236,7 +257,7 @@ fn rectangles() {
 #[test]
 fn selections_offer_constraints() {
     let mut e = drawing();
-    e.press("tool:line");
+    e.act("tool", "line");
     e.click(0.0, 0.5);
     e.click(1.0, 0.7);
     e.key("Escape");
@@ -247,17 +268,16 @@ fn selections_offer_constraints() {
     assert_eq!(e.session().tool, Tool::Select);
     e.click(0.5, 0.6);
     e.click(0.5, 1.75);
-    assert_eq!(e.session().selection.curves.len(), 2);
-    let options = e.constrain_options();
-    let parallel = options.iter().position(|o| o == "Parallel").unwrap();
-    e.press(&format!("constrain:{parallel}"));
+    assert_eq!(e.selection().len(), 2);
+    assert!(e.constrain_options().iter().any(|o| o == "Parallel"));
+    e.act("constrain", "Parallel");
     assert!(
         e.sketch()
             .constraints
             .values()
             .any(|c| matches!(c, Constraint::Parallel { .. }))
     );
-    assert!(e.session().selection.is_empty());
+    assert!(e.selection().is_empty());
 
     e.click(0.5, 0.6);
     e.key("Delete");
@@ -273,7 +293,7 @@ fn selections_offer_constraints() {
 #[test]
 fn dragging_points() {
     let mut e = drawing();
-    e.press("tool:line");
+    e.act("tool", "line");
     e.click(0.0, 0.0);
     e.click(1.0, 0.0);
     e.key("Escape");
@@ -300,15 +320,14 @@ fn dragging_points() {
 #[test]
 fn constraint_values_are_edited_in_the_list() {
     let mut e = drawing();
-    e.press("tool:line");
+    e.act("tool", "line");
     e.click(0.0, 0.5);
     e.click(1.0, 0.8);
     e.key("Escape");
     e.key("Escape");
     e.click(0.5, 0.65);
-    let options = e.constrain_options();
-    let length = options.iter().position(|o| o == "Length").unwrap();
-    e.press(&format!("constrain:{length}"));
+    assert!(e.constrain_options().iter().any(|o| o == "Length"));
+    e.act("constrain", "Length");
     let (&id, _) = e.sketch().constraints.iter().next().unwrap();
     e.send(StepEditEvent::Dialog {
         key: format!("constraint:{}", id.0),

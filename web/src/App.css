@@ -590,8 +590,8 @@ button.inline {
   font-size: 0.8em;
 }
 
-/* A select shown as radios: a list per group, the options that don't fit
-   greyed out. */
+/* Grouped actions: a box of buttons per group, those that don't fit now
+   disabled. */
 .constructions {
   display: flex;
   flex-direction: column;
@@ -611,26 +611,11 @@ button.inline {
   color: #999;
   padding: 0 0.25rem;
 }
-.construction {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
+.constructions button {
   font-size: 0.7rem;
   line-height: 1.2;
-  cursor: pointer;
+  text-align: left;
 }
-.construction input {
-  margin: 0;
-  flex: none;
-}
-.construction.disabled {
-  color: #555;
-  cursor: default;
-}
-.construction.checked {
-  color: #7ec9ff;
-}
-
 
 /* ── projection toggle ─────────────────────────────────────────────────── */
 

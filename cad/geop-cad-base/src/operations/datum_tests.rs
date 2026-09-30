@@ -6,8 +6,9 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_ops::operation::{Aspects, Role};
 use geop_ops::{EntityRef, ORIGIN, Operation, Part};
-use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, Role, inspect_selection};
+use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, fitting_constructions};
 
 use crate::examples;
 
@@ -77,7 +78,7 @@ fn on_plane(frame: &CoordinateSystem<S>, p: [f64; 3]) -> bool {
 #[test]
 fn selections_fit_by_shape() {
     let part = drilled_box();
-    let fits = |selection: Vec<EntityRef>| inspect_selection(&part, &selection).fits;
+    let fits = |selection: Vec<EntityRef>| fitting_constructions(&part, &selection);
 
     let top = fits(vec![face("extrude(box,end)")]);
     assert!(top.contains(&"offset"), "{top:?}");
@@ -115,9 +116,46 @@ fn selections_fit_by_shape() {
     );
     assert!(fits(Vec::new()).is_empty());
     // Nothing fits what the part does not have.
-    let missing = inspect_selection(&part, &[face("nowhere")]);
-    assert!(missing.fits.is_empty());
-    assert_eq!(missing.roles, [Vec::<Role>::new()]);
+    assert!(fitting_constructions(&part, &[face("nowhere")]).is_empty());
+    assert!(Aspects::of(&face("nowhere"), &part).is_err());
+}
+
+/// A sketch's points and lines are points and lines to build on: the
+/// drilled box's outline — a 2 x 2 square on the xy plane — gives a line
+/// through two of its corners.
+#[test]
+fn sketch_points_and_lines() {
+    let part = drilled_box();
+    let placed = part.sketch(part.sketch_id("outline").unwrap()).unwrap();
+    let corner = |x: f64, y: f64| {
+        let (&point, _) = placed
+            .sketch
+            .points
+            .iter()
+            .find(|(_, p)| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9)
+            .unwrap();
+        EntityRef::SketchPoint {
+            sketch: "outline".into(),
+            point,
+        }
+    };
+    let d = datum(
+        &part,
+        vec![corner(0.0, 0.0), corner(2.0, 2.0)],
+        Construction::TwoPoints {},
+    );
+    assert_at(&d.frame, [0.0, 0.0, 0.0], [1.0, 1.0, 0.0]);
+    let (&line, _) = placed.sketch.curves.iter().next().unwrap();
+    let roles = Aspects::of(
+        &EntityRef::SketchCurve {
+            sketch: "outline".into(),
+            curve: line,
+        },
+        &part,
+    )
+    .unwrap()
+    .roles();
+    assert_eq!(roles, [Role::Line]);
 }
 
 #[test]
@@ -429,8 +467,8 @@ fn frames() {
     assert_at(&d.frame, [2., 0., 1.], [-1., 0., 2.]);
     assert!(d.frame.u().sub(&v(0., 1., 0.)).norm().to_f64() < 1e-9);
 
-    let fit = inspect_selection(&part, &[EntityRef::datum("cs")]);
-    assert_eq!(fit.roles, [vec![Role::Point]]);
+    let roles = Aspects::of(&EntityRef::datum("cs"), &part).unwrap().roles();
+    assert_eq!(roles, [Role::Point]);
     // Its axes carry an offset point, as a datum point's do.
     let d = datum(
         &part,

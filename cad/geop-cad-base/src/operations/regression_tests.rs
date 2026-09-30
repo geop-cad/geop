@@ -12,7 +12,7 @@ use geop_core_topology::{
 use geop_ops::{EntityRef, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::ExtrudeArgs;
+use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
 use geop_ops_rasterize::face_triangles_uv;
 use geop_ops_sketch::AddSketchArgs;
 
@@ -140,7 +140,10 @@ fn cylinder_joined_over_a_hole() {
     program.push(
         "sketch1",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: plate,
         },
     );
@@ -173,7 +176,7 @@ fn cylinder_joined_over_a_hole() {
     program.push(
         "sketch2",
         AddSketchArgs {
-            plane: EntityRef::datum("reference1"),
+            plane: Some(EntityRef::datum("reference1")),
             sketch: boss,
         },
     );
@@ -185,6 +188,56 @@ fn cylinder_joined_over_a_hole() {
             symmetric: false,
             combine: Combine::Union {
                 target: "extrude(extrude1)".into(),
+            },
+        },
+    );
+    assert_builds_valid(&program);
+}
+
+/// The drilled box's outline revolved a full turn around its own right
+/// edge and joined to the box: a half-cylinder-like solid whose end disks
+/// lie in the box's front and back faces, and whose sweep starts in the
+/// box's bottom face — coplanar faces and coincident edges on every side.
+/// The outline is the solved sketch, so its corners sit ~1e-11 off the
+/// round values.
+///
+/// It panicked in `remesh_edges_x_edges`, about to insert a vertex 3e-12
+/// from the box's corner. That crossing was real geometry, not an
+/// under-resolved search: the solver meets `Horizontal` and `Vertical` only
+/// to its tolerance, so the outline's bottom was ~5e-12 rad off
+/// perpendicular to the axis, the box's front face tilted with it, and the
+/// revolve swept a cone that flat instead of a disk. Both were built from
+/// sharp `f64` positions that claimed to be exact. A sketch is now built
+/// from an enclosure of its exact solution (`Sketch::enclose`, a Krawczyk
+/// test), so the two faces carry the uncertainty the solve really left, and
+/// the crossing could be the corner — which the corner then is.
+#[test]
+fn outline_revolved_around_its_edge_joined_to_its_box() {
+    let mut program = crate::examples::box_with_drill_hole();
+    let crate::PartOperation::AddSketch(outline) = &program.steps[0].operation else {
+        panic!("the outline comes first");
+    };
+    let sketch = &outline.sketch;
+    let right = sketch
+        .curves
+        .iter()
+        .find(|(_, c)| {
+            c.points()
+                .iter()
+                .all(|p| (sketch.points[p].xy()[0] - 2.0).abs() < 1e-9)
+        })
+        .map(|(&id, _)| id)
+        .unwrap();
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: "outline".into(),
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "outline".into(),
+                curve: right,
+            }),
+            combine: Combine::Union {
+                target: "extrude(hole)".into(),
             },
         },
     );

@@ -22,25 +22,38 @@ fn tool_hint(tool: Tool, draft: Option<&Draft>) -> &'static str {
     }
 }
 
-/// The fields for drawing: tools, constraints, and how the sketch stands.
-pub(super) fn draw_dialog(d: &mut Dialog, sketch: &Sketch, s: &SketchSession) {
+/// The fields for drawing in the sketch on `before`: tools, constraints,
+/// and how the sketch stands, with `keys` the keys of the visuals selected.
+pub(super) fn draw_dialog<'a, S: Scalar>(
+    d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
+    before: &'a Part<S>,
+    sketch: &Sketch,
+    s: &SketchSession,
+    keys: &[String],
+) {
+    let (selection, selected_constraints) = selected(sketch, keys);
     d.heading("draw_heading", "Draw");
-    d.buttons(
-        "tools",
+    d.actions(
+        "tool",
         Tool::ALL
             .iter()
-            .map(|&(tool, key, label, shortcut)| {
-                ButtonItem::new(format!("tool:{key}"), label)
+            .map(|&(tool, name, label, shortcut)| {
+                Action::new(name, label)
                     .title(format!("Shortcut: {shortcut}"))
                     .active(s.tool == tool)
             })
             .collect(),
+        move |edit, name| {
+            if let Some(tool) = Tool::by_name(name) {
+                editing(before, edit, |e| e.take(tool));
+            }
+        },
     );
     d.text("tool_hint", tool_hint(s.tool, s.draft.as_ref()), Tone::Hint);
 
     d.heading("constrain_heading", "Constrain");
-    let options = constraints::options(sketch, &s.selection);
-    if options.is_empty() && s.selection.curves.is_empty() {
+    let options = constraints::options(sketch, &selection);
+    if options.is_empty() && selection.curves.is_empty() {
         d.text(
             "constrain_hint",
             "Select points and curves (Select tool) to see the constraints that apply.",
@@ -48,24 +61,30 @@ pub(super) fn draw_dialog(d: &mut Dialog, sketch: &Sketch, s: &SketchSession) {
         );
     }
     if !options.is_empty() {
-        d.buttons(
+        d.actions(
             "constrain",
             options
                 .iter()
-                .enumerate()
-                .map(|(i, o)| ButtonItem::new(format!("constrain:{i}"), o.label).title(o.title))
+                .map(|o| Action::new(o.label, o.label).title(o.title))
                 .collect(),
+            move |edit, label| editing(before, edit, |e| e.constrain(label)),
         );
     }
     let mut edits = Vec::new();
-    if !s.selection.curves.is_empty() {
-        edits.push(ButtonItem::new("construction", "Construction"));
+    if !selection.curves.is_empty() {
+        edits.push(Action::new("construction", "Construction"));
     }
-    if !s.selection.is_empty() || s.selected_constraint.is_some() {
-        edits.push(ButtonItem::new("delete", "Delete"));
+    if !selection.is_empty() || !selected_constraints.is_empty() {
+        edits.push(Action::new("delete", "Delete"));
     }
     if !edits.is_empty() {
-        d.buttons("edit", edits);
+        d.actions("edit", edits, move |edit, action| {
+            editing(before, edit, |e| match action {
+                "construction" => e.toggle_construction(),
+                "delete" => e.delete_selection(),
+                _ => {}
+            })
+        });
     }
 
     d.heading("status_heading", "Status");
@@ -115,32 +134,33 @@ pub(super) fn draw_dialog(d: &mut Dialog, sketch: &Sketch, s: &SketchSession) {
         Some(Solved::Solved { report }) => report.failed_constraints.clone(),
         _ => Vec::new(),
     };
-    d.list(
-        "constraints",
-        sketch
-            .constraints
-            .iter()
-            .map(|(&id, c)| {
-                let mut item = ListItem::new(format!("constraint:{}", id.0), constraints::name(c));
-                item.selected = s.selected_constraint == Some(id);
-                item.removable = true;
-                item.tone = if failed.contains(&id) {
-                    Tone::Error
+    let items: Vec<ListItem> = sketch
+        .constraints
+        .iter()
+        .map(|(&id, c)| {
+            let key = format!("constraint:{}", id.0);
+            d.on(key.clone(), move |edit, value| {
+                editing(before, edit, |e| e.constraint(id, &value))
+            });
+            let mut item = ListItem::new(key, constraints::name(c));
+            item.selected = selected_constraints.contains(&id);
+            item.removable = true;
+            item.tone = if failed.contains(&id) {
+                Tone::Error
+            } else {
+                Tone::Normal
+            };
+            item.value = constraints::value(c).map(|v| {
+                if matches!(c, Constraint::Angle { .. }) {
+                    v.to_degrees()
                 } else {
-                    Tone::Normal
-                };
-                item.value = constraints::value(c).map(|v| {
-                    if matches!(c, Constraint::Angle { .. }) {
-                        v.to_degrees()
-                    } else {
-                        v
-                    }
-                });
-                item
-            })
-            .collect(),
-        "None yet.",
-    );
+                    v
+                }
+            });
+            item
+        })
+        .collect();
+    d.list("constraints", items, "None yet.");
     if let Some([x, y]) = s.cursor {
         d.text("cursor", format!("x {x:.3} · y {y:.3}"), Tone::Hint);
     }

@@ -4,8 +4,8 @@
 //!
 //! Which constructions can be chosen depends on what is selected, and on its
 //! shape, not only its kind: a straight edge is a line, a circular one has a
-//! center and an axis, a flat face is a plane (see [`Geometry`]).
-//! [`inspect_selection`] tells an editor which constructions fit a
+//! center and an axis, a flat face is a plane (see [`Aspects`]).
+//! [`fitting_constructions`] tells an editor which constructions fit a
 //! selection, by exactly the matching a step applies.
 
 use geop_core_geometry::shape::Plane;
@@ -20,14 +20,11 @@ use serde::{Deserialize, Serialize};
 
 use geop_ops::{
     Part,
-    operation::{EntityRef, Operation, frame_along},
-    ui::{Form, Value},
+    operation::{Aspects, EntityRef, Operation, Role, frame_along},
+    ui::{Form, Unit},
 };
 
-use crate::{
-    editor,
-    geometry::{Geometry, Role},
-};
+use crate::editor;
 
 /// What kind of value a construction takes besides its selection.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,6 +34,7 @@ pub enum ParamKind {
         default: f64,
         min: f64,
         max: f64,
+        unit: Unit,
     },
     Bool {
         default: bool,
@@ -124,15 +122,15 @@ constructions! {
     // ── points ──
     Point "point" "Point" [Point] -> Point,
     "A point offset from the selected one: along its own axes if it is a datum or the origin, along the world's otherwise. Its frame is that point's, moved." {
-        x: f64 = Number { default: 0.0, min: -10.0, max: 10.0 }, "How far along x.";
-        y: f64 = Number { default: 0.0, min: -10.0, max: 10.0 }, "How far along y.";
-        z: f64 = Number { default: 0.0, min: -10.0, max: 10.0 }, "How far along z.";
+        x: f64 = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along x.";
+        y: f64 = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along y.";
+        z: f64 = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along z.";
     }
     Midpoint "midpoint" "Midpoint" [Point, Point] -> Point,
     "The point halfway between two points." {}
     EdgePoint "edge_point" "Point on edge" [Edge] -> Point,
     "A point along an edge, its z axis along the edge." {
-        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0 }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
     Center "center" "Center" [Circle] -> Point,
     "The center of a circular edge, its z axis the one the arc turns around." {}
@@ -168,13 +166,13 @@ constructions! {
     }
     Tangent "tangent" "Tangent to edge" [Edge] -> Axis,
     "The tangent to an edge at a point along it." {
-        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0 }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
     // ── planes ──
     Offset "offset" "Offset plane" [Plane] -> Plane,
     "A plane parallel to the selected one, a distance along its normal." {
-        distance: f64 = Number { default: 1.0, min: -10.0, max: 10.0 }, "How far along the plane's normal; backwards if negative.";
+        distance: f64 = Number { default: 1.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along the plane's normal; backwards if negative.";
     }
     Midplane "midplane" "Midplane" [Plane, Plane] -> Plane,
     "The plane halfway between two parallel planes, or halving the angle between two that meet." {
@@ -184,7 +182,7 @@ constructions! {
     "The plane through three points." {}
     Angle "angle" "Plane at angle" [Plane, Line] -> Plane,
     "The plane through a line at an angle to a plane: turned around the line from the plane through it most nearly parallel to the selected one — which, for a line parallel to that plane, is parallel to it." {
-        angle: f64 = Number { default: 45.0, min: -180.0, max: 180.0 }, "How far to turn, in degrees, right-handed about the line's direction.";
+        angle: f64 = Number { default: 45.0, min: -180.0, max: 180.0, unit: Unit::Angle }, "How far to turn, in degrees, right-handed about the line's direction.";
     }
     LinePoint "line_point" "Plane through line and point" [Line, Point] -> Plane,
     "The plane through a line and a point off it." {}
@@ -196,7 +194,7 @@ constructions! {
     "The plane through a point perpendicular to a line." {}
     NormalToEdge "normal_to_edge" "Plane normal to edge" [Edge] -> Plane,
     "The plane perpendicular to an edge at a point along it." {
-        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0 }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
     // ── coordinate systems ──
@@ -226,10 +224,10 @@ pub struct AddDatumArgs {
 /// Which selected entity fills each of `inputs`, in order: one entity per
 /// input, each able to fill its role, and of all such assignments the first
 /// in selection order. `None` if there is none.
-fn assign<S: Scalar>(inputs: &[Role], selection: &[Geometry<S>]) -> Option<Vec<usize>> {
+fn assign<S: Scalar>(inputs: &[Role], selection: &[Aspects<S>]) -> Option<Vec<usize>> {
     fn extend<S: Scalar>(
         inputs: &[Role],
-        selection: &[Geometry<S>],
+        selection: &[Aspects<S>],
         chosen: &mut Vec<usize>,
     ) -> bool {
         let Some(role) = inputs.get(chosen.len()) else {
@@ -250,46 +248,36 @@ fn assign<S: Scalar>(inputs: &[Role], selection: &[Geometry<S>]) -> Option<Vec<u
     (inputs.len() == selection.len() && extend(inputs, selection, &mut chosen)).then_some(chosen)
 }
 
-/// What an editor offers for a selection: what each entity can be used as,
-/// and which constructions fit — by the same matching a step applies.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct SelectionFit {
-    /// Per selected entity; none for one the part does not have.
-    pub roles: Vec<Vec<Role>>,
-    /// The method of every construction that fits.
-    pub fits: Vec<&'static str>,
-}
-
-/// Which constructions fit `selection` in `part` (see [`SelectionFit`]).
-pub fn inspect_selection<S: Scalar>(part: &Part<S>, selection: &[EntityRef]) -> SelectionFit {
-    let resolved: Option<Vec<Geometry<S>>> = selection
+/// The method of every construction that fits `selection` in `part` — by
+/// the same matching a step applies. None, if the part lacks an entity of
+/// it.
+pub fn fitting_constructions<S: Scalar>(
+    part: &Part<S>,
+    selection: &[EntityRef],
+) -> Vec<&'static str> {
+    let Ok(resolved) = selection
         .iter()
-        .map(|e| Geometry::of(e, part).ok())
-        .collect();
-    let roles = selection
-        .iter()
-        .map(|e| Geometry::of(e, part).map(|g| g.roles()).unwrap_or_default())
-        .collect();
-    let fits = match &resolved {
-        Some(resolved) => CONSTRUCTIONS
-            .iter()
-            .filter(|c| assign(c.inputs, resolved).is_some())
-            .map(|c| c.method)
-            .collect(),
-        None => Vec::new(),
+        .map(|e| Aspects::of(e, part))
+        .collect::<GeopResult<Vec<_>>>()
+    else {
+        return Vec::new();
     };
-    SelectionFit { roles, fits }
+    CONSTRUCTIONS
+        .iter()
+        .filter(|c| assign(c.inputs, &resolved).is_some())
+        .map(|c| c.method)
+        .collect()
 }
 
 impl AddDatumArgs {
     /// The selection resolved in `part` and ordered as the construction
     /// takes it.
-    pub(crate) fn inputs<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Vec<Geometry<S>>> {
+    pub(crate) fn inputs<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Vec<Aspects<S>>> {
         let schema = self.construction.schema();
         let resolved = self
             .selection
             .iter()
-            .map(|e| Geometry::of(e, part))
+            .map(|e| Aspects::of(e, part))
             .collect::<GeopResult<Vec<_>>>()?;
         let Some(order) = assign(schema.inputs, &resolved) else {
             let needs: Vec<&str> = schema.inputs.iter().map(|&r| r.describe()).collect();
@@ -321,10 +309,7 @@ fn moved<S: Scalar>(
 
 /// The point `position` of the way along the edge `edge` (see
 /// [`Construction::EdgePoint`]), and the unit tangent there.
-fn along_edge<S: Scalar>(
-    edge: &Geometry<S>,
-    position: f64,
-) -> GeopResult<(Vector3<S>, Vector3<S>)> {
+fn along_edge<S: Scalar>(edge: &Aspects<S>, position: f64) -> GeopResult<(Vector3<S>, Vector3<S>)> {
     if !(0.0..=1.0).contains(&position) {
         return Err(GeopError::new(format!(
             "position {position} is not along the edge: it must be from 0 to 1"
@@ -381,7 +366,7 @@ impl Construction {
     /// [`AddDatumArgs::inputs`]).
     pub(crate) fn build<S: Scalar>(
         &self,
-        inputs: &[Geometry<S>],
+        inputs: &[Aspects<S>],
     ) -> GeopResult<CoordinateSystem<S>> {
         let point = |i: usize| inputs[i].point.expect("assigned a point");
         let line = |i: usize| inputs[i].line.clone().expect("assigned a line");
@@ -634,19 +619,14 @@ impl Operation for AddDatum {
 
     /// Picking the selection, choosing among the constructions that fit
     /// it, and offsets as handles: see [`crate::editor`].
-    fn form<S: Scalar>(&self, before: &Part<S>, args: &AddDatumArgs, _: &()) -> Form<S> {
-        editor::form(before, args)
-    }
-
-    fn set<S: Scalar>(
+    fn form<'a, S: Scalar>(
         &self,
-        before: &Part<S>,
-        args: &mut AddDatumArgs,
-        _: &mut (),
-        key: &str,
-        value: Value,
-    ) {
-        editor::set(before, args, key, value);
+        before: &'a Part<S>,
+        args: &AddDatumArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, AddDatumArgs> {
+        editor::form(before, args)
     }
 }
 
@@ -661,7 +641,7 @@ mod tests {
         ORIGIN, Operations,
         ui::{
             Button, Control, PartView, Pointer, Presentation, Reach, Shape, StepEditEvent,
-            StepEditor, Target,
+            StepEditor, Tone, Value,
         },
     };
 
@@ -809,7 +789,7 @@ mod tests {
         let part = Part::<S>::new();
         let handles = edited(&part, args.clone(), false, &[]).1.visuals;
         let keys: Vec<&str> = handles.iter().map(|h| h.key.as_str()).collect();
-        assert_eq!(keys, ["param:x", "param:y", "param:z"]);
+        assert_eq!(keys, ["x", "y", "z"]);
         let Shape::Handle { at, direction } = handles[2].shape else {
             panic!("a handle");
         };
@@ -845,11 +825,11 @@ mod tests {
         let part = Part::<S>::new();
         assert!(AddDatum.apply(part.clone(), "d", &args).is_err());
         let dialog = edited(&part, args.clone(), false, &[]).1.dialog;
-        let Some(Control::List { items, .. }) = dialog.get("selected") else {
-            panic!("the selection is listed");
+        let Some(Control::Reference(selection)) = dialog.get("selection") else {
+            panic!("the selection is a reference field");
         };
-        assert_eq!(items[0].detail.as_deref(), Some("point"));
-        assert_eq!(items[1].detail.as_deref(), Some("not found"));
+        assert_eq!(selection.value[0].detail.as_deref(), Some("point"));
+        assert_eq!(selection.value[1].tone, Tone::Error);
         assert!(dialog.get("construction_needs").is_some());
 
         let args = AddDatumArgs {
@@ -857,10 +837,10 @@ mod tests {
             ..args
         };
         let dialog = edited(&part, args, false, &[]).1.dialog;
-        let Some(Control::Select { options, .. }) = dialog.get("construction") else {
-            panic!("the constructions are a select");
+        let Some(Control::Actions { actions }) = dialog.get("construction") else {
+            panic!("the constructions are actions");
         };
-        let enabled = |method: &str| options.iter().find(|o| o.value == method).unwrap().enabled;
+        let enabled = |method: &str| actions.iter().find(|a| a.value == method).unwrap().enabled;
         assert!(enabled("offset"));
         assert!(!enabled("midpoint"));
     }
@@ -880,8 +860,28 @@ mod tests {
         };
         let (once, shown) = edited(&part, args.clone(), true, std::slice::from_ref(&click));
         assert_eq!(once.selection, [origin()]);
-        assert!(shown.pickable.contains(&Target::Datum(DatumKind::Frame)));
+        assert!(shown.pickable.contains(&Role::Point));
         let (twice, _) = edited(&part, args, true, &[click.clone(), click]);
         assert!(twice.selection.is_empty());
+    }
+
+    /// Entities are taken out of the selection in its field, one or all —
+    /// by the editor, as for any reference field; the construction follows.
+    #[test]
+    fn selections_are_edited_in_their_field() {
+        let part = Part::<S>::new();
+        let args = AddDatumArgs {
+            selection: vec![origin(), axis(FrameAxis::X)],
+            construction: Construction::Perpendicular {},
+        };
+        let field = |value| StepEditEvent::Dialog {
+            key: "selection".into(),
+            value,
+        };
+        let (removed, _) = edited(&part, args.clone(), false, &[field(Value::RemoveAt(0))]);
+        assert_eq!(removed.selection, [axis(FrameAxis::X)]);
+        assert_eq!(removed.construction.schema().method, "along_line");
+        let (cleared, _) = edited(&part, args, false, &[field(Value::Clear)]);
+        assert!(cleared.selection.is_empty());
     }
 }

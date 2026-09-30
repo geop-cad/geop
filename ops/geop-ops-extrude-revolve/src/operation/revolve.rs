@@ -1,4 +1,7 @@
-//! [`Revolve`]: sweep a sketch's regions a full turn around a sketch line.
+//! [`Revolve`]: sweep a sketch's regions a full turn around a line in its
+//! plane.
+
+use std::collections::BTreeSet;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -8,13 +11,13 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::{
-    CurveId, CurveKind, Positions, ProfileLoop,
+    CurveKind, Enclosure, PointId, ProfileLoop,
     point::{P2, dot, sub},
 };
 use geop_ops::{
-    Namer, Part,
-    operation::{EntityRef, Operation},
-    ui::{Choice, Dialog, Form, Tone, Value},
+    Namer, Part, PlacedSketch,
+    operation::{Aspects, EntityRef, Operation, Role},
+    ui::Form,
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
@@ -22,18 +25,25 @@ use serde::{Deserialize, Serialize};
 use super::{extrude::sketch_profile, sketch_field};
 use crate::revolve::revolve_at_oriented;
 
-/// Revolves every region of a sketch a full turn around one of its lines,
-/// into one solid named `revolve(R)` for the operation `R` — or, with
-/// [`RevolveArgs::combine`], combines that with another solid (see
+/// Revolves every region of a sketch a full turn around a line in its
+/// plane, into one solid named `revolve(R)` for the operation `R` — or,
+/// with [`RevolveArgs::combine`], combines that with another solid (see
 /// [`Combine`]), the result named `revolve(R)` all the same.
 ///
-/// Each region must touch the axis along an edge — a line whose endpoints the
-/// constraints put on the axis (see `Sketch::on_line`), typically the axis
-/// line itself — and lie entirely on one side of it, the same side for every
-/// region. The rest of its boundary is the profile that sweeps out the
-/// solid, and names it (see
-/// [`revolve_at_oriented`]): with `X` a
-/// piece of a sketch curve and `P` a joint of the sketch `K`, as for
+/// The axis is any line (see [`Role::Line`]) in the sketch's plane: a line
+/// of the sketch, of another one, a datum axis, a frame's axis, a straight
+/// edge. Every region lies entirely on one side of it, the same side for
+/// every region, and either
+///
+/// - touches it along an edge — the constraints put the edge's endpoints on
+///   the axis, which must then be a line of the sketch itself (see
+///   `Sketch::on_line`), typically the axis line itself — and the rest of
+///   its boundary is an open profile from the axis back to it, sweeping a
+///   solid around it; or
+/// - stays clear of it, and its whole boundary sweeps a ring.
+///
+/// The profile names what it sweeps (see [`revolve_at_oriented`]): with `X`
+/// a piece of a sketch curve and `P` a joint of the sketch `K`, as for
 /// [`super::Extrude`],
 ///
 /// - `revolve(R,K,X,q0)` .. `q3`: the face `X` sweeps through each quarter
@@ -49,38 +59,106 @@ pub struct Revolve;
 pub struct RevolveArgs {
     /// The sketch to revolve.
     pub sketch: String,
-    /// The line of that sketch to revolve around. The profile must touch it
-    /// along an edge.
-    pub axis: CurveId,
+    /// The line to revolve around, in the sketch's plane; none yet, for a
+    /// step that has not picked one.
+    pub axis: Option<EntityRef>,
     /// Keep the solid as a new body, or combine it with another solid.
     #[serde(default)]
     pub combine: Combine,
 }
 
-/// The lines of the sketch named `sketch` in `part`: `(id, construction)`.
-fn lines<S: Scalar>(part: &Part<S>, sketch: &str) -> Vec<(CurveId, bool)> {
-    let Some(placed) = part.sketch_id(sketch).and_then(|id| part.sketch(id)).ok() else {
-        return Vec::new();
-    };
-    placed
+/// The line of `sketch` to revolve around by default: its first
+/// construction line — what an axis is usually drawn as — else its first
+/// line; none, for a sketch with no line.
+fn default_axis<S: Scalar>(part: &Part<S>, sketch: &str) -> Option<EntityRef> {
+    let placed = part.sketch_id(sketch).and_then(|id| part.sketch(id)).ok()?;
+    let lines: Vec<_> = placed
         .sketch
         .curves
         .iter()
         .filter(|(_, c)| matches!(c.kind, CurveKind::Line { .. }))
-        .map(|(&id, c)| (id, c.construction))
-        .collect()
+        .collect();
+    let (curve, _) = lines
+        .iter()
+        .find(|(_, c)| c.construction)
+        .or(lines.first())?;
+    Some(EntityRef::SketchCurve {
+        sketch: sketch.into(),
+        curve: **curve,
+    })
 }
 
-/// The line of `sketch` to revolve around by default: its first
-/// construction line — what an axis is usually drawn as — else its first
-/// line.
-fn default_axis<S: Scalar>(part: &Part<S>, sketch: &str) -> CurveId {
-    let lines = lines(part, sketch);
-    lines
-        .iter()
-        .find(|(_, construction)| *construction)
-        .or(lines.first())
-        .map_or(CurveId(0), |&(id, _)| id)
+/// The axis in the sketch's own coordinates.
+struct SketchAxis<S: Scalar> {
+    /// A point on it, and its unit direction, enclosed.
+    point: Vector2<S>,
+    direction: Vector2<S>,
+    /// The same, as drawn: which side of it a region lies on is a question
+    /// about the sketch as drawn.
+    drawn: (P2, P2),
+    /// The points of the sketch the constraints put on it — none, unless it
+    /// is a line of the sketch.
+    on_axis: BTreeSet<PointId>,
+}
+
+impl<S: Scalar> SketchAxis<S> {
+    /// `axis` in the coordinates of `placed`, the sketch `name` of `part`,
+    /// whose solution is `geometry`. A line of the sketch itself is its own
+    /// line; any other line must lie in the sketch's plane, and is used as
+    /// it lies there.
+    fn of(
+        axis: &EntityRef,
+        part: &Part<S>,
+        name: &str,
+        placed: &PlacedSketch<S>,
+        geometry: &Enclosure<S>,
+    ) -> GeopResult<Self> {
+        let ctx = with_context!("revolving around {axis}");
+        let unit = |d: Vector2<S>| d.normalize().with_context(ctx);
+        let drawn = |p: &Vector2<S>| [p[0].to_f64(), p[1].to_f64()];
+        if let EntityRef::SketchCurve { sketch, curve } = axis
+            && sketch == name
+        {
+            let sketch = &placed.sketch;
+            let CurveKind::Line { start, end } = sketch.curve(*curve).with_context(ctx)?.kind
+            else {
+                return Err(GeopError::new(format!("{axis} is not a line"))).with_context(ctx);
+            };
+            let positions = sketch.positions();
+            let (a, b) = (positions[&start], positions[&end]);
+            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let point = geometry.points[&start];
+            return Ok(SketchAxis {
+                point,
+                direction: unit(geometry.points[&end].sub(&point))?,
+                drawn: (a, [(b[0] - a[0]) / length, (b[1] - a[1]) / length]),
+                on_axis: sketch.on_line(*curve).with_context(ctx)?,
+            });
+        }
+        let line = Aspects::of(axis, part)
+            .with_context(ctx)?
+            .line
+            .ok_or_else(|| GeopError::new(format!("{axis} is not a line")))
+            .with_context(ctx)?;
+        let plane = &placed.plane;
+        let point = plane.to_uvw(&line.point);
+        let along = |axis: &geop_core_math::vector::Vector3<S>| line.direction.prod_dot(axis);
+        let direction = [along(plane.u()), along(plane.v()), along(plane.w())];
+        if !point[2].could_be_equal(S::ZERO) || !direction[2].could_be_equal(S::ZERO) {
+            return Err(GeopError::new(format!(
+                "{axis} does not lie in the plane of sketch {name:?}"
+            )))
+            .with_context(ctx);
+        }
+        let point = Vector2::from_array([point[0], point[1]]);
+        let direction = unit(Vector2::from_array([direction[0], direction[1]]))?;
+        Ok(SketchAxis {
+            drawn: (drawn(&point), drawn(&direction)),
+            point,
+            direction,
+            on_axis: BTreeSet::new(),
+        })
+    }
 }
 
 impl Operation for Revolve {
@@ -98,63 +176,38 @@ impl Operation for Revolve {
         }
     }
 
-    /// The sketch, picked, and the axis among its lines.
-    fn form<S: Scalar>(&self, before: &Part<S>, args: &RevolveArgs, _: &()) -> Form<S> {
-        let mut d = Dialog::new();
-        sketch_field(&mut d, before, &args.sketch);
-        let lines = lines(before, &args.sketch);
-        if lines.is_empty() {
-            d.text(
-                "axis",
-                "The sketch has no line to revolve around.",
-                Tone::Hint,
-            );
-        } else {
-            d.select(
-                "axis",
-                "axis",
-                args.axis.0.to_string(),
-                lines
-                    .iter()
-                    .map(|(id, construction)| {
-                        let label = if *construction {
-                            format!("Line {id} (construction)")
-                        } else {
-                            format!("Line {id}")
-                        };
-                        Choice::new(id.0.to_string(), label)
-                    })
-                    .collect(),
-            );
-        }
-        args.combine.show(&mut d);
-        Form::dialog(d)
-    }
-
-    /// A sketch picked brings its axis back to its default.
-    fn set<S: Scalar>(
+    /// The sketch and the axis, picked. Another sketch picked brings an
+    /// axis that was a line of the old one back to the new one's default.
+    fn form<'a, S: Scalar>(
         &self,
-        before: &Part<S>,
-        args: &mut RevolveArgs,
-        _: &mut (),
-        key: &str,
-        value: Value,
-    ) {
-        if args.combine.set(before, key, &value) {
-            return;
-        }
-        match (key, value) {
-            ("sketch", Value::Entity(EntityRef::Sketch { name })) => {
-                args.axis = default_axis(before, &name);
-                args.sketch = name;
+        before: &'a Part<S>,
+        args: &RevolveArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, RevolveArgs> {
+        let mut f = Form::<S, RevolveArgs>::new();
+        sketch_field(&mut f, before, &args.sketch, move |args, sketch| {
+            let old = std::mem::replace(&mut args.sketch, sketch);
+            let of_old = match &args.axis {
+                None => true,
+                Some(EntityRef::SketchCurve { sketch, .. }) => *sketch == old,
+                Some(_) => false,
+            };
+            if of_old {
+                args.axis = default_axis(before, &args.sketch);
             }
-            ("axis", Value::Choice(id)) => {
-                if let Ok(id) = id.parse() {
-                    args.axis = CurveId(id);
-                }
-            }
-            _ => {}
-        }
+        });
+        f.reference(
+            "axis",
+            "axis",
+            args.axis.iter().cloned().collect(),
+            &[Role::Line],
+            None,
+            false,
+            |edit, picked| edit.args.axis = picked.into_iter().next(),
+        );
+        args.combine.show(&mut f, before, |args| &mut args.combine);
+        f
     }
 
     fn apply<S: Scalar>(
@@ -169,20 +222,16 @@ impl Operation for Revolve {
             .sketch(part.sketch_id(&args.sketch).with_context(ctx)?)?
             .clone();
         let sketch = &placed.sketch;
-        let CurveKind::Line { start, end } = sketch.curve(args.axis).with_context(ctx)?.kind else {
-            return Err(GeopError::new(format!(
-                "revolve axis {} is not a line",
-                args.axis
-            )))
-            .with_context(ctx);
+        let Some(axis) = &args.axis else {
+            return Err(GeopError::new("pick a line to revolve around")).with_context(ctx);
         };
+        let geometry = sketch.enclose::<S>().with_context(ctx)?;
+        let axis = SketchAxis::of(axis, &part, &args.sketch, &placed, &geometry)?;
         let positions = sketch.positions();
-        let a = positions[&start];
-        let b = positions[&end];
-        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
-        let dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+        let (a, dir) = axis.drawn;
         let left = [-dir[1], dir[0]];
-        let on_axis = sketch.on_line(args.axis)?;
+        let axis_left = Vector2::from_array([axis.direction[1].neg(), axis.direction[0]]);
+        let on_axis = &axis.on_axis;
 
         let regions = sketch.regions().with_context(ctx)?;
         let mut sides = Vec::new();
@@ -198,16 +247,19 @@ impl Operation for Revolve {
             // Which side of the axis the region lies on, from its outline; it
             // must not cross. Vertices on the axis sit within rounding of it on
             // either side, so crossing means reaching measurably across,
-            // relative to the region's extent — a classification of design
-            // data, like the nesting test in `Sketch::regions`.
+            // relative to the region's extent and distance from the axis — a
+            // classification of design data, like the nesting test in
+            // `Sketch::regions`.
             let outline = region.outer.polyline(sketch, &positions);
             let side = |p: &P2| dot(sub(*p, a), left);
             let (lo, hi) = outline
                 .iter()
                 .map(side)
-                .fold((0.0f64, 0.0f64), |(lo, hi), s| (lo.min(s), hi.max(s)));
-            let scale = hi - lo;
-            if lo < -1e-9 * scale && hi > 1e-9 * scale {
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), s| {
+                    (lo.min(s), hi.max(s))
+                });
+            let tolerance = 1e-9 * (hi.max(0.0) - lo.min(0.0));
+            if lo < -tolerance && hi > tolerance {
                 return Err(GeopError::new("the profile crosses the revolve axis"))
                     .with_context(ctx);
             }
@@ -220,30 +272,40 @@ impl Operation for Revolve {
                 ))
                 .with_context(ctx);
             }
+            let clear = if sign > 0.0 {
+                lo > tolerance
+            } else {
+                hi < -tolerance
+            };
 
             // `(r, z)` coordinates: `r` towards the region, `z` along the axis,
             // oriented like the sketch (`z` is `r` turned counter-clockwise), so
-            // loops keep their winding. Points the constraints put on the axis
-            // get `r = 0` exactly — the solver only approaches it.
-            let r_dir = [sign * left[0], sign * left[1]];
-            let z_dir = [-r_dir[1], r_dir[0]];
-            let rz: Positions = positions
-                .iter()
-                .map(|(&p, xy)| {
-                    let d = [xy[0] - a[0], xy[1] - a[1]];
-                    let r = if on_axis.contains(&p) {
-                        0.0
-                    } else {
-                        d[0] * r_dir[0] + d[1] * r_dir[1]
-                    };
-                    (p, [r, d[0] * z_dir[0] + d[1] * z_dir[1]])
-                })
-                .collect();
+            // loops keep their winding — a rigid motion, which leaves sweeps
+            // and radii as they are. Points the constraints put on the axis
+            // get `r = 0` exactly: that is what the constraints say.
+            let r_dir = axis_left.prod_scalar(S::from_f64(sign));
+            let z_dir = Vector2::from_array([r_dir[1].neg(), r_dir[0]]);
+            let rz = Enclosure {
+                points: geometry
+                    .points
+                    .iter()
+                    .map(|(&p, xy)| {
+                        let d = xy.sub(&axis.point);
+                        let r = if on_axis.contains(&p) {
+                            S::ZERO
+                        } else {
+                            d.prod_dot(&r_dir)
+                        };
+                        (p, Vector2::from_array([r, d.prod_dot(&z_dir)]))
+                    })
+                    .collect(),
+                params: geometry.params.clone(),
+            };
 
             // The profile is the outer loop minus its run of edges on the
-            // axis, walked top-down (see `revolve_at_oriented`): the loop is
-            // counter-clockwise, so the region lies left of it, and reversing
-            // puts it on the right.
+            // axis — or, clear of the axis, all of it — walked top-down (see
+            // `revolve_at_oriented`): the loop is counter-clockwise, so the
+            // region lies left of it, and reversing puts it on the right.
             let edges = &region.outer.edges;
             let flags: Vec<bool> = edges
                 .iter()
@@ -256,38 +318,49 @@ impl Operation for Revolve {
                 .collect();
             let n = edges.len();
             let starts_off_axis = |k: usize| !flags[k] && flags[(k + n - 1) % n];
-            if (0..n).filter(|&k| starts_off_axis(k)).count() != 1 {
-                return Err(GeopError::new(
-                    "the profile must touch the revolve axis along exactly one run of edges \
-                     (constrain its edge onto the axis line)",
-                ))
-                .with_context(ctx);
-            }
-            let first_off = (0..n).find(|&k| starts_off_axis(k)).unwrap();
-            let chain = ProfileLoop {
-                edges: (0..n)
-                    .map(|k| (first_off + k) % n)
-                    .take_while(|&k| !flags[k])
-                    .map(|k| edges[k])
-                    .collect(),
-            }
-            .reversed();
+            let (chain, closed) = match (0..n).filter(|&k| starts_off_axis(k)).count() {
+                0 if clear => (region.outer.clone(), true),
+                0 => {
+                    return Err(GeopError::new(
+                        "the profile touches the revolve axis, but none of its edges lies on it: \
+                         constrain an edge onto a line of the sketch to revolve around, or keep \
+                         the profile clear of the axis",
+                    ))
+                    .with_context(ctx);
+                }
+                1 => {
+                    let first_off = (0..n).find(|&k| starts_off_axis(k)).unwrap();
+                    let chain = ProfileLoop {
+                        edges: (0..n)
+                            .map(|k| (first_off + k) % n)
+                            .take_while(|&k| !flags[k])
+                            .map(|k| edges[k])
+                            .collect(),
+                    };
+                    (chain, false)
+                }
+                _ => {
+                    return Err(GeopError::new(
+                        "the profile must touch the revolve axis along exactly one run of edges",
+                    ))
+                    .with_context(ctx);
+                }
+            };
             let profile = sketch_profile(
                 &args.sketch,
-                chain.to_nurbs(sketch, &rz).with_context(ctx)?,
-                false,
+                chain.reversed().to_nurbs(sketch, &rz).with_context(ctx)?,
+                closed,
             );
 
             let plane = &placed.plane;
-            let dir3 = |d: P2| {
+            let dir3 = |d: Vector2<S>| {
                 plane
                     .u()
-                    .prod_scalar(S::from_f64(d[0]))
-                    .add(&plane.v().prod_scalar(S::from_f64(d[1])))
+                    .prod_scalar(d[0])
+                    .add(&plane.v().prod_scalar(d[1]))
             };
             let (u, w) = (dir3(r_dir), dir3(z_dir));
-            let origin =
-                plane.uv_to_xyz(&Vector2::from_array([S::from_f64(a[0]), S::from_f64(a[1])]));
+            let origin = plane.uv_to_xyz(&axis.point);
             let cs = CoordinateSystem::try_new(origin, u, w.prod_cross(&u), w)?;
             // Every region after the first is merged into the first, so its
             // own solid name only exists until then.

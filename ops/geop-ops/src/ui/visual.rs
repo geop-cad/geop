@@ -1,6 +1,5 @@
-//! [`Form`]: what an operation shows for a step — its dialog and the
-//! [`Visual`]s it draws in the viewport — and [`Presentation`], what an
-//! editor shows of it.
+//! [`Visual`]: what an operation draws in the viewport — and
+//! [`Presentation`], what an editor shows of a step.
 
 use geop_core_math::{
     primitives::CoordinateSystem,
@@ -9,8 +8,8 @@ use geop_core_math::{
 };
 use serde::Serialize;
 
-use super::{Dialog, Target};
-use crate::operation::EntityRef;
+use super::Dialog;
+use crate::operation::{EntityRef, Role};
 
 /// What a visual is.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -35,7 +34,9 @@ pub enum Shape<S: Scalar> {
         offset: Vector3<S>,
     },
     /// The number field of the visual's key, as something to drag along
-    /// `direction`: moving it by `direction` adds one to the field.
+    /// `direction`: moving it by `direction` adds one to the field. Only the
+    /// editor draws these, for a field with a handle (see
+    /// [`super::Track`]).
     Handle {
         at: Vector3<S>,
         direction: Vector3<S>,
@@ -72,8 +73,9 @@ pub enum Style {
     Free,
     /// Cannot move any more: a fully constrained one.
     Fixed,
+    /// Selected — drawn so by the editor, whatever its own style.
     Selected,
-    /// What a click would take.
+    /// What a click would take — drawn so by the editor.
     Hover,
     /// Part of what cannot be satisfied.
     Failed,
@@ -89,7 +91,9 @@ pub enum Style {
 }
 
 /// Something an operation draws in the viewport, under a key the hit tests
-/// report (see [`super::hit::hit_visuals`]).
+/// report (see [`super::hit::hit_visuals`]) — and what the user can do with
+/// it, which the editor handles alike for every operation (see
+/// [`super::StepEditor`]).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Visual<S: Scalar> {
@@ -97,6 +101,13 @@ pub struct Visual<S: Scalar> {
     #[serde(flatten)]
     pub shape: Shape<S>,
     pub style: Style,
+    /// A click on it selects it, or takes it out of the selection again.
+    #[serde(skip)]
+    pub selectable: bool,
+    /// It can be dragged in the plane worked in: the operation is sent
+    /// where to (see [`super::CanvasEvent::Move`]).
+    #[serde(skip)]
+    pub draggable: bool,
 }
 
 impl<S: Scalar> Visual<S> {
@@ -105,50 +116,37 @@ impl<S: Scalar> Visual<S> {
             key: key.into(),
             shape,
             style,
+            selectable: false,
+            draggable: false,
         }
     }
-}
 
-/// What an operation shows for a step: its fields, and what it draws.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Form<S: Scalar> {
-    pub dialog: Dialog,
-    pub visuals: Vec<Visual<S>>,
-    /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
-    /// stops orbiting, and draws a grid on it.
-    pub focus: Option<CoordinateSystem<S>>,
-    /// Whether a press where the pointer last hovered starts a drag the
-    /// operation follows itself (see [`crate::Operation::event`]); handles
-    /// are dragged by the editor.
-    pub grab: bool,
-}
+    pub fn selectable(mut self) -> Self {
+        self.selectable = true;
+        self
+    }
 
-impl<S: Scalar> Form<S> {
-    /// Only a dialog.
-    pub fn dialog(dialog: Dialog) -> Self {
-        Self {
-            dialog,
-            visuals: Vec::new(),
-            focus: None,
-            grab: false,
-        }
+    pub fn draggable(mut self) -> Self {
+        self.draggable = true;
+        self
     }
 }
 
 /// What an editor shows for a step being edited: the operation's
-/// [`Form`], and what the editor adds to it — what is picked and what a
-/// click would pick.
+/// [`Form`], and what the editor adds to it — what is picked, selected and
+/// hovered, what a click would pick, and the handles of number fields.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Presentation<S: Scalar> {
-    pub dialog: Dialog,
+    pub dialog: Dialog<S>,
     pub visuals: Vec<Visual<S>>,
     /// Entities of the part to draw lit: what is picked, what a click would
     /// pick.
     pub highlights: Vec<EntityRef>,
-    /// What a click in the viewport picks right now. The viewer shows
-    /// datums of these kinds and fades the rest.
-    pub pickable: Vec<Target>,
+    /// What a click in the viewport picks right now: entities that can
+    /// fill one of these roles. The viewer shows datums that can, and fades
+    /// the rest.
+    pub pickable: Vec<Role>,
     /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
     /// stops orbiting, and draws a grid on it.
     pub focus: Option<CoordinateSystem<S>>,

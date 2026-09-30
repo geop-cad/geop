@@ -133,33 +133,71 @@ construction fitting the selection — move into one
 `normalize(before, &mut args)` hook. This is the most invasive step and 1–4
 already remove most of the drift, so it comes last and only if it still pays.
 
-## Steps
+## Status
 
-Each step is independently shippable and keeps the full suite green.
+All six steps are done. What was built differs from the sketch above in a
+few names and details:
 
-1. **Roles and sketch sub-entities.** Move `Role`/`Geometry` into `geop-ops`;
-   add `EntityRef::SketchCurve` / `SketchPoint` and picking them in
-   `PartView`; replace `Pick`/`Target` with `Reference`/`Role`. Revolve's
-   axis becomes a line reference (sketch line, edge, datum axis).
-2. **The editor owns reference fields.** Toggle, remove, clear and per-item
-   status in `StepEditor` and the dialog; delete the datum crate's `List`,
-   "Clear" and toggling.
-3. **Handles on `Number`.** Add `unit` and `handle`; drop `Shape::Handle` and
-   the key convention; migrate extrude and datums.
-4. **Editor-owned selection and drag.** Affordances on `Visual`,
-   `Value::Selection` / `Value::MovedTo`; move the sketch onto them and delete
-   its hit testing, hover, selection and drag code.
-5. **Commands for a selection.** `Control::Commands`; datum constructions and
-   sketch constraints both use it.
-6. **(Optional) Fields with setters and a `normalize` hook.**
+1. **Roles and sketch entities.** `Aspects` (what an entity can be used as;
+   the name avoids "geometry", which in this kernel means NURBS curves and
+   surfaces) and `Role` live in `geop_ops::operation`. `EntityRef` has
+   `SketchCurve { sketch, curve }` and `SketchPoint { sketch, point }`,
+   resolved from the sketch's enclosed solution (`Sketch::enclose`).
+   `PartView` draws sketch points and stores each drawn entity's roles, and
+   `PartView::pick(pointer, roles, scope)` offers only what can fill one,
+   within the scope if one is given. `Target` is gone.
+   Revolve's axis is any `Role::Line` in the sketch's plane. A region
+   touching the axis along an edge revolves as before; that needs the axis
+   to be a line of the sketch, because only then do the constraints say
+   which edges lie on it. A region clear of the axis revolves into a ring:
+   `revolve_at_oriented` now takes closed profiles, building the genus with
+   `mer` / `mekr`.
+2. **The editor owns reference fields.** `Control::Reference` holds
+   `Picked` entities, and the editor sets each one's detail and tone.
+   `Value::RemoveAt` / `Value::Clear` come from the viewer; an operation's
+   setter only ever receives the entities the field holds now. The datum
+   crate's list, "Clear" button, toggling and `SelectionFit::roles` are
+   deleted (`inspect_selection` became `fitting_constructions`).
+3. **Handles on `Number`.** `Number { unit, range, step, handle:
+   Option<Track> }`. The editor turns handles into `Shape::Handle` visuals.
+   That shape still exists for the viewer to draw, but no operation
+   produces it, and the key convention is gone.
+4. **Editor-owned selection and drag.** `Visual::selectable` / `draggable`,
+   `Form::tool`, and `StepEditor` owning `selection`, hover styling, the grab
+   flag and plane drags. Operations receive `CanvasEvent`: hover, leave,
+   clicks the selection did not take, `Move { key, from, to, done }`, and
+   keys. The sketch lost its hit-tested selection, hover and grab state.
+5. **Actions for a selection.** `Control::Actions` replaces `Buttons` and
+   the grouped `Select`. Datum constructions, sketch constraints, sketch
+   tools and sketch edits all use it. `Select` is now only a dropdown for
+   plain enums.
+6. **Fields with setters.** `Form` (`ui/form.rs`) builds each field
+   together with its setter (`Form::number`, `Form::reference`,
+   `Form::actions`, ...; `Form::on` for a list's items). `Operation::set`
+   has a default implementation that runs the setter for the key, so no
+   operation implements `set` any more. No separate `normalize` hook was
+   needed: a setter may capture the part before the step, which covers
+   every cross-field consequence (the datum construction following the
+   selection, revolve's axis following its sketch, extrude's combine mode
+   following the distance's sign).
 
 ## Done when
 
-- No operation hit-tests, tracks hover, or keeps selection or drag state of
-  its own — only drawing tools consume raw events.
-- No operation parses its own keys back out of strings (`"selection:3"`,
-  `"param:x"`, ids in `Choice` values).
-- Every reference to geometry is picked in the viewport, with the same arming,
-  highlighting, removal and status.
-- The sketch editor tests (`geop-ops-sketch/src/editor/tests.rs`) and the
-  datum editor tests pass against the editor-owned interaction.
+- [x] No operation hit-tests for selection, tracks hover, or keeps selection
+  state of its own. The sketch still hit-tests its own visuals for *snapping*
+  a drawn point, and remembers where a drag started and what it moves. Both
+  are specific to drawing.
+- [x] No operation parses dialog keys back out of strings. The sketch's
+  constraint list registers one setter per item, capturing the item's id.
+  Visual keys like `p3` / `c3` / `k3` are the sketch's own names for its
+  entities, and it still reads them from the selection.
+- [x] Every reference to geometry is picked in the viewport, with the same
+  arming, highlighting, removal and status.
+- [x] The sketch and datum editor tests pass against the editor-owned
+  interaction. New regression tests: `revolve_axes_are_picked`,
+  `selections_are_edited_in_their_field`, `sketch_lines`,
+  `sketch_points_and_lines`, `fields_serialize_flat`, the ring revolves
+  (`square_ring_is_valid`, `torus_is_valid`,
+  `revolve_square_around_an_outside_axis_is_a_ring`, ...), and the sketch
+  enclosure (`solutions_are_enclosed`, `free_choices_stay_sharp`,
+  `outline_revolved_around_its_edge_joined_to_its_box`).

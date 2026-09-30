@@ -97,37 +97,67 @@ before it holds).
 
 - **Arguments** are numbers, choices, sketches, and references to entities
   by name (`EntityRef`): what the program stores.
-- **The form** is a `Dialog` — an ordered list of keyed fields: headings,
-  texts, buttons, checkboxes, sliders, selects, lists, and entities to pick
-  — and `Visual`s to draw in the viewport: points, polylines, filled areas,
-  labels, and handles, each bound to a number field.
+- **The form** is a `Dialog` — an ordered list of keyed fields that say
+  what their values *mean*: headings and texts, actions (things to do or
+  choose, grouped, one perhaps active, a disabled one saying why), checkboxes,
+  numbers (with a unit, a slider range, and perhaps a handle to drag them
+  by), selects, lists, and references to entities of the part — and
+  `Visual`s to draw in the viewport: points, polylines, filled areas and
+  labels, each perhaps selectable or draggable.
 - **A field is set** by the dialog, by a pick in the viewport, or by
   dragging its handle. Which of these it was, the operation never knows.
+  Each field is described once: the form (`Form`) holds, next to each
+  control, the setter its value goes to, and `Operation::set` finds it by
+  the field's key — an operation never matches keys itself. A setter may
+  capture the part before the step, for what setting one field implies for
+  others: a selection picks the construction it fits, another sketch brings
+  its own axis.
 
-Picking and dragging are the same for every operation, so they are not the
+How a field is edited is the same for every operation, so it is not the
 operations' but the `StepEditor`'s, which edits one step. It turns what the
 user did — a `StepEditEvent`: a dialog field used, a hover, a click or a drag in
 the viewport, each a `Pointer` (the `Ray` from the eye through the cursor,
 and its `Reach`: how far from the ray counts as under it, a cone from the
-eye in perspective, a tube in an orthographic view), or a key — into fields
-set:
+eye in perspective, a tube in an orthographic view), or a key — into what
+the operation understands:
 
-- **Pick fields** arm on a press; the editor then finds what a click would
-  pick on hover, lights it, and sets the field on a click — once for a
-  field of one entity, again and again for a field of several. A new step
-  starts with its first pick field armed: what it is built on is what it
-  needs first. While a field waits for a pick, the part is shown as it
-  stands, not the plane the step works in.
-- **Handles** are dragged along their direction, the value following how
-  far the pointer has moved along the handle's track, from the ray where the
-  drag started to the ray where it is now, snapped to a hundredth.
+- **Reference fields** hold entities that can fill one of the field's
+  `Role`s — a point, a line, a plane, an edge, a circle, something round, a
+  solid, a sketch — and, with a scope, are part of it: a revolve's axis is a
+  line *of the sketch it revolves*. Which roles an entity fills is decided by
+  its shape, not its kind (`Aspects`): a straight edge, a datum axis, a
+  frame's axis and a sketch line are all lines. A field arms on a press; the
+  editor then finds what a click would pick on hover, lights it, and picks it
+  on a click — once for a field of one entity, again and again (each pick
+  adding one or taking it out) for a field of several. Taking one out, or
+  all, is the editor's too, as is saying what each entity held is used as,
+  or why it cannot be. The operation is only ever sent what the field holds
+  now. A new step whose first reference field is still empty starts with it
+  armed: what it is built on is what it needs first. One that already holds
+  something — an extrude's newest sketch — waits for no click, so its
+  handles can be dragged straight away. While a field waits for a pick, the
+  part is shown as it stands, not the plane the step works in.
+- **Handles** of number fields are drawn by the editor and dragged along
+  their direction, the value following how far the pointer has moved along
+  the handle's track, from the ray where the drag started to the ray where
+  it is now, snapped to a hundredth.
+- **Selecting** is the editor's: a click on a selectable visual selects it
+  or takes it out again, a click on nothing clears the selection unless
+  shift is held, and Escape clears it. The operation reads the selection in
+  its form and may change it as its fields are used. The editor draws what
+  is selected and what the pointer is over.
+- **Dragging** a draggable visual is the editor's too: it is grabbed where
+  the drag starts, and the operation is sent where to, in the plane worked
+  in.
 
-An operation that draws in a canvas of its own — a sketch — also takes the
-pointer and key events the editor does not (`Operation::event`), with a
-`Session` for what it keeps between them: the tool in hand, a half-drawn
-curve. Every other operation's session is `()`. What the editor sends back
-is a `Presentation`: the form, what the pick fields hold and what a click
-would pick lit, and what a click picks now.
+An operation that draws in a canvas of its own — a sketch — also takes what
+the editor passes on (`Operation::event`, a `CanvasEvent`): clicks while it
+has a tool in hand, and those on nothing, hovers, keys, and moves of its
+draggable visuals — with a `Session` for what it keeps between them: the
+tool in hand, a half-drawn curve. Every other operation's session is `()`.
+What the editor sends back is a `Presentation`: the form, what the
+reference fields hold and what a click would pick lit, what is selected and
+hovered, the handles, and what a click picks now.
 
 So an editor renders primitives and forwards raw input, and every decision
 — what a click picks, what a line snaps to, what a drag changes — is made in
@@ -147,7 +177,8 @@ in the part's scalar type.
 **Entity references.** A step that builds on existing geometry names it
 with an `EntityRef`: a `Vertex`, `Edge`, `Face`, `Solid`, `Sketch` or
 `Datum` of the part by name — for a coordinate system, perhaps only one of
-its axes or planes. `resolve_plane` gives the plane one lies in, what a
+its axes or planes — or a `SketchCurve` / `SketchPoint`, a curve or a point of a sketch by its
+id. `resolve_plane` gives the plane one lies in, what a
 sketch is placed on; what else an entity can be used as is for the
 operations that build on it to say (see
 [geop-ops-datums](./geop-ops-datums.md)).

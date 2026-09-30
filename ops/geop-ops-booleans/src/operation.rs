@@ -9,8 +9,8 @@ use geop_core_math::{
 use geop_core_topology::SolidId;
 use geop_ops::{
     Namer, Part,
-    operation::{EntityRef, Operation},
-    ui::{Choice, Dialog, Form, Target, Value},
+    operation::{EntityRef, Operation, Role},
+    ui::{Choice, Form},
 };
 use serde::{Deserialize, Serialize};
 
@@ -50,12 +50,20 @@ const OPS: [(BooleanOp, &str, &str); 3] = [
     (BooleanOp::Difference, "difference", "Difference"),
 ];
 
-/// A solid by name, as a pick field holds it: nothing, if unnamed.
+/// A solid by name, as a reference field holds it: nothing, if unnamed.
 fn solid(name: &str) -> Vec<EntityRef> {
     if name.is_empty() {
         Vec::new()
     } else {
         vec![EntityRef::Solid { name: name.into() }]
+    }
+}
+
+/// The name of the solid a reference field holds: none, if it holds none.
+fn solid_name(picked: &[EntityRef]) -> String {
+    match picked {
+        [EntityRef::Solid { name }] => name.clone(),
+        _ => String::new(),
     }
 }
 
@@ -82,39 +90,46 @@ impl Operation for Boolean {
     }
 
     /// The two solids, picked, and how to combine them.
-    fn form<S: Scalar>(&self, _before: &Part<S>, args: &BooleanArgs, _: &()) -> Form<S> {
-        let mut d = Dialog::new();
-        d.pick("a", "a", solid(&args.a), &[Target::Solid], false);
-        d.pick("b", "b", solid(&args.b), &[Target::Solid], false);
-        d.select(
+    fn form<'a, S: Scalar>(
+        &self,
+        _before: &'a Part<S>,
+        args: &BooleanArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, BooleanArgs> {
+        let mut f = Form::<S, BooleanArgs>::new();
+        f.reference(
+            "a",
+            "a",
+            solid(&args.a),
+            &[Role::Solid],
+            None,
+            false,
+            |e, p| e.args.a = solid_name(&p),
+        );
+        f.reference(
+            "b",
+            "b",
+            solid(&args.b),
+            &[Role::Solid],
+            None,
+            false,
+            |e, p| e.args.b = solid_name(&p),
+        );
+        f.select(
             "op",
             "op",
             OPS.iter().find(|o| o.0 == args.op).map_or("", |o| o.1),
             OPS.iter()
                 .map(|&(_, value, label)| Choice::new(value, label))
                 .collect(),
-        );
-        Form::dialog(d)
-    }
-
-    fn set<S: Scalar>(
-        &self,
-        _before: &Part<S>,
-        args: &mut BooleanArgs,
-        _: &mut (),
-        key: &str,
-        value: Value,
-    ) {
-        match (key, value) {
-            ("a", Value::Entity(EntityRef::Solid { name })) => args.a = name,
-            ("b", Value::Entity(EntityRef::Solid { name })) => args.b = name,
-            ("op", Value::Choice(value)) => {
+            |args, value| {
                 if let Some(&(op, ..)) = OPS.iter().find(|o| o.1 == value) {
                     args.op = op;
                 }
-            }
-            _ => {}
-        }
+            },
+        );
+        f
     }
 
     fn apply<S: Scalar>(
@@ -166,9 +181,6 @@ const MODES: [(&str, &str); 4] = [
     ("intersection", "Intersect"),
 ];
 
-/// The dialog key of a [`Combine`]'s target.
-const TARGET: &str = "combine_target";
-
 impl Combine {
     /// The mode, as it serializes: `new_body`, `union`.
     pub fn mode(&self) -> &'static str {
@@ -210,10 +222,17 @@ impl Combine {
         }
     }
 
-    /// A join for a positive `value`, a cut for a negative one: what an
-    /// extrude up out of a face, or down into it, means. A new body and an
-    /// intersection stay what they are.
-    pub fn follow_sign(&mut self, value: f64) {
+    /// A join for a positive `value`, a cut for a negative one — what an
+    /// extrude up out of a face, or down into it, means — when `value`
+    /// crosses to the other side of zero from `from`. On the same side, a
+    /// join or a cut stays what was chosen: an extrude may cut upwards into
+    /// a solid above its sketch. A new body and an intersection stay what
+    /// they are.
+    pub fn follow_sign(&mut self, from: f64, value: f64) {
+        let crossed = (from > 0.0) != (value > 0.0) || (from < 0.0) != (value < 0.0);
+        if !crossed {
+            return;
+        }
         *self = match std::mem::take(self) {
             Combine::Union { target } | Combine::Difference { target } if value > 0.0 => {
                 Combine::Union { target }
@@ -225,9 +244,16 @@ impl Combine {
         };
     }
 
-    /// Its fields in a dialog: the mode, and the target to pick.
-    pub fn show(&self, d: &mut Dialog) {
-        d.select(
+    /// Its fields in `form`, for the arguments `combine` picks it out of:
+    /// the mode — which, if it had no target, takes the newest solid of
+    /// `before` — and the target to pick.
+    pub fn show<'a, S: Scalar, A: 'a, T: 'a>(
+        &self,
+        form: &mut Form<'a, S, A, T>,
+        before: &'a Part<S>,
+        combine: fn(&mut A) -> &mut Combine,
+    ) {
+        form.select(
             "combine",
             "combine",
             self.mode(),
@@ -235,35 +261,33 @@ impl Combine {
                 .iter()
                 .map(|&(value, label)| Choice::new(value, label))
                 .collect(),
-        );
-        if let Some(target) = self.target() {
-            d.pick(TARGET, "target", solid(target), &[Target::Solid], false);
-        }
-    }
-
-    /// Sets its field `key` (see [`Combine::show`]) to `value`: a mode —
-    /// the target, if it had none, the newest solid of `before` — or the
-    /// target. Whether `key` is one of its fields.
-    pub fn set<S: Scalar>(&mut self, before: &Part<S>, key: &str, value: &Value) -> bool {
-        match (key, value) {
-            ("combine", Value::Choice(mode)) => {
-                let target = self
+            move |args, mode| {
+                let this = combine(args);
+                let target = this
                     .target()
                     .map(str::to_string)
                     .or_else(|| before.solid_names().pop())
                     .unwrap_or_default();
                 if let Some(next) = Combine::with_mode(mode, target) {
-                    *self = next;
+                    *this = next;
                 }
-                true
-            }
-            (TARGET, Value::Entity(EntityRef::Solid { name })) => {
-                if let Some(next) = Combine::with_mode(self.mode(), name.clone()) {
-                    *self = next;
-                }
-                true
-            }
-            _ => false,
+            },
+        );
+        if let Some(target) = self.target() {
+            form.reference(
+                "combine_target",
+                "target",
+                solid(target),
+                &[Role::Solid],
+                None,
+                false,
+                move |edit, picked| {
+                    let this = combine(edit.args);
+                    if let Some(next) = Combine::with_mode(this.mode(), solid_name(&picked)) {
+                        *this = next;
+                    }
+                },
+            );
         }
     }
 

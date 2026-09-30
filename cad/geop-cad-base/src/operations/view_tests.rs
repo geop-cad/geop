@@ -8,7 +8,8 @@ use geop_core_math::{
 use geop_core_sketch::Sketch;
 use geop_ops::{
     EntityRef, ORIGIN, Part, PlacedSketch,
-    ui::{PartView, Pointer, Reach, Target},
+    operation::Role,
+    ui::{PartView, Pointer, Reach},
 };
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
@@ -41,26 +42,27 @@ fn cube() -> Part<S> {
     part
 }
 
-/// What `pointer` picks among `targets`, and its kind.
-fn picked(view: &PartView<S>, pointer: &Pointer<S>, targets: &[Target]) -> Option<EntityRef> {
-    view.pick(pointer, targets).map(|h| h.entity)
+/// What `pointer` picks that can fill one of `roles`.
+fn picked(view: &PartView<S>, pointer: &Pointer<S>, roles: &[Role]) -> Option<EntityRef> {
+    view.pick(pointer, roles, None).map(|h| h.entity)
 }
 
-const ANY: &[Target] = &[Target::Vertex, Target::Edge, Target::Face];
+/// A cube's vertices, edges and faces.
+const ANY: &[Role] = &[Role::Point, Role::Edge, Role::Plane];
 
 /// A face is hit where the ray enters the part; a solid on any of its
 /// faces; and nothing where the ray misses.
 #[test]
 fn faces_and_solids() {
     let view = PartView::of(&cube()).unwrap();
-    let hit = view.pick(&down(0.5, 0.5), &[Target::Face]).unwrap();
+    let hit = view.pick(&down(0.5, 0.5), &[Role::Plane], None).unwrap();
     assert!(matches!(hit.entity, EntityRef::Face { .. }));
     assert!(hit.point[2].could_be_equal(S::ONE), "{hit:?}");
     assert!(matches!(
-        picked(&view, &down(0.5, 0.5), &[Target::Solid]),
+        picked(&view, &down(0.5, 0.5), &[Role::Solid]),
         Some(EntityRef::Solid { .. })
     ));
-    assert_eq!(picked(&view, &down(5.0, 5.0), &[Target::Face]), None);
+    assert_eq!(picked(&view, &down(5.0, 5.0), &[Role::Plane]), None);
 }
 
 /// The smallest entity near the pointer wins — a corner, else an edge,
@@ -109,7 +111,7 @@ fn sketches() {
     part.add_sketch(placed(0.0), "low").unwrap();
     part.add_sketch(placed(1.0), "high").unwrap();
     let view = PartView::of(&part).unwrap();
-    let sketch = |pointer: Pointer<S>| picked(&view, &pointer, &[Target::Sketch]);
+    let sketch = |pointer: Pointer<S>| picked(&view, &pointer, &[Role::Sketch]);
     let named = |name: &str| Some(EntityRef::Sketch { name: name.into() });
     assert_eq!(sketch(down(0.5, 0.5)), named("high"));
     assert_eq!(sketch(down(1.005, 0.5)), named("high"));
@@ -121,7 +123,7 @@ fn sketches() {
 }
 
 /// Datums are hit as drawn — a plane as a square around the drawing's
-/// center — and only those of the kinds looked for.
+/// center — and only for the roles they can fill.
 #[test]
 fn datums() {
     let mut part = cube();
@@ -146,27 +148,11 @@ fn datums() {
     let datum = Some(EntityRef::datum("above"));
     // Beside the cube, but within the square drawn around its center: √3
     // across, the cube's diagonal.
-    assert_eq!(
-        picked(&view, &down(1.2, 0.5), &[Target::Datum(DatumKind::Plane)]),
-        datum
-    );
-    assert_eq!(
-        picked(&view, &down(1.2, 0.5), &[Target::Datum(DatumKind::Point)]),
-        None
-    );
+    assert_eq!(picked(&view, &down(1.2, 0.5), &[Role::Plane]), datum);
+    assert_eq!(picked(&view, &down(1.2, 0.5), &[Role::Point]), None);
     // In front of the cube's top, the plane is nearer.
-    assert_eq!(
-        picked(
-            &view,
-            &down(0.5, 0.5),
-            &[Target::Face, Target::Datum(DatumKind::Plane)]
-        ),
-        datum
-    );
-    assert_eq!(
-        picked(&view, &down(50.0, 0.5), &[Target::Datum(DatumKind::Plane)]),
-        None
-    );
+    assert_eq!(picked(&view, &down(0.5, 0.5), &[Role::Plane]), datum);
+    assert_eq!(picked(&view, &down(50.0, 0.5), &[Role::Plane]), None);
 }
 
 /// A frame datum — here the origin every part has — is hit before
@@ -175,12 +161,7 @@ fn datums() {
 #[test]
 fn frames() {
     let view = PartView::of(&cube()).unwrap();
-    let frame = [
-        Target::Datum(DatumKind::Point),
-        Target::Datum(DatumKind::Axis),
-        Target::Datum(DatumKind::Plane),
-        Target::Face,
-    ];
+    let frame = [Role::Point, Role::Line, Role::Plane];
     // Ten reaches of 0.009 each: the axes reach 0.09 out.
     assert_eq!(
         picked(&view, &down(0.0, 0.0), &frame),
@@ -200,9 +181,63 @@ fn frames() {
             DatumComponent::Plane(FrameAxis::Z)
         ))
     );
-    // Without the frame's kinds, the cube's face under it.
+    // Looking for what no part of a frame can be, the cube under it.
     assert!(matches!(
-        picked(&view, &down(0.04, 0.04), &[Target::Face]),
-        Some(EntityRef::Face { .. })
+        picked(&view, &down(0.04, 0.04), &[Role::Solid]),
+        Some(EntityRef::Solid { .. })
     ));
+}
+
+/// A sketch's lines are picked as lines and its points as points — the
+/// nearer of two sketches' — and, within a sketch, only that sketch's.
+#[test]
+fn sketch_lines() {
+    let mut square = Sketch::new();
+    let p: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+        .iter()
+        .map(|c| square.add_point(c[0], c[1]))
+        .collect();
+    let right = square.add_line(p[1], p[2]);
+    for i in [0, 2, 3] {
+        square.add_line(p[i], p[(i + 1) % 4]);
+    }
+    let placed = |z: f64| PlacedSketch {
+        plane: CoordinateSystem::try_new(
+            v(0.0, 0.0, z),
+            v(1.0, 0.0, 0.0),
+            v(0.0, 1.0, 0.0),
+            v(0.0, 0.0, 1.0),
+        )
+        .unwrap(),
+        sketch: square.clone(),
+    };
+    let mut part = Part::<S>::new();
+    part.add_sketch(placed(0.0), "low").unwrap();
+    part.add_sketch(placed(1.0), "high").unwrap();
+    let view = PartView::of(&part).unwrap();
+    let line = |sketch: &str| {
+        Some(EntityRef::SketchCurve {
+            sketch: sketch.into(),
+            curve: right,
+        })
+    };
+    assert_eq!(
+        picked(&view, &down(1.005, 0.5), &[Role::Line]),
+        line("high")
+    );
+    let low = EntityRef::Sketch { name: "low".into() };
+    let within = view
+        .pick(&down(1.005, 0.5), &[Role::Line], Some(&low))
+        .map(|h| h.entity);
+    assert_eq!(within, line("low"));
+    // Inside the square, no line is near.
+    assert_eq!(picked(&view, &down(0.5, 0.5), &[Role::Line]), None);
+    // Its corners are points, of the nearer sketch.
+    assert_eq!(
+        picked(&view, &down(1.005, 0.995), &[Role::Point]),
+        Some(EntityRef::SketchPoint {
+            sketch: "high".into(),
+            point: p[2],
+        })
+    );
 }

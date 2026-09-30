@@ -3,7 +3,8 @@
 //! solved sketch into closed profiles for extrude and revolve.
 //!
 //! - [`sketch`]: the entities and constraints (plain `f64` design data).
-//! - [`solve`]: [`Sketch::solve`] / [`Sketch::solve_with_drag`].
+//! - [`solve`]: [`Sketch::solve`] / [`Sketch::solve_with_drag`], and
+//!   [`Sketch::enclose`]: the solution as the kernel builds on it.
 //! - [`profile`]: [`Sketch::regions`] and [`ProfileLoop::to_nurbs`].
 
 pub mod bfgs;
@@ -16,7 +17,8 @@ pub mod solve;
 
 pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region};
 pub use sketch::{
-    Constraint, ConstraintId, Curve, CurveId, CurveKind, Point, PointId, Positions, Sketch,
+    Constraint, ConstraintId, Curve, CurveId, CurveKind, Enclosure, Point, PointId, Positions,
+    Sketch,
 };
 pub use solve::SolveReport;
 
@@ -308,9 +310,9 @@ mod tests {
         assert_eq!(regions[0].outer.edges.len(), 4);
         assert_eq!(regions[0].holes.len(), 1);
 
-        let positions = s.positions();
+        let geometry = s.enclose::<S>().unwrap();
         for (lp, count) in [(&regions[0].outer, 6), (&regions[0].holes[0], 4)] {
-            let pieces = lp.to_nurbs::<S>(&s, &positions).unwrap();
+            let pieces = lp.to_nurbs::<S>(&s, &geometry).unwrap();
             let curves: Vec<_> = pieces.iter().map(|p| &p.curve).collect();
             assert_eq!(curves.len(), count);
             // The joints chain up exactly like the curves do.
@@ -327,7 +329,7 @@ mod tests {
             }
         }
         // The half circle on the right passes through (2.5, 0.5).
-        let outer = regions[0].outer.to_nurbs::<S>(&s, &positions).unwrap();
+        let outer = regions[0].outer.to_nurbs::<S>(&s, &geometry).unwrap();
         let far = Vector2::from_array([S::from_f64(2.5), S::from_f64(0.5)]);
         assert!(
             outer
@@ -492,10 +494,10 @@ mod tests {
         let lines: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
 
         let regions = s.regions().unwrap();
-        let positions = s.positions();
+        let geometry = s.enclose::<ScalInF64>().unwrap();
         let outer = regions[0]
             .outer
-            .to_nurbs::<ScalInF64>(&s, &positions)
+            .to_nurbs::<ScalInF64>(&s, &geometry)
             .unwrap();
         let names: Vec<String> = outer.iter().map(|p| p.name()).collect();
         assert_eq!(names.len(), 4);
@@ -510,7 +512,7 @@ mod tests {
 
         // The hole runs clockwise, against the circle's own direction.
         let hole = regions[0].holes[0]
-            .to_nurbs::<ScalInF64>(&s, &positions)
+            .to_nurbs::<ScalInF64>(&s, &geometry)
             .unwrap();
         let joints: Vec<String> = hole.iter().map(|p| p.start.to_string()).collect();
         assert_eq!(
@@ -581,5 +583,88 @@ mod tests {
         assert!(s.curves.is_empty() && s.constraints.is_empty());
         assert_eq!(s.points.keys().copied().collect::<Vec<_>>(), [lone]);
         s.validate().unwrap();
+    }
+
+    /// A solved sketch encloses the exact solution of its constraints: a
+    /// rectangle whose sides the solver only made nearly horizontal and
+    /// vertical is built from boxes around its exact corners — narrow, but
+    /// each holding the corner the constraints mean.
+    #[test]
+    fn solutions_are_enclosed() {
+        let mut s = Sketch::new();
+        let p = [
+            s.add_point(0.1, -0.1),
+            s.add_point(2.2, 0.2),
+            s.add_point(1.9, 1.3),
+            s.add_point(-0.2, 0.8),
+        ];
+        let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
+        s.constrain(Constraint::Fix {
+            point: p[0],
+            x: 0.0,
+            y: 0.0,
+        });
+        s.constrain(Constraint::Horizontal { line: l[0] });
+        s.constrain(Constraint::Horizontal { line: l[2] });
+        s.constrain(Constraint::Vertical { line: l[1] });
+        s.constrain(Constraint::Vertical { line: l[3] });
+        s.constrain(Constraint::Length {
+            curve: l[0],
+            value: 2.0,
+        });
+        s.constrain(Constraint::Distance {
+            a: p[1],
+            b: p[2],
+            value: 1.0,
+        });
+        assert!(s.solve().unwrap().converged);
+        let enclosed = s.enclose::<ScalInF64>().unwrap();
+        let exact = [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]];
+        for (pi, e) in p.iter().zip(exact) {
+            let q = enclosed.points[pi];
+            for k in 0..2 {
+                assert!(
+                    q[k].could_be_equal(ScalInF64::from_f64(e[k])),
+                    "{q:?} vs {e:?}"
+                );
+                assert!(q[k].width().to_f64() < 1e-12, "{q:?}");
+            }
+        }
+    }
+
+    /// What the constraints leave free is the designer's choice, kept
+    /// exactly as drawn; only what they determine is enclosed.
+    #[test]
+    fn free_choices_stay_sharp() {
+        let mut s = Sketch::new();
+        let a = s.add_point(0.3, 0.7);
+        let b = s.add_point(1.9, 0.75);
+        let line = s.add_line(a, b);
+        s.constrain(Constraint::Horizontal { line });
+        assert!(s.solve().unwrap().converged);
+        let enclosed = s.enclose::<ScalInF64>().unwrap();
+        // Three of the four coordinates are free; one is set by the others.
+        let sharp = [enclosed.points[&a], enclosed.points[&b]]
+            .iter()
+            .flat_map(|q| [q[0], q[1]])
+            .filter(|v| v.is_sharp())
+            .count();
+        assert!(sharp >= 3, "{enclosed:?}");
+        assert!(enclosed.points[&a][1].could_be_equal(enclosed.points[&b][1]));
+        // Unmet constraints leave the sketch as drawn.
+        s.constrain(Constraint::Vertical { line });
+        s.constrain(Constraint::Fix {
+            point: a,
+            x: 0.0,
+            y: 0.0,
+        });
+        s.constrain(Constraint::Fix {
+            point: b,
+            x: 1.0,
+            y: 0.0,
+        });
+        let report = s.solve().unwrap();
+        assert!(!report.converged);
+        assert_eq!(s.enclose::<ScalInF64>().unwrap(), Enclosure::as_drawn(&s));
     }
 }

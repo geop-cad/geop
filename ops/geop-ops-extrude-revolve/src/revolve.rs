@@ -1,5 +1,6 @@
 //! Revolve a planar profile, given as `(r, z)` points in the half-plane `r
-//! >= 0` (whose first and last points must be poles, `r = 0`), 360 degrees
+//! >= 0` — an open chain whose first and last points are poles (`r = 0`), or
+//! a closed loop off the axis, which sweeps a ring — 360 degrees
 //! around a vertical axis, entirely from euler operations — built one
 //! angular quadrant *column* at a time (all `P = profile.len() - 1` row
 //! faces of a given 90-degree wedge, before moving to the next wedge),
@@ -25,6 +26,12 @@
 //! it real. No separate degenerate cap is ever needed, unlike a naive
 //! row-by-row sweep (which always leaves one extra zero-area face behind at
 //! the final pole).
+//!
+//! A closed loop is bootstrapped the same way, and its last segment closes
+//! the ring with `mer` onto the very face it was grown on — a hole of it,
+//! the solid's handle — so the columns grow inside that hole exactly as
+//! they grow on the chain; the last column's first beam (`mekr`) joins the
+//! two loops again, and the rest close as for a chain.
 //!
 //! A profile row at `r = 0` (only ever the first/last, both required poles)
 //! collapses to a single shared vertex — no angular beam is grown for it at
@@ -185,18 +192,19 @@ fn quadrant_patch<S: Scalar>(
 }
 
 /// Revolve `profile` — an open chain of curves in the `(r, z)` half-plane
-/// `r >= 0`, starting and ending on the axis (`r = 0`), each clamped and on
-/// the domain `[0, 1]` — 360 degrees around a vertical axis through `origin`
-/// (parallel to the z-axis), producing a closed, manifold solid of exactly
-/// `4 * profile.len()` faces (no leftover degenerate one) — `origin` is added
+/// `r >= 0`, starting and ending on the axis (`r = 0`), or a closed loop
+/// entirely off it, each curve clamped and on the domain `[0, 1]` — 360
+/// degrees around a vertical axis through `origin` (parallel to the z-axis),
+/// producing a closed, manifold solid of exactly `4 * profile.len()` faces
+/// (no leftover degenerate one), a ring for a loop — `origin` is added
 /// to every generated point, so the profile's own `z` values are relative to
 /// `origin`'s `z`. See the module doc for the overall column-by-column
 /// strategy, and [`revolve_at_oriented`] for how the result is named.
 ///
 /// The profile runs "top-down": walked from its first point to its last,
 /// the region it bounds together with the axis lies on its right (e.g.
-/// `(0, h) -> (r, h) -> (r, 0) -> (0, 0)` for a cylinder). Walked the other
-/// way, the solid comes out inside-out.
+/// `(0, h) -> (r, h) -> (r, 0) -> (0, 0)` for a cylinder) — a loop runs
+/// clockwise. Walked the other way, the solid comes out inside-out.
 ///
 /// A thin wrapper around [`revolve_at_oriented`] with the identity
 /// (z-axis) coordinate system — see that function to revolve around an
@@ -249,33 +257,34 @@ pub fn revolve_at_oriented<S: Scalar>(
     coordinate_system: &CoordinateSystem<S>,
 ) -> GeopResult<SolidId> {
     profile.check_names()?;
-    if profile.is_closed() {
-        return Err(GeopError::new(
-            "revolve: the profile must be an open chain with a name for its end joint",
-        ));
-    }
     let curves = &profile.curves;
     if curves.is_empty() {
         return Err(GeopError::new(
             "revolve: profile must have at least 1 curve",
         ));
     }
+    let closed = profile.is_closed();
     let p_segments = curves.len();
-    // Row `i`: the profile's `i`-th vertex, where curve `i` starts.
+    // Row `i`: the profile's `i`-th vertex, where curve `i` starts; an open
+    // chain has one more, its end. Curve `i` runs from row `i` to row
+    // `next(i)`, which wraps around for a closed loop.
     let mut rows = curves
         .iter()
         .map(start_point)
         .collect::<GeopResult<Vec<_>>>()?;
-    rows.push(end_point(&curves[p_segments - 1])?);
-    for i in 0..p_segments - 1 {
-        if !end_point(&curves[i])?.could_be_equal(&rows[i + 1]) {
+    if !closed {
+        rows.push(end_point(&curves[p_segments - 1])?);
+    }
+    let m = rows.len();
+    let next = |i: usize| (i + 1) % m;
+    for i in 0..p_segments {
+        if !end_point(&curves[i])?.could_be_equal(&rows[next(i)]) {
             return Err(GeopError::new(format!(
                 "revolve: profile curve {i} does not end where curve {} starts",
-                i + 1
+                next(i)
             )));
         }
     }
-    let m = rows.len();
 
     let zero = S::ZERO;
     let one = S::ONE;
@@ -288,15 +297,25 @@ pub fn revolve_at_oriented<S: Scalar>(
     ];
 
     let degenerate: Vec<bool> = rows.iter().map(|p| p[0].could_be_equal(zero)).collect();
-    if !degenerate[0] {
-        return Err(GeopError::new(
-            "revolve: profile must start at r = 0 (a pole)",
-        ));
-    }
-    if !degenerate[m - 1] {
-        return Err(GeopError::new(
-            "revolve: profile must end at r = 0 (a pole)",
-        ));
+    if closed {
+        // A loop revolves into a ring: every one of its points sweeps a
+        // circle, so none may lie on the axis.
+        if let Some(row) = degenerate.iter().position(|&d| d) {
+            return Err(GeopError::new(format!(
+                "revolve: a closed profile must stay off the axis, but its point {row} could be on it"
+            )));
+        }
+    } else {
+        if !degenerate[0] {
+            return Err(GeopError::new(
+                "revolve: profile must start at r = 0 (a pole)",
+            ));
+        }
+        if !degenerate[m - 1] {
+            return Err(GeopError::new(
+                "revolve: profile must end at r = 0 (a pole)",
+            ));
+        }
     }
 
     // Names, see the table above.
@@ -324,7 +343,7 @@ pub fn revolve_at_oriented<S: Scalar>(
             centers[i].add(&dirs[k].prod_scalar(rows[i][0]))
         }
     };
-    // Curve `i` of the profile at angle `k`, from row `i` to row `i + 1`.
+    // Curve `i` of the profile at angle `k`, from row `i` to row `next(i)`.
     let meridian = |i: usize, k: usize| {
         embed_curve(
             &curves[i],
@@ -334,22 +353,26 @@ pub fn revolve_at_oriented<S: Scalar>(
         )
     };
     let w = sqrt2_over_2::<S>();
+    let patch = |i: usize, k_new: usize, k_old: usize| {
+        quadrant_patch(&curves[i], coordinate_system, &dirs, k_new, k_old)
+    };
 
-    // The placeholder face becomes the last segment's last quadrant, via
+    // The placeholder face becomes the last quadrant left open — the last
+    // segment's for a chain, the first one's for a loop — via
     // `replace_face` at the very end.
+    let last_face = if closed { 0 } else { p_segments - 1 };
     let (v0, face_id, solid_id) = part.mvfs(
-        centers[0],
+        pos(0, 0),
         vertex_name(0, 0),
-        face_name(p_segments - 1, N - 1),
+        face_name(last_face, N - 1),
         solid,
     )?;
 
-    // Bootstrap meridian 0 (angle index 0): the `p_segments`-edge profile
-    // chain from `v0` through every other row, straight in 3-D (the user's
-    // own profile segments). `anchors[i]` (forward) gets rebuilt as
-    // segment `i`'s own "old" meridian every time a new angle is grown;
-    // `mirrors[i]` (reversed) stays untouched, needed only once more, to
-    // close the very last angle back onto this first one.
+    // Bootstrap meridian 0 (angle index 0): the profile's own chain from
+    // `v0` through every other row, straight in 3-D. `anchors[i]` (forward)
+    // gets rebuilt as segment `i`'s own "old" meridian every time a new
+    // angle is grown; `mirrors[i]` (reversed) stays untouched, needed only
+    // once more, to close the very last angle back onto this first one.
     let mut anchors = Vec::with_capacity(p_segments);
     let mut mirrors = Vec::with_capacity(p_segments);
     let (_, a0, r0, _) = part
@@ -359,67 +382,90 @@ pub fn revolve_at_oriented<S: Scalar>(
             meridian(0, 0)?,
             meridian_pcurve()?,
             meridian_closing_pcurve()?,
-            pos(1, 0),
-            vertex_name(1, 0),
+            pos(next(0), 0),
+            vertex_name(next(0), 0),
             meridian_name(0, 0),
         )
         .with_context("revolve_at: bootstrap segment 0 failed")?;
     anchors.push(a0);
     mirrors.push(r0);
-    for i in 1..p_segments {
+    // A loop's last segment closes the ring instead of growing a vertex.
+    let grown = if closed { p_segments - 1 } else { p_segments };
+    for i in 1..grown {
         let (_, a, r, _) = part
             .mve(
                 anchors[i - 1],
                 meridian(i, 0)?,
                 meridian_pcurve()?,
                 meridian_closing_pcurve()?,
-                pos(i + 1, 0),
-                vertex_name(i + 1, 0),
+                pos(next(i), 0),
+                vertex_name(next(i), 0),
                 meridian_name(i, 0),
             )
             .with_context(with_context!("revolve_at: bootstrap segment {i} failed"))?;
         anchors.push(a);
         mirrors.push(r);
     }
+    if closed {
+        // Closing the loop splits the ring off as a hole of the very face
+        // it was grown on: the forward side, where the columns grow, is the
+        // hole, and the reversed side, where the last column closes, stays
+        // the outer boundary. That is the ring's handle — a loop revolves
+        // into a solid of genus one — which the last column's first beam
+        // (`mekr`) takes back again.
+        let last = p_segments - 1;
+        let (_, backward, forward) = part
+            .mer(
+                anchors[last - 1],
+                anchors[0],
+                meridian(last, 0)?,
+                meridian_pcurve()?,
+                meridian_closing_pcurve()?,
+                face_id,
+                meridian_name(last, 0),
+            )
+            .with_context("revolve_at: closing the profile's loop failed")?;
+        anchors.push(forward);
+        mirrors.push(backward);
+    }
 
     // Grow meridians 1..N-1 (angle indices 1, 2, 3), closing all
     // `p_segments` quadrant faces of each new column as it's grown: for
-    // every non-pole interior row, one new "beam" (angular arc) edge grows
-    // that row across to the new angle (`mve`); each segment's own closing
-    // `mef` then mints its own new meridian edge (straight, at the new
-    // angle) using whichever of its two rows' beams exist, or the row's
-    // shared vertex directly (via the *old* meridian coedge) if a row is a
-    // pole.
+    // every row off the axis, one new "beam" (angular arc) edge grows that
+    // row across to the new angle (`mve`); each segment's own closing `mef`
+    // then mints its own new meridian edge (straight, at the new angle)
+    // using whichever of its two rows' beams exist, or the row's shared
+    // vertex directly (via the *old* meridian coedge) if a row is a pole.
     for k in 0..N - 1 {
         let k1 = k + 1;
-        let mut beam_fwd: Vec<Option<CoedgeId>> = vec![None; p_segments + 1];
-        let mut beam_rev: Vec<Option<CoedgeId>> = vec![None; p_segments + 1];
-        for row in 1..p_segments {
-            if !degenerate[row] {
-                let (_, bf, br, _) = part
-                    .mve(
-                        anchors[row - 1],
-                        beam_curve(pos(row, k), pos(row, k1), centers[row], w)?,
-                        beam_pcurve_bottom()?,
-                        beam_pcurve_top()?,
-                        pos(row, k1),
-                        vertex_name(row, k1),
-                        beam_name(row, k),
-                    )
-                    .with_context(with_context!(
-                        "revolve_at: beam at row {row}, angle {k} -> {k1} failed"
-                    ))?;
-                beam_fwd[row] = Some(bf);
-                beam_rev[row] = Some(br);
-            }
+        let mut beam_fwd: Vec<Option<CoedgeId>> = vec![None; m];
+        let mut beam_rev: Vec<Option<CoedgeId>> = vec![None; m];
+        for row in (0..m).filter(|&row| !degenerate[row]) {
+            // The segment ending at `row`: its old meridian ends there.
+            let arriving = (row + p_segments - 1) % p_segments;
+            let (_, bf, br, _) = part
+                .mve(
+                    anchors[arriving],
+                    beam_curve(pos(row, k), pos(row, k1), centers[row], w)?,
+                    beam_pcurve_bottom()?,
+                    beam_pcurve_top()?,
+                    pos(row, k1),
+                    vertex_name(row, k1),
+                    beam_name(row, k),
+                )
+                .with_context(with_context!(
+                    "revolve_at: beam at row {row}, angle {k} -> {k1} failed"
+                ))?;
+            beam_fwd[row] = Some(bf);
+            beam_rev[row] = Some(br);
         }
 
         let mut new_anchors = Vec::with_capacity(p_segments);
         for i in 0..p_segments {
-            let coedge1 = if degenerate[i + 1] {
+            let coedge1 = if degenerate[next(i)] {
                 anchors[i]
             } else {
-                beam_fwd[i + 1].unwrap()
+                beam_fwd[next(i)].unwrap()
             };
             let coedge2 = if degenerate[i] {
                 anchors[i]
@@ -427,7 +473,6 @@ pub fn revolve_at_oriented<S: Scalar>(
                 beam_rev[i].unwrap()
             };
             let curve = meridian(i, k1)?.reverse();
-            let surface = quadrant_patch(&curves[i], coordinate_system, &dirs, k1, k)?;
             let (_, _, _, coedge_backward) = part
                 .mef(
                     coedge1,
@@ -435,7 +480,7 @@ pub fn revolve_at_oriented<S: Scalar>(
                     curve,
                     meridian_closing_pcurve()?,
                     meridian_pcurve()?,
-                    surface,
+                    patch(i, k1, k)?,
                     meridian_name(i, k1),
                     face_name(i, k),
                 )
@@ -445,7 +490,7 @@ pub fn revolve_at_oriented<S: Scalar>(
             if degenerate[i] {
                 close_top_pole_gap(part, coedge2)?;
             }
-            if degenerate[i + 1] {
+            if degenerate[next(i)] {
                 close_bottom_pole_gap(part, coedge1)?;
             }
             new_anchors.push(coedge_backward);
@@ -455,25 +500,44 @@ pub fn revolve_at_oriented<S: Scalar>(
 
     // Close the last column (angle 3 -> 0) back onto the very first
     // meridian's own mirrors, reusing `anchors`/`mirrors` directly instead
-    // of growing anything new on the meridian side — only the interior
-    // beams (angle 3 -> 0) are actually new, one per non-last row's own
-    // closing `mef`. The very last segment needs no `mef` at all: after
-    // all the others close, its own boundary is already exactly what's
-    // left on the placeholder face, so it only needs `replace_face` to
-    // become real — the same trick `sphere_octants` uses, no separate
-    // degenerate cap required.
+    // of growing anything new on the meridian side — only the beams (angle
+    // 3 -> 0) are actually new, one per closing `mef`. The face left open
+    // needs no `mef` at all: after all the others close, its own boundary
+    // is already exactly what's left on the placeholder face, so it only
+    // needs `replace_face` to become real — the same trick `sphere_octants`
+    // uses, no separate degenerate cap required.
     let (k, k1) = (N - 1, 0);
-    for i in 0..p_segments - 1 {
-        let row = i + 1;
-        let curve = beam_curve(pos(row, k), pos(row, k1), centers[row], w)?;
-        let surface = quadrant_patch(&curves[i], coordinate_system, &dirs, k1, k)?;
+    let beam = |row: usize| beam_curve(pos(row, k), pos(row, k1), centers[row], w);
+    let closing: Vec<usize> = if closed {
+        // A loop's first beam joins the first meridian (the outer boundary)
+        // to the columns' ring (the hole) at row 1: it closes no face, it
+        // only takes back the handle closing the loop made. `mekr` keeps
+        // its first coedge's loop, so it grows from the outer side, from
+        // angle 0 to 3 — the direction segment 1 runs along it — and the
+        // other side is segment 0's.
+        let (_, _, backward) = part
+            .mekr(
+                mirrors[1],
+                anchors[1],
+                beam(1)?.reverse(),
+                beam_pcurve_top()?,
+                beam_name(1, k),
+            )
+            .with_context("revolve_at: joining the last column to the first failed")?;
+        part.replace_pcurve(backward, beam_pcurve_bottom()?)?;
+        (1..p_segments).collect()
+    } else {
+        (0..p_segments - 1).collect()
+    };
+    for i in closing {
+        let row = next(i);
         part.mef(
             anchors[i],
             mirrors[i],
-            curve,
+            beam(row)?,
             beam_pcurve_bottom()?,
             beam_pcurve_top()?,
-            surface,
+            patch(i, k1, k)?,
             beam_name(row, k),
             face_name(i, k),
         )
@@ -484,15 +548,13 @@ pub fn revolve_at_oriented<S: Scalar>(
             close_top_pole_gap(part, anchors[i])?;
         }
     }
-    let last = p_segments - 1;
-    let surface = quadrant_patch(&curves[last], coordinate_system, &dirs, k1, k)?;
-    if degenerate[last] {
-        close_top_pole_gap(part, anchors[last])?;
+    if degenerate[last_face] {
+        close_top_pole_gap(part, anchors[last_face])?;
     }
-    if degenerate[last + 1] {
-        close_bottom_pole_gap(part, anchors[last])?;
+    if degenerate[next(last_face)] {
+        close_bottom_pole_gap(part, anchors[last_face])?;
     }
-    part.replace_face(face_id, surface)
+    part.replace_face(face_id, patch(last_face, k1, k)?)
         .with_context("revolve_at: final replace_face failed")?;
 
     Ok(solid_id)
@@ -631,5 +693,77 @@ mod tests {
     #[test]
     fn sphere_is_valid() {
         for_all_scalars!(check_sphere_is_valid);
+    }
+
+    /// Revolve the closed loop `curves` around the z-axis into a fresh part.
+    fn revolved_ring<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> Part<S> {
+        let mut part = Part::<S>::new();
+        let namer = Namer::new("revolve", "r").unwrap();
+        revolve(&mut part, &namer, &Profile::closed(curves)).unwrap();
+        part.check_names().unwrap();
+        part
+    }
+
+    /// A square off the axis revolves into a ring with a square cross
+    /// section: genus one, four quadrant faces per side, no poles.
+    fn check_square_ring_is_valid<S: Scalar>() {
+        // Clockwise, so the square lies on the right of it walked along.
+        let profile = polyline(&[
+            v2::<S>(1.0, 1.0),
+            v2(2.0, 1.0),
+            v2(2.0, 0.0),
+            v2(1.0, 0.0),
+            v2(1.0, 1.0),
+        ])
+        .unwrap();
+        let part = revolved_ring(profile);
+        let model = part.topology();
+        assert_valid(model);
+        assert_eq!(model.faces.len(), 16);
+        assert_eq!(model.vertices.len(), 16);
+        assert_eq!(model.edges.len(), 32);
+        for name in ["revolve(r,c0,q0)", "revolve(r,c3,q3)", "revolve(r,p0,a3)"] {
+            assert!(
+                part.face_id(name).is_ok() || part.vertex_id(name).is_ok(),
+                "{name}"
+            );
+        }
+        part.edge_id("revolve(r,p0,q3)").unwrap();
+        part.edge_id("revolve(r,c3,a0)").unwrap();
+    }
+    #[test]
+    fn square_ring_is_valid() {
+        for_all_scalars!(check_square_ring_is_valid);
+    }
+
+    /// A circle off the axis revolves into an exact torus: two half arcs,
+    /// clockwise, swept into doubly curved quadrant patches.
+    fn check_torus_is_valid<S: Scalar>() {
+        let w = sqrt2_over_2::<S>();
+        let profile = vec![
+            arc2(v2(2.0, 1.0), v2(3.0, 1.0), v2(3.0, 0.0), w).unwrap(),
+            arc2(v2(3.0, 0.0), v2(3.0, -1.0), v2(2.0, -1.0), w).unwrap(),
+            arc2(v2(2.0, -1.0), v2(1.0, -1.0), v2(1.0, 0.0), w).unwrap(),
+            arc2(v2(1.0, 0.0), v2(1.0, 1.0), v2(2.0, 1.0), w).unwrap(),
+        ];
+        let part = revolved_ring(profile);
+        let model = part.topology();
+        assert_valid(model);
+        assert_eq!(model.faces.len(), 16);
+    }
+    #[test]
+    fn torus_is_valid() {
+        for_all_scalars!(check_torus_is_valid);
+    }
+
+    /// A loop touching the axis cannot sweep a ring.
+    #[test]
+    fn rings_stay_off_the_axis() {
+        type S = geop_core_math::scalars::ScalInF64;
+        let profile =
+            polyline(&[v2::<S>(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), v2(0.0, 1.0)]).unwrap();
+        let mut part = Part::<S>::new();
+        let namer = Namer::new("revolve", "r").unwrap();
+        assert!(revolve(&mut part, &namer, &Profile::closed(profile)).is_err());
     }
 }

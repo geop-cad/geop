@@ -11,8 +11,8 @@ use geop_core_math::{
 use geop_core_sketch::{ProfilePiece, Sketch, point::P2, profile::curve_polyline};
 use geop_ops::{
     Namer, Part,
-    operation::{EntityRef, Operation},
-    ui::{Dialog, Form, Shape, Style, Value, Visual},
+    operation::Operation,
+    ui::{Form, Number, Track, Unit},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
@@ -65,23 +65,19 @@ pub struct ExtrudeArgs {
     pub combine: Combine,
 }
 
-/// The distance, as a handle at the centre of the end cap that slides along
-/// the sketch plane's normal. None while the sketch cannot be found.
-fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<Visual<S>> {
+/// Where the distance is dragged: at the centre of the end cap, along the
+/// sketch plane's normal. None while the sketch cannot be found.
+fn distance_handle<S: Scalar>(before: &Part<S>, args: &ExtrudeArgs) -> Option<Track<S>> {
     let placed = before.sketch(before.sketch_id(&args.sketch).ok()?).ok()?;
     let plane = &placed.plane;
     let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?);
     // A symmetric extrude's end cap is half the distance off the plane.
     let scale = if args.symmetric { 0.5 } else { 1.0 };
     let normal = *plane.w();
-    Some(Visual::new(
-        "distance",
-        Shape::Handle {
-            at: center.add(&normal.prod_scalar(S::from_f64(args.distance * scale))),
-            direction: normal.prod_scalar(S::from_f64(scale)),
-        },
-        Style::Handle,
-    ))
+    Some(Track {
+        at: center.add(&normal.prod_scalar(S::from_f64(args.distance * scale))),
+        direction: normal.prod_scalar(S::from_f64(scale)),
+    })
 }
 
 impl Operation for Extrude {
@@ -99,43 +95,36 @@ impl Operation for Extrude {
         }
     }
 
-    /// The sketch, picked; the distance, typed or dragged as a handle;
+    /// The sketch, picked; the distance, typed or dragged as a handle —
+    /// turning a join into a cut when it crosses down through the sketch
+    /// plane, and back when it crosses up (see [`Combine::follow_sign`]);
     /// and how to combine.
-    fn form<S: Scalar>(&self, before: &Part<S>, args: &ExtrudeArgs, _: &()) -> Form<S> {
-        let mut d = Dialog::new();
-        sketch_field(&mut d, before, &args.sketch);
-        d.slider("distance", "distance", args.distance, -10.0, 10.0);
-        d.checkbox("symmetric", "symmetric", args.symmetric);
-        args.combine.show(&mut d);
-        Form {
-            visuals: distance_handle(before, args).into_iter().collect(),
-            ..Form::dialog(d)
-        }
-    }
-
-    /// A distance joins when it is positive and cuts when it is negative,
-    /// if the extrude combines with a solid at all (see
-    /// [`Combine::follow_sign`]).
-    fn set<S: Scalar>(
+    fn form<'a, S: Scalar>(
         &self,
-        before: &Part<S>,
-        args: &mut ExtrudeArgs,
-        _: &mut (),
-        key: &str,
-        value: Value,
-    ) {
-        if args.combine.set(before, key, &value) {
-            return;
-        }
-        match (key, value) {
-            ("sketch", Value::Entity(EntityRef::Sketch { name })) => args.sketch = name,
-            ("distance", Value::Number(v)) => {
-                args.distance = v;
-                args.combine.follow_sign(v);
-            }
-            ("symmetric", Value::Bool(b)) => args.symmetric = b,
-            _ => {}
-        }
+        before: &'a Part<S>,
+        args: &ExtrudeArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, ExtrudeArgs> {
+        let mut f = Form::<S, ExtrudeArgs>::new();
+        sketch_field(&mut f, before, &args.sketch, |args, sketch| {
+            args.sketch = sketch
+        });
+        f.number(
+            "distance",
+            Number::new("distance", args.distance, Unit::Length)
+                .range(-10.0, 10.0)
+                .handle(distance_handle(before, args)),
+            |args, distance| {
+                let from = std::mem::replace(&mut args.distance, distance);
+                args.combine.follow_sign(from, distance);
+            },
+        );
+        f.checkbox("symmetric", "symmetric", args.symmetric, |args, b| {
+            args.symmetric = b
+        });
+        args.combine.show(&mut f, before, |args| &mut args.combine);
+        f
     }
 
     fn apply<S: Scalar>(
@@ -167,11 +156,11 @@ impl Operation for Extrude {
             placed.plane.clone()
         };
 
-        let positions = sketch.positions();
+        let geometry = sketch.enclose::<S>().with_context(ctx)?;
         let regions = sketch.regions().with_context(ctx)?;
         let mut solid = None;
         for region in &regions {
-            let outer_pieces = region.outer.to_nurbs::<S>(sketch, &positions)?;
+            let outer_pieces = region.outer.to_nurbs(sketch, &geometry)?;
             let region_name = (regions.len() > 1).then(|| {
                 let lowest = outer_pieces.iter().map(|p| p.source).min();
                 format!("{},{}", args.sketch, lowest.expect("a loop has pieces"))
@@ -183,7 +172,7 @@ impl Operation for Extrude {
                 .map(|h| {
                     Ok(sketch_profile(
                         &args.sketch,
-                        h.to_nurbs(sketch, &positions)?,
+                        h.to_nurbs(sketch, &geometry)?,
                         true,
                     ))
                 })

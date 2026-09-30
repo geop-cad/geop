@@ -5,10 +5,8 @@
 
 mod add_datum;
 mod editor;
-mod geometry;
 
 pub use add_datum::{
     AddDatum, AddDatumArgs, CONSTRUCTIONS, Construction, ConstructionSchema, Param, ParamKind,
-    SelectionFit, inspect_selection,
+    fitting_constructions,
 };
-pub use geometry::{Geometry, Role};

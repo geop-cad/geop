@@ -15,13 +15,16 @@ use geop_core_math::{
     scalars::{Scalar, as_f64},
     vector::{Vector2, Vector3},
 };
-use geop_core_sketch::{CurveId, point::P2, profile::curve_polyline};
+use geop_core_sketch::{CurveId, PointId, point::P2, profile::curve_polyline};
 use geop_core_topology::{FaceId, Model, SolidId};
 use geop_ops_rasterize::rasterize;
 use serde::Serialize;
 
 use super::{Pointer, hit::nearer};
-use crate::{Part, operation::EntityRef};
+use crate::{
+    Part,
+    operation::{Aspects, EntityRef, Role},
+};
 
 /// Samples per edge and per parametric direction of a face. A face's grid is
 /// refined further where its own curvature asks for it (see
@@ -33,22 +36,6 @@ const RESOLUTION: usize = 24;
 /// planes laid out in fractions of that, in [`PartView::pick`] as in the
 /// viewer.
 pub const FRAME: f64 = 10.0;
-
-/// What kind of entity a pick looks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Target {
-    Vertex,
-    Edge,
-    Face,
-    /// A solid, hit on any of its faces.
-    Solid,
-    /// A sketch, hit inside its closed regions or on its curves.
-    Sketch,
-    /// A datum of this kind — or a frame's axis or plane, for an axis or a
-    /// plane, and a frame as a whole, for a point.
-    Datum(DatumKind),
-}
 
 /// An entity a pointer is over, where, and how far along its ray.
 #[derive(Clone, Debug, PartialEq)]
@@ -66,12 +53,24 @@ pub struct ViewVertex<S: Scalar> {
     pub at: Vector3<S>,
 }
 
+/// The roles `entity` can fill in `part` (see [`Aspects`]): none for one
+/// that does not resolve.
+fn roles_of<S: Scalar>(entity: &EntityRef, part: &Part<S>) -> Vec<Role> {
+    Aspects::of(entity, part)
+        .map(|g| g.roles())
+        .unwrap_or_default()
+}
+
 /// An edge of the part, as drawn: its curve sampled into a polyline.
 #[derive(Clone, Debug, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct ViewEdge<S: Scalar> {
     pub name: String,
     pub polyline: Vec<Vector3<S>>,
+    /// What it can be picked as: an edge, and a line or a circle if it is
+    /// one.
+    #[serde(skip)]
+    pub roles: Vec<Role>,
 }
 
 /// A face of the part, as drawn: triangulated, with the surface's normal at
@@ -84,21 +83,35 @@ pub struct ViewFace<S: Scalar> {
     pub solid: Option<String>,
     pub triangles: Vec<[Vector3<S>; 3]>,
     pub normals: Vec<[Vector3<S>; 3]>,
+    /// What it can be picked as: a plane if it is flat, round if it turns
+    /// around an axis.
+    #[serde(skip)]
+    pub roles: Vec<Role>,
 }
 
 /// A curve of a sketch, as drawn, in the sketch's plane.
 #[derive(Clone, Debug, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct ViewCurve<S: Scalar> {
-    #[serde(skip)]
     pub id: CurveId,
     pub construction: bool,
     pub polyline: Vec<Vector2<S>>,
+    /// What it can be picked as: a line, if it is one.
+    #[serde(skip)]
+    pub roles: Vec<Role>,
+}
+
+/// A point of a sketch, as drawn, in the sketch's plane.
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
+pub struct ViewSketchPoint<S: Scalar> {
+    pub id: PointId,
+    pub at: Vector2<S>,
 }
 
 /// A sketch of the part, as drawn: its plane, its closed regions (each an
-/// outer loop and its holes) and its curves, in the plane's `u`/`v`
-/// coordinates.
+/// outer loop and its holes), its curves and its points, in the plane's
+/// `u`/`v` coordinates.
 #[derive(Clone, Debug, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct ViewSketch<S: Scalar> {
@@ -107,6 +120,7 @@ pub struct ViewSketch<S: Scalar> {
     #[serde(skip)]
     pub regions: Vec<Vec<Vec<Vector2<S>>>>,
     pub curves: Vec<ViewCurve<S>>,
+    pub points: Vec<ViewSketchPoint<S>>,
 }
 
 /// A datum of the part.
@@ -179,6 +193,7 @@ impl<S: Scalar> PartView<S> {
         let sketches = part
             .sketches()
             .map(|(id, placed)| {
+                let sketch = name(id.into());
                 let s = &placed.sketch;
                 let positions = s.positions();
                 // A sketch whose curves form no region is still a sketch,
@@ -198,7 +213,7 @@ impl<S: Scalar> PartView<S> {
                     })
                     .unwrap_or_default();
                 ViewSketch {
-                    name: name(id.into()),
+                    name: sketch.clone(),
                     plane: placed.plane.clone(),
                     regions,
                     curves: s
@@ -208,6 +223,20 @@ impl<S: Scalar> PartView<S> {
                             id,
                             construction: c.construction,
                             polyline: uv(curve_polyline(s, &positions, id)),
+                            roles: roles_of(
+                                &EntityRef::SketchCurve {
+                                    sketch: sketch.clone(),
+                                    curve: id,
+                                },
+                                part,
+                            ),
+                        })
+                        .collect(),
+                    points: positions
+                        .iter()
+                        .map(|(&id, &p)| ViewSketchPoint {
+                            id,
+                            at: Vector2::from_array(p.map(S::from_f64)),
                         })
                         .collect(),
                 }
@@ -224,21 +253,29 @@ impl<S: Scalar> PartView<S> {
                 .collect(),
             edges: edges
                 .into_iter()
-                .map(|(&id, polyline)| ViewEdge {
-                    name: name(id.into()),
-                    polyline: polyline.clone(),
+                .map(|(&id, polyline)| {
+                    let edge = name(id.into());
+                    ViewEdge {
+                        roles: roles_of(&EntityRef::Edge { name: edge.clone() }, part),
+                        name: edge,
+                        polyline: polyline.clone(),
+                    }
                 })
                 .collect(),
             faces: faces
                 .into_iter()
-                .map(|(&id, tris)| ViewFace {
-                    name: name(id.into()),
-                    solid: solid_of_face(model, id).map(|s| name(s.into())),
-                    triangles: tris.iter().map(|t| [t.a, t.b, t.c]).collect(),
-                    normals: tris
-                        .iter()
-                        .map(|t| t.vertex_normals.unwrap_or([t.normal; 3]))
-                        .collect(),
+                .map(|(&id, tris)| {
+                    let face = name(id.into());
+                    ViewFace {
+                        roles: roles_of(&EntityRef::Face { name: face.clone() }, part),
+                        name: face,
+                        solid: solid_of_face(model, id).map(|s| name(s.into())),
+                        triangles: tris.iter().map(|t| [t.a, t.b, t.c]).collect(),
+                        normals: tris
+                            .iter()
+                            .map(|t| t.vertex_normals.unwrap_or([t.normal; 3]))
+                            .collect(),
+                    }
                 })
                 .collect(),
             sketches,
@@ -298,24 +335,27 @@ impl<S: Scalar> PartView<S> {
         }
     }
 
-    /// Whatever of the `targets` kinds the pointer is over. Frame datums
-    /// are drawn on top of everything, so they are picked first. Otherwise
-    /// a vertex or an edge near the pointer — and not hidden behind a face
-    /// — wins: the smallest entity under the pointer is the one meant. Else
-    /// the nearest along the ray of the faces, sketches and other datums
-    /// hit.
-    pub fn pick(&self, pointer: &Pointer<S>, targets: &[Target]) -> Option<PartHit<S>> {
-        let wants = |t: Target| targets.contains(&t);
-        if let Some(hit) = self.pick_frame(pointer, targets) {
+    /// Whatever the pointer is over that can fill one of `roles` — and, with
+    /// a `scope`, is part of it: a line of one sketch. Frame datums are drawn
+    /// on top of everything, so they are picked first. Otherwise a vertex or
+    /// a sketch point, else an edge or a sketch curve, near the pointer — and not hidden behind a
+    /// face — wins: the smallest entity under the pointer is the one meant.
+    /// Else the nearest along the ray of the faces, solids, sketches and
+    /// other datums hit.
+    pub fn pick(
+        &self,
+        pointer: &Pointer<S>,
+        roles: &[Role],
+        scope: Option<&EntityRef>,
+    ) -> Option<PartHit<S>> {
+        let accept = |entity: &EntityRef, its: &[Role]| {
+            its.iter().any(|r| roles.contains(r)) && scope.is_none_or(|s| entity.lies_in(s))
+        };
+        if let Some(hit) = self.pick_frame(pointer, &accept) {
             return Some(hit);
         }
         let ray = &pointer.ray;
-        let face = (wants(Target::Face)
-            || wants(Target::Solid)
-            || wants(Target::Vertex)
-            || wants(Target::Edge))
-        .then(|| self.pick_face(pointer))
-        .flatten();
+        let face = self.pick_face(pointer);
         // In front of the face hit, give or take the reach: a vertex or an
         // edge on the face's own boundary lies right at it.
         let visible = |t: S| {
@@ -323,51 +363,86 @@ impl<S: Scalar> PartView<S> {
                 .is_none_or(|(ft, _)| !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft))))
         };
         let near = |(dist, t): (S, S)| (pointer.within(dist, t, 1.0) && visible(t)).then_some(t);
+        let nearest = |hits: Vec<PartHit<S>>| hits.into_iter().min_by(|a, b| nearer(a.t, b.t));
 
-        if wants(Target::Vertex) {
-            let vertex = self
-                .vertices
-                .iter()
-                .filter_map(|v| near(ray.distance_to_point(&v.at)).map(|t| (t, v)))
-                .min_by(|a, b| nearer(a.0, b.0));
-            if let Some((t, v)) = vertex {
-                return Some(PartHit {
-                    entity: EntityRef::Vertex {
-                        name: v.name.clone(),
-                    },
-                    point: v.at,
+        let vertices = self.vertices.iter().map(|v| {
+            let entity = EntityRef::Vertex {
+                name: v.name.clone(),
+            };
+            (entity, v.at)
+        });
+        let sketch_points = self.sketches.iter().flat_map(|sketch| {
+            sketch.points.iter().map(|p| {
+                let entity = EntityRef::SketchPoint {
+                    sketch: sketch.name.clone(),
+                    point: p.id,
+                };
+                (entity, sketch.plane.uv_to_xyz(&p.at))
+            })
+        });
+        let points = vertices
+            .chain(sketch_points)
+            .filter(|(entity, _)| accept(entity, &[Role::Point]))
+            .filter_map(|(entity, at)| {
+                near(ray.distance_to_point(&at)).map(|t| PartHit {
+                    entity,
+                    point: at,
                     t,
-                });
+                })
+            })
+            .collect();
+        if let Some(hit) = nearest(points) {
+            return Some(hit);
+        }
+
+        let polyline_hit =
+            |entity: EntityRef, polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>| {
+                polyline
+                    .filter_map(|(a, b)| near(ray.distance_to_segment(&a, &b)))
+                    .min_by(|&a, &b| nearer(a, b))
+                    .map(|t| PartHit {
+                        entity: entity.clone(),
+                        point: ray.at(t),
+                        t,
+                    })
+            };
+        let mut curves = Vec::new();
+        for e in &self.edges {
+            let entity = EntityRef::Edge {
+                name: e.name.clone(),
+            };
+            if accept(&entity, &e.roles) {
+                let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
+                curves.extend(polyline_hit(entity, &mut segments));
             }
         }
-        if wants(Target::Edge) {
-            let edge = self
-                .edges
-                .iter()
-                .flat_map(|e| e.polyline.windows(2).map(move |w| (e, w)))
-                .filter_map(|(e, w)| near(ray.distance_to_segment(&w[0], &w[1])).map(|t| (t, e)))
-                .min_by(|a, b| nearer(a.0, b.0));
-            if let Some((t, e)) = edge {
-                return Some(PartHit {
-                    entity: EntityRef::Edge {
-                        name: e.name.clone(),
-                    },
-                    point: ray.at(t),
-                    t,
-                });
+        for sketch in &self.sketches {
+            for c in &sketch.curves {
+                let entity = EntityRef::SketchCurve {
+                    sketch: sketch.name.clone(),
+                    curve: c.id,
+                };
+                if accept(&entity, &c.roles) {
+                    let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
+                    let mut segments = c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
+                    curves.extend(polyline_hit(entity, &mut segments));
+                }
             }
+        }
+        if let Some(hit) = nearest(curves) {
+            return Some(hit);
         }
 
         let mut hits: Vec<PartHit<S>> = Vec::new();
         if let Some((t, f)) = face {
-            let entity = if wants(Target::Face) {
-                Some(EntityRef::Face {
-                    name: f.name.clone(),
-                })
-            } else if wants(Target::Solid) {
-                f.solid.clone().map(|name| EntityRef::Solid { name })
+            let face = EntityRef::Face {
+                name: f.name.clone(),
+            };
+            let solid = f.solid.clone().map(|name| EntityRef::Solid { name });
+            let entity = if accept(&face, &f.roles) {
+                Some(face)
             } else {
-                None
+                solid.filter(|solid| accept(solid, &[Role::Solid]))
             };
             hits.extend(entity.map(|entity| PartHit {
                 entity,
@@ -375,11 +450,31 @@ impl<S: Scalar> PartView<S> {
                 t,
             }));
         }
-        if wants(Target::Sketch) {
-            hits.extend(self.pick_sketch(pointer));
+        hits.extend(self.pick_sketch(pointer, &accept));
+        hits.extend(self.pick_datum(pointer, &accept));
+        nearest(hits)
+    }
+
+    /// Whether `entity` — a sketch or a datum — or a part of it can fill one
+    /// of `roles`: whether a pick for them could take something of it.
+    pub fn can_fill(&self, entity: &EntityRef, roles: &[Role]) -> bool {
+        let fills = |its: &[Role]| its.iter().any(|r| roles.contains(r));
+        match entity {
+            EntityRef::Sketch { name } => self.sketches.iter().any(|s| {
+                s.name == *name
+                    && (fills(&[Role::Sketch])
+                        || (!s.points.is_empty() && fills(&[Role::Point]))
+                        || s.curves.iter().any(|c| fills(&c.roles)))
+            }),
+            EntityRef::Datum { name, .. } => self.datums.iter().any(|d| {
+                d.name == *name
+                    && match d.kind {
+                        DatumKind::Frame => fills(&[Role::Point, Role::Line, Role::Plane]),
+                        kind => fills(&[datum_role(kind)]),
+                    }
+            }),
+            _ => false,
         }
-        hits.extend(self.pick_datum(pointer, targets));
-        hits.into_iter().min_by(|a, b| nearer(a.t, b.t))
     }
 
     /// The nearest face the ray enters.
@@ -393,9 +488,19 @@ impl<S: Scalar> PartView<S> {
 
     /// The nearest sketch hit inside one of its closed regions — the area a
     /// viewer shades — or near one of its curves.
-    fn pick_sketch(&self, pointer: &Pointer<S>) -> Option<PartHit<S>> {
+    fn pick_sketch(
+        &self,
+        pointer: &Pointer<S>,
+        accept: &impl Fn(&EntityRef, &[Role]) -> bool,
+    ) -> Option<PartHit<S>> {
         self.sketches
             .iter()
+            .filter(|sketch| {
+                let entity = EntityRef::Sketch {
+                    name: sketch.name.clone(),
+                };
+                accept(&entity, &[Role::Sketch])
+            })
             .filter_map(|sketch| {
                 let (t, p) = pointer.ray.intersect_uv_plane(&sketch.plane)?;
                 let reach = pointer.reach_at(1.0, t);
@@ -419,17 +524,24 @@ impl<S: Scalar> PartView<S> {
             .min_by(|a, b| nearer(a.t, b.t))
     }
 
-    /// The nearest datum other than a frame of a targeted kind the ray
-    /// hits, as the viewer draws it: a point at its origin, an axis as a
-    /// line and a plane as a square, each [`Extent::size`] long around the
-    /// point of it nearest the extent's center.
-    fn pick_datum(&self, pointer: &Pointer<S>, targets: &[Target]) -> Option<PartHit<S>> {
+    /// The nearest datum other than a frame `accept`ed the ray hits, as the
+    /// viewer draws it: a point at its origin, an axis as a line and a plane
+    /// as a square, each [`Extent::size`] long around the point of it
+    /// nearest the extent's center.
+    fn pick_datum(
+        &self,
+        pointer: &Pointer<S>,
+        accept: &impl Fn(&EntityRef, &[Role]) -> bool,
+    ) -> Option<PartHit<S>> {
         let Extent { center, size } = self.extent;
         let ray = &pointer.ray;
         let half = size.div(S::TWO).ok()?;
         self.datums
             .iter()
-            .filter(|d| d.kind != DatumKind::Frame && targets.contains(&Target::Datum(d.kind)))
+            .filter(|d| {
+                d.kind != DatumKind::Frame
+                    && accept(&EntityRef::datum(d.name.clone()), &[datum_role(d.kind)])
+            })
             .filter_map(|d| {
                 let f = &d.frame;
                 let (origin, w) = (f.origin(), f.w());
@@ -462,22 +574,25 @@ impl<S: Scalar> PartView<S> {
             .min_by(|a, b| nearer(a.t, b.t))
     }
 
-    /// The part of a frame datum of a targeted kind the ray hits, the
-    /// frame [`FRAME`] reaches tall: its origin ball — the frame as a whole
-    /// — else an axis (from a tenth of its length to its tip), else a
+    /// The part of a frame datum `accept`ed the ray hits, the frame
+    /// [`FRAME`] reaches tall: its origin ball — the frame as a whole, a
+    /// point — else an axis (from a tenth of its length to its tip), else a
     /// plane's square (off the origin, between the other two axes). The
     /// smallest part under the pointer, as for the part's entities, and of
     /// the nearest frame.
-    fn pick_frame(&self, pointer: &Pointer<S>, targets: &[Target]) -> Option<PartHit<S>> {
+    fn pick_frame(
+        &self,
+        pointer: &Pointer<S>,
+        accept: &impl Fn(&EntityRef, &[Role]) -> bool,
+    ) -> Option<PartHit<S>> {
         let ray = &pointer.ray;
-        let wants = |kind: DatumKind| targets.contains(&Target::Datum(kind));
         let frac = |size: S, x: f64| size.mul(S::from_f64(x));
         let (mut balls, mut axes, mut planes) = (Vec::new(), Vec::new(), Vec::new());
         for d in self.datums.iter().filter(|d| d.kind == DatumKind::Frame) {
             let f = &d.frame;
             let origin = f.origin();
             let size = pointer.reach_at(FRAME, ray.closest_to_point(origin));
-            if wants(DatumKind::Frame) || wants(DatumKind::Point) {
+            if accept(&EntityRef::datum(d.name.clone()), &[Role::Point]) {
                 let (dist, t) = ray.distance_to_point(origin);
                 if !dist.definitely_greater(frac(size, 0.12)) {
                     balls.push(PartHit {
@@ -489,7 +604,8 @@ impl<S: Scalar> PartView<S> {
             }
             for axis in FrameAxis::ALL {
                 let dir = axis.of(f);
-                if wants(DatumKind::Axis) {
+                let component = |c| EntityRef::datum_component(d.name.clone(), c);
+                if accept(&component(DatumComponent::Axis(axis)), &[Role::Line]) {
                     let (a, b) = (
                         origin.add(&dir.prod_scalar(frac(size, 0.1))),
                         origin.add(&dir.prod_scalar(size)),
@@ -506,7 +622,7 @@ impl<S: Scalar> PartView<S> {
                         });
                     }
                 }
-                if wants(DatumKind::Plane)
+                if accept(&component(DatumComponent::Plane(axis)), &[Role::Plane])
                     && let Some((t, point)) = ray.intersect_plane(origin, &dir)
                 {
                     let local = point.sub(origin);
@@ -540,5 +656,14 @@ impl<S: Scalar> PartView<S> {
         nearest(balls)
             .or_else(|| nearest(axes))
             .or_else(|| nearest(planes))
+    }
+}
+
+/// The role a datum of `kind` fills as a whole, other than a frame's.
+fn datum_role(kind: DatumKind) -> Role {
+    match kind {
+        DatumKind::Point | DatumKind::Frame => Role::Point,
+        DatumKind::Axis => Role::Line,
+        DatumKind::Plane => Role::Plane,
     }
 }

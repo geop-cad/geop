@@ -1,0 +1,230 @@
+//! [`Form`]: what an operation shows for a step — its dialog and the
+//! [`Visual`]s it draws — and, for each field, what setting it does.
+//!
+//! A field is described once: the control it shows and the setter its
+//! value goes to, side by side (see [`Form::number`], [`Form::reference`],
+//! ...). [`crate::Operation::set`] finds a field's setter by its key, so an
+//! operation never matches keys itself. A setter may capture what the form
+//! was built from — the part before the step — for what setting a field
+//! implies for others: another sketch picked brings its own axis, a
+//! selection picks the construction it fits.
+
+use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar};
+
+use super::{
+    Action, Choice, Control, Dialog, ListItem, Number, Picked, Reference, Tone, Value, Visual,
+};
+use crate::operation::{EntityRef, Role};
+
+/// What a setter edits: the step's arguments, its session, and the keys of
+/// the visuals selected.
+pub struct Edit<'e, A, T> {
+    pub args: &'e mut A,
+    pub session: &'e mut T,
+    pub selection: &'e mut Vec<String>,
+}
+
+/// What setting a field does.
+type Setter<'a, A, T> = Box<dyn Fn(Edit<'_, A, T>, Value) + 'a>;
+
+/// What an operation shows for a step: its fields and what setting each
+/// does, and what it draws. `A` is its arguments, `T` its session; a form
+/// an editor reads (see [`Form::erase`]) has neither.
+pub struct Form<'a, S: Scalar, A = (), T = ()> {
+    pub dialog: Dialog<S>,
+    pub visuals: Vec<Visual<S>>,
+    /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
+    /// stops orbiting, and draws a grid on it. Draggable visuals are
+    /// dragged in it.
+    pub focus: Option<CoordinateSystem<S>>,
+    /// Whether the operation has a tool in hand — drawing a line, say — so
+    /// that clicks go to it rather than select.
+    pub tool: bool,
+    setters: Vec<(String, Setter<'a, A, T>)>,
+}
+
+impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
+    fn default() -> Self {
+        Self {
+            dialog: Dialog::new(),
+            visuals: Vec::new(),
+            focus: None,
+            tool: false,
+            setters: Vec::new(),
+        }
+    }
+}
+
+impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// What the field `key` does with `value`: its setter's. Nothing for a
+    /// key no field has — a field shown only to be read.
+    pub fn set(&self, key: &str, edit: Edit<'_, A, T>, value: Value) {
+        if let Some((_, setter)) = self.setters.iter().find(|(k, _)| k == key) {
+            setter(edit, value);
+        }
+    }
+
+    /// The form as an editor reads it: what it shows, without what setting
+    /// its fields does.
+    pub fn erase(self) -> Form<'a, S> {
+        Form {
+            dialog: self.dialog,
+            visuals: self.visuals,
+            focus: self.focus,
+            tool: self.tool,
+            setters: Vec::new(),
+        }
+    }
+
+    /// `setter` for the key `key`: for a control already in the dialog, or
+    /// one of its items — a list's entries each have their own key.
+    pub fn on(&mut self, key: impl Into<String>, setter: impl Fn(Edit<'_, A, T>, Value) + 'a) {
+        self.setters.push((key.into(), Box::new(setter)));
+    }
+
+    /// Appends `control` under `key`, set by `setter`.
+    fn field(
+        &mut self,
+        key: &str,
+        control: Control<S>,
+        setter: impl Fn(Edit<'_, A, T>, Value) + 'a,
+    ) -> &mut Self {
+        self.dialog.push(key, control);
+        self.on(key, setter);
+        self
+    }
+
+    pub fn heading(&mut self, key: &str, text: impl Into<String>) -> &mut Self {
+        self.dialog
+            .push(key, Control::Heading { text: text.into() });
+        self
+    }
+
+    pub fn text(&mut self, key: &str, text: impl Into<String>, tone: Tone) -> &mut Self {
+        self.dialog.push(
+            key,
+            Control::Text {
+                text: text.into(),
+                tone,
+            },
+        );
+        self
+    }
+
+    /// A list of entries, each with a key of its own for [`Form::on`].
+    pub fn list(&mut self, key: &str, items: Vec<ListItem>, empty: impl Into<String>) -> &mut Self {
+        self.dialog.push(
+            key,
+            Control::List {
+                items,
+                empty: empty.into(),
+            },
+        );
+        self
+    }
+
+    /// Things to do or choose; pressing one runs `run` with its value.
+    pub fn actions(
+        &mut self,
+        key: &str,
+        actions: Vec<Action>,
+        run: impl Fn(Edit<'_, A, T>, &str) + 'a,
+    ) -> &mut Self {
+        self.field(key, Control::Actions { actions }, move |edit, value| {
+            if let Value::Choice(choice) = value {
+                run(edit, &choice);
+            }
+        })
+    }
+
+    pub fn checkbox(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: bool,
+        set: impl Fn(&mut A, bool) + 'a,
+    ) -> &mut Self {
+        let control = Control::Checkbox {
+            label: label.into(),
+            value,
+        };
+        self.field(key, control, move |edit, value| {
+            if let Value::Bool(b) = value {
+                set(edit.args, b);
+            }
+        })
+    }
+
+    pub fn number(
+        &mut self,
+        key: &str,
+        number: Number<S>,
+        set: impl Fn(&mut A, f64) + 'a,
+    ) -> &mut Self {
+        self.field(key, Control::Number(number), move |edit, value| {
+            if let Value::Number(v) = value {
+                set(edit.args, v);
+            }
+        })
+    }
+
+    /// One of `options`, by value.
+    pub fn select(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        options: Vec<Choice>,
+        set: impl Fn(&mut A, &str) + 'a,
+    ) -> &mut Self {
+        let control = Control::Select {
+            label: label.into(),
+            value: value.into(),
+            options,
+        };
+        self.field(key, control, move |edit, value| {
+            if let Value::Choice(choice) = value {
+                set(edit.args, &choice);
+            }
+        })
+    }
+
+    /// Entities that can fill one of `roles` — and, with a `scope`, are part
+    /// of it (see [`Reference`]); `set` gets what the field holds now.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reference(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: Vec<EntityRef>,
+        roles: &[Role],
+        scope: Option<EntityRef>,
+        multiple: bool,
+        set: impl Fn(Edit<'_, A, T>, Vec<EntityRef>) + 'a,
+    ) -> &mut Self {
+        let control = Control::Reference(Reference {
+            label: label.into(),
+            roles: roles.to_vec(),
+            scope,
+            value: value
+                .into_iter()
+                .map(|entity| Picked {
+                    entity,
+                    detail: None,
+                    tone: Tone::Normal,
+                })
+                .collect(),
+            multiple,
+            armed: false,
+        });
+        self.field(key, control, move |edit, value| {
+            if let Value::Entities(entities) = value {
+                set(edit, entities);
+            }
+        })
+    }
+}

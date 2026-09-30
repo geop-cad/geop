@@ -1,12 +1,17 @@
 //! The editor engine: a program edited by commands, and only what changed
 //! sent back.
 
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::{
     primitives::Ray,
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::ui::{Pointer, Reach, StepEditEvent, Target, Value};
+use geop_ops::{
+    EntityRef, ORIGIN,
+    operation::Role,
+    ui::{Button, Control, Pointer, Reach, StepEditEvent, Tone, Value},
+};
 use geop_ops_booleans::Combine;
 
 use crate::{Command, Editor, PartOperation, Program, Update, examples};
@@ -185,8 +190,61 @@ fn handles_are_dragged() {
     assert!(matches!(hole.combine, Combine::Union { .. }));
 }
 
-/// A new step starts by picking its first input; while it does, the
-/// sketches the program used — hidden otherwise — are shown to pick from.
+/// A new extrude's distance handle, dragged as a viewer drags it: straight
+/// away — the newest sketch it starts with needs no click — seen in
+/// perspective, the pointer moving in several steps before it is released.
+#[test]
+fn new_steps_handles_are_dragged_in_steps() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "extrude".into(),
+    });
+    // From the side, in perspective: the hole sketch's extrude ends a unit
+    // above the box's top, at (1, 1, 2).
+    let side = |z: f64| {
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        Pointer {
+            ray: Ray::try_new(v([1.0, -10.0, 2.0]), v([0.0, 11.0, z - 2.0])).unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.002),
+            },
+        }
+    };
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover { pointer: side(2.0) },
+    });
+    assert!(
+        update.step.unwrap().presentation.grab,
+        "the handle offers a grab"
+    );
+    for (z, done) in [(2.1, false), (2.2, false), (2.3, true)] {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Drag {
+                from: side(2.0),
+                to: side(z),
+                done,
+            },
+        });
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let PartOperation::Extrude(extrude) = &program.steps.last().unwrap().operation else {
+        panic!("an extrude");
+    };
+    assert!(
+        (extrude.distance - 1.3).abs() < 1e-9,
+        "{}",
+        extrude.distance
+    );
+}
+
+/// A new step whose first input is still empty starts by picking it — a
+/// new sketch waits for its plane, nothing preselected, and says so rather
+/// than failing. One that already
+/// holds its first input — the newest sketch, for an extrude — waits for no
+/// click; pressing the field picks another, and while it does, the sketches
+/// the program used — hidden otherwise — are shown to pick from.
 #[test]
 fn new_steps_pick_their_first_input() {
     let (mut editor, update) = editor();
@@ -195,11 +253,100 @@ fn new_steps_pick_their_first_input() {
     assert!(hidden.contains(&"hole_sketch".to_string()));
 
     let update = editor.handle(Command::New {
-        kind: "extrude".into(),
+        kind: "add_sketch".into(),
     });
     let step = update.step.unwrap();
-    assert_eq!(step.presentation.pickable, [Target::Sketch]);
+    // Waiting for its plane is no error; it cannot be committed yet.
+    assert_eq!(step.missing, ["plane"]);
+    assert_eq!(step.error, None);
+    let presentation = step.presentation;
+    assert_eq!(presentation.pickable, [Role::Plane]);
+    let Some(Control::Reference(plane)) = presentation.dialog.get("plane") else {
+        panic!("the plane is picked");
+    };
+    assert!(plane.armed && plane.value.is_empty(), "{plane:?}");
+    let refused = editor.handle(Command::Commit);
+    let refused = refused.error.expect("the commit is refused");
+    assert!(refused.contains("pick the plane first"), "{refused}");
+    editor.handle(Command::Cancel);
+
+    let update = editor.handle(Command::New {
+        kind: "extrude".into(),
+    });
+    assert!(update.step.unwrap().presentation.pickable.is_empty());
+    let update = editor.handle(dialog("sketch", Value::Press));
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Sketch]);
     assert!(update.scene.unwrap().hidden.is_empty());
+}
+
+/// Choosing to cut sticks while the distance changes on the same side of
+/// the sketch plane; crossing it turns a cut into a join, and back.
+#[test]
+fn a_chosen_cut_stays_a_cut() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "extrude".into(),
+    });
+    let combine = |editor: &mut Editor<S>| {
+        editor.handle(Command::Commit);
+        let program = editor.program();
+        let PartOperation::Extrude(extrude) = &program.steps.last().unwrap().operation else {
+            panic!("an extrude");
+        };
+        let combine = extrude.combine.clone();
+        editor.handle(Command::Undo);
+        combine
+    };
+    editor.handle(dialog("combine", Value::Choice("difference".into())));
+    editor.handle(dialog("distance", Value::Number(2.0)));
+    assert!(matches!(combine(&mut editor), Combine::Difference { .. }));
+}
+
+/// A revolve picks its axis in the viewport, like anything else it builds
+/// on: any line in the sketch's plane — here the origin's y axis.
+#[test]
+fn revolve_axes_are_picked() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::New {
+        kind: "revolve".into(),
+    });
+    let presentation = update.step.unwrap().presentation;
+    let Some(Control::Reference(axis)) = presentation.dialog.get("axis") else {
+        panic!("the axis is picked");
+    };
+    assert!(
+        axis.value.is_empty(),
+        "the newest sketch, a circle, has no line to default to"
+    );
+    // Kept apart from the box: joining the two is a boolean of its own.
+    editor.handle(dialog("combine", Value::Choice("new_body".into())));
+    // From below: the outline's square, under the box.
+    let below = |x: f64, y: f64| pointer([x, y, -10.0], [0.0, 0.0, 1.0]);
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    editor.handle(click(below(1.0, 0.5)));
+    editor.handle(dialog("axis", Value::Press));
+    // The origin's y axis, ten reaches of 0.009 long, from below.
+    let update = editor.handle(click(below(0.0, 0.06)));
+    let presentation = update.step.unwrap().presentation;
+    let Some(Control::Reference(axis)) = presentation.dialog.get("axis") else {
+        panic!("the axis is picked");
+    };
+    assert_eq!(
+        axis.entities().collect::<Vec<_>>(),
+        [&EntityRef::datum_component(
+            ORIGIN,
+            DatumComponent::Axis(FrameAxis::Y)
+        )]
+    );
+    assert_eq!(axis.value[0].tone, Tone::Normal);
+    assert!(!axis.armed, "one axis is picked, and done");
 }
 
 /// Seeking runs only the steps before the marker, and new steps go there.

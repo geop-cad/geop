@@ -26,11 +26,14 @@ export type DatumComponent = { axis: FrameAxis } | { plane: FrameAxis };
 /**
  * Something picked in the viewport (see `geop_ops::EntityRef`): an entity
  * of the part by name — for a frame datum, perhaps one of its axes or
- * planes. Every part has the frame datum `origin`.
+ * planes; for a sketch, perhaps one of its curves, by id. Every part has the
+ * frame datum `origin`.
  */
 export type EntityRef =
   | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch"; name: string }
-  | { type: "Datum"; name: string; component?: DatumComponent };
+  | { type: "Datum"; name: string; component?: DatumComponent }
+  | { type: "SketchCurve"; sketch: string; curve: number }
+  | { type: "SketchPoint"; sketch: string; point: number };
 
 /** Whether two entities are the same one. */
 export function sameEntity(a: EntityRef, b: EntityRef): boolean {
@@ -39,6 +42,8 @@ export function sameEntity(a: EntityRef, b: EntityRef): boolean {
 
 /** How an entity is shown: its name, and which component of a frame. */
 export function entityLabel(e: EntityRef): string {
+  if (e.type === "SketchCurve") return `${e.sketch} c${e.curve}`;
+  if (e.type === "SketchPoint") return `${e.sketch} p${e.point}`;
   if (e.type !== "Datum" || !e.component) return e.name;
   if ("axis" in e.component) return `${e.name} ${e.component.axis} axis`;
   const plane = { x: "yz", y: "zx", z: "xy" }[e.component.plane];
@@ -92,7 +97,12 @@ export interface PartView {
   /** Triangulated, with the kernel's surface normal at each corner. */
   faces: { name: string; solid: string | null; triangles: [Vec3, Vec3, Vec3][]; normals: [Vec3, Vec3, Vec3][] }[];
   /** Curves in their plane's `u`/`v` coordinates. */
-  sketches: { name: string; plane: Frame; curves: { construction: boolean; polyline: [number, number][] }[] }[];
+  sketches: {
+    name: string;
+    plane: Frame;
+    curves: { id: number; construction: boolean; polyline: [number, number][] }[];
+    points: { id: number; at: [number, number] }[];
+  }[];
   datums: DatumInfo[];
   /** The part's solids, oldest first. */
   solids: string[];
@@ -143,7 +153,11 @@ export type Value =
   | { type: "remove" }
   | { type: "bool"; value: boolean }
   | { type: "number"; value: number }
-  | { type: "choice"; value: string };
+  | { type: "choice"; value: string }
+  /** The entity at this index taken out of a reference field. */
+  | { type: "remove_at"; value: number }
+  /** Everything taken out of a reference field. */
+  | { type: "clear" };
 
 /** One thing the user did in the viewport. */
 export type PointerEvent_ =
@@ -157,20 +171,22 @@ export type EditEvent = { type: "dialog"; key: string; value: Value } | { type: 
 
 export type Tone = "normal" | "hint" | "error" | "success";
 
-export interface ButtonItem {
-  key: string;
+/** Something to do or choose — see `geop_ops::ui::Action`. */
+export interface Action {
+  /** What pressing it sends, as a choice. */
+  value: string;
   label: string;
+  /** What it does — or, disabled, why it cannot be done now. */
   title: string | null;
-  active: boolean;
+  group: string | null;
   enabled: boolean;
+  /** Shown pressed: the tool in hand, the way chosen. */
+  active: boolean;
 }
 
 export interface Choice {
   value: string;
   label: string;
-  enabled: boolean;
-  title: string | null;
-  group: string | null;
 }
 
 export interface ListItem {
@@ -183,20 +199,42 @@ export interface ListItem {
   value: number | null;
 }
 
-/** What a click picks: a kind of entity. */
-export type Target = "vertex" | "edge" | "face" | "solid" | "sketch" | { datum: DatumKind };
+/** What an entity can be used as, and what a pick looks for — see `geop_ops::operation::Role`. */
+export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "solid" | "sketch";
+
+/** What a number measures. */
+export type Unit = "length" | "angle" | "fraction";
+
+/** An entity a reference field holds, and what the kernel found it to be. */
+export interface Picked {
+  entity: EntityRef;
+  detail: string | null;
+  tone: Tone;
+}
 
 /** A dialog primitive. */
 export type Control =
   | { type: "heading"; text: string }
   | { type: "text"; text: string; tone: Tone }
-  | { type: "buttons"; buttons: ButtonItem[] }
+  /** Pressing one sends its value as a choice. */
+  | { type: "actions"; actions: Action[] }
   | { type: "checkbox"; label: string; value: boolean }
-  | { type: "number"; label: string; value: number; slider: [number, number] | null; step: number }
-  /** Grouped options are shown all at once, the rest as a dropdown. */
+  /** A slider over `range`, if given. */
+  | { type: "number"; label: string; value: number; unit: Unit; range: [number, number] | null; step: number }
   | { type: "select"; label: string; value: string; options: Choice[] }
-  /** Entities picked in the viewport; pressing it arms it. */
-  | { type: "pick"; label: string; value: EntityRef[]; targets: Target[]; multiple: boolean; armed: boolean }
+  /**
+   * Entities picked in the viewport that can fill one of `roles`: pressing
+   * it arms it; an entity is taken out by `remove_at`, all by `clear`.
+   */
+  | {
+      type: "reference";
+      label: string;
+      roles: Role[];
+      scope: EntityRef | null;
+      value: Picked[];
+      multiple: boolean;
+      armed: boolean;
+    }
   | { type: "list"; items: ListItem[]; empty: string };
 
 /** A control, under the key the events it sends carry. */
@@ -230,8 +268,8 @@ export interface Presentation {
   visuals: Visual[];
   /** Entities of the part to draw lit. */
   highlights: EntityRef[];
-  /** What a click picks right now. */
-  pickable: Target[];
+  /** What a click picks right now: entities that can fill one of these. */
+  pickable: Role[];
   /** A plane to work in, head on. */
   focus: Frame | null;
   /** Whether a press where the pointer last hovered starts a drag. */
@@ -292,7 +330,9 @@ export interface StepState {
   /** None yet, for a new step. */
   id: string | null;
   presentation: Presentation;
-  /** Why it does not build; only a step that builds can be committed. */
+  /** What it still needs picked, by its fields' labels: until then it is not built, and has no error. */
+  missing: string[];
+  /** Why it does not build, once it has what it needs; only a step that builds can be committed. */
   error: string | null;
   preview: boolean;
 }

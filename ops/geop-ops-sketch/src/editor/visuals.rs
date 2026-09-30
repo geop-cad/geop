@@ -2,8 +2,10 @@
 
 use super::*;
 
-/// What the sketch looks like in its plane `frame`, with what is selected,
-/// hovered and being drawn in `s`.
+/// What the sketch looks like in its plane `frame`, with what is being
+/// drawn in `s`: its points and curves selectable and draggable, its
+/// constraints' glyphs selectable. What is selected or hovered the editor
+/// draws so.
 pub(super) fn visuals<S: Scalar>(
     sketch: &Sketch,
     s: &SketchSession,
@@ -23,7 +25,6 @@ pub(super) fn visuals<S: Scalar>(
         .unwrap_or_default();
     let failed_points: Vec<PointId> = failed.iter().flat_map(|c| c.points()).collect();
     let failed_curves: Vec<CurveId> = failed.iter().flat_map(|c| c.curves()).collect();
-    let hovered = |key: &str| s.hover.as_deref() == Some(key);
     let world = |p: P2| to_world(frame, p);
     let positions = sketch.positions();
     let mut out = Vec::new();
@@ -33,11 +34,7 @@ pub(super) fn visuals<S: Scalar>(
         Shape::Point {
             at: world([0.0, 0.0]),
         },
-        if hovered("origin") {
-            Style::Hover
-        } else {
-            Style::Guide
-        },
+        Style::Guide,
     ));
     if let Ok(regions) = sketch.regions() {
         for (i, region) in regions.iter().enumerate() {
@@ -62,11 +59,7 @@ pub(super) fn visuals<S: Scalar>(
     }
     for (&id, curve) in &sketch.curves {
         let key = id.to_string();
-        let style = if s.selection.curves.contains(&id) {
-            Style::Selected
-        } else if hovered(&key) {
-            Style::Hover
-        } else if failed_curves.contains(&id) {
+        let style = if failed_curves.contains(&id) {
             Style::Failed
         } else if curve.construction {
             Style::Construction
@@ -75,16 +68,20 @@ pub(super) fn visuals<S: Scalar>(
         } else {
             Style::Fixed
         };
-        out.push(Visual::new(
-            key,
-            Shape::Polyline {
-                points: curve_polyline(sketch, &positions, id)
-                    .into_iter()
-                    .map(world)
-                    .collect(),
-            },
-            style,
-        ));
+        out.push(
+            Visual::new(
+                key,
+                Shape::Polyline {
+                    points: curve_polyline(sketch, &positions, id)
+                        .into_iter()
+                        .map(world)
+                        .collect(),
+                },
+                style,
+            )
+            .selectable()
+            .draggable(),
+        );
         if let CurveKind::Spline { control_points } = &curve.kind {
             out.push(Visual::new(
                 format!("hull{}", id.0),
@@ -112,18 +109,18 @@ pub(super) fn visuals<S: Scalar>(
     }
     for (&id, p) in &sketch.points {
         let key = id.to_string();
-        let style = if s.selection.points.contains(&id) {
-            Style::Selected
-        } else if hovered(&key) {
-            Style::Hover
-        } else if failed_points.contains(&id) {
+        let style = if failed_points.contains(&id) {
             Style::Failed
         } else if report.is_none_or(|r| r.free_points.get(&id).copied().unwrap_or(true)) {
             Style::Free
         } else {
             Style::Fixed
         };
-        out.push(Visual::new(key, Shape::Point { at: world(p.xy()) }, style));
+        out.push(
+            Visual::new(key, Shape::Point { at: world(p.xy()) }, style)
+                .selectable()
+                .draggable(),
+        );
     }
     // Glyphs of one spot stack sideways, so each can be read and clicked.
     let mut anchors: Vec<P2> = Vec::new();
@@ -134,27 +131,26 @@ pub(super) fn visuals<S: Scalar>(
         let stack = anchors.iter().filter(|&&a| dist(a, at) < 1e-9).count();
         anchors.push(at);
         let key = id.to_string();
-        let style = if s.selected_constraint == Some(id) {
-            Style::Selected
-        } else if hovered(&key) {
-            Style::Hover
-        } else if report.is_some_and(|r| r.failed_constraints.contains(&id)) {
+        let style = if report.is_some_and(|r| r.failed_constraints.contains(&id)) {
             Style::Failed
         } else {
             Style::Fixed
         };
-        out.push(Visual::new(
-            key,
-            Shape::Label {
-                at: world(at),
-                text,
-                offset: frame
-                    .u()
-                    .prod_scalar(S::from_f64(1.5 + 2.5 * stack as f64))
-                    .add(&frame.v().prod_scalar(S::from_f64(1.3))),
-            },
-            style,
-        ));
+        out.push(
+            Visual::new(
+                key,
+                Shape::Label {
+                    at: world(at),
+                    text,
+                    offset: frame
+                        .u()
+                        .prod_scalar(S::from_f64(1.5 + 2.5 * stack as f64))
+                        .add(&frame.v().prod_scalar(S::from_f64(1.3))),
+                },
+                style,
+            )
+            .selectable(),
+        );
     }
     out
 }

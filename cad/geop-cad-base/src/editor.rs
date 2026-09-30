@@ -11,7 +11,8 @@
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
     EntityRef, OperationInfo, Operations, Step, StepResult,
-    ui::{PartView, Presentation, StepEditEvent, StepEditor, Target},
+    operation::Role,
+    ui::{PartView, Presentation, StepEditEvent, StepEditor},
 };
 use serde::{Deserialize, Serialize};
 
@@ -121,7 +122,11 @@ pub struct StepState<S: Scalar> {
     /// Its id — none yet, for a new step.
     pub id: Option<String>,
     pub presentation: Presentation<S>,
-    /// Why it does not build; only a step that builds can be committed.
+    /// What it still needs picked, by its fields' labels: until it has it,
+    /// it is not built, and there is no error to show.
+    pub missing: Vec<String>,
+    /// Why it does not build, once it has what it needs; only a step that
+    /// builds can be committed.
     pub error: Option<String>,
     pub preview: bool,
 }
@@ -145,7 +150,7 @@ struct Open<S: Scalar> {
     index: usize,
     /// The step it edits; `None` for a new one inserted at `index`.
     id: Option<String>,
-    editor: StepEditor<PartOperation>,
+    editor: StepEditor<PartOperation, S>,
     /// The part before it, as drawn: what picks test against.
     view: PartView<S>,
 }
@@ -304,6 +309,17 @@ impl<S: Scalar> Editor<S> {
                 let Some(open) = &self.open else {
                     return Err(GeopError::new("no step is being edited"));
                 };
+                let dialog = open
+                    .editor
+                    .presentation(self.runner.part_at(open.index))
+                    .dialog;
+                let missing = dialog.missing();
+                if !missing.is_empty() {
+                    return Err(GeopError::new(format!(
+                        "pick the {} first",
+                        missing.join(" and ")
+                    )));
+                }
                 if let Some(error) = self.step_error(open) {
                     return Err(GeopError::new(format!("the step does not build: {error}")));
                 }
@@ -427,7 +443,7 @@ impl<S: Scalar> Editor<S> {
             .enumerate()
             .map(|(i, step)| {
                 let session = step.operation.new_session();
-                let form = step.operation.form(self.runner.part_at(i), &*session);
+                let form = step.operation.form(self.runner.part_at(i), &*session, &[]);
                 form.dialog.picked().cloned().collect()
             })
             .collect();
@@ -455,13 +471,21 @@ impl<S: Scalar> Editor<S> {
         let info = PartOperation::infos()
             .into_iter()
             .find(|i| i.kind == step.kind())?;
+        let presentation = open.editor.presentation(self.runner.part_at(open.index));
+        let missing: Vec<String> = presentation
+            .dialog
+            .missing()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         Some(StepState {
             kind: info.kind,
             label: info.label,
             doc: info.doc,
             id: open.id.clone(),
-            presentation: open.editor.presentation(self.runner.part_at(open.index)),
-            error: self.step_error(open),
+            error: missing.is_empty().then(|| self.step_error(open)).flatten(),
+            missing,
+            presentation,
             preview: self.preview,
         })
     }
@@ -472,8 +496,10 @@ impl<S: Scalar> Editor<S> {
     fn shown_steps(&self, step: Option<&StepState<S>>) -> usize {
         match (&self.open, step) {
             (Some(open), Some(step)) => {
-                let preview =
-                    self.preview && step.error.is_none() && step.presentation.focus.is_none();
+                let preview = self.preview
+                    && step.missing.is_empty()
+                    && step.error.is_none()
+                    && step.presentation.focus.is_none();
                 open.index + usize::from(preview)
             }
             _ => self.runner.results().len(),
@@ -481,20 +507,24 @@ impl<S: Scalar> Editor<S> {
     }
 
     /// What the shown steps built on — sketches, and datums as a whole —
-    /// but none of a kind `picking` looks for.
-    fn hidden(&self, picking: Option<&[Target]>) -> Vec<String> {
+    /// but none that something of could fill a role `picking` looks for.
+    fn hidden(&self, picking: Option<&[Role]>) -> Vec<String> {
         let picking = picking.unwrap_or_default();
-        let picking_sketch = picking.contains(&Target::Sketch);
-        let picking_datum = picking.iter().any(|t| matches!(t, Target::Datum(_)));
+        let pickable = |r: &EntityRef| {
+            self.open
+                .as_ref()
+                .is_some_and(|open| open.view.can_fill(r, picking))
+        };
         self.references
             .iter()
             .flatten()
+            .filter(|r| !pickable(r))
             .filter_map(|r| match r {
-                EntityRef::Sketch { name } if !picking_sketch => Some(name.clone()),
-                EntityRef::Datum {
+                EntityRef::Sketch { name }
+                | EntityRef::Datum {
                     name,
                     component: None,
-                } if !picking_datum => Some(name.clone()),
+                } => Some(name.clone()),
                 _ => None,
             })
             .collect()
@@ -522,7 +552,7 @@ impl<S: Scalar> Editor<S> {
             .enumerate()
             .map(|(i, step)| {
                 let session = step.operation.new_session();
-                let form = step.operation.form(self.runner.part_at(i), &*session);
+                let form = step.operation.form(self.runner.part_at(i), &*session, &[]);
                 StepInfo {
                     id: step.id.clone(),
                     kind: step.operation.kind(),

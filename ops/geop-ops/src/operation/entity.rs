@@ -9,6 +9,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_sketch::{CurveId, PointId};
 use serde::{Deserialize, Serialize};
 
 /// Something picked in the viewport, to build on or to use.
@@ -44,6 +45,16 @@ pub enum EntityRef {
     Sketch {
         name: String,
     },
+    /// A curve of a sketch, by its id in the sketch.
+    SketchCurve {
+        sketch: String,
+        curve: CurveId,
+    },
+    /// A point of a sketch, by its id in the sketch.
+    SketchPoint {
+        sketch: String,
+        point: PointId,
+    },
 }
 
 impl EntityRef {
@@ -70,12 +81,27 @@ impl EntityRef {
                 name,
                 component: Some(component),
             } => format!("{name} {component}"),
+            EntityRef::SketchCurve { sketch, curve } => format!("{sketch} {curve}"),
+            EntityRef::SketchPoint { sketch, point } => format!("{sketch} {point}"),
             EntityRef::Vertex { name }
             | EntityRef::Edge { name }
             | EntityRef::Face { name }
             | EntityRef::Datum { name, .. }
             | EntityRef::Solid { name }
             | EntityRef::Sketch { name } => name.clone(),
+        }
+    }
+}
+
+impl EntityRef {
+    /// Whether it is `scope` or part of it: a curve or a point of a sketch.
+    pub fn lies_in(&self, scope: &EntityRef) -> bool {
+        match (self, scope) {
+            (
+                EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. },
+                EntityRef::Sketch { name },
+            ) => sketch == name,
+            _ => self == scope,
         }
     }
 }
@@ -96,6 +122,12 @@ impl std::fmt::Display for EntityRef {
             } => write!(f, "the {component} of datum {name:?}"),
             EntityRef::Solid { name } => write!(f, "solid {name:?}"),
             EntityRef::Sketch { name } => write!(f, "sketch {name:?}"),
+            EntityRef::SketchCurve { sketch, curve } => {
+                write!(f, "curve {curve} of sketch {sketch:?}")
+            }
+            EntityRef::SketchPoint { sketch, point } => {
+                write!(f, "point {point} of sketch {sketch:?}")
+            }
         }
     }
 }

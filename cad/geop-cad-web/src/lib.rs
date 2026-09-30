@@ -71,7 +71,7 @@ mod tests {
         send(serde_json::json!({"command": "load", "program": {"steps": []}}));
         let started = send(serde_json::json!({"command": "new", "kind": "add_sketch"}));
         let step = &started["step"];
-        assert_eq!(step["presentation"]["dialog"][0]["type"], "pick");
+        assert_eq!(step["presentation"]["dialog"][0]["type"], "reference");
         assert!(step["presentation"]["focus"].is_null());
 
         let pointer = |origin: [f64; 3], dir: [f64; 3]| {

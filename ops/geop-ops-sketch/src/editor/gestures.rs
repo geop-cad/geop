@@ -1,5 +1,6 @@
-//! What the user does in the drawing: clicks with a tool, selections,
-//! drags, dialog fields and keys — each answered with a new sketch.
+//! What the user does in the drawing: clicks with a tool, drags of what the
+//! editor lets be dragged, dialog fields and keys — each answered with a new
+//! sketch.
 
 use super::*;
 
@@ -43,11 +44,12 @@ impl<S: Scalar> Editing<'_, S> {
         }
     }
 
-    /// A click at `p` in the plane, `t` along the pointer's ray.
-    fn click(&mut self, pointer: &Pointer<S>, p: P2, t: S, shift: bool) {
+    /// A click at `p` in the plane, `t` along the pointer's ray — one that
+    /// selected nothing.
+    fn click(&mut self, pointer: &Pointer<S>, p: P2, t: S) {
         let mut next = self.sketch().clone();
         match (self.s.tool, self.s.draft.clone()) {
-            (Tool::Select, _) => self.select_at(pointer, shift),
+            (Tool::Select, _) => self.origin_at(pointer),
             (Tool::Point, _) => {
                 self.place_point(&mut next, pointer, p);
                 self.commit(next);
@@ -161,85 +163,48 @@ impl<S: Scalar> Editing<'_, S> {
         }
     }
 
-    /// A click with the select tool: a constraint's glyph selects the
-    /// constraint; a point or a curve joins the selection, or leaves it; the
-    /// origin gets a point fixed there, selected, to constrain others to.
-    fn select_at(&mut self, pointer: &Pointer<S>, shift: bool) {
-        let visuals = self.visuals();
-        let hit = hit_key(
-            &visuals,
-            pointer,
-            &[&is_glyph, &is_point, &is_origin, &is_curve],
-        );
-        let Some(key) = hit else {
-            if !shift {
-                self.s.selection = Selection::default();
-            }
-            self.s.selected_constraint = None;
-            return;
-        };
-        if let Some(constraint) = glyph_key(&key) {
-            self.s.selected_constraint = Some(constraint);
-            self.s.selection = Selection::default();
+    /// A click with the select tool on the origin: a point fixed there,
+    /// selected, to constrain others to.
+    fn origin_at(&mut self, pointer: &Pointer<S>) {
+        let visuals = visuals(self.sketch(), self.s, &self.frame);
+        if hit_key(&visuals, pointer, &[&is_origin]).is_none() {
             return;
         }
-        self.s.selected_constraint = None;
-        fn toggle<T: PartialEq>(xs: &mut Vec<T>, x: T) {
-            match xs.iter().position(|y| *y == x) {
-                Some(i) => {
-                    xs.remove(i);
-                }
-                None => xs.push(x),
-            }
-        }
-        if let Some(point) = point_key(&key) {
-            toggle(&mut self.s.selection.points, point);
-        } else if let Some(curve) = curve_key(&key) {
-            toggle(&mut self.s.selection.curves, curve);
-        } else {
-            let mut next = self.sketch().clone();
-            let id = self.place_point(&mut next, pointer, [0.0, 0.0]);
-            self.commit(next);
-            if !shift {
-                self.s.selection = Selection::default();
-            }
-            self.s.selection.points.push(id);
-        }
+        let mut next = self.sketch().clone();
+        let id = self.place_point(&mut next, pointer, [0.0, 0.0]);
+        self.commit(next);
+        self.selection.push(id.to_string());
     }
 
-    /// A drag with the select tool, grabbed at `from`: what was grabbed
-    /// follows the pointer, as far as the constraints let it.
-    fn drag(&mut self, from: &Pointer<S>, to: &Pointer<S>, done: bool) {
-        let (Some((grab, _)), Some((p, _))) = (self.in_plane(from), self.in_plane(to)) else {
-            return;
-        };
+    /// The visual `key` dragged from `from` to `to` in the plane: what it
+    /// stands for follows the pointer, as far as the constraints let it — a
+    /// point, a line's or a spline's points, a circle's radius, an arc's
+    /// sweep.
+    fn drag(&mut self, key: &str, from: P2, to: P2, done: bool) {
         if self.s.drag.is_none() {
-            let visuals = self.visuals();
-            let key = hit_key(&visuals, from, &[&is_point, &is_curve]);
             let sketch = self.sketch();
             let points = |points: Vec<PointId>| Drag::Points {
                 origins: points.iter().map(|&q| pt(sketch, q)).collect(),
                 points,
-                grab,
+                grab: from,
             };
-            self.s.drag = match key {
-                Some(key) => match (point_key(&key), curve_key(&key)) {
-                    (Some(point), _) => Some(points(vec![point])),
-                    (_, Some(curve)) => Some(match &sketch.curves[&curve].kind {
-                        CurveKind::Circle { .. } => Drag::Circle { curve },
-                        CurveKind::Arc { .. } => Drag::Arc { curve },
-                        CurveKind::Line { .. } | CurveKind::Spline { .. } => {
-                            points(sketch.curves[&curve].points())
-                        }
-                    }),
-                    _ => None,
-                },
-                None => None,
+            self.s.drag = match (point_key(key), curve_key(key)) {
+                (Some(point), _) if sketch.points.contains_key(&point) => Some(points(vec![point])),
+                (_, Some(curve)) => sketch.curves.get(&curve).map(|c| match &c.kind {
+                    CurveKind::Circle { .. } => Drag::Circle { curve },
+                    CurveKind::Arc { .. } => Drag::Arc { curve },
+                    CurveKind::Line { .. } | CurveKind::Spline { .. } => points(c.points()),
+                }),
+                _ => None,
             };
         }
         let Some(drag) = self.s.drag.clone() else {
             return;
         };
+        if done {
+            self.s.drag = None;
+        }
+        let p = to;
         let mut next = self.sketch().clone();
         let mut drags = Vec::new();
         match drag {
@@ -284,91 +249,76 @@ impl<S: Scalar> Editing<'_, S> {
         }
         solve(&mut next, self.s, &drags);
         self.args.sketch = next;
-        if done {
-            self.s.drag = None;
+    }
+
+    /// Removes what is selected: points, curves and constraints.
+    pub(super) fn delete_selection(&mut self) {
+        let (selection, constraints) = selected(self.sketch(), self.selection);
+        if selection.is_empty() && constraints.is_empty() {
+            return;
+        }
+        let mut next = self.sketch().clone();
+        next.remove(&selection.points, &selection.curves, &constraints);
+        self.selection.clear();
+        self.commit(next);
+    }
+
+    /// Puts down what is being drawn, and takes up `tool`.
+    pub(super) fn take(&mut self, tool: Tool) {
+        self.finish_draft();
+        self.s.tool = tool;
+    }
+
+    /// Adds the constraint labelled `label` among those that fit the
+    /// selection, and clears the selection.
+    pub(super) fn constrain(&mut self, label: &str) {
+        let (selection, _) = selected(self.sketch(), self.selection);
+        let options = constraints::options(self.sketch(), &selection);
+        if let Some(option) = options.into_iter().find(|o| o.label == label) {
+            let mut next = self.sketch().clone();
+            next.constrain(option.constraint);
+            self.commit(next);
+            self.selection.clear();
         }
     }
 
-    fn delete_selection(&mut self) {
+    /// Makes the selected curves construction geometry — or, if they all
+    /// are, profile geometry again.
+    pub(super) fn toggle_construction(&mut self) {
+        let (selection, _) = selected(self.sketch(), self.selection);
         let mut next = self.sketch().clone();
-        if let Some(constraint) = self.s.selected_constraint.take() {
-            next.remove(&[], &[], &[constraint]);
-        } else if !self.s.selection.is_empty() {
-            next.remove(&self.s.selection.points, &self.s.selection.curves, &[]);
-            self.s.selection = Selection::default();
-        } else {
-            return;
+        let all = selection
+            .curves
+            .iter()
+            .all(|c| next.curves.get(c).is_some_and(|c| c.construction));
+        for &c in &selection.curves {
+            next.set_construction(c, !all);
         }
         self.commit(next);
     }
 
-    pub(super) fn dialog(&mut self, key: &str, value: &Value) {
-        if let Some(tool) = key.strip_prefix("tool:").and_then(Tool::by_key) {
-            self.finish_draft();
-            self.s.tool = tool;
-            return;
-        }
-        if let Some(i) = key
-            .strip_prefix("constrain:")
-            .and_then(|i| i.parse::<usize>().ok())
-        {
-            let options = constraints::options(self.sketch(), &self.s.selection);
-            if let Some(option) = options.into_iter().nth(i) {
-                let mut next = self.sketch().clone();
-                next.constrain(option.constraint);
+    /// The constraint `id`'s entry in the list used: pressed, it is
+    /// selected; removed; given a new value.
+    pub(super) fn constraint(&mut self, id: ConstraintId, value: &Value) {
+        let mut next = self.sketch().clone();
+        match value {
+            Value::Press => *self.selection = vec![id.to_string()],
+            Value::Remove => {
+                next.remove(&[], &[], &[id]);
+                self.selection.retain(|k| glyph_key(k) != Some(id));
                 self.commit(next);
-                self.s.selection = Selection::default();
             }
-            return;
-        }
-        if let Some(id) = key
-            .strip_prefix("constraint:")
-            .and_then(|i| i.parse().ok())
-            .map(ConstraintId)
-        {
-            let mut next = self.sketch().clone();
-            match value {
-                Value::Press => {
-                    self.s.selected_constraint = Some(id);
-                    self.s.selection = Selection::default();
-                }
-                Value::Remove => {
-                    next.remove(&[], &[], &[id]);
-                    if self.s.selected_constraint == Some(id) {
-                        self.s.selected_constraint = None;
-                    }
+            Value::Number(v) => {
+                if let Some(c) = next.constraints.get_mut(&id) {
+                    let v = if matches!(c, Constraint::Angle { .. }) {
+                        v.to_radians()
+                    } else {
+                        *v
+                    };
+                    constraints::set_value(c, v);
                     self.commit(next);
                 }
-                Value::Number(v) => {
-                    if let Some(c) = next.constraints.get_mut(&id) {
-                        let v = if matches!(c, Constraint::Angle { .. }) {
-                            v.to_radians()
-                        } else {
-                            *v
-                        };
-                        constraints::set_value(c, v);
-                        self.commit(next);
-                    }
-                }
-                _ => {}
             }
-            return;
-        }
-        match key {
-            "construction" => {
-                let mut next = self.sketch().clone();
-                let all = self
-                    .s
-                    .selection
-                    .curves
-                    .iter()
-                    .all(|c| next.curves.get(c).is_some_and(|c| c.construction));
-                for &c in &self.s.selection.curves {
-                    next.set_construction(c, !all);
-                }
-                self.commit(next);
-            }
-            "delete" => self.delete_selection(),
             _ => {}
         }
     }
@@ -379,8 +329,6 @@ impl<S: Scalar> Editing<'_, S> {
                 if self.s.draft.is_some() {
                     self.finish_draft();
                 } else {
-                    self.s.selection = Selection::default();
-                    self.s.selected_constraint = None;
                     self.s.tool = Tool::Select;
                 }
             }
@@ -388,59 +336,46 @@ impl<S: Scalar> Editing<'_, S> {
             "Delete" | "Backspace" => self.delete_selection(),
             other => {
                 if let Some(tool) = Tool::by_shortcut(other) {
-                    self.finish_draft();
-                    self.s.tool = tool;
+                    self.take(tool);
                 }
             }
         }
     }
 
-    /// Where the pointer is over: what a click there would take.
-    fn hover(&mut self, pointer: &Pointer<S>) {
-        self.s.cursor = self.in_plane(pointer).map(|(p, _)| p);
-        let visuals = self.visuals();
-        self.s.hover = if self.s.tool == Tool::Select {
-            hit_key(
-                &visuals,
-                pointer,
-                &[&is_glyph, &is_point, &is_origin, &is_curve],
-            )
-        } else {
-            hit_key(&visuals, pointer, &[&is_point, &is_origin, &is_curve])
-        };
-    }
-
-    pub(super) fn event(&mut self, event: &StepEditEvent<S>) {
+    pub(super) fn event(&mut self, event: &CanvasEvent<S>) {
         match event {
-            StepEditEvent::Dialog { .. } => {}
-            StepEditEvent::Key { key } => self.key(key),
-            StepEditEvent::Hover { pointer } => self.hover(pointer),
-            StepEditEvent::Leave => {
-                self.s.cursor = None;
-                self.s.hover = None;
+            CanvasEvent::Key { key } => self.key(key),
+            CanvasEvent::Hover { pointer } => {
+                self.s.cursor = self.in_plane(pointer).map(|(p, _)| p)
             }
-            StepEditEvent::Click {
+            CanvasEvent::Leave => self.s.cursor = None,
+            CanvasEvent::Click {
                 pointer,
                 button,
                 double,
-                shift,
+                ..
             } => match button {
                 Button::Secondary => self.finish_draft(),
                 Button::Primary => {
                     if let Some((p, t)) = self.in_plane(pointer) {
                         self.s.cursor = Some(p);
-                        self.click(pointer, p, t, *shift);
+                        if !*double {
+                            self.click(pointer, p, t);
+                        }
                     }
                     if *double {
                         self.finish_draft();
                     }
-                    self.hover(pointer);
                 }
             },
-            StepEditEvent::Drag { from, to, done } => {
-                if self.s.tool == Tool::Select {
-                    self.drag(from, to, *done);
-                }
+            CanvasEvent::Move {
+                key,
+                from,
+                to,
+                done,
+            } => {
+                let (from, to) = (self.to_sketch(from), self.to_sketch(to));
+                self.drag(key, from, to, *done);
             }
         }
     }

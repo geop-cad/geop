@@ -11,15 +11,21 @@ pub use revolve::{Revolve, RevolveArgs};
 use geop_core_math::scalars::Scalar;
 use geop_ops::{
     Part,
-    operation::EntityRef,
-    ui::{Dialog, Target, Tone},
+    operation::{EntityRef, Role},
+    ui::{Form, Tone},
 };
 
-/// The sketch field of a dialog: a sketch to pick — or, before there is
-/// any sketch, a hint to draw one.
-fn sketch_field<S: Scalar>(d: &mut Dialog, before: &Part<S>, sketch: &str) {
+/// The sketch field of a form: a sketch to pick, `set` given its name (none
+/// when the field is cleared) — or, before there is any sketch, a hint to
+/// draw one.
+fn sketch_field<'a, S: Scalar, A: 'a>(
+    form: &mut Form<'a, S, A>,
+    before: &Part<S>,
+    sketch: &str,
+    set: impl Fn(&mut A, String) + 'a,
+) {
     if before.sketches().next().is_none() {
-        d.text("sketch", "No sketch yet — add one first.", Tone::Hint);
+        form.text("sketch", "No sketch yet — add one first.", Tone::Hint);
         return;
     }
     let value = if sketch.is_empty() {
@@ -29,5 +35,19 @@ fn sketch_field<S: Scalar>(d: &mut Dialog, before: &Part<S>, sketch: &str) {
             name: sketch.into(),
         }]
     };
-    d.pick("sketch", "sketch", value, &[Target::Sketch], false);
+    form.reference(
+        "sketch",
+        "sketch",
+        value,
+        &[Role::Sketch],
+        None,
+        false,
+        move |edit, picked| {
+            let name = match picked.as_slice() {
+                [EntityRef::Sketch { name }] => name.clone(),
+                _ => String::new(),
+            };
+            set(edit.args, name);
+        },
+    );
 }

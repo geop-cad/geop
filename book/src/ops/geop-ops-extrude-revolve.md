@@ -61,10 +61,18 @@ Everything is named after the profile curve `X` or joint `P` that swept it
 
 ## Revolve
 
-`revolve_at_oriented` sweeps an open `(r, z)` profile 360° around an axis.
-The first and last points must lie on the axis (`r = 0`) and become poles.
-Walked from first to last point, the region bounded by the profile and the
-axis must lie on the right, or the solid comes out inside-out.
+`revolve_at_oriented` sweeps an `(r, z)` profile 360° around an axis:
+either an open chain whose first and last points lie on the axis (`r = 0`)
+and become poles, or a closed loop entirely off the axis, which sweeps a
+ring. Walked from first to last point, the region bounded by the profile
+(and the axis) must lie on the right — a loop runs clockwise — or the solid
+comes out inside-out.
+
+A ring has genus one, and is built from the same operators as a chain: the
+loop's last segment closes it with `mer` onto the very face it was grown
+on, as a hole of it — the handle — so the columns grow inside that hole
+just as they grow on a chain, and the last column's first beam (`mekr`)
+joins the two loops again.
 
 The solid is built one 90° column at a time rather than one row at a time,
 and the last column closes back onto the first meridian. That way no
@@ -98,8 +106,14 @@ feature, which their dev-dependencies turn on.
 [geop-ops](./geop-ops.md#operations)): they sweep a sketch of the part into
 a solid, and name everything after the sketch's elements. Editing one, the
 sketch is picked in the viewport and the extrude's distance is a handle on
-the end cap; until the user chooses how to combine, a positive distance
-joins and a negative one cuts. Both take a `Combine` from
+the end cap. A revolve's axis is any line in the sketch's plane — a line of
+the sketch, a datum axis, a frame's axis, a straight edge: a region touching
+it along an edge sweeps a solid around it, which needs the axis to be a line
+of the sketch itself (only then do the constraints say which edges lie on
+it), and a region clear of it sweeps a ring. Dragging or typing the
+distance across the sketch plane turns a join into a cut and back; on
+either side, how to combine stays what was chosen — an extrude may cut
+upwards into a solid above its sketch. Both take a `Combine` from
 [geop-ops-booleans](./geop-ops-booleans.md): keep the result as a
 `NewBody`, or immediately unite, intersect or subtract it with a `target`
 solid — which is why this crate depends on the booleans, not the other way

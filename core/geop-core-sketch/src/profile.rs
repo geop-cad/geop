@@ -19,7 +19,7 @@
 
 use crate::{
     point::{P2, add, dist, lerp, scale, sub},
-    sketch::{CurveId, CurveKind, PointId, Positions, Sketch},
+    sketch::{CurveId, CurveKind, Enclosure, PointId, Positions, Sketch},
 };
 use geop_core_geometry::{
     intersection::curve_curve_intersect,
@@ -28,11 +28,11 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::{Field, Ring, Scalar, scal_in_f64::ScalInF64},
-    vector::Vector3,
+    vector::{Vector2, Vector3},
     with_context,
 };
 use std::collections::BTreeMap;
-use std::f64::consts::{FRAC_PI_2, SQRT_2};
+use std::f64::consts::FRAC_PI_2;
 
 /// The scalar the containment tests below run in. A sketch is `f64` design
 /// data, and these questions are about the sketch's own geometry, so nothing
@@ -84,11 +84,12 @@ impl Sketch {
                 "sketch has no closed profile: its curves do not form a loop",
             ));
         }
-        let positions = self.positions();
+        // Nesting and winding are questions about the sketch as drawn.
+        let drawn = Enclosure::as_drawn(self);
         let curves: Vec<Vec<NurbCurve2D<F>>> = loops
             .iter()
             .map(|l| {
-                Ok(l.to_nurbs::<F>(self, &positions)?
+                Ok(l.to_nurbs::<F>(self, &drawn)?
                     .into_iter()
                     .map(|p| p.curve)
                     .collect())
@@ -328,13 +329,13 @@ impl ProfileLoop {
     pub fn to_nurbs<S: Scalar>(
         &self,
         sketch: &Sketch,
-        positions: &Positions,
+        geometry: &Enclosure<S>,
     ) -> GeopResult<Vec<ProfilePiece<S>>> {
         let mut out = Vec::new();
         for edge in &self.edges {
             let curve = edge.curve;
             let ctx = with_context!("converting sketch curve {curve} to NURBS");
-            let pieces = edge_pieces(sketch, positions, curve).with_context(ctx)?;
+            let pieces = edge_pieces(sketch, geometry, curve).with_context(ctx)?;
             let (first, last) = curve_joints(sketch, curve).with_context(ctx)?;
             let n = pieces.len();
             // Joint `j`, in the curve's own direction: where piece `j` starts
@@ -553,8 +554,8 @@ fn bspline_point(cps: &[P2], t: f64) -> P2 {
 }
 
 /// Homogeneous control point `(w x, w y, w)`.
-fn hom<S: Scalar>(p: P2, w: f64) -> Vector3<S> {
-    Vector3::from_array([S::from_f64(p[0] * w), S::from_f64(p[1] * w), S::from_f64(w)])
+fn hom<S: Scalar>(p: Vector2<S>, w: S) -> Vector3<S> {
+    Vector3::from_array([p[0].mul(w), p[1].mul(w), w])
 }
 
 fn unit_knots<S: Scalar>(knots: &[f64]) -> Vec<S> {
@@ -563,49 +564,81 @@ fn unit_knots<S: Scalar>(knots: &[f64]) -> Vec<S> {
 
 /// A rational quadratic from `p0` to `p2` through the tangent intersection
 /// `m`, with middle weight `w`.
-fn conic<S: Scalar>(p0: P2, m: P2, p2: P2, w: f64) -> GeopResult<NurbCurve2D<S>> {
+fn conic<S: Scalar>(
+    p0: Vector2<S>,
+    m: Vector2<S>,
+    p2: Vector2<S>,
+    w: S,
+) -> GeopResult<NurbCurve2D<S>> {
     NurbCurve::try_new(
         2,
-        vec![hom(p0, 1.0), hom(m, w), hom(p2, 1.0)],
+        vec![hom(p0, S::ONE), hom(m, w), hom(p2, S::ONE)],
         unit_knots(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
     )
 }
 
-fn line<S: Scalar>(p0: P2, p1: P2) -> GeopResult<NurbCurve2D<S>> {
+fn line<S: Scalar>(p0: Vector2<S>, p1: Vector2<S>) -> GeopResult<NurbCurve2D<S>> {
     NurbCurve::try_new(
         1,
-        vec![hom(p0, 1.0), hom(p1, 1.0)],
+        vec![hom(p0, S::ONE), hom(p1, S::ONE)],
         unit_knots(&[0.0, 0.0, 1.0, 1.0]),
     )
 }
 
-/// One sketch curve as NURBS pieces from its start to its end.
+/// `v` turned a quarter counter-clockwise.
+fn perpendicular<S: Scalar>(v: Vector2<S>) -> Vector2<S> {
+    Vector2::from_array([v[1].neg(), v[0]])
+}
+
+/// `v` turned counter-clockwise by the angle whose cosine and sine are
+/// `cos` and `sin`.
+fn rotated<S: Scalar>(v: Vector2<S>, cos: S, sin: S) -> Vector2<S> {
+    Vector2::from_array([
+        v[0].mul(cos).sub(v[1].mul(sin)),
+        v[0].mul(sin).add(v[1].mul(cos)),
+    ])
+}
+
+/// One sketch curve as NURBS pieces from its start to its end, built from
+/// `geometry` — how many pieces, from the sketch as drawn, which is design
+/// data, so the pieces and their names do not depend on how precisely the
+/// geometry is known.
 fn edge_pieces<S: Scalar>(
     sketch: &Sketch,
-    positions: &Positions,
+    geometry: &Enclosure<S>,
     curve: CurveId,
 ) -> GeopResult<Vec<NurbCurve2D<S>>> {
+    let at = |p: &PointId| geometry.points[p];
+    let param = || geometry.params[&curve];
     match &sketch.curve(curve)?.kind {
-        CurveKind::Line { start, end } => Ok(vec![line(positions[start], positions[end])?]),
+        CurveKind::Line { start, end } => Ok(vec![line(at(start), at(end))?]),
         CurveKind::Arc { start, end, sweep } => {
-            let (s, e) = (positions[start], positions[end]);
+            let (s, e) = (at(start), at(end));
             if *sweep == 0.0 {
                 return Ok(vec![line(s, e)?]);
             }
-            let arc = arc_of(positions, *start, *end, *sweep);
             let pieces = (sweep.abs() / FRAC_PI_2).ceil().max(1.0) as usize;
-            let delta = sweep / pieces as f64;
-            // Piece boundaries on the circle. Only needed for more than one
-            // piece, where the arc turns by more than a quarter and so has a
-            // center at a moderate distance.
+            let delta = param().div(S::from_i64(pieces as i64))?;
+            let half = delta.div(S::TWO)?;
+            // Piece boundaries: the start turned about the center by
+            // multiples of `delta`. Only needed for more than one piece,
+            // where the arc turns by more than a quarter and so has a center
+            // at a moderate distance.
             let mut ends = vec![s];
             if pieces > 1 {
-                let c = arc.center();
-                let r = arc.radius();
-                let a0 = (s[1] - c[1]).atan2(s[0] - c[0]);
+                let whole = param().div(S::TWO)?;
+                let chord = e.sub(&s);
+                let length = chord.norm();
+                let left = perpendicular(chord.normalize()?);
+                let mid = s.add(&e).prod_scalar(S::from_f64(0.5));
+                let offset = length
+                    .mul(S::from_f64(0.5))
+                    .mul(whole.cos())
+                    .div(whole.sin())?;
+                let center = mid.add(&left.prod_scalar(offset));
                 ends.extend((1..pieces).map(|j| {
-                    let a = a0 + delta * j as f64;
-                    [c[0] + r * a.cos(), c[1] + r * a.sin()]
+                    let angle = delta.mul(S::from_i64(j as i64));
+                    center.add(&rotated(s.sub(&center), angle.cos(), angle.sin()))
                 }));
             }
             ends.push(e);
@@ -615,29 +648,39 @@ fn edge_pieces<S: Scalar>(
                     // tan(δ/2)` to the chord's right (its left for a
                     // clockwise arc). Exact for any radius, including a
                     // nearly straight arc whose center is far away.
-                    let piece = PlainArc {
-                        s: w[0],
-                        e: w[1],
-                        half: delta / 2.0,
-                    };
-                    let bulge = piece.chord_length() * 0.5 * (delta / 2.0).tan();
-                    let m = sub(lerp(piece.s, piece.e, 0.5), scale(piece.left(), bulge));
-                    conic(w[0], m, w[1], (delta / 2.0).cos())
+                    let chord = w[1].sub(&w[0]);
+                    let length = chord.norm();
+                    let left = perpendicular(chord.normalize()?);
+                    let bulge = length
+                        .mul(S::from_f64(0.5))
+                        .mul(half.sin())
+                        .div(half.cos())?;
+                    let mid = w[0].add(&w[1]).prod_scalar(S::from_f64(0.5));
+                    let m = mid.sub(&left.prod_scalar(bulge));
+                    conic(w[0], m, w[1], half.cos())
                 })
                 .collect()
         }
-        CurveKind::Circle { center, radius } => {
-            let [cx, cy] = positions[center];
-            let r = *radius;
-            let q = [[cx + r, cy], [cx, cy + r], [cx - r, cy], [cx, cy - r]];
-            let corners = [
-                [cx + r, cy + r],
-                [cx - r, cy + r],
-                [cx - r, cy - r],
-                [cx + r, cy - r],
+        CurveKind::Circle { center, .. } => {
+            let c = at(center);
+            let r = param();
+            let point = |x: S, y: S| c.add(&Vector2::from_array([x, y]));
+            let q = [
+                point(r, S::ZERO),
+                point(S::ZERO, r),
+                point(r.neg(), S::ZERO),
+                point(S::ZERO, r.neg()),
             ];
+            let corners = [
+                point(r, r),
+                point(r.neg(), r),
+                point(r.neg(), r.neg()),
+                point(r, r.neg()),
+            ];
+            // cos(45°), honestly: √2 / 2 is irrational.
+            let w = S::from_f64(0.5).sqrt()?;
             (0..4)
-                .map(|j| conic(q[j], corners[j], q[(j + 1) % 4], SQRT_2 / 2.0))
+                .map(|j| conic(q[j], corners[j], q[(j + 1) % 4], w))
                 .collect()
         }
         CurveKind::Spline { control_points } => {
@@ -645,10 +688,7 @@ fn edge_pieces<S: Scalar>(
             let degree = spline_degree(n);
             Ok(vec![NurbCurve::try_new(
                 degree,
-                control_points
-                    .iter()
-                    .map(|p| hom(positions[p], 1.0))
-                    .collect(),
+                control_points.iter().map(|p| hom(at(p), S::ONE)).collect(),
                 unit_knots(&spline_knots(n, degree)),
             )?])
         }
@@ -706,11 +746,8 @@ fn midpoint(curve: &NurbCurve2D<F>) -> GeopResult<P2> {
 fn ray(from: P2, dir: P2, extent: f64) -> GeopResult<NurbCurve2D<F>> {
     let length = 3.0 * extent;
     let to = add(from, scale(dir, length));
-    NurbCurve::try_new(
-        1,
-        vec![hom::<F>(from, 1.0), hom::<F>(to, 1.0)],
-        unit_knots::<F>(&[0.0, 0.0, 1.0, 1.0]),
-    )
+    let point = |p: P2| Vector2::from_array(p.map(F::from_f64));
+    line(point(from), point(to))
 }
 
 /// Is `probe` inside the closed loop `curves`?

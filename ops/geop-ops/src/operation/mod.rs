@@ -8,19 +8,22 @@
 //! (part, args) -> part                                            apply
 //! ```
 //!
-//! and edited, it shows a [`Form`] — fields and visuals — whose fields the
-//! editor sets:
+//! and edited, it shows a [`Form`] — fields, each with what setting it
+//! does, and visuals — whose fields the editor sets:
 //!
 //! ```text
-//! (part, args)                   -> form                           form
-//! (part, args, field, value)     -> args                           set
+//! (part, args, selection)                -> form                  form
+//! (part, args, selection, field, value)  -> args, selection       set
 //! ```
 //!
-//! Picking entities for a field and dragging handles are the editor's (see
-//! [`crate::ui::StepEditor`]), the same for every operation; an operation
-//! that draws in a canvas of its own — a sketch — also takes the raw
-//! pointer and key events ([`Operation::event`]), with a `Session` for what
-//! it keeps between them.
+//! `set` is the form's: each field is described once, with its setter.
+//!
+//! Picking entities for a field, dragging handles, selecting visuals and
+//! dragging them are the editor's (see [`crate::ui::StepEditor`]), the same
+//! for every operation; an operation that draws in a canvas of its own — a
+//! sketch — also takes what the pointer and the keys do beyond that
+//! ([`Operation::event`]), with a `Session` for what it keeps between
+//! events.
 //!
 //! Arguments are plain design data — `f64` lengths, sketches — and refer to
 //! existing entities of the part only by name, never by an internal id: an
@@ -34,8 +37,10 @@
 //! what a program step holds, and what serializes as `{"operation":
 //! "extrude", "args": {...}}`.
 
+mod aspects;
 mod entity;
 
+pub use aspects::{Aspects, Role, describe_roles};
 pub use entity::{EntityRef, frame_along};
 
 pub use geop_ops_derive::Operations;
@@ -47,7 +52,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     Part,
-    ui::{Form, StepEditEvent, Value},
+    ui::{CanvasEvent, Edit, Form, Value},
 };
 
 /// An operation of a set: how a step spells it, its short name and what it
@@ -87,38 +92,54 @@ pub trait Operation {
     ) -> GeopResult<Part<S>>;
 
     /// What a step shows while it is edited against `before`: its fields —
-    /// numbers, choices, entities to pick — and what it draws, handles to
-    /// drag among them. Never fails: an editor needs the form most exactly
-    /// when the arguments do not build, so whatever is wrong is said in it.
-    fn form<S: Scalar>(
+    /// numbers, choices, entities to pick — each with what setting it does,
+    /// and what it draws, with `selection` the keys of its visuals selected.
+    /// Never fails: an editor needs the form most exactly when the arguments
+    /// do not build, so whatever is wrong is said in it.
+    ///
+    /// Its setters may capture `before`, never the arguments: they are
+    /// handed the arguments to change (see [`Operation::set`]).
+    fn form<'a, S: Scalar>(
         &self,
-        before: &Part<S>,
+        before: &'a Part<S>,
         args: &Self::Args,
         session: &Self::Session,
-    ) -> Form<S>;
+        selection: &[String],
+    ) -> Form<'a, S, Self::Args, Self::Session>;
 
     /// The field `key` of the form set to `value`: typed or chosen in the
-    /// dialog, picked in the viewport, dragged as a handle.
+    /// dialog, picked in the viewport, dragged as a handle — by the setter
+    /// the form gave it (see [`Form`]).
     fn set<S: Scalar>(
         &self,
         before: &Part<S>,
         args: &mut Self::Args,
         session: &mut Self::Session,
+        selection: &mut Vec<String>,
         key: &str,
         value: Value,
-    );
+    ) {
+        let form = self.form(before, args, session, selection);
+        let edit = Edit {
+            args,
+            session,
+            selection,
+        };
+        form.set(key, edit, value);
+    }
 
-    /// A pointer or key event the editor did not take itself — a pick or a
-    /// handle's drag it does. Only an operation that draws in a canvas of
-    /// its own, like a sketch, needs these.
+    /// A pointer or key event the editor passed on (see [`CanvasEvent`]).
+    /// Only an operation that draws in a canvas of its own, like a sketch,
+    /// needs these.
     fn event<S: Scalar>(
         &self,
         before: &Part<S>,
         args: &mut Self::Args,
         session: &mut Self::Session,
-        event: &StepEditEvent<S>,
+        selection: &mut Vec<String>,
+        event: &CanvasEvent<S>,
     ) {
-        let _ = (before, args, session, event);
+        let _ = (before, args, session, selection, event);
     }
 }
 
@@ -146,19 +167,32 @@ pub trait Operations: Clone + std::fmt::Debug + PartialEq + Serialize + Deserial
     /// A fresh session for editing this step.
     fn new_session(&self) -> Box<dyn Any>;
 
-    /// See [`Operation::form`]; `session` is one [`Operations::new_session`]
-    /// made for a step of the same operation.
-    fn form<S: Scalar>(&self, before: &Part<S>, session: &dyn Any) -> Form<S>;
+    /// See [`Operation::form`], as an editor reads it; `session` is one
+    /// [`Operations::new_session`] made for a step of the same operation.
+    fn form<'a, S: Scalar>(
+        &self,
+        before: &'a Part<S>,
+        session: &dyn Any,
+        selection: &[String],
+    ) -> Form<'a, S>;
 
     /// See [`Operation::set`].
-    fn set<S: Scalar>(&mut self, before: &Part<S>, session: &mut dyn Any, key: &str, value: Value);
+    fn set<S: Scalar>(
+        &mut self,
+        before: &Part<S>,
+        session: &mut dyn Any,
+        selection: &mut Vec<String>,
+        key: &str,
+        value: Value,
+    );
 
     /// See [`Operation::event`].
     fn event<S: Scalar>(
         &mut self,
         before: &Part<S>,
         session: &mut dyn Any,
-        event: &StepEditEvent<S>,
+        selection: &mut Vec<String>,
+        event: &CanvasEvent<S>,
     );
 
     /// The operation's kind, as it is serialized: `extrude`.

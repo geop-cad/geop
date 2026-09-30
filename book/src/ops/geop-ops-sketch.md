@@ -12,11 +12,12 @@ do to it.
 
 ## Editing a sketch
 
-A new sketch starts by picking its plane — a pick field like any other, so
-picking another one later moves the drawing onto it — and once it has one
-it is drawn on it, the viewer facing it head on. Drawing is `AddSketch`'s
-own: it takes the pointer and key events the editor does not (see
-[geop-ops](./geop-ops.md#operations)):
+A new sketch has no plane and starts by picking one — a reference field like any
+other, so picking another one later moves the drawing onto it — and once it
+has one it is drawn on it, the viewer facing it head on. Selecting and
+dragging are the editor's, as in every operation; drawing is `AddSketch`'s
+own: it takes the clicks while a tool is in hand, the keys, and where its
+points and curves are dragged to (see [geop-ops](./geop-ops.md#operations)):
 
 - **Tools** — line (chaining), rectangle, arc (start, end, a point it passes
   through), circle, spline, point — are state machines on the session: the
@@ -27,10 +28,11 @@ own: it takes the pointer and key events the editor does not (see
   there; a line drawn within 2° of horizontal or vertical gets that
   constraint. Proximity only suggests; the constraint is what the sketch
   then holds.
-- **Selecting** points and curves offers the constraints that fit them,
-  measured from the geometry as it is, so adding one moves nothing.
+- **Selecting** points and curves offers the constraints that fit them, as
+  actions, measured from the geometry as it is, so adding one moves nothing.
   Constraints are listed, their values edited in place (angles in degrees)
-  and removed; each is marked in the sketch by a glyph that can be clicked.
+  and removed; each is marked in the sketch by a glyph that can be selected
+  too. Delete removes whatever is selected.
 - **Dragging** a point, a line or a spline moves its points as far as the
   constraints let them (`Sketch::solve_with_drag`); dragging a circle sets
   its radius, an arc its sweep.

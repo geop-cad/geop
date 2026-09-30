@@ -42,9 +42,10 @@ one, else as far as the program runs — which keeps the part after every
 step, so the part before the step being edited is always at hand, and a
 change to it replays only that step.
 
-What the shown steps built on — their pick fields' values — is hidden from
-the drawing: sketches and whole datums, since what was made from them shows
-them now; none of a kind while it is being picked.
+What the shown steps built on — their reference fields' values — is hidden
+from the drawing: sketches and whole datums, since what was made from them
+shows them now; none that something of could be picked while a field waits
+for a pick.
 
 ## Examples
 

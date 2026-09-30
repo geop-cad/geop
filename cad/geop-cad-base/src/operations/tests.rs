@@ -35,7 +35,10 @@ fn polygon(s: &mut Sketch, corners: &[[f64; 2]]) -> Vec<PointId> {
 }
 
 fn sketch(plane: EntityRef, sketch: Sketch) -> AddSketchArgs {
-    AddSketchArgs { plane, sketch }
+    AddSketchArgs {
+        plane: Some(plane),
+        sketch,
+    }
 }
 
 fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
@@ -189,7 +192,10 @@ fn revolve_rectangle_about_construction_axis() {
         "tube",
         RevolveArgs {
             sketch: "profile".into(),
-            axis,
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "profile".into(),
+                curve: axis,
+            }),
             combine: Combine::NewBody,
         },
     );
@@ -220,7 +226,10 @@ fn revolve_half_disc_is_sphere() {
         "ball",
         RevolveArgs {
             sketch: "half_disc".into(),
-            axis,
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "half_disc".into(),
+                curve: axis,
+            }),
             combine: Combine::NewBody,
         },
     );
@@ -252,11 +261,96 @@ fn revolve_across_axis_fails() {
         "bad",
         RevolveArgs {
             sketch: "profile".into(),
-            axis,
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "profile".into(),
+                curve: axis,
+            }),
             combine: Combine::NewBody,
         },
     );
     assert!(program.build::<S>().is_err());
+}
+
+/// Revolves `s`, sketched on the origin's zx plane, around `axis`.
+fn revolved_on_zx(s: Sketch, axis: EntityRef) -> geop_core_math::geop_error::GeopResult<Part<S>> {
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        sketch(
+            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
+            s,
+        ),
+    );
+    program.push(
+        "ring",
+        RevolveArgs {
+            sketch: "profile".into(),
+            axis: Some(axis),
+            combine: Combine::NewBody,
+        },
+    );
+    program.build::<S>()
+}
+
+/// A square clear of an axis from outside the sketch — the origin's z axis,
+/// which lies in the sketch's plane — revolves into a ring with a square
+/// cross section.
+#[test]
+fn revolve_square_around_an_outside_axis_is_a_ring() {
+    let mut s = Sketch::new();
+    polygon(&mut s, &[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]);
+    let z = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    let part = revolved_on_zx(s, z).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 16);
+}
+
+/// A circle beside a construction line of its own sketch, not touching it,
+/// revolves into a torus.
+#[test]
+fn revolve_circle_clear_of_its_axis_is_a_torus() {
+    let mut s = Sketch::new();
+    let a0 = s.add_point(0.0, -1.0);
+    let a1 = s.add_point(0.0, 1.0);
+    let axis = s.add_line(a0, a1);
+    s.set_construction(axis, true);
+    let center = s.add_point(3.0, 0.0);
+    s.add_circle(center, 1.0);
+    let part = revolved_on_zx(
+        s,
+        EntityRef::SketchCurve {
+            sketch: "profile".into(),
+            curve: axis,
+        },
+    )
+    .unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 16);
+}
+
+/// A profile touching an axis from outside the sketch is refused: nothing
+/// says which of its edges lie on that axis.
+#[test]
+fn revolve_touching_an_outside_axis_fails() {
+    let mut s = Sketch::new();
+    polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    let z = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    let Err(error) = revolved_on_zx(s, z) else {
+        panic!("revolved");
+    };
+    assert!(error.root_message().contains("touches"), "{error:?}");
+}
+
+/// An axis out of the sketch's plane is refused.
+#[test]
+fn revolve_around_an_axis_off_the_plane_fails() {
+    let mut s = Sketch::new();
+    polygon(&mut s, &[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]);
+    let y = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Y));
+    let Err(error) = revolved_on_zx(s, y) else {
+        panic!("revolved");
+    };
+    assert!(error.root_message().contains("plane"), "{error:?}");
 }
 
 /// Extrude refers to a sketch by name; naming a solid instead is an error.

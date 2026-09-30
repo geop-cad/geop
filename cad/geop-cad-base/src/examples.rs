@@ -95,7 +95,10 @@ pub fn box_with_drill_hole() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: solved(outline),
         },
     );
@@ -114,9 +117,9 @@ pub fn box_with_drill_hole() -> Program {
     program.push(
         "hole_sketch",
         AddSketchArgs {
-            plane: EntityRef::Face {
+            plane: Some(EntityRef::Face {
                 name: "extrude(box,end)".into(),
-            },
+            }),
             sketch: solved(hole),
         },
     );
@@ -149,7 +152,10 @@ pub fn bracket() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: solved(outline),
         },
     );
@@ -168,9 +174,9 @@ pub fn bracket() -> Program {
     program.push(
         "hole_sketch",
         AddSketchArgs {
-            plane: EntityRef::Face {
+            plane: Some(EntityRef::Face {
                 name: "extrude(block,end)".into(),
-            },
+            }),
             sketch: solved(hole),
         },
     );
@@ -248,7 +254,10 @@ pub fn cross_drilled_shaft() -> Program {
     program.push(
         "section",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::X)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::X),
+            )),
             sketch: solved(section),
         },
     );
@@ -256,7 +265,10 @@ pub fn cross_drilled_shaft() -> Program {
         "shaft",
         RevolveArgs {
             sketch: "section".into(),
-            axis,
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "section".into(),
+                curve: axis,
+            }),
             combine: Combine::NewBody,
         },
     );
@@ -268,7 +280,10 @@ pub fn cross_drilled_shaft() -> Program {
     program.push(
         "bore_sketch",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )),
             sketch: solved(bore),
         },
     );
@@ -297,7 +312,10 @@ pub fn two_plates() -> Program {
     program.push(
         "plates_sketch",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: solved(plates),
         },
     );
@@ -325,7 +343,10 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: solved(outline),
         },
     );
@@ -352,7 +373,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "boss_sketch",
         AddSketchArgs {
-            plane: EntityRef::datum("lifted"),
+            plane: Some(EntityRef::datum("lifted")),
             sketch: solved(boss),
         },
     );
@@ -422,7 +443,10 @@ pub fn handle_with_hole() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: solved(outline),
         },
     );
@@ -442,7 +466,10 @@ pub fn handle_with_hole() -> Program {
     program.push(
         "hole_sketch",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )),
             sketch: solved(hole),
         },
     );
@@ -517,7 +544,10 @@ pub fn luggage_tag() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: solved(outline),
         },
     );
@@ -564,7 +594,10 @@ pub fn revolved_cone_on_box() -> Program {
     program.push(
         "sketch1",
         AddSketchArgs {
-            plane: EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
             sketch: outline,
         },
     );
@@ -589,9 +622,9 @@ pub fn revolved_cone_on_box() -> Program {
     program.push(
         "sketch2",
         AddSketchArgs {
-            plane: EntityRef::Face {
+            plane: Some(EntityRef::Face {
                 name: format!("extrude(extrude1,sketch1,{right})"),
-            },
+            }),
             sketch: triangle,
         },
     );
@@ -599,7 +632,10 @@ pub fn revolved_cone_on_box() -> Program {
         "revolve1",
         RevolveArgs {
             sketch: "sketch2".into(),
-            axis,
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "sketch2".into(),
+                curve: axis,
+            }),
             combine: Combine::Union {
                 target: "extrude(extrude1)".into(),
             },
@@ -913,9 +949,9 @@ mod tests {
         let crate::PartOperation::AddSketch(args) = &mut program.steps[2].operation else {
             unreachable!()
         };
-        args.plane = EntityRef::Face {
+        args.plane = Some(EntityRef::Face {
             name: "extrude(box,side)".into(),
-        };
+        });
         let Err(err) = program.build::<S>() else {
             panic!("a sketch on a face that doesn't exist was placed somewhere");
         };

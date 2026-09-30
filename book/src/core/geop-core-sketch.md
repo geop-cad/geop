@@ -68,11 +68,38 @@ points and curves are still free to move, and which constraints failed.
   evaluated with `Dual` numbers (forward-mode automatic differentiation) for
   exact gradients.
 
-A sketch is design intent, not a geometric claim, so the solved positions
-are plain floats: they are the designer's free choice and enter the kernel as
-exact inputs. The residuals are nonetheless computed on `Dual<ScalInF64>`,
-so the `sin`, `sqrt` and `PI` they need are enclosed rather than rounded
-away.
+The solved positions the sketch stores are plain floats: the solver's best
+approximation, what is drawn and what a program saves. The residuals are
+computed on `Dual<ScalInF64>`, so the `sin`, `sqrt` and `PI` they need are
+enclosed rather than rounded away.
+
+## Enclosing the solution
+
+What the kernel builds on is not those floats but `Sketch::enclose`: an
+`Enclosure` of every point, arc sweep and circle radius that contains the
+*exact* solution of the constraints. A float solution only meets
+`Horizontal` or `Perpendicular` to the solver's tolerance, and built as
+though exact it tilts faces by a hair where the designer meant square — a
+real, tiny feature that a boolean later finds and meshes. Enclosed, the
+geometry carries the uncertainty the solve really left, and the interval
+tests downstream can see that two such faces may be one.
+
+- **Free choices stay sharp.** The Jacobian at the solution says which
+  variables the constraints determine and which they leave free. The free
+  ones are the designer's choice, kept exactly as drawn.
+- **Newton, then Krawczyk.** The determined ones are polished by a few
+  Newton steps on the independent constraints, then enclosed by the
+  Krawczyk test: for a box `X` around the polished point `x̃`,
+  `K(X) = x̃ - Y f(x̃) + (I - Y J(X)) (X - x̃)`, evaluated in interval
+  arithmetic, and `K(X) ⊆ X` proves `X` holds a solution. The box is
+  widened until the test passes.
+- **Honest failures.** A sketch whose constraints are not met is no
+  solution, and is built as drawn. One that meets them only at a singular
+  configuration cannot be proven, and fails to enclose.
+
+`ProfileLoop::to_nurbs` builds the NURBS pieces from an `Enclosure`;
+questions about the design data itself — nesting, winding, which side of an
+axis — use `Enclosure::as_drawn`.
 
 An arc is stored by its sweep rather than its curvature, because only the
 sweep stays smooth through a straight arc and a half circle, and only the

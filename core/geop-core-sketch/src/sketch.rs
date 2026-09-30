@@ -10,7 +10,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector2,
+};
 
 use crate::point::{P2, dist};
 use serde::{Deserialize, Serialize};
@@ -303,10 +307,44 @@ impl Constraint {
     }
 }
 
-/// Every point's `[x, y]`, by [`PointId`]: the sketch's own positions
-/// ([`Sketch::positions`]) or a rigid motion of them (see
-/// [`crate::ProfileLoop::to_nurbs`]).
+/// Every point's `[x, y]`, by [`PointId`]: the sketch's own positions, as
+/// drawn (see [`Sketch::positions`]) — for drawing, and for questions about
+/// the design data itself.
 pub type Positions = BTreeMap<PointId, P2>;
+
+/// A sketch's geometry as the kernel builds on it: every point, and every
+/// arc's sweep and circle's radius. Solved (see [`Sketch::enclose`]), each
+/// encloses the exact solution of the sketch's constraints; as drawn (see
+/// [`Enclosure::as_drawn`]), each is the sketch's own value, sharp. A rigid
+/// motion of either is one too (see [`crate::ProfileLoop::to_nurbs`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Enclosure<S: Scalar> {
+    pub points: BTreeMap<PointId, Vector2<S>>,
+    /// An arc's sweep, a circle's radius.
+    pub params: BTreeMap<CurveId, S>,
+}
+
+impl<S: Scalar> Enclosure<S> {
+    /// `sketch`'s geometry exactly as drawn.
+    pub fn as_drawn(sketch: &Sketch) -> Self {
+        Enclosure {
+            points: sketch
+                .points
+                .iter()
+                .map(|(&id, p)| (id, Vector2::from_array([p.x, p.y].map(S::from_f64))))
+                .collect(),
+            params: sketch
+                .curves
+                .iter()
+                .filter_map(|(&id, c)| match c.kind {
+                    CurveKind::Arc { sweep, .. } => Some((id, S::from_f64(sweep))),
+                    CurveKind::Circle { radius, .. } => Some((id, S::from_f64(radius))),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+}
 
 /// A constraint sketch.
 ///

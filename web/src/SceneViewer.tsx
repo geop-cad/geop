@@ -13,7 +13,7 @@ import {
   type Pointer,
   type PointerEvent_,
   type Reach,
-  type Target,
+  type Role,
   type Vec3,
   type Visual,
 } from "./geop";
@@ -25,9 +25,14 @@ const CLICK_PX = 4;
 /** How soon, in milliseconds, a second click makes a double click. */
 const DOUBLE_MS = 350;
 
-/** The kinds of datum a click can pick, among `targets`. */
-function datumKinds(targets: Target[]): DatumKind[] {
-  return targets.flatMap((t) => (typeof t === "object" ? [t.datum] : []));
+/** The kinds of datum a click can pick something of, looking for `roles`: a frame's origin, axes and planes are points, lines and planes too. */
+function datumKinds(roles: Role[]): DatumKind[] {
+  const kinds: DatumKind[] = [];
+  if (roles.includes("point")) kinds.push("point");
+  if (roles.includes("line")) kinds.push("axis");
+  if (roles.includes("plane")) kinds.push("plane");
+  if (kinds.length) kinds.push("frame");
+  return kinds;
 }
 
 /** How long a [[Props.focus]] move takes, in milliseconds. */
@@ -51,9 +56,12 @@ interface Scene {
   point_names: string[];
   /** `[x0, y0, z0, x1, y1, z1, colorHex]` per line segment. */
   lines: [number, number, number, number, number, number, number][];
-  /** Per line: the sketch it belongs to, or the edge it draws. */
+  /** Per line: the sketch it belongs to and the id of its curve there, or the edge it draws. */
   line_sketches: (string | null)[];
+  line_curves: (number | null)[];
   line_edges: (string | null)[];
+  /** Every sketch's points, by the sketch and their id in it. */
+  sketch_points: { sketch: string; id: number; at: Vec3 }[];
   /** Per triangle: its corners, its color, its corners' normals, and the index in `faces` of its face. */
   triangles: [Vec3, Vec3, Vec3, number][];
   normals: [Vec3, Vec3, Vec3][];
@@ -73,7 +81,9 @@ function flatten(part: PartView): Scene {
     point_names: [],
     lines: [],
     line_sketches: [],
+    line_curves: [],
     line_edges: [],
+    sketch_points: [],
     triangles: [],
     normals: [],
     triangle_faces: [],
@@ -83,13 +93,14 @@ function flatten(part: PartView): Scene {
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
   }
-  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, edge: string | null) => {
+  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, curve: number | null, edge: string | null) => {
     scene.lines.push([...a, ...b, color]);
     scene.line_sketches.push(sketch);
+    scene.line_curves.push(curve);
     scene.line_edges.push(edge);
   };
   for (const e of part.edges) {
-    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, e.name);
+    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name);
   }
   part.faces.forEach((f, index) => {
     scene.faces.push({ name: f.name, solid: f.solid });
@@ -103,7 +114,10 @@ function flatten(part: PartView): Scene {
     for (const curve of sketch.curves) {
       const color = curve.construction ? CONSTRUCTION_COLOR : SKETCH_COLOR;
       const points = curve.polyline.map((p) => inPlane(sketch.plane, p));
-      for (let i = 1; i < points.length; i++) line(points[i - 1], points[i], color, sketch.name, null);
+      for (let i = 1; i < points.length; i++) line(points[i - 1], points[i], color, sketch.name, curve.id, null);
+    }
+    for (const point of sketch.points) {
+      scene.sketch_points.push({ sketch: sketch.name, id: point.id, at: inPlane(sketch.plane, point.at) });
     }
   }
   return scene;
@@ -117,7 +131,7 @@ interface Props {
   /** What to draw highlighted — what is picked, what a click would pick. */
   highlights?: EntityRef[];
   /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
-  pickable?: Target[];
+  pickable?: Role[];
   /** Sketches and datums, by name, not to draw. */
   hidden?: string[];
   /**
@@ -229,6 +243,22 @@ function buildSceneGroup(scene: Scene): THREE.Group {
     group.add(lines);
   }
 
+  // Sketch points: one Points per sketch, shown and hidden with its lines.
+  const bySketch = new Map<string, number[]>();
+  for (const { sketch, at } of scene.sketch_points) {
+    const coords = bySketch.get(sketch) ?? [];
+    coords.push(...at);
+    bySketch.set(sketch, coords);
+  }
+  for (const [sketch, coords] of bySketch) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(coords), 3));
+    const material = new THREE.PointsMaterial({ color: SKETCH_COLOR, size: 5, sizeAttenuation: false });
+    const points = new THREE.Points(geometry, material);
+    points.userData = { sketch, color: SKETCH_COLOR };
+    group.add(points);
+  }
+
   // Points.
   if (scene.points.length > 0) {
     const positions = new Float32Array(scene.points.length * 3);
@@ -264,6 +294,12 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[
   const named = (type: EntityRef["type"]) =>
     new Set(highlights.flatMap((h) => (h.type === type && "name" in h ? [h.name] : [])));
   const [faces, solids, sketches, edges, vertices] = (["Face", "Solid", "Sketch", "Edge", "Vertex"] as const).map(named);
+  /** A curve's or a point's key: its sketch and its id there. */
+  const curveKey = (sketch: string, id: number) => `${sketch}\u0000${id}`;
+  const curves = new Set(highlights.flatMap((h) => (h.type === "SketchCurve" ? [curveKey(h.sketch, h.curve)] : [])));
+  const sketchPoints = new Set(
+    highlights.flatMap((h) => (h.type === "SketchPoint" ? [curveKey(h.sketch, h.point)] : [])),
+  );
   const tags = group.userData.triangles as TriangleTags | undefined;
   if (tags) {
     const attribute = tags.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
@@ -277,10 +313,11 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[
     attribute.needsUpdate = true;
   }
   for (const child of group.children) {
-    if (!(child instanceof THREE.LineSegments) || child.userData.sketch == null) continue;
+    const drawn = child instanceof THREE.LineSegments || child instanceof THREE.Points;
+    if (!drawn || child.userData.sketch == null) continue;
     const lit = sketches.has(child.userData.sketch);
     child.visible = lit || !hidden.includes(child.userData.sketch);
-    const material = child.material as THREE.LineBasicMaterial;
+    const material = child.material as THREE.LineBasicMaterial | THREE.PointsMaterial;
     material.color.set(lit ? HIGHLIGHT : child.userData.color);
     // A sketch often lies on or behind the model (on a face, or under the
     // solid made from it): lit, it is drawn on top, so it can be seen.
@@ -293,20 +330,27 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[
     group.remove(old);
     disposeGroup(old as THREE.Group);
   }
-  if (edges.size === 0 && vertices.size === 0) return;
+  if (edges.size === 0 && vertices.size === 0 && curves.size === 0 && sketchPoints.size === 0) return;
   const overlay = new THREE.Group();
   overlay.userData.overlay = true;
   const coords: number[] = [];
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1], i) => {
     const edge = scene.line_edges[i];
-    if (edge != null && edges.has(edge)) coords.push(x0, y0, z0, x1, y1, z1);
+    const sketch = scene.line_sketches[i];
+    const curve = scene.line_curves[i];
+    const lit =
+      (edge != null && edges.has(edge)) || (sketch != null && curve != null && curves.has(curveKey(sketch, curve)));
+    if (lit) coords.push(x0, y0, z0, x1, y1, z1);
   });
   if (coords.length) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(coords), 3));
     overlay.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: HIGHLIGHT, depthTest: false })));
   }
-  const points = scene.points.filter((_, i) => vertices.has(scene.point_names[i]));
+  const points = scene.points
+    .filter((_, i) => vertices.has(scene.point_names[i]))
+    .map(([x, y, z]): Vec3 => [x, y, z])
+    .concat(scene.sketch_points.filter((p) => sketchPoints.has(curveKey(p.sketch, p.id))).map((p) => p.at));
   if (points.length) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(points.flatMap(([x, y, z]) => [x, y, z])), 3));
