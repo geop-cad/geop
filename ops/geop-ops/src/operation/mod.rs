@@ -47,7 +47,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     Part,
-    ui::{Event, Form, Value},
+    ui::{Form, StepEditEvent, Value},
 };
 
 /// An operation of a set: how a step spells it, its short name and what it
@@ -116,7 +116,7 @@ pub trait Operation {
         before: &Part<S>,
         args: &mut Self::Args,
         session: &mut Self::Session,
-        event: &Event<S>,
+        event: &StepEditEvent<S>,
     ) {
         let _ = (before, args, session, event);
     }
@@ -154,7 +154,12 @@ pub trait Operations: Clone + std::fmt::Debug + PartialEq + Serialize + Deserial
     fn set<S: Scalar>(&mut self, before: &Part<S>, session: &mut dyn Any, key: &str, value: Value);
 
     /// See [`Operation::event`].
-    fn event<S: Scalar>(&mut self, before: &Part<S>, session: &mut dyn Any, event: &Event<S>);
+    fn event<S: Scalar>(
+        &mut self,
+        before: &Part<S>,
+        session: &mut dyn Any,
+        event: &StepEditEvent<S>,
+    );
 
     /// The operation's kind, as it is serialized: `extrude`.
     fn kind(&self) -> &'static str;

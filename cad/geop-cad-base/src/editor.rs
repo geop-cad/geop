@@ -11,7 +11,7 @@
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
     EntityRef, OperationInfo, Operations, Step, StepResult,
-    ui::{Event, PartView, Presentation, StepEditor, Target},
+    ui::{PartView, Presentation, StepEditEvent, StepEditor, Target},
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,7 @@ pub enum Command<S: Scalar> {
     },
     /// Something the user did to the step being edited.
     Event {
-        event: Event<S>,
+        event: StepEditEvent<S>,
     },
     /// Put the step being edited into the program — refused, unless it
     /// builds.

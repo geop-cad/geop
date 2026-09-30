@@ -203,7 +203,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 &mut self,
                 before: &::geop_ops::Part<S>,
                 session: &mut dyn ::std::any::Any,
-                event: &::geop_ops::ui::Event<S>,
+                event: &::geop_ops::ui::StepEditEvent<S>,
             ) {
                 match self {
                     #(#event_arms)*

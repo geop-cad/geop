@@ -660,8 +660,8 @@ mod tests {
     use geop_ops::{
         ORIGIN, Operations,
         ui::{
-            Button, Control, Event, PartView, Pointer, Presentation, Reach, Shape, StepEditor,
-            Target,
+            Button, Control, PartView, Pointer, Presentation, Reach, Shape, StepEditEvent,
+            StepEditor, Target,
         },
     };
 
@@ -783,7 +783,7 @@ mod tests {
         part: &Part<S>,
         args: AddDatumArgs,
         new: bool,
-        events: &[Event<S>],
+        events: &[StepEditEvent<S>],
     ) -> (AddDatumArgs, Presentation<S>) {
         let view = PartView::of(part).unwrap();
         let mut editor = StepEditor::new(Ops::AddDatum(args), part, new);
@@ -817,7 +817,7 @@ mod tests {
         assert!(at.could_be_equal(&v([1.0, 2.0, 3.3])), "{at:?}");
         // Seen from the side, dragged half a unit up.
         let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
-        let drag = Event::Drag {
+        let drag = StepEditEvent::Drag {
             from: side(3.3),
             to: side(3.8),
             done: true,
@@ -872,7 +872,7 @@ mod tests {
         let part = Part::<S>::new();
         let args = AddDatum.new_args(&part);
         // The origin's ball, from above.
-        let click = Event::Click {
+        let click = StepEditEvent::Click {
             pointer: pointer([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]),
             button: Button::Primary,
             double: false,

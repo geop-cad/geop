@@ -6,7 +6,7 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::ui::{Event, Pointer, Reach, Target, Value};
+use geop_ops::ui::{Pointer, Reach, StepEditEvent, Target, Value};
 use geop_ops_booleans::Combine;
 
 use crate::{Command, Editor, PartOperation, Program, Update, examples};
@@ -22,7 +22,7 @@ fn editor() -> (Editor<S>, Update<S>) {
 
 fn dialog(key: &str, value: Value) -> Command<S> {
     Command::Event {
-        event: Event::Dialog {
+        event: StepEditEvent::Dialog {
             key: key.into(),
             value,
         },
@@ -142,7 +142,7 @@ fn only_what_changed_is_sent() {
     let update = editor.handle(Command::Open { id: "hole".into() });
     assert!(update.program.is_some(), "the step is marked as edited");
     let update = editor.handle(Command::Event {
-        event: Event::Hover {
+        event: StepEditEvent::Hover {
             pointer: pointer([5.0, 5.0, 5.0], [0.0, 0.0, -1.0]),
         },
     });
@@ -164,11 +164,11 @@ fn handles_are_dragged() {
     // at (1, 1, 0.5); dragged up past its sketch plane, it builds up.
     let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
     let update = editor.handle(Command::Event {
-        event: Event::Hover { pointer: side(0.5) },
+        event: StepEditEvent::Hover { pointer: side(0.5) },
     });
     assert!(update.step.unwrap().presentation.grab);
     editor.handle(Command::Event {
-        event: Event::Drag {
+        event: StepEditEvent::Drag {
             from: side(0.5),
             to: side(1.253),
             done: true,

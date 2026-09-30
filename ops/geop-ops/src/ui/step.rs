@@ -6,8 +6,8 @@ use std::any::Any;
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 
 use super::{
-    Button, Control, Dialog, Event, PartView, Pointer, Presentation, Shape, Target, Value, Visual,
-    hit::hit_visuals,
+    Button, Control, Dialog, PartView, Pointer, Presentation, Shape, StepEditEvent, Target, Value,
+    Visual, hit::hit_visuals,
 };
 use crate::{
     Part,
@@ -90,9 +90,14 @@ impl<O: Operations> StepEditor<O> {
 
     /// Applies `event` — `view` is `before` as drawn, what picks test
     /// against.
-    pub fn handle<S: Scalar>(&mut self, before: &Part<S>, view: &PartView<S>, event: &Event<S>) {
+    pub fn handle<S: Scalar>(
+        &mut self,
+        before: &Part<S>,
+        view: &PartView<S>,
+        event: &StepEditEvent<S>,
+    ) {
         let form = self.step.form(before, &*self.session);
-        if let Event::Dialog { key, value } = event {
+        if let StepEditEvent::Dialog { key, value } = event {
             if let Some(Control::Pick { .. }) = form.dialog.get(key) {
                 self.armed = (self.armed.as_deref() != Some(key)).then(|| key.clone());
                 self.hover = None;
@@ -112,14 +117,14 @@ impl<O: Operations> StepEditor<O> {
             }
             self.armed = None;
         }
-        if let Event::Drag { from, to, done } = event
+        if let StepEditEvent::Drag { from, to, done } = event
             && let Some((key, value)) = self.drag(&form.dialog, &form.visuals, from, to, *done)
         {
             self.step
                 .set(before, &mut *self.session, &key, Value::Number(value));
             return;
         }
-        if let Event::Hover { pointer } = event {
+        if let StepEditEvent::Hover { pointer } = event {
             self.over_handle = over_handle(&form.visuals, pointer);
         }
         self.step.event(before, &mut *self.session, event);
@@ -132,17 +137,17 @@ impl<O: Operations> StepEditor<O> {
         &mut self,
         before: &Part<S>,
         view: &PartView<S>,
-        event: &Event<S>,
+        event: &StepEditEvent<S>,
         key: &str,
         targets: &[Target],
         multiple: bool,
     ) {
         match event {
-            Event::Hover { pointer } => {
+            StepEditEvent::Hover { pointer } => {
                 self.hover = view.pick(pointer, targets).map(|h| h.entity);
             }
-            Event::Leave => self.hover = None,
-            Event::Click {
+            StepEditEvent::Leave => self.hover = None,
+            StepEditEvent::Click {
                 pointer,
                 button: Button::Primary,
                 ..
@@ -156,7 +161,7 @@ impl<O: Operations> StepEditor<O> {
                         .set(before, &mut *self.session, key, Value::Entity(hit.entity));
                 }
             }
-            Event::Key { key } if key == "Escape" => {
+            StepEditEvent::Key { key } if key == "Escape" => {
                 self.armed = None;
                 self.hover = None;
             }

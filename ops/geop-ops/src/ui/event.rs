@@ -1,4 +1,4 @@
-//! [`Event`]: what the user did, as an operation receives it.
+//! [`StepEditEvent`]: what the user did, as an operation receives it.
 
 use geop_core_math::{
     primitives::Ray,
@@ -89,7 +89,7 @@ pub enum Value {
 /// One thing the user did while editing a step.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
-pub enum Event<S: Scalar> {
+pub enum StepEditEvent<S: Scalar> {
     /// The dialog field `key` was used.
     Dialog { key: String, value: Value },
     /// The pointer moved over the viewport with no button held.
@@ -121,11 +121,11 @@ pub enum Event<S: Scalar> {
     Key { key: String },
 }
 
-impl<S: Scalar> Event<S> {
+impl<S: Scalar> StepEditEvent<S> {
     /// The dialog field this event uses, and its value.
     pub fn dialog(&self) -> Option<(&str, &Value)> {
         match self {
-            Event::Dialog { key, value } => Some((key, value)),
+            StepEditEvent::Dialog { key, value } => Some((key, value)),
             _ => None,
         }
     }
@@ -134,8 +134,10 @@ impl<S: Scalar> Event<S> {
     /// it is now.
     pub fn pointer(&self) -> Option<&Pointer<S>> {
         match self {
-            Event::Hover { pointer } | Event::Click { pointer, .. } => Some(pointer),
-            Event::Drag { to, .. } => Some(to),
+            StepEditEvent::Hover { pointer } | StepEditEvent::Click { pointer, .. } => {
+                Some(pointer)
+            }
+            StepEditEvent::Drag { to, .. } => Some(to),
             _ => None,
         }
     }

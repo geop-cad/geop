@@ -106,7 +106,7 @@ before it holds).
 
 Picking and dragging are the same for every operation, so they are not the
 operations' but the `StepEditor`'s, which edits one step. It turns what the
-user did — an `Event`: a dialog field used, a hover, a click or a drag in
+user did — a `StepEditEvent`: a dialog field used, a hover, a click or a drag in
 the viewport, each a `Pointer` (the `Ray` from the eye through the cursor,
 and its `Reach`: how far from the ray counts as under it, a cone from the
 eye in perspective, a tube in an orthographic view), or a key — into fields

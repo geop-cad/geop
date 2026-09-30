@@ -48,7 +48,7 @@ impl Editor {
         }
     }
 
-    fn send(&mut self, event: Event<S>) {
+    fn send(&mut self, event: StepEditEvent<S>) {
         self.editor.handle(&self.part, &self.view, &event);
         let Ops::AddSketch(args) = self.editor.step().clone();
         self.args = args;
@@ -60,14 +60,14 @@ impl Editor {
     }
 
     fn press(&mut self, key: &str) {
-        self.send(Event::Dialog {
+        self.send(StepEditEvent::Dialog {
             key: key.into(),
             value: Value::Press,
         });
     }
 
     fn click(&mut self, x: f64, y: f64) {
-        self.send(Event::Click {
+        self.send(StepEditEvent::Click {
             pointer: down(x, y),
             button: Button::Primary,
             double: false,
@@ -76,7 +76,7 @@ impl Editor {
     }
 
     fn key(&mut self, key: &str) {
-        self.send(Event::Key { key: key.into() });
+        self.send(StepEditEvent::Key { key: key.into() });
     }
 
     fn sketch(&self) -> &Sketch {
@@ -138,7 +138,7 @@ fn a_new_sketch_picks_its_plane_first() {
     // The origin's zx plane's square, ten reaches of 0.009 from the
     // origin: seen from the front, at (0.04, 0, 0.04).
     let front = pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]);
-    e.send(Event::Click {
+    e.send(StepEditEvent::Click {
         pointer: front,
         button: Button::Primary,
         double: false,
@@ -211,7 +211,7 @@ fn rectangles() {
     let mut e = drawing();
     e.key("r");
     e.click(0.2, 0.2);
-    e.send(Event::Hover {
+    e.send(StepEditEvent::Hover {
         pointer: down(0.8, 0.6),
     });
     assert!(
@@ -278,11 +278,11 @@ fn dragging_points() {
     e.click(1.0, 0.0);
     e.key("Escape");
     e.key("Escape");
-    e.send(Event::Hover {
+    e.send(StepEditEvent::Hover {
         pointer: down(1.0, 0.0),
     });
     assert!(e.presentation.grab);
-    e.send(Event::Drag {
+    e.send(StepEditEvent::Drag {
         from: down(1.0, 0.0),
         to: down(2.0, 0.4),
         done: true,
@@ -310,7 +310,7 @@ fn constraint_values_are_edited_in_the_list() {
     let length = options.iter().position(|o| o == "Length").unwrap();
     e.press(&format!("constrain:{length}"));
     let (&id, _) = e.sketch().constraints.iter().next().unwrap();
-    e.send(Event::Dialog {
+    e.send(StepEditEvent::Dialog {
         key: format!("constraint:{}", id.0),
         value: Value::Number(2.0),
     });
@@ -329,7 +329,7 @@ fn another_plane_keeps_the_drawing() {
     assert_eq!(e.sketch().curves.len(), 1);
     e.press("plane");
     assert!(e.presentation.focus.is_none());
-    e.send(Event::Click {
+    e.send(StepEditEvent::Click {
         pointer: pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]),
         button: Button::Primary,
         double: false,

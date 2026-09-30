@@ -1,7 +1,7 @@
 //! What an editor exchanges with the operations while a step is edited.
 //!
 //! An editor never edits a step's arguments itself. It sends what the user
-//! did — an [`Event`]: a dialog field used, a click or a drag in the 3-D
+//! did — a [`StepEditEvent`]: a dialog field used, a click or a drag in the 3-D
 //! viewport as a ray from the eye, a key — to a [`StepEditor`], which
 //! turns it into what the operation understands: a field set to a value, by
 //! the dialog, by a pick in the viewport or by dragging a handle — or, for
@@ -24,7 +24,7 @@ pub mod view;
 mod visual;
 
 pub use dialog::{ButtonItem, Choice, Control, Dialog, Field, ListItem, Tone};
-pub use event::{Button, Event, Pointer, Reach, Value};
+pub use event::{Button, Pointer, Reach, StepEditEvent, Value};
 pub use step::{DRAG_SNAP, StepEditor};
 pub use view::{Extent, PartHit, PartView, Target};
 pub use visual::{Form, Presentation, Shape, Style, Visual};

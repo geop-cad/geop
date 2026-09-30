@@ -31,8 +31,8 @@ use geop_core_sketch::{
 use geop_ops::{
     Part,
     ui::{
-        Button, ButtonItem, Dialog, Event, Form, ListItem, Pointer, Shape, Style, Target, Tone,
-        Value, Visual, hit::hit_visuals,
+        Button, ButtonItem, Dialog, Form, ListItem, Pointer, Shape, StepEditEvent, Style, Target,
+        Tone, Value, Visual, hit::hit_visuals,
     },
 };
 
@@ -316,7 +316,7 @@ pub(crate) fn event<S: Scalar>(
     before: &Part<S>,
     args: &mut AddSketchArgs,
     s: &mut SketchSession,
-    event: &Event<S>,
+    event: &StepEditEvent<S>,
 ) {
     editing(before, args, s, |e| e.event(event));
 }

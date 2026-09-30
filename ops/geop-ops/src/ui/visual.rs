@@ -153,6 +153,6 @@ pub struct Presentation<S: Scalar> {
     /// stops orbiting, and draws a grid on it.
     pub focus: Option<CoordinateSystem<S>>,
     /// Whether a press where the pointer last hovered starts a drag (sent
-    /// as [`super::Event::Drag`]) rather than moving the camera.
+    /// as [`super::StepEditEvent::Drag`]) rather than moving the camera.
     pub grab: bool,
 }

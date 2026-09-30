@@ -10,7 +10,7 @@ use geop_core_sketch::Sketch;
 use geop_ops::{
     ORIGIN, Part, PlacedSketch,
     operation::{EntityRef, Operation},
-    ui::{Event, Form, Value},
+    ui::{Form, StepEditEvent, Value},
 };
 use serde::{Deserialize, Serialize};
 
@@ -88,7 +88,7 @@ impl Operation for AddSketch {
         before: &Part<S>,
         args: &mut AddSketchArgs,
         s: &mut SketchSession,
-        event: &Event<S>,
+        event: &StepEditEvent<S>,
     ) {
         editor::event(before, args, s, event);
     }

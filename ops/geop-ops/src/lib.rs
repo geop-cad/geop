@@ -23,7 +23,7 @@
 //!   sketches, and references to entities of the part by name
 //!   ([`EntityRef`]).
 //! - [`ui`]: what an editor exchanges with the operations — the
-//!   [`Event`](ui::Event)s it sends (a dialog field used, a click or a drag
+//!   [`StepEditEvent`](ui::StepEditEvent)s it sends (a dialog field used, a click or a drag
 //!   as a ray from the eye, a key) and the
 //!   [`Presentation`](ui::Presentation) it gets back — and the
 //!   [`StepEditor`](ui::StepEditor), which makes every operation answer

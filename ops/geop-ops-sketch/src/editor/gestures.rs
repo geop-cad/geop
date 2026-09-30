@@ -410,16 +410,16 @@ impl<S: Scalar> Editing<'_, S> {
         };
     }
 
-    pub(super) fn event(&mut self, event: &Event<S>) {
+    pub(super) fn event(&mut self, event: &StepEditEvent<S>) {
         match event {
-            Event::Dialog { .. } => {}
-            Event::Key { key } => self.key(key),
-            Event::Hover { pointer } => self.hover(pointer),
-            Event::Leave => {
+            StepEditEvent::Dialog { .. } => {}
+            StepEditEvent::Key { key } => self.key(key),
+            StepEditEvent::Hover { pointer } => self.hover(pointer),
+            StepEditEvent::Leave => {
                 self.s.cursor = None;
                 self.s.hover = None;
             }
-            Event::Click {
+            StepEditEvent::Click {
                 pointer,
                 button,
                 double,
@@ -437,7 +437,7 @@ impl<S: Scalar> Editing<'_, S> {
                     self.hover(pointer);
                 }
             },
-            Event::Drag { from, to, done } => {
+            StepEditEvent::Drag { from, to, done } => {
                 if self.s.tool == Tool::Select {
                     self.drag(from, to, *done);
                 }
