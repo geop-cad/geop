@@ -29,6 +29,7 @@ import {
 } from "./files";
 import { ParametersPanel } from "./ParametersPanel";
 import { SceneViewer } from "./SceneViewer";
+import { StructurePanel } from "./StructurePanel";
 import { Timeline, type TimelineStep } from "./Timeline";
 import { Toolbar } from "./Toolbar";
 import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
@@ -413,6 +414,17 @@ function App() {
     </section>
   );
 
+  const structurePanel = (
+    <section className="panel structure-panel">
+      <h2>Part</h2>
+      <StructurePanel
+        items={scene?.structure ?? []}
+        enabled={wasmReady}
+        onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
+      />
+    </section>
+  );
+
   const explorer = !host && (
     <Explorer
       workspace={workspace}
@@ -471,7 +483,10 @@ function App() {
       />
       <div className="body">
         {explorer && <aside className="explorer-bar desktop-only">{explorer}</aside>}
-        <aside className="sidebar desktop-only">{programPanel}</aside>
+        <aside className="sidebar desktop-only">
+          {programPanel}
+          {structurePanel}
+        </aside>
         <div className="editor-area">
           {!host && (
             <div className="editor-tabs desktop-only">
@@ -531,6 +546,7 @@ function App() {
         bugReportOpen={bugReportOpen}
         operationButtons={operationButtonsRow}
         programPanel={programPanel}
+        structurePanel={structurePanel}
         detailPanel={detailPanel}
         filesPanel={explorer || null}
         onBugReportHost={setBugReportHost}

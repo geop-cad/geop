@@ -27,7 +27,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_sketch::{CurveId, PointId, profile::curve_polyline};
-use geop_core_topology::{FaceId, Model, SolidId};
+use geop_core_topology::{EdgeId, FaceId, Model, SolidId};
 use geop_ops_rasterize::rasterize;
 use serde::Serialize;
 
@@ -62,6 +62,8 @@ pub struct PartHit<S: Scalar> {
 #[serde(bound = "S: Scalar")]
 pub struct ViewVertex<S: Scalar> {
     pub name: String,
+    /// The solid it is a corner of.
+    pub solid: Option<String>,
     pub at: Vector3<S>,
 }
 
@@ -78,6 +80,8 @@ fn roles_of<S: Scalar>(entity: &EntityRef, part: &Part<S>) -> Vec<Role> {
 #[serde(bound = "S: Scalar")]
 pub struct ViewEdge<S: Scalar> {
     pub name: String,
+    /// The solid it bounds.
+    pub solid: Option<String>,
     pub polyline: Vec<Vector3<S>>,
     /// What it can be picked as: an edge, and a line or a circle if it is
     /// one.
@@ -285,6 +289,12 @@ pub fn solid_of_face<S: Scalar>(model: &Model<S>, face: FaceId) -> Option<SolidI
         .map(|s| s.solid)
 }
 
+/// The solid `edge` bounds: that of a face it runs along.
+fn solid_of_edge<S: Scalar>(model: &Model<S>, edge: EdgeId) -> Option<SolidId> {
+    let coedge = *model.coedges_of_edge(edge).first()?;
+    solid_of_face(model, model.get_coedge(coedge).ok()?.face)
+}
+
 impl<S: Scalar> PartView<S> {
     /// `part` as drawn.
     pub fn of(part: &Part<S>) -> GeopResult<Self> {
@@ -364,11 +374,20 @@ impl<S: Scalar> PartView<S> {
             })
             .collect::<GeopResult<_>>()?;
 
+        // A vertex is a corner of the solid an edge at it bounds.
+        let mut corner_of = std::collections::HashMap::new();
+        for (&id, edge) in &model.edges {
+            if let Some(solid) = solid_of_edge(model, id) {
+                corner_of.insert(edge.start_vertex, solid);
+                corner_of.insert(edge.end_vertex, solid);
+            }
+        }
         let mut view = PartView {
             vertices: vertices
                 .into_iter()
                 .map(|(&id, p)| ViewVertex {
                     name: name(id.into()),
+                    solid: corner_of.get(&id).map(|&s| name(s.into())),
                     at: *p,
                 })
                 .collect(),
@@ -377,6 +396,7 @@ impl<S: Scalar> PartView<S> {
                 .map(|(&id, polyline)| {
                     let edge = name(id.into());
                     ViewEdge {
+                        solid: solid_of_edge(model, id).map(|s| name(s.into())),
                         roles: roles_of(&EntityRef::Edge { name: edge.clone() }, part),
                         name: edge,
                         polyline: polyline.clone(),

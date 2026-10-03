@@ -460,3 +460,273 @@ fn parameters_are_edited_and_undone() {
     editor.handle(Command::Undo);
     assert_eq!(editor.program().parameters, program.parameters);
 }
+
+/// The part drawn is listed beyond its faces — its datums, sketches,
+/// solids — each shown or hidden as the editor would, until the user says
+/// otherwise; and a placed part's mates are listed too, never drawn.
+#[test]
+fn the_structure_is_listed_and_shown_as_chosen() {
+    use crate::editor::StructureKind;
+    use crate::{Command, Editor};
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program: examples::box_with_drill_hole(),
+        path: None,
+    });
+    let scene = update.scene.unwrap();
+    let listed = |kind| -> Vec<(String, Option<bool>)> {
+        scene
+            .structure
+            .iter()
+            .filter(|i| i.kind == kind)
+            .map(|i| (i.name.clone(), i.visible))
+            .collect()
+    };
+    assert!(listed(StructureKind::Datum).contains(&("origin".into(), Some(true))));
+    // The sketches were extruded: hidden by themselves.
+    assert_eq!(
+        listed(StructureKind::Sketch),
+        [
+            ("outline".into(), Some(false)),
+            ("hole_sketch".into(), Some(false))
+        ]
+    );
+    let solid = listed(StructureKind::Solid)[0].0.clone();
+    assert_eq!(listed(StructureKind::Solid), [(solid.clone(), Some(true))]);
+
+    let shown = |editor: &mut Editor<S>, name: &str, visible: bool| {
+        let update = editor.handle(Command::Visibility {
+            name: name.into(),
+            visible,
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        let scene = update.scene.expect("what is hidden changed");
+        assert!(
+            scene
+                .structure
+                .iter()
+                .any(|i| i.name == name && i.visible == Some(visible))
+        );
+        scene.hidden
+    };
+    let hidden = shown(&mut editor, "outline", true);
+    assert!(!hidden.contains(&"outline".to_string()));
+    let hidden = shown(&mut editor, &solid, false);
+    assert!(hidden.contains(&solid));
+    let hidden = shown(&mut editor, "origin", false);
+    assert!(hidden.contains(&"origin".to_string()));
+}
+
+/// A parameter changed rebuilds the part — with no step edited, and with
+/// one edited: the sketch open follows its formulas at once, solved, and
+/// what it builds follows once it is committed. A table added on the fly
+/// is read by its columns in a formula typed into a dimension.
+#[test]
+fn parameters_changed_rebuild_what_reads_them() {
+    use crate::{Command, Editor};
+    use geop_ops::parameters::{Parameter, Row};
+    use geop_ops::ui::{Shape, StepEditEvent, Value};
+    let mut editor = Editor::<S>::new();
+    let program = examples::parametric_plate();
+    editor.handle(Command::Load {
+        program: program.clone(),
+        path: None,
+    });
+    let corner_x = |editor: &Editor<S>| {
+        let part = editor.part();
+        let p = Aspects::of(
+            &EntityRef::SketchPoint {
+                sketch: "outline".into(),
+                point: PointId(2),
+            },
+            part,
+        )
+        .unwrap()
+        .point
+        .unwrap();
+        p[0].to_f64()
+    };
+    assert!((corner_x(&editor) - 4.0).abs() < 1e-9);
+    // Its state is where its parts are — it places none.
+    assert!(
+        editor.program().state.is_empty(),
+        "{:?}",
+        editor.program().state
+    );
+    let mut parameters = program.parameters.clone();
+    let set_width = |parameters: &mut geop_ops::parameters::Parameters, w: &str| {
+        let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
+            panic!("width is a number")
+        };
+        *expression = w.into();
+    };
+    set_width(&mut parameters, "5");
+    let update = editor.handle(Command::Parameters {
+        parameters: parameters.clone(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let widest_vertex = update
+        .scene
+        .as_ref()
+        .expect("the part changed")
+        .part
+        .vertices
+        .iter()
+        .map(|v| v.at[0].to_f64())
+        .fold(f64::MIN, f64::max);
+    assert!((widest_vertex - 5.0).abs() < 1e-9, "drawn: {widest_vertex}");
+    let state = update.program.unwrap();
+    assert!(
+        state.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        state.steps
+    );
+    let built = editor.program().build::<S>(&NoFiles).unwrap();
+    let corner_built = Aspects::of(
+        &EntityRef::SketchPoint {
+            sketch: "outline".into(),
+            point: PointId(2),
+        },
+        &built,
+    )
+    .unwrap()
+    .point
+    .unwrap()[0]
+        .to_f64();
+    assert!(
+        (corner_built - 5.0).abs() < 1e-9,
+        "the program itself: {corner_built}"
+    );
+    let sketch_of = |part: &Part<S>| {
+        part.sketch(part.sketch_id("outline").unwrap())
+            .unwrap()
+            .sketch
+            .clone()
+    };
+    assert!(
+        (corner_x(&editor) - 5.0).abs() < 1e-9,
+        "{}: {:?} vs built {:?}",
+        corner_x(&editor),
+        sketch_of(editor.part()).points.get(&PointId(2)),
+        sketch_of(&built).points.get(&PointId(2)),
+    );
+
+    // Editing the outline, the width changes: the drawing follows, solved.
+    editor.handle(Command::Open {
+        id: "outline".into(),
+    });
+    set_width(&mut parameters, "7");
+    let update = editor.handle(Command::Parameters {
+        parameters: parameters.clone(),
+    });
+    let visuals = update.step.unwrap().presentation.visuals;
+    let widest = visuals
+        .iter()
+        .filter_map(|v| match &v.shape {
+            Shape::Point { at } if v.key.starts_with('p') => Some(at[0].to_f64()),
+            _ => None,
+        })
+        .fold(f64::MIN, f64::max);
+    assert!((widest - 7.0).abs() < 1e-6, "{widest}");
+    editor.handle(Command::Commit);
+    assert!(
+        (corner_x(&editor) - 7.0).abs() < 1e-9,
+        "{}",
+        corner_x(&editor)
+    );
+
+    // A table, added while the hole's sketch is edited, read in a formula.
+    editor.handle(Command::Open {
+        id: "hole_sketch".into(),
+    });
+    parameters.values.push(Parameter {
+        name: "size".into(),
+        kind: ParameterKind::Table {
+            columns: vec!["diameter".into()],
+            rows: vec![
+                Row {
+                    name: "small".into(),
+                    values: vec![0.3],
+                },
+                Row {
+                    name: "large".into(),
+                    values: vec![0.5],
+                },
+            ],
+            selected: "large".into(),
+        },
+    });
+    let update = editor.handle(Command::Parameters {
+        parameters: parameters.clone(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let crate::PartOperation::AddSketch(args) = editor.editing().unwrap() else {
+        panic!("a sketch")
+    };
+    let (&diameter, _) = args
+        .sketch
+        .constraints
+        .iter()
+        .find(|(_, c)| matches!(c, geop_ops_sketch::Constraint::Diameter { .. }))
+        .unwrap();
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Dialog {
+            key: format!("constraint:{}", diameter.0),
+            value: Value::Text("size.diameter".into()),
+        },
+    });
+    let step = update.step.unwrap();
+    let hint = step.presentation.dialog.get("hint");
+    assert!(
+        !matches!(
+            hint,
+            Some(geop_ops::ui::Control::Text {
+                tone: geop_ops::ui::Tone::Error,
+                ..
+            })
+        ),
+        "{hint:?}"
+    );
+    let crate::PartOperation::AddSketch(args) = editor.editing().unwrap() else {
+        panic!("a sketch")
+    };
+    assert_eq!(args.formulas[&diameter], "size.diameter");
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+}
+
+/// A runner rebuilds from scratch what a parameter changed reaches.
+#[test]
+fn runners_rebuild_when_parameters_change() {
+    let mut program = examples::parametric_plate();
+    let mut runner = crate::ProgramRunner::<S>::new();
+    let corner = |part: &Part<S>| {
+        Aspects::of(
+            &EntityRef::SketchPoint {
+                sketch: "outline".into(),
+                point: PointId(2),
+            },
+            part,
+        )
+        .unwrap()
+        .point
+        .unwrap()[0]
+            .to_f64()
+    };
+    runner.run(&program, None, &NoFiles);
+    assert!((corner(runner.part()) - 4.0).abs() < 1e-9);
+    let ParameterKind::Number { expression, .. } = &mut program.parameters.values[0].kind else {
+        panic!("width is a number")
+    };
+    *expression = "5".into();
+    assert_eq!(
+        geop_ops::parameters::number(&program.inputs(), "width"),
+        Some(5.0)
+    );
+    runner.run(&program, None, &NoFiles);
+    assert!(
+        (corner(runner.part()) - 5.0).abs() < 1e-9,
+        "{}",
+        corner(runner.part())
+    );
+}

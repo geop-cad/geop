@@ -241,7 +241,8 @@ The `parameters` module. A program's `Parameters` are the named values its
 design is given by, defined once in the program and read by name wherever a
 value is typed — a sketch dimension of `width / 2`:
 
-- **Numbers**, each a formula of those defined before it — `4`,
+- **Numbers**, each a formula of the others, defined before it or
+  after — `4`,
   `width / 2`, `sqrt(a^2 + b^2)` — with `+ - * / ^`, parentheses, `pi`
   and `sqrt abs sin cos tan asin acos atan round floor ceil min max`,
   angles in degrees. A `min` and `max` say what a slider offers when the

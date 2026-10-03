@@ -96,8 +96,9 @@ export interface ViewInstance {
 
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
-  vertices: { name: string; at: Vec3 }[];
-  edges: { name: string; polyline: Vec3[] }[];
+  /** Each with the solid it belongs to, if any. */
+  vertices: { name: string; solid: string | null; at: Vec3 }[];
+  edges: { name: string; solid: string | null; polyline: Vec3[] }[];
   /** Triangulated, with the kernel's surface normal at each corner. */
   faces: { name: string; solid: string | null; triangles: [Vec3, Vec3, Vec3][]; normals: [Vec3, Vec3, Vec3][] }[];
   /** Curves in their plane's `u`/`v` coordinates. */
@@ -367,6 +368,8 @@ export type Command =
   | { command: "load_workspace_example"; name: string; folder?: string }
   | { command: "undo" }
   | { command: "redo" }
+  /** Show or hide the datum, sketch, solid or placed part `name`. */
+  | { command: "visibility"; name: string; visible: boolean }
   /** The program's parameters are now these. */
   | { command: "parameters"; parameters: Parameters }
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
@@ -404,8 +407,20 @@ export interface ProgramState {
   workspace_examples: string[];
 }
 
+/** What kind of thing a [[StructureItem]] is. */
+export type StructureKind = "datum" | "sketch" | "solid" | "part" | "mate";
+
+/** A datum, sketch, solid, placed part or mate of the part drawn: whether it is shown, if it is drawn at all. */
+export interface StructureItem {
+  kind: StructureKind;
+  name: string;
+  visible: boolean | null;
+}
+
 export interface SceneState {
   part: PartView;
+  /** What the part has beyond its faces, to list and show or hide. */
+  structure: StructureItem[];
   /** Sketches and datums, by name, not to draw. */
   hidden: string[];
   /** The views of components not sent before, by key: keep them, they are not sent again. */

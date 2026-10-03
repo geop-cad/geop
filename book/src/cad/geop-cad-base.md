@@ -45,7 +45,15 @@ change to it replays only that step.
 What the shown steps built on — their reference fields' values — is hidden
 from the drawing: sketches and whole datums, since what was made from them
 shows them now; none that something of could be picked while a field waits
-for a pick.
+for a pick. Every scene lists the part's structure beyond its faces — its
+solids, sketches, datums, placed parts and their mates — each shown or not;
+`Command::Visibility` shows or hides one by name over what the editor would
+by itself, for as long as the same file is edited.
+
+The program's parameters are edited as a whole (`Command::Parameters`),
+also while a step is edited: everything reading one is built again — the
+step being edited included, a sketch solved anew with its formulas'
+values.
 
 ## Examples
 

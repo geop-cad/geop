@@ -81,7 +81,7 @@ function shown(value: ParamValue | undefined): string {
 
 /**
  * The program's parameters: the part's colour, numbers given as formulas
- * of the parameters before them, and tables of variants — a family of
+ * of the other parameters, and tables of variants — a family of
  * parts, one row each — whose selected row's columns read as
  * `name.column`. Sketch dimensions read them by name; a program placing
  * the part gives them other values.
@@ -104,10 +104,26 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange }: Pro
               <th>row</th>
               {p.columns.map((c, k) => (
                 <th key={k}>
-                  <Field
-                    value={c}
-                    onChange={(name) => set(index, { ...p, columns: p.columns.map((x, j) => (j === k ? name : x)) })}
-                  />
+                  <span className="parameter-column">
+                    <Field
+                      value={c}
+                      onChange={(name) => set(index, { ...p, columns: p.columns.map((x, j) => (j === k ? name : x)) })}
+                    />
+                    <button
+                      className="item-remove"
+                      title={`Remove the column ${c}`}
+                      aria-label={`Remove the column ${c}`}
+                      onClick={() =>
+                        set(index, {
+                          ...p,
+                          columns: p.columns.filter((_, j) => j !== k),
+                          rows: p.rows.map((r) => ({ ...r, values: r.values.filter((_, j) => j !== k) })),
+                        })
+                      }
+                    >
+                      ✕
+                    </button>
+                  </span>
                 </th>
               ))}
               <th>
@@ -223,7 +239,7 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange }: Pro
                     className="parameter-expression"
                     value={p.expression}
                     placeholder="a number or formula"
-                    title="A number, or a formula of the parameters above: width / 2, sqrt(a^2 + b^2), screw.diameter"
+                    title="A number, or a formula of the other parameters: width / 2, sqrt(a^2 + b^2), screw.diameter"
                     onChange={(expression) => set(index, { ...p, expression })}
                   />
                   <span className="parameter-value" title="What it is now">

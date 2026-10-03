@@ -106,6 +106,13 @@ pub enum Command<S: Scalar> {
     Parameters {
         parameters: Parameters,
     },
+    /// Show the datum, sketch, solid or placed part `name` of the part
+    /// drawn, or hide it — whatever the editor would do by itself — for as
+    /// long as the same file is edited.
+    Visibility {
+        name: String,
+        visible: bool,
+    },
     /// Take the drag tool in hand, or put it down: with no step being
     /// edited, dragging any placed part moves it as far as the program's
     /// mates let it.
@@ -169,6 +176,29 @@ pub struct SceneState<S: Scalar> {
     /// a viewer keeps them, so moving a placed part sends where it is, not
     /// what it looks like.
     pub components: BTreeMap<String, PartView<S>>,
+    /// What the part has beyond its faces, to list and show or hide.
+    pub structure: Vec<StructureItem>,
+}
+
+/// What kind of thing a [`StructureItem`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StructureKind {
+    Datum,
+    Sketch,
+    Solid,
+    Part,
+    Mate,
+}
+
+/// A datum, sketch, solid, placed part or mate of the part drawn, by name:
+/// whether it is shown, if it is something drawn at all — what
+/// [`Command::Visibility`] switches.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StructureItem {
+    pub kind: StructureKind,
+    pub name: String,
+    pub visible: Option<bool>,
 }
 
 /// The step being edited, as shown.
@@ -301,6 +331,9 @@ pub struct Editor<S: Scalar> {
     drag_tool: Option<DragTool<S>>,
     /// The part as last drawn: what the drag tool picks from.
     drawn: Option<PartView<S>>,
+    /// What the user chose to show or hide, by name, over what the editor
+    /// would by itself (see [`Editor::hidden`]).
+    visibility: BTreeMap<String, bool>,
 }
 
 impl<S: Scalar> Default for Editor<S> {
@@ -334,11 +367,17 @@ impl<S: Scalar> Editor<S> {
             sent: std::collections::HashSet::new(),
             drag_tool: None,
             drawn: None,
+            visibility: BTreeMap::new(),
         }
     }
 
     pub fn program(&self) -> &Program {
         &self.program
+    }
+
+    /// The part the program builds, as far as it runs now.
+    pub fn part(&self) -> &Part<S> {
+        self.runner.part()
     }
 
     /// The step being edited, with its arguments as they now are.
@@ -408,6 +447,7 @@ impl<S: Scalar> Editor<S> {
             self.drawn = Some(part.clone());
             SceneState {
                 part,
+                structure: self.structure(shown.steps, &shown.hidden),
                 hidden: shown.hidden,
                 components,
             }
@@ -674,6 +714,7 @@ impl<S: Scalar> Editor<S> {
                     }
                     self.undo.clear();
                     self.redo.clear();
+                    self.visibility.clear();
                     self.runner.reset();
                 }
                 self.program = program;
@@ -740,6 +781,10 @@ impl<S: Scalar> Editor<S> {
                 self.runner.reset();
                 self.added = Some(files);
                 Changed::Program
+            }
+            Command::Visibility { name, visible } => {
+                self.visibility.insert(name, visible);
+                Changed::Nothing
             }
             Command::DragTool { on } => {
                 idle(self)?;
@@ -1025,7 +1070,58 @@ impl<S: Scalar> Editor<S> {
             }
             placed(self.runner.part_at(steps), "", &mut hidden);
         }
+        // Then what the user chose — but what a click could pick now is
+        // shown, to be picked.
+        for (name, &visible) in &self.visibility {
+            let wanted = [
+                EntityRef::datum(name.clone()),
+                EntityRef::Sketch { name: name.clone() },
+                EntityRef::Solid { name: name.clone() },
+            ];
+            if visible || wanted.iter().any(pickable) {
+                hidden.retain(|h| h != name);
+            } else if !hidden.contains(name) {
+                hidden.push(name.clone());
+            }
+        }
         hidden
+    }
+
+    /// What the part `steps` steps build has beyond its faces: its datums,
+    /// sketches, solids, the parts placed in it and their mates — each
+    /// shown or not as `hidden` says, but a mate, which is never drawn.
+    fn structure(&self, steps: usize, hidden: &[String]) -> Vec<StructureItem> {
+        let part = self.runner.part_at(steps);
+        let item = |kind, name: &str| StructureItem {
+            kind,
+            name: name.to_string(),
+            visible: Some(!hidden.iter().any(|h| h == name)),
+        };
+        let named = |id: geop_ops::RefId| part.name_of(id).unwrap_or_default();
+        let mut items: Vec<StructureItem> = part
+            .datums()
+            .map(|(id, _)| item(StructureKind::Datum, named(id.into())))
+            .collect();
+        items.extend(
+            part.sketch_names()
+                .iter()
+                .map(|n| item(StructureKind::Sketch, n)),
+        );
+        items.extend(
+            part.solid_names()
+                .iter()
+                .map(|n| item(StructureKind::Solid, n)),
+        );
+        items.extend(
+            part.instances()
+                .map(|(id, _)| item(StructureKind::Part, named(id.into()))),
+        );
+        items.extend(part.mates().map(|(name, _)| StructureItem {
+            kind: StructureKind::Mate,
+            name: name.to_string(),
+            visible: None,
+        }));
+        items
     }
 
     /// The part `steps` steps build, as drawn.

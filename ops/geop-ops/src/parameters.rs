@@ -178,7 +178,11 @@ impl Parameters {
     /// The values the parameters are built with, `overrides` — what a
     /// program placing the part gives it — taking the place of their own:
     /// a number by value, a table by the name of its row, the colour by
-    /// itself. Each number's formula reads the values resolved before it.
+    /// itself. A number's formula may read any other parameter, defined
+    /// before it or after: the tables first, then the numbers whose
+    /// formulas can be evaluated, again and again while that resolves
+    /// more. What is left — reading a parameter there is none of, or one
+    /// that reads it back — fails, saying why.
     pub fn resolve(&self, overrides: &State) -> Resolved {
         let mut out = Resolved::default();
         let color = match overrides.get(COLOR) {
@@ -188,24 +192,15 @@ impl Parameters {
         if let Some(color) = color {
             out.values.insert(COLOR.into(), ParamValue::Text(color));
         }
+        let mut numbers = Vec::new();
         for p in &self.values {
             match &p.kind {
-                ParameterKind::Number { expression, .. } => {
-                    let value = match overrides.get(&p.name) {
-                        Some(ParamValue::Number(v)) => Ok(v.to_f64()),
-                        _ => evaluate(expression, |name| number(&out.values, name)),
-                    };
-                    match value {
-                        Ok(v) => {
-                            out.values
-                                .insert(p.name.clone(), ParamValue::Number(Design::from_f64(v)));
-                        }
-                        Err(e) => {
-                            out.errors
-                                .insert(p.name.clone(), e.root_message().to_string());
-                        }
+                ParameterKind::Number { expression, .. } => match overrides.get(&p.name) {
+                    Some(ParamValue::Number(v)) => {
+                        out.values.insert(p.name.clone(), ParamValue::Number(*v));
                     }
-                }
+                    _ => numbers.push((&p.name, expression)),
+                },
                 ParameterKind::Table {
                     columns,
                     rows,
@@ -234,6 +229,33 @@ impl Parameters {
                     }
                 }
             }
+        }
+        // Each pass evaluates what it can; one that resolves nothing more
+        // leaves what never will.
+        while !numbers.is_empty() {
+            let count = numbers.len();
+            let mut left = Vec::new();
+            let mut failures = Vec::new();
+            for (name, expression) in numbers {
+                match evaluate(expression, |n| number(&out.values, n)) {
+                    Ok(v) => {
+                        out.values
+                            .insert(name.clone(), ParamValue::Number(Design::from_f64(v)));
+                    }
+                    Err(e) => {
+                        left.push((name, expression));
+                        failures.push((name, e));
+                    }
+                }
+            }
+            if left.len() == count {
+                for (name, e) in failures {
+                    out.errors
+                        .insert(name.clone(), e.root_message().to_string());
+                }
+                break;
+            }
+            numbers = left;
         }
         out
     }
@@ -507,9 +529,9 @@ mod tests {
         assert!(!is_formula(" 12.5 ") && is_formula("width"));
     }
 
-    /// Numbers read what is defined before them, a table gives its row's
-    /// values by column, and overrides take the place of definitions — the
-    /// numbers reading them following.
+    /// Numbers read what is defined before or after them, a table gives
+    /// its row's values by column, and overrides take the place of
+    /// definitions — the numbers reading them following.
     #[test]
     fn parameters_resolve_in_order_with_overrides() {
         let parameters = Parameters {
@@ -564,6 +586,21 @@ mod tests {
         assert_eq!(number(&placed.values, "screw.head"), Some(8.5));
         assert!((number(&placed.values, "hole").unwrap() - 5.2).abs() < 1e-12);
         assert_eq!(placed.values[COLOR], ParamValue::Text("#000000".into()));
+
+        // Read before it is defined: the same.
+        let mut reordered = parameters.clone();
+        reordered.values.rotate_left(1);
+        let later = reordered.resolve(&State::new());
+        assert_eq!(number(&later.values, "hole"), number(&own.values, "hole"));
+        // Reading one that never resolves: it fails too, saying so.
+        let mut cycle = parameters.clone();
+        cycle.values[1].kind = ParameterKind::Number {
+            expression: "broken + 1".into(),
+            min: None,
+            max: None,
+        };
+        let cyclic = cycle.resolve(&State::new());
+        assert!(cyclic.errors.contains_key("hole") && cyclic.errors.contains_key("broken"));
 
         let mut bad = parameters.clone();
         bad.values[1].name = "screw".into();

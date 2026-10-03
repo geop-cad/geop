@@ -258,6 +258,9 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         if self.parts[0].parameters() != &program.parameters {
             // A program's parameters are what every step is started with.
             common = 0;
+        }
+        if self.parts[0].parameters() != &program.parameters || self.parts[0].inputs() != &inputs {
+            // What an editor edits the first step against, too.
             self.parts[0] = program.start();
         }
         if self.inputs != inputs {

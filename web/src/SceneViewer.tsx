@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, type CameraPose, type Projection } from "./camera";
 import { DatumLayer } from "./datums3d";
@@ -83,9 +83,10 @@ function colorHex(color: string | null | undefined, fallback: number): number {
   return hex ? parseInt(hex, 16) : fallback;
 }
 
-/** `part` as a [[Scene]], its faces in its own colour if it has one. */
-function flatten(part: PartView): Scene {
+/** `part` as a [[Scene]], its faces in its own colour if it has one, without the solids in `hidden`. */
+function flatten(part: PartView, hidden: string[] = []): Scene {
   const faceColor = colorHex(part.color, FACE_COLOR);
+  const shown = (solid: string | null) => solid == null || !hidden.includes(solid);
   const scene: Scene = {
     points: [],
     point_names: [],
@@ -100,6 +101,7 @@ function flatten(part: PartView): Scene {
     faces: [],
   };
   for (const v of part.vertices) {
+    if (!shown(v.solid)) continue;
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
   }
@@ -110,9 +112,12 @@ function flatten(part: PartView): Scene {
     scene.line_edges.push(edge);
   };
   for (const e of part.edges) {
+    if (!shown(e.solid)) continue;
     for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name);
   }
-  part.faces.forEach((f, index) => {
+  part.faces.forEach((f) => {
+    if (!shown(f.solid)) return;
+    const index = scene.faces.length;
     scene.faces.push({ name: f.name, solid: f.solid });
     f.triangles.forEach(([a, b, c], i) => {
       scene.triangles.push([a, b, c, faceColor]);
@@ -492,7 +497,7 @@ export function SceneViewer({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const groupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
+  const controlsRef = useRef<TrackballControls | null>(null);
   // The move in progress, if any: where it started, where it is going, when.
   const moveRef = useRef<{
     from: CameraPose;
@@ -540,16 +545,19 @@ export function SceneViewer({
     camera.up.set(...DEFAULT_POSE.up);
     cameraRef.current = camera;
 
-    // `OrbitControls` reads `camera.up` once, when it is made, and orbits
-    // about that axis from then on. A focus move can turn the camera's up
-    // (to face a plane head on), so the controls are made afresh whenever
-    // one lands: orbiting about a stale up is what turned a vertical drag
-    // sideways. Making them afresh also drops any momentum left over from
-    // before the move. The same holds for the camera itself: the controls
-    // are made for one.
-    const makeControls = (target: THREE.Vector3): OrbitControls => {
-      const made = new OrbitControls(camera, renderer.domElement);
-      made.enableDamping = true;
+    // Trackball controls: the view tumbles freely about its target —
+    // turning about its own axis too — rather than orbiting about a fixed
+    // up. The controls are made afresh whenever a focus move lands, which
+    // drops any momentum left over from before the move; the same holds
+    // for the camera itself: the controls are made for one.
+    const makeControls = (target: THREE.Vector3): TrackballControls => {
+      const made = new TrackballControls(camera, renderer.domElement);
+      made.rotateSpeed = 3;
+      made.zoomSpeed = 1.2;
+      made.panSpeed = 0.6;
+      made.dynamicDampingFactor = 0.15;
+      // Its keys switch what a drag does — and are the sketch's tools'.
+      made.keys = ["", "", ""];
       made.target.copy(target);
       made.addEventListener("end", () => onPoseRef.current?.(pose()));
       controlsRef.current = made;
@@ -579,6 +587,7 @@ export function SceneViewer({
       labelRenderer.setSize(clientWidth, clientHeight);
       perspective.aspect = clientWidth / clientHeight;
       perspective.updateProjectionMatrix();
+      controlsRef.current?.handleResize();
     };
     /**
      * Size the orthographic camera like a perspective one at its distance
@@ -809,7 +818,7 @@ export function SceneViewer({
       } else {
         // Working in a plane, the view stays head on to it: dragging pans.
         const inPlane = planeRef.current != null;
-        controls.enableRotate = !inPlane;
+        controls.noRotate = inPlane;
         controls.mouseButtons.LEFT = inPlane ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
         controls.update();
       }
@@ -905,7 +914,10 @@ export function SceneViewer({
   }, [focus]);
 
   // Swap in the current part's geometry, leaving camera and controls alone.
-  const scene = useMemo(() => flatten(part), [part]);
+  // A solid hidden is not built at all: what is hidden is part of it.
+  const hiddenKey = JSON.stringify(hidden ?? []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const scene = useMemo(() => flatten(part, hidden ?? []), [part, hiddenKey]);
   useEffect(() => {
     const threeScene = sceneRef.current;
     if (!threeScene) return;
@@ -934,6 +946,7 @@ export function SceneViewer({
         const view = components[placed.component];
         highlights.push(...(view?.solids ?? []).map((solid): EntityRef => ({ type: "Solid", name: solid })));
       }
+      placed.group.visible = !hiddenRef.current.includes(name);
       const hiddenHere = hiddenRef.current.flatMap((h) => (h.startsWith(`${name}/`) ? [h.slice(name.length + 1)] : []));
       applyHighlight(placed.group, placed.scene, highlights, hiddenHere);
     }

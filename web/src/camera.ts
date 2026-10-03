@@ -55,23 +55,26 @@ export function scaleForDistance(distance: number, height: number): number {
 }
 
 /**
- * The same view the camera has now, turned to face `frame` head-on: same
- * look-at point (projected onto the plane) and the same distance, so
- * working in a plane rotates the view into it rather than cutting to
- * somewhere else.
+ * The same view the camera has now, turned as little as it can to face
+ * `frame` head-on: same look-at point (projected onto the plane) and the
+ * same distance, from the side of the plane the camera is on already, and
+ * with whichever of the plane's directions — `±u`, `±v` — is nearest the
+ * camera's up as up. So working in a plane rotates the view into it rather
+ * than cutting to somewhere else, or turning it on its side.
  */
 export function headOnPose(frame: Frame, pose: CameraPose): CameraPose {
+  const dot = (a: Vec3 | number[], b: Vec3 | number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const d = [0, 1, 2].map((k) => pose.target[k] - frame.origin[k]);
-  const along = (a: Vec3) => d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
-  const center: [number, number] = [along(frame.u), along(frame.v)];
-  const distance = Math.hypot(
-    pose.position[0] - pose.target[0],
-    pose.position[1] - pose.target[1],
-    pose.position[2] - pose.target[2],
-  );
+  const center: [number, number] = [dot(d, frame.u), dot(d, frame.v)];
+  const eye = [0, 1, 2].map((k) => pose.position[k] - pose.target[k]);
+  const distance = Math.hypot(eye[0], eye[1], eye[2]);
+  const side = dot(eye, frame.w) < 0 ? -1 : 1;
+  const negate = (a: Vec3): Vec3 => [-a[0], -a[1], -a[2]];
+  const ups: Vec3[] = [frame.v, frame.u, negate(frame.u), negate(frame.v)];
+  const up = ups.reduce((best, a) => (dot(a, pose.up) > dot(best, pose.up) ? a : best));
   return {
-    position: planeToWorld(frame, center, distance),
+    position: planeToWorld(frame, center, side * distance),
     target: planeToWorld(frame, center),
-    up: frame.v,
+    up,
   };
 }

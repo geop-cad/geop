@@ -366,15 +366,25 @@ fn solve(sketch: &mut Sketch, s: &mut SketchSession, drags: &[(PointId, P2)]) {
 
 /// `args` brought up to date with the part `before`, in `frame`: its own
 /// origin and axes there, what it projects where that is now, its formulas
-/// evaluated. What cannot be brought up to date stays as it was: the step
-/// says why when it is built.
-fn refresh<S: Scalar>(args: &mut AddSketchArgs, before: &Part<S>, frame: &CoordinateSystem<S>) {
+/// evaluated — and solved again if that changed it, or if it was not
+/// solved yet, recording how that went in `s`. What cannot be brought up
+/// to date stays as it was: the step says why when it is built.
+fn refresh<S: Scalar>(
+    args: &mut AddSketchArgs,
+    s: &mut SketchSession,
+    before: &Part<S>,
+    frame: &CoordinateSystem<S>,
+) {
+    let drawn = args.sketch.clone();
     args.ensure_frame();
     let _ = args.update_references(before, frame);
     let inputs = before.inputs();
     let _ = args.apply_formulas(|formula| {
         geop_ops::parameters::evaluate(formula, |name| geop_ops::parameters::number(inputs, name))
     });
+    if s.solved.is_none() || args.sketch != drawn {
+        solve(&mut args.sketch, s, &[]);
+    }
 }
 
 impl<S: Scalar> Editing<'_, S> {
@@ -439,11 +449,8 @@ pub(crate) fn form<'a, S: Scalar>(
         }
     };
     let mut args = args.clone();
-    refresh(&mut args, before, &frame);
     let mut s = s.clone();
-    if s.solved.is_none() {
-        solve(&mut args.sketch.clone(), &mut s, &[]);
-    }
+    refresh(&mut args, &mut s, before, &frame);
     draw_dialog(&mut f, before, &args, &s, selection, &frame);
     f.visuals = visuals(&args, &s, selection, &frame);
     f.focus = Some(frame);
@@ -460,8 +467,8 @@ pub(crate) fn event<S: Scalar>(
     editing(before, edit, |e| e.event(event));
 }
 
-/// `f` applied to the drawing, brought up to date with the part and solved
-/// first. Nothing, while the plane is none.
+/// `f` applied to the drawing, brought up to date with the part — and so
+/// solved — first. Nothing, while the plane is none.
 fn editing<S: Scalar>(
     before: &Part<S>,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
@@ -476,10 +483,7 @@ fn editing<S: Scalar>(
     let Some(Ok(frame)) = args.plane.as_ref().map(|p| p.resolve_plane(before)) else {
         return;
     };
-    refresh(args, before, &frame);
-    if s.solved.is_none() {
-        solve(&mut args.sketch, s, &[]);
-    }
+    refresh(args, s, before, &frame);
     f(&mut Editing {
         before,
         args,

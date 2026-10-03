@@ -1170,3 +1170,74 @@ button.inline {
   margin: 0;
   font-size: 0.7rem;
 }
+
+/* ── the part's structure ──────────────────────────────────────────────── */
+
+.structure-panel {
+  margin-top: 0.6rem;
+}
+.structure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.structure-group summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+.structure-count {
+  color: #666;
+  margin-left: 0.2rem;
+}
+.structure-group ul {
+  list-style: none;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.structure-group li {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.12rem 0.3rem;
+  border-radius: 3px;
+  background: #1e1e1e;
+  font-size: 0.75rem;
+}
+.structure-group li.hidden-item .structure-name {
+  color: #666;
+}
+.structure-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+}
+.structure-eye {
+  display: flex;
+  padding: 1px 3px;
+  background: transparent;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+}
+.structure-eye:hover:not(:disabled) {
+  color: #fff;
+}
+.parameter-column {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.parameter-column .item-remove {
+  padding: 0 2px;
+  font-size: 0.65rem;
+}
