@@ -124,6 +124,34 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         )
     }
 
+    /// Whether `other` could be the very same patch: equal degrees, and
+    /// knots and homogeneous control points that `could_be_equal` pairwise.
+    ///
+    /// A test of the representation, so it is exact where it answers `true`
+    /// — two patches built the same way, e.g. two copies of one solid — and
+    /// says nothing about the same surface parametrized differently.
+    pub fn could_be_equal(&self, other: &Self) -> bool {
+        self.degree_u == other.degree_u
+            && self.degree_v == other.degree_v
+            && self.num_u == other.num_u
+            && self.num_v == other.num_v
+            && self
+                .knot_vector_u
+                .iter()
+                .zip(&other.knot_vector_u)
+                .all(|(a, b)| a.could_be_equal(*b))
+            && self
+                .knot_vector_v
+                .iter()
+                .zip(&other.knot_vector_v)
+                .all(|(a, b)| a.could_be_equal(*b))
+            && self
+                .control_points
+                .iter()
+                .zip(&other.control_points)
+                .all(|(a, b)| a.could_be_equal(b))
+    }
+
     /// Number of control points in the u direction.
     pub fn num_u(&self) -> usize {
         self.num_u

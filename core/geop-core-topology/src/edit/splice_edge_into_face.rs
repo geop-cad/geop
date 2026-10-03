@@ -6,7 +6,7 @@ use geop_core_math::{
 };
 
 use crate::{
-    Coedge, CoedgeGeometry, CoedgeId, EdgeId, Face, FaceId, Model, Sense, VertexId,
+    Coedge, CoedgeGeometry, CoedgeId, Curve2, EdgeId, Face, FaceId, Model, Sense, VertexId,
     boundary::{BoundaryIndex, BoundaryType},
     contains::face::{PointClassification, face_contains},
     loop_sampling::sample_loop_to_polygon,
@@ -60,20 +60,52 @@ impl<S: Scalar> Model<S> {
         let (start_vertex, end_vertex) = (edge.start_vertex, edge.end_vertex);
         let curve = edge.curve.clone();
 
-        // The coedge each of the edge's endpoints would attach *after*: the one
-        // already arriving at that vertex.
-        let at_start = coedge_ending_at(model, face_id, start_vertex).with_context(&ctx)?;
-        let at_end = coedge_ending_at(model, face_id, end_vertex).with_context(&ctx)?;
-
-        // Where the face already has a coedge arriving at an endpoint, that
-        // coedge's own pcurve end is the authoritative `(u, v)` there — pin the
-        // new pcurve to it so the loop stays exactly continuous.
-        let pin_start = pcurve_end_uv(model, at_start).with_context(&ctx)?;
-        let pin_end = pcurve_end_uv(model, at_end).with_context(&ctx)?;
+        // The coedge each of the edge's endpoints would attach *after*: one
+        // already arriving at that vertex. Where the face already has one,
+        // its pcurve end is the authoritative `(u, v)` there — the new pcurve
+        // is pinned to it so the loop stays exactly continuous.
         let surface = model.get_face(face_id).with_context(&ctx)?.surface.clone();
-        let pcurve_fwd = surface
-            .fit_pcurve(&curve, pin_start, pin_end, max_nodes, min_subdivision_size)
-            .with_context(&ctx)?;
+        let fit = |at_start: Option<CoedgeId>, at_end: Option<CoedgeId>| {
+            surface
+                .fit_pcurve(
+                    &curve,
+                    pcurve_end_uv(model, at_start)?,
+                    pcurve_end_uv(model, at_end)?,
+                    max_nodes,
+                    min_subdivision_size,
+                )
+                .with_context(&ctx)
+        };
+        let arriving_start = coedges_ending_at(model, face_id, start_vertex).with_context(&ctx)?;
+        let arriving_end = coedges_ending_at(model, face_id, end_vertex).with_context(&ctx)?;
+        let first = |arriving: &[CoedgeId]| arriving.first().copied();
+        let mut pcurve_fwd = fit(first(&arriving_start), first(&arriving_end))?;
+        // A vertex the loop passes more than once — the root of a spur, or a
+        // point where the face touches itself — has as many corners there,
+        // and the edge belongs in the one it leaves into. Its pcurve says
+        // which, so it is chosen after a first fit and refitted if that
+        // moved the pin.
+        let at_start = choose_corner(
+            model,
+            &arriving_start,
+            Leg {
+                pcurve: &pcurve_fwd,
+                from_end: false,
+            },
+        )
+        .with_context(&ctx)?;
+        let at_end = choose_corner(
+            model,
+            &arriving_end,
+            Leg {
+                pcurve: &pcurve_fwd,
+                from_end: true,
+            },
+        )
+        .with_context(&ctx)?;
+        if at_start != first(&arriving_start) || at_end != first(&arriving_end) {
+            pcurve_fwd = fit(at_start, at_end)?;
+        }
         let pcurve_rev = pcurve_fwd.reverse();
 
         let fwd = model.insert_coedge(Coedge {
@@ -242,19 +274,226 @@ fn pcurve_end_uv<S: Scalar>(
     Ok(Some(pcurve.evaluate(t1)?))
 }
 
-/// The coedge of `face_id` that *arrives* at `vertex`, if any — the one a
-/// new edge leaving `vertex` has to be spliced in after.
-fn coedge_ending_at<S: Scalar>(
+/// Every coedge of `face_id` that *arrives* at `vertex`: one per time its
+/// boundary passes through it. A new edge leaving `vertex` has to be spliced
+/// in after one of them — see [`choose_corner`].
+fn coedges_ending_at<S: Scalar>(
     model: &Model<S>,
     face_id: FaceId,
     vertex: VertexId,
-) -> GeopResult<Option<CoedgeId>> {
+) -> GeopResult<Vec<CoedgeId>> {
+    let mut arriving = Vec::new();
     for coedge_id in model.iterate_face_coedges(face_id) {
         if model.coedge_end_vertex_id(coedge_id)? == vertex {
-            return Ok(Some(coedge_id));
+            arriving.push(coedge_id);
         }
     }
-    Ok(None)
+    Ok(arriving)
+}
+
+/// Of the coedges `arriving` at one vertex, the one whose corner a new edge
+/// leaving the vertex along `leaving` runs into.
+///
+/// Each pass of the boundary through the vertex makes a corner: the face's
+/// material fills the angle swept counter-clockwise from the way the boundary
+/// leaves to the way it arrived from — material lies to the left of every
+/// loop, outer and hole alike. One pass leaves no choice. Several do — a
+/// spur's root, where the boundary passes once on each side of it — and
+/// splicing into the wrong corner puts the edge on the wrong side of the
+/// spur: the face split it makes then carries the spur into the half it does
+/// not lie in. That happened on `three_inscribed_bores_remesh_imprints_every_arc`:
+/// an arc spliced as a spur from a point of a bore's rim, and the rim arc
+/// spliced at that same point a moment later, landed the spur in the outer
+/// piece of the wall.
+///
+/// The curves are ordered around the vertex by where they first leave a
+/// small circle around it, not by their tangents: see [`Leg`].
+fn choose_corner<S: Scalar>(
+    model: &Model<S>,
+    arriving: &[CoedgeId],
+    leaving: Leg<'_, S>,
+) -> GeopResult<Option<CoedgeId>> {
+    if arriving.len() <= 1 {
+        return Ok(arriving.first().copied());
+    }
+    let mut corners = Vec::new();
+    for &coedge_id in arriving {
+        let coedge = model.get_coedge(coedge_id)?;
+        let goes_to = Leg {
+            pcurve: &model.get_coedge(coedge.next)?.pcurve,
+            from_end: false,
+        };
+        let came_from = Leg {
+            pcurve: &coedge.pcurve,
+            from_end: true,
+        };
+        corners.push((coedge_id, goes_to, came_from));
+    }
+
+    // One radius for every leg, small enough that no leg meets another
+    // vertex inside it (see `Leg`).
+    let mut radius = leaving.reach()?;
+    for (_, goes_to, came_from) in &corners {
+        for leg in [goes_to, came_from] {
+            let reach = leg.reach()?;
+            if reach.definitely_less(radius) {
+                radius = reach;
+            }
+        }
+    }
+    let radius = radius.div(S::TWO)?.sharpen();
+    if !radius.definitely_greater(S::ZERO) {
+        return Err(GeopError::new(format!(
+            "splice_edge_into_face: a curve at the vertex returns to it at once, so no circle around the vertex orders the corners after coedges {arriving:?}"
+        )));
+    }
+
+    let d = leaving.exit(radius)?;
+    let mut chosen = Vec::new();
+    for (coedge_id, goes_to, came_from) in &corners {
+        let (from, to) = (goes_to.exit(radius)?, came_from.exit(radius)?);
+        match within_corner(from, to, d) {
+            Some(true) => chosen.push(*coedge_id),
+            Some(false) => {}
+            None => {
+                return Err(GeopError::new(format!(
+                    "splice_edge_into_face: cannot tell whether an edge leaving towards {d:?} runs into the corner after coedge {coedge_id}, from {from:?} counter-clockwise to {to:?} (at radius {radius:?})"
+                )));
+            }
+        }
+    }
+    match chosen[..] {
+        [coedge_id] => Ok(Some(coedge_id)),
+        _ => Err(GeopError::new(format!(
+            "splice_edge_into_face: an edge leaving towards {d:?} runs into {} of the corners after coedges {arriving:?}, where it must run into exactly one",
+            chosen.len()
+        ))),
+    }
+}
+
+/// A pcurve run away from the vertex at one of its ends.
+///
+/// Several curves leaving one vertex are ordered around it by where each
+/// first leaves a circle of some radius around the vertex. Within a radius
+/// that no curve meets another vertex inside, their pieces in the disk are
+/// paths from its centre to its rim that do not cross — curves of a face's
+/// boundary, and an edge being spliced into it, meet only at vertices — and
+/// such paths leave the disk in the same cyclic order they leave its centre.
+/// So the order is exact at any such radius, and a larger one only separates
+/// the curves further.
+///
+/// Tangents would answer the same question only where the curves leave in
+/// different directions. Intersection curves of tangent configurations often
+/// leave a vertex tangent to each other, and then only curvature separates
+/// them — which, differentiated twice off a pcurve that encloses a traced
+/// curve, comes out too wide to decide anything.
+struct Leg<'a, S: Scalar> {
+    pcurve: &'a Curve2<S>,
+    /// Whether the vertex is at the pcurve's end (and it is run backwards).
+    from_end: bool,
+}
+
+impl<S: Scalar> Leg<'_, S> {
+    /// The parameters of the vertex end and of the pcurve's midpoint.
+    fn ends(&self) -> GeopResult<(S, S)> {
+        let (t0, t1) = self.pcurve.domain();
+        let mid = t0.add(t1).div(S::TWO)?;
+        Ok((if self.from_end { t1 } else { t0 }, mid))
+    }
+
+    /// A radius this leg reaches, before meeting any vertex other than the
+    /// one it leaves: its distance to its midpoint, or to its far end where
+    /// that is nearer. A curve returning to the vertex it leaves has no far
+    /// end to meet.
+    fn reach(&self) -> GeopResult<S> {
+        let (t0, t1) = self.pcurve.domain();
+        let (t_vertex, t_mid) = self.ends()?;
+        let t_far = if self.from_end { t0 } else { t1 };
+        let origin = self.pcurve.evaluate(t_vertex)?;
+        let mid = self.pcurve.evaluate(t_mid)?.sub(&origin).norm();
+        let far = self.pcurve.evaluate(t_far)?.sub(&origin).norm();
+        Ok(
+            if far.definitely_greater(S::ZERO) && far.definitely_less(mid) {
+                far
+            } else {
+                mid
+            },
+        )
+    }
+
+    /// Where the leg leaves the circle of `radius` around its vertex,
+    /// relative to the vertex. Located by bisection between the vertex and
+    /// the midpoint, which lies outside a circle of at most half its reach;
+    /// the parameters bisected are the search's own choice, so they are sharp.
+    ///
+    /// Bisection finds *a* crossing of the circle, which is the first exit
+    /// the ordering argument needs as long as the leg does not leave the disk
+    /// and come back before its midpoint — true of the short, smooth trim
+    /// curves at half their reach, and an assumption for anything else.
+    fn exit(&self, radius: S) -> GeopResult<Vector2<S>> {
+        let (t_vertex, t_mid) = self.ends()?;
+        let origin = self.pcurve.evaluate(t_vertex)?;
+        let radius_sq = radius.mul(radius);
+        let (mut inside, mut outside) = (t_vertex, t_mid);
+        let mut point = self.pcurve.evaluate(outside)?.sub(&origin);
+        for _ in 0..EXIT_BISECTIONS {
+            let t = inside.add(outside).div(S::TWO)?.sharpen();
+            point = self.pcurve.evaluate(t)?.sub(&origin);
+            let excess = point.norm_sq().sub(radius_sq);
+            if excess.definitely_less(S::ZERO) {
+                inside = t;
+            } else if excess.definitely_greater(S::ZERO) {
+                outside = t;
+            } else {
+                break;
+            }
+        }
+        Ok(point)
+    }
+}
+
+/// Bisection steps for [`Leg::exit`]. Bounds effort only: each step halves
+/// the stretch of curve the exit point is known to lie on, and the point
+/// returned is on the curve either way.
+const EXIT_BISECTIONS: usize = 60;
+
+/// Whether `d` lies strictly inside the angle swept counter-clockwise from
+/// `from` to `to`; `None` where the intervals cannot decide it. `from` and
+/// `to` pointing the same way sweep the full turn — the tip of a spur, whose
+/// corner is everything around it.
+fn within_corner<S: Scalar>(from: Vector2<S>, to: Vector2<S>, d: Vector2<S>) -> Option<bool> {
+    let sign = |x: S| {
+        if x.definitely_greater(S::ZERO) {
+            Some(true)
+        } else if x.definitely_less(S::ZERO) {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let after_from = sign(from.prod_cross(&d));
+    let before_to = sign(d.prod_cross(&to));
+    let turn = from.prod_cross(&to);
+    if turn.definitely_greater(S::ZERO) {
+        // Less than half a turn: inside means past `from` and short of `to`.
+        match (after_from, before_to) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        }
+    } else if turn.definitely_less(S::ZERO) {
+        // More than half a turn: everything but the complementary angle.
+        match (after_from, before_to) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    } else if from.prod_dot(&to).definitely_greater(S::ZERO) {
+        // The full turn, unless `d` leaves along it.
+        after_from.map(|_| true)
+    } else {
+        None
+    }
 }
 
 /// Make `to` follow `from` in loop order, keeping `prev` consistent.

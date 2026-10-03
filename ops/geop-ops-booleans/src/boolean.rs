@@ -15,13 +15,15 @@
 //!    them where the operator needs the material on the other side.
 //! 4. Assemble the survivors into a new solid and discard everything else.
 
+use std::collections::HashMap;
+
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_topology::{
-    FaceId, Model, ShellId, SolidId,
+    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
     contains::{
         face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
         shell::{PointClassification as ShellPoint, shell_contains},
@@ -174,6 +176,7 @@ pub fn boolean<S: Scalar>(
     let faces_a = model.solid_faces(solid_a).with_context(&ctx)?;
     let faces_b = model.solid_faces(solid_b).with_context(&ctx)?;
 
+    let mut decisions: HashMap<FaceId, (FaceClassification, Keep)> = HashMap::new();
     let mut keep: Vec<FaceId> = Vec::new();
     let mut reverse: Vec<FaceId> = Vec::new();
     for (faces, from_a, other) in [(&faces_a, true, solid_b), (&faces_b, false, solid_a)] {
@@ -183,7 +186,9 @@ pub fn boolean<S: Scalar>(
                 .with_context(&|e: GeopError| {
                     e.with_context(format!("classifying face {face_id}"))
                 })?;
-            match op.keeps(class, from_a) {
+            let decision = op.keeps(class, from_a);
+            decisions.insert(face_id, (class, decision));
+            match decision {
                 Keep::AsIs => keep.push(face_id),
                 Keep::Reversed => {
                     keep.push(face_id);
@@ -193,6 +198,7 @@ pub fn boolean<S: Scalar>(
             }
         }
     }
+    check_closed(model, &decisions).with_context(&ctx)?;
 
     for &face_id in &reverse {
         part.reverse_face(face_id).with_context(&ctx)?;
@@ -202,14 +208,66 @@ pub fn boolean<S: Scalar>(
         .with_context(&ctx)
 }
 
-/// Where `face_id` sits relative to `other_solid`, decided at a single point
-/// strictly inside the face's trimmed region.
+/// Fails unless the kept faces close up: every edge they use must be used an
+/// even number of times by them — twice where two faces meet, four times
+/// where the result touches itself along the edge. An odd count is a hole in
+/// the result, so a face was kept or dropped wrongly, or remesh left a face
+/// straddling the other solid; the error lists every face along that edge
+/// with its classification, which tells the two apart.
+fn check_closed<S: Scalar>(
+    model: &Model<S>,
+    decisions: &HashMap<FaceId, (FaceClassification, Keep)>,
+) -> GeopResult<()> {
+    let mut uses: HashMap<EdgeId, usize> = HashMap::new();
+    for (&face_id, &(_, decision)) in decisions {
+        if decision == Keep::Drop {
+            continue;
+        }
+        for coedge in model.iterate_face_coedges(face_id) {
+            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
+                *uses.entry(edge).or_default() += 1;
+            }
+        }
+    }
+    let Some((&edge, &count)) = uses
+        .iter()
+        .filter(|(_, n)| *n % 2 != 0)
+        .min_by_key(|(e, _)| e.0)
+    else {
+        return Ok(());
+    };
+    let e = model.get_edge(edge)?;
+    let faces: Vec<String> = model
+        .coedges_of_edge(edge)
+        .into_iter()
+        .map(|coedge| {
+            let face = model.get_coedge(coedge)?.face;
+            Ok(match decisions.get(&face) {
+                Some((class, decision)) => format!("{face}: {class:?} -> {decision:?}"),
+                None => format!("{face}: not in either solid"),
+            })
+        })
+        .collect::<GeopResult<_>>()?;
+    Err(GeopError::new(format!(
+        "boolean: the kept faces use edge {edge} (from {:?} to {:?}) {count} time(s), leaving the result open there; faces along it: [{}]",
+        model.get_vertex(e.start_vertex)?.point,
+        model.get_vertex(e.end_vertex)?.point,
+        faces.join(", ")
+    )))
+}
+
+/// Where `face_id` sits relative to `other_solid`, decided at points strictly
+/// inside the face's trimmed region.
 ///
-/// One point is enough *because remesh ran first*: every curve along which
-/// the other solid's boundary crosses this face has been imprinted, and the
-/// face split along it, so the face no longer straddles anything. Without
+/// One point would be enough *because remesh ran first*: every curve along
+/// which the other solid's boundary crosses this face has been imprinted, and
+/// the face split along it, so the face no longer straddles anything. Without
 /// that guarantee this would be unsound, which is why it lives here rather
-/// than as a general-purpose query.
+/// than as a general-purpose query. Every interior point offered (one or two
+/// per boundary coedge, see `face_interior_point_where`) is classified anyway,
+/// and points that disagree are an error: a missed intersection curve then
+/// names the face it left straddling, instead of surfacing as a result that
+/// is open somewhere else — or, by luck of which point came first, not at all.
 ///
 /// A point that lands *on* the other solid's boundary doesn't decide it by
 /// itself: the face may lie along that boundary over an area (coincident
@@ -228,7 +286,7 @@ pub fn classify_face<S: Scalar>(
 ) -> GeopResult<FaceClassification> {
     let face = model.get_face(face_id)?;
     let shells = model.get_solid(other_solid)?.shells.clone();
-    let mut decided = None;
+    let mut decided: Vec<(FaceClassification, Vector3<S>)> = Vec::new();
     let mut on_boundary = Vec::new();
     face_interior_point_where(
         model,
@@ -248,8 +306,8 @@ pub fn classify_face<S: Scalar>(
                     SEED,
                 )? {
                     ShellPoint::Inside => {
-                        decided = Some(FaceClassification::Inside);
-                        return Ok(true);
+                        decided.push((FaceClassification::Inside, point));
+                        return Ok(false);
                     }
                     ShellPoint::Outside => continue,
                     ShellPoint::OnFace | ShellPoint::OnEdge | ShellPoint::OnVertex => {
@@ -258,11 +316,16 @@ pub fn classify_face<S: Scalar>(
                     }
                 }
             }
-            decided = Some(FaceClassification::Outside);
-            Ok(true)
+            decided.push((FaceClassification::Outside, point));
+            Ok(false)
         },
     )?;
-    if let Some(classification) = decided {
+    if let Some(&(classification, point)) = decided.first() {
+        if let Some((other, other_point)) = decided.iter().find(|(c, _)| *c != classification) {
+            return Err(GeopError::new(format!(
+                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted"
+            )));
+        }
         return Ok(classification);
     }
 
@@ -857,13 +920,6 @@ mod tests {
     /// right: the bore touches the cube's sides along lines, and the one at
     /// `x = 0.5` survives the cut.
     #[test]
-    #[ignore = "still fails: the section plane x = 0.05 cuts the sphere in a circle of radius \
-                0.4975, exactly the bore wall's y = ±0.4975, so the circle touches the wall's section \
-                lines tangentially at (0.05, ±0.4975, 0). Splitting the section face there leaves two \
-                kept faces overlapping on the thin strip between the cube side and the wall (the \
-                spurious triangles), with a wall-section edge used by 3 coedges. Fixed so far: the \
-                missing top/bottom corner faces (stale start-point face; a curve shorter than the \
-                tracer's first step never getting a direction)."]
     fn flush_bored_cube_plus_inscribed_sphere_section() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1042,6 +1098,53 @@ mod tests {
         op_empty(&mut part, a, b, BooleanOp::Difference);
     }
 
+    /// Every operator on two copies of one shape — same geometry, separate
+    /// topology with ids of their own — so that each face of either copy
+    /// coincides with a face of the other over its whole area, and every edge
+    /// and vertex lies exactly on one of the other copy's. Union and
+    /// intersection must give the shape back, difference must be empty.
+    fn check_duplicated_shape(make: impl Fn(&mut M) -> geop_core_topology::SolidId) {
+        let probes = [(0.0, 0.0, 0.0), (0.2, -0.1, 0.15), (0.9, 0.0, 0.0)];
+        let inside_original = {
+            let mut part = M::new();
+            let shape = make(&mut part);
+            probes.map(|p| contains(part.topology(), shape, p))
+        };
+        for operator in [BooleanOp::Union, BooleanOp::Intersection] {
+            let mut part = M::new();
+            let a = make(&mut part);
+            let b = make(&mut part);
+            let result = op(&mut part, a, b, operator);
+            for (p, inside) in probes.iter().zip(inside_original) {
+                assert_eq!(
+                    contains(part.topology(), result, *p),
+                    inside,
+                    "{operator:?} of two copies must contain {p:?} exactly when one copy does"
+                );
+            }
+        }
+        let mut part = M::new();
+        let a = make(&mut part);
+        let b = make(&mut part);
+        op_empty(&mut part, a, b, BooleanOp::Difference);
+    }
+
+    #[test]
+    fn duplicated_cube_all_operators() {
+        check_duplicated_shape(|part| cube(part, CORNER, UNIT));
+    }
+
+    #[test]
+    fn duplicated_sphere_all_operators() {
+        check_duplicated_shape(|part| sphere(part, [0.0, 0.0, 0.0], 0.5));
+    }
+
+    #[test]
+    fn duplicated_cylinder_all_operators() {
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
+        check_duplicated_shape(|part| cylinder(part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z));
+    }
+
     /// A sphere centred on the cube's corner: its three coordinate-plane
     /// seams lie exactly in three faces of the cube.
     #[test]
@@ -1125,13 +1228,141 @@ mod tests {
         op(&mut part, block, ball, BooleanOp::Union);
     }
 
+    /// Two inscribed bores at right angles: the first two steps of
+    /// `cube_minus_three_inscribed_bores`. The second bore's wall meets the
+    /// first's in two Steinmetz ellipses, which end exactly where both bores
+    /// touch the cube's faces — at the midpoints of its edges.
+    #[test]
+    fn cube_minus_two_inscribed_bores() {
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
+        let mut part = M::new();
+        let block = cube(&mut part, CORNER, UNIT);
+        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut part, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        op(&mut part, a, x, BooleanOp::Difference);
+    }
+
+    /// Remesh `a` against `b`, then require an edge shared by faces of both
+    /// between each pair of points in `arcs`, and the full validation to
+    /// pass.
+    ///
+    /// The full validation cannot see a missing intersection arc that ends
+    /// at vertices both solids share: faces sharing a vertex are not
+    /// searched for crossings. A boolean only notices one as a face it cannot
+    /// classify, or a result that is open, far from the cause. So the arcs a
+    /// scene must have are named, and on failure the edges it does have are
+    /// listed.
+    fn check_remesh_imprints(
+        part: &mut M,
+        a: geop_core_topology::SolidId,
+        b: geop_core_topology::SolidId,
+        arcs: &[[[f64; 3]; 2]],
+    ) {
+        crate::remesh::remesh::remesh(part, &namer(), a, b, RemeshParams::default())
+            .unwrap_or_else(|e| panic!("remesh failed: {e}"));
+        let model = part.topology();
+        let faces_a = model.solid_faces(a).unwrap();
+        let faces_b = model.solid_faces(b).unwrap();
+        let mut shared = Vec::new();
+        for (&edge_id, edge) in &model.edges {
+            let faces: Vec<_> = model
+                .coedges_of_edge(edge_id)
+                .iter()
+                .map(|&c| model.get_coedge(c).unwrap().face)
+                .collect();
+            if faces.iter().any(|f| faces_a.contains(f))
+                && faces.iter().any(|f| faces_b.contains(f))
+            {
+                shared.push([edge.start_vertex, edge.end_vertex].map(|v| {
+                    let p = model.get_vertex(v).unwrap().point;
+                    [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
+                }));
+            }
+        }
+        // Telling which known point a vertex is, not a kernel comparison:
+        // the expected points are well apart, so any coarse tolerance names
+        // them unambiguously.
+        let near = |p: [f64; 3], q: [f64; 3]| (0..3).all(|i| (p[i] - q[i]).abs() < 1e-4);
+        let missing: Vec<_> = arcs
+            .iter()
+            .filter(|[p, q]| {
+                !shared
+                    .iter()
+                    .any(|[s, e]| (near(*s, *p) && near(*e, *q)) || (near(*s, *q) && near(*e, *p)))
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "no edge shared by both solids between {missing:?}; the shared edges are {shared:?}"
+        );
+
+        if let Err(errors) = geop_core_topology::validation::validate(&validation(), model) {
+            let all: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
+            panic!(
+                "{} validate error(s):\n{}",
+                errors.len(),
+                all.join("\n---\n")
+            );
+        }
+    }
+
+    /// The remesh behind `cube_minus_two_inscribed_bores`' second step: each
+    /// Steinmetz ellipse `x = ±z` of the two walls runs through midpoints
+    /// `(±0.5, 0, ±0.5)` of the cube's edges and through `(0, ±0.5, 0)`,
+    /// where the two ellipses cross with the walls tangent — so each of its
+    /// eight arcs can only be traced from the midpoint end.
+    #[test]
+    fn two_inscribed_bores_remesh_imprints_every_arc() {
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
+        let mut part = M::new();
+        let block = cube(&mut part, CORNER, UNIT);
+        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut part, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        let mut arcs = Vec::new();
+        for (mx, mz) in [(0.5, 0.5), (0.5, -0.5), (-0.5, 0.5), (-0.5, -0.5)] {
+            for cy in [0.5, -0.5] {
+                arcs.push([[mx, 0.0, mz], [0.0, cy, 0.0]]);
+            }
+        }
+        check_remesh_imprints(&mut part, a, x, &arcs);
+    }
+
+    /// The remesh behind `cube_minus_three_inscribed_bores`' third step. In
+    /// each octant the three walls meet at one point, `(±1, ±1, ±1) / sqrt 8`,
+    /// where the arc the third wall cuts from the first meets the arc it cuts
+    /// from the second: one runs from there to `(0, ±0.5, ±0.5)`, the other
+    /// to `(±0.5, ±0.5, 0)`. That point is interior to the third wall, so both
+    /// arcs leave it into the same face.
+    #[test]
+    fn three_inscribed_bores_remesh_imprints_every_arc() {
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
+        let mut part = M::new();
+        let block = cube(&mut part, CORNER, UNIT);
+        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut part, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        let b = op(&mut part, a, x, BooleanOp::Difference);
+        let y = cylinder(&mut part, [0.0, -0.875, 0.0], 0.5, 1.75, Axis::Y);
+        let t = 0.125f64.sqrt();
+        let mut arcs = Vec::new();
+        for sx in [1.0, -1.0] {
+            for sy in [1.0, -1.0] {
+                for sz in [1.0, -1.0] {
+                    let triple = [sx * t, sy * t, sz * t];
+                    arcs.push([triple, [0.0, sy * 0.5, sz * 0.5]]);
+                    arcs.push([triple, [sx * 0.5, sy * 0.5, 0.0]]);
+                }
+            }
+        }
+        check_remesh_imprints(&mut part, b, y, &arcs);
+    }
+
     /// Inscribed bores along all three axes, one after another (a "jack").
     /// Each bore is tangent to four faces, and each later bore crosses the
     /// earlier ones at Steinmetz points.
     #[test]
-    #[ignore = "still fails: after the third bore one face's normal points into the solid \
-                (face_orientation check); not yet investigated. The bores are tangent to the cube's \
-                faces and cross each other at Steinmetz points, the same degeneracies as elsewhere."]
     fn cube_minus_three_inscribed_bores() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1211,6 +1442,47 @@ mod tests {
         let b = op(&mut part, a, cap, BooleanOp::Union);
         let hole = cylinder(&mut part, [0.0, 0.0, -0.5], 0.25, 1.5, Axis::Z);
         op(&mut part, b, hole, BooleanOp::Difference);
+    }
+
+    /// The second step of `chained_differences_block_with_two_slots_and_a_sphere`,
+    /// stopped after remesh: a point of the second slot's side face, above the
+    /// block, must classify as outside the slotted block. It came back
+    /// `Inside` — a ray-parity miscount that the boolean only stopped hiding
+    /// once `classify_face` checked every interior point it sampled.
+    #[test]
+    fn chained_slots_point_above_the_block_is_outside() {
+        let f = ScalInF64::from_f64;
+        let corner = |x: f64, y: f64, z: f64, dx: f64, dy: f64, dz: f64| {
+            (
+                Vector3::from_array([f(x), f(y), f(z)]),
+                Vector3::from_array([f(x + dx), f(y + dy), f(z + dz)]),
+            )
+        };
+        let mut part = M::new();
+        let (min_a, max_a) = corner(-0.50, -0.50, -0.50, 1.00, 1.00, 1.00);
+        let a = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "a", min_a, max_a).unwrap();
+        let (min_b, max_b) = corner(-1.13, -0.30, -0.33, 2.25, 0.60, 0.65);
+        let b = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "b", min_b, max_b).unwrap();
+        let c = op(&mut part, a, b, BooleanOp::Difference);
+        let (min_d, max_d) = corner(-0.33, -0.28, -1.15, 0.65, 0.55, 2.30);
+        let d = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "d", min_d, max_d).unwrap();
+        crate::remesh::remesh::remesh(&mut part, &namer(), c, d, RemeshParams::default()).unwrap();
+
+        let params = RemeshParams::<ScalInF64>::default();
+        let shell = part.topology().get_solid(c).unwrap().shells[0];
+        let classification = geop_core_topology::contains::shell::shell_contains(
+            part.topology(),
+            shell,
+            v(-0.005, -0.28, 0.825),
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+            super::SEED,
+        )
+        .unwrap();
+        assert_eq!(
+            classification,
+            geop_core_topology::contains::shell::PointClassification::Outside
+        );
     }
 
     #[test]

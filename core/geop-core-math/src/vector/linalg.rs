@@ -1,7 +1,7 @@
 use crate::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector, Vector3},
+    vector::{Vector, Vector2, Vector3},
 };
 
 impl<S: Scalar, const N: usize> Vector<S, N> {
@@ -145,5 +145,14 @@ impl<S: Scalar> Vector3<S> {
         out[1] = self[2].mul(other[0]).sub(self[0].mul(other[2]));
         out[2] = self[0].mul(other[1]).sub(self[1].mul(other[0]));
         out
+    }
+}
+
+impl<S: Scalar> Vector2<S> {
+    /// The 2-D cross product `self.x * other.y - self.y * other.x`: the z
+    /// component of the 3-D one, positive when `other` lies counter-clockwise
+    /// of `self`.
+    pub fn prod_cross(&self, other: &Self) -> S {
+        self[0].mul(other[1]).sub(self[1].mul(other[0]))
     }
 }

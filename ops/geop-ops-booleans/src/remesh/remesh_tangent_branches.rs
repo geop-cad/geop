@@ -23,7 +23,7 @@
 //! curvatures* agree.
 
 use geop_core_geometry::{
-    contains::surface::surface_could_contain,
+    contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{Intersections, curve_surface_intersect},
     nurb_curve::NurbCurve,
     nurb_surface::NurbSurface3D,
@@ -33,7 +33,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_topology::{EdgeId, FaceId, Model, SolidId, VertexId};
+use geop_core_topology::{EdgeId, FaceId, Model, Sense, SolidId, VertexId};
 use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
@@ -189,6 +189,107 @@ fn tangent_branch_points<S: Scalar>(
     Ok(found)
 }
 
+/// Whether an intersection branch of faces `g` and `f` could leave `edge_id`,
+/// which bounds `g` and lies on `f`, into both faces at once — `false` only
+/// where that is excluded exactly, before [`tangent_branch_points`] searches
+/// for one.
+///
+/// Two cases are excluded, and both are the configurations that make the
+/// search exhaustive: two surfaces that agree in curvature all along the edge
+/// never let it discard a stretch, so it evaluates every one of its
+/// `2^ISOLATION_LEVELS` pieces and finds nothing. Two copies of one solid
+/// consist of nothing else — every edge lies on the other copy's faces — and
+/// spent seconds per boolean here.
+///
+/// - **The same patch.** Where `g` and `f` are one surface, `g ∩ f` is that
+///   surface, not branches leaving the edge; the overlap is imprinting's to
+///   handle.
+/// - **Opposite sides.** Where the edge runs along a boundary edge of `f`
+///   (the other solid's copy of it), `f` lies to one side of it, and a branch
+///   leaving into both faces needs `g` on that same side. Material lies left
+///   of every coedge, so a face's side is `n x t`, its normal across its
+///   coedge's direction; with the normals parallel and the directions
+///   parallel, `(n_g x t_g) . (n_f x t_f) = (n_g . n_f)(t_g . t_f)`. Both
+///   signs are exact — no point is probed. The neighbouring patches of a
+///   sphere meet that way along their seams.
+///
+/// Anything undecided answers `true`, leaving it to the search.
+fn branch_can_leave<S: Scalar>(
+    model: &Model<S>,
+    edge_id: EdgeId,
+    g: FaceId,
+    f: FaceId,
+    max_nodes: usize,
+    min_subdivision_size: S,
+) -> GeopResult<bool> {
+    let (face_g, face_f) = (model.get_face(g)?, model.get_face(f)?);
+    if face_g.surface.could_be_equal(&face_f.surface) {
+        return Ok(false);
+    }
+
+    let edge = model.get_edge(edge_id)?;
+    if edge.start_vertex == edge.end_vertex {
+        return Ok(true);
+    }
+    let on_g: Vec<_> = model
+        .coedges_of_edge(edge_id)
+        .into_iter()
+        .filter(|&c| model.coedges.get(&c).is_some_and(|c| c.face == g))
+        .collect();
+    let [coedge_g] = on_g[..] else {
+        return Ok(true);
+    };
+    let (t0, t1) = edge.curve.domain();
+    let mid = edge.curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?;
+    let mut along_f = None;
+    for coedge_id in model.iterate_face_coedges(f) {
+        let coedge = model.get_coedge(coedge_id)?;
+        let Ok(other) = coedge.edge() else {
+            continue;
+        };
+        let other_edge = model.get_edge(other)?;
+        let same_ends = [other_edge.start_vertex, other_edge.end_vertex]
+            == [edge.start_vertex, edge.end_vertex]
+            || [other_edge.end_vertex, other_edge.start_vertex]
+                == [edge.start_vertex, edge.end_vertex];
+        if same_ends
+            && curve_could_contain(&other_edge.curve, &mid, max_nodes, min_subdivision_size)?
+                .is_some()
+        {
+            along_f = Some((coedge_id, other_edge.start_vertex == edge.start_vertex));
+            break;
+        }
+    }
+    let Some((coedge_f, same_direction)) = along_f else {
+        // The edge runs through `f`'s interior, which lies on both sides.
+        return Ok(true);
+    };
+
+    let normal_at_mid = |face: &geop_core_topology::Face<S>, coedge| -> GeopResult<Vector3<S>> {
+        let pcurve = &model.get_coedge(coedge)?.pcurve;
+        let (a, b) = pcurve.domain();
+        let uv = pcurve.evaluate(a.add(b).div(S::TWO)?.sharpen())?;
+        face.surface.normal(uv[0], uv[1])
+    };
+    let (Ok(n_g), Ok(n_f)) = (
+        normal_at_mid(face_g, coedge_g),
+        normal_at_mid(face_f, coedge_f),
+    ) else {
+        return Ok(true);
+    };
+    let alignment = n_g.prod_dot(&n_f);
+    let aligned = if alignment.definitely_greater(S::ZERO) {
+        true
+    } else if alignment.definitely_less(S::ZERO) {
+        false
+    } else {
+        return Ok(true);
+    };
+    let forward = |c| -> GeopResult<bool> { Ok(model.get_coedge(c)?.sense == Sense::Forward) };
+    let parallel = forward(coedge_g)? == (forward(coedge_f)? == same_direction);
+    Ok(aligned == parallel)
+}
+
 /// The first branch point (see the module doc) on an edge of `edge_solid`
 /// lying on a face of `face_solid`, strictly inside the edge: the edge, the
 /// parameter to split it at, an existing vertex there if there is one, the
@@ -224,6 +325,11 @@ fn find_tangent_branch<S: Scalar>(
                 continue;
             }
             for &g in &bounded {
+                if !branch_can_leave(model, edge_id, g, face_id, max_nodes, min_subdivision_size)
+                    .with_context(&pair_ctx)?
+                {
+                    continue;
+                }
                 let surf_g = &model.get_face(g)?.surface;
                 for t in tangent_branch_points(
                     &edge.curve,

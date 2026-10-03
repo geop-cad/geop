@@ -1,6 +1,6 @@
 use geop_core_geometry::{
     contains::curve::curve_could_contain,
-    intersection::curve_curve_intersect,
+    intersection::{curve_curve_intersect, refine_curve_curve_crossing},
     nurb_curve::{NurbCurve, NurbCurve2D},
     nurb_surface::NurbSurface3D,
 };
@@ -110,7 +110,6 @@ pub fn loops_contain<S: Scalar>(
     let dv = v_hi.sub(v_lo);
     let diag = du.mul(du).add(dv.mul(dv)).sqrt()?;
     let ray_length = diag.mul(S::from_f64(3.0)).add(S::ONE);
-    let t_epsilon = epsilon.div(ray_length)?;
 
     let mut rng = Rng::new(seed);
     // Why the most recent direction was given up on — reported if every one
@@ -159,8 +158,32 @@ pub fn loops_contain<S: Scalar>(
                 }
             };
             for (t, mid) in hits {
-                if !t.definitely_greater(t_epsilon) {
-                    continue;
+                // A crossing the search cannot place beyond the query point
+                // is refined until it can: a crossing right next to the query
+                // is a real one — the boundary is just there — and has to be
+                // counted. Dropping every hit within `epsilon` of the query,
+                // as this once did, turned a point 6e-5 outside a face into
+                // one inside it.
+                let (t, mid) = if t.definitely_greater(S::ZERO) {
+                    (t, mid)
+                } else {
+                    refine_curve_curve_crossing(&ray, pcurve, t, mid)
+                };
+                if !t.definitely_greater(S::ZERO) {
+                    // Still not beyond it. Either the query is on this
+                    // pcurve to within what the numbers can tell — the
+                    // check above asks about the sharp query, and a point
+                    // 6e-16 off the boundary passes it — or the search met
+                    // the pcurve only at its own resolution, near the query
+                    // but not on it, and this ray is as ambiguous as a
+                    // vertex graze.
+                    if pcurve.evaluate(mid)?.could_be_equal(&query) {
+                        return Ok(PointClassification::OnCoedge);
+                    }
+                    last_rejection = format!(
+                        "ray {ray:?} meets coedge {coedge_id} at t={t:?}, which cannot be told from the query point"
+                    );
+                    continue 'attempt;
                 }
                 // `curve_curve_intersect` honestly returns the whole
                 // surviving span of its converged leaf, not an arbitrarily

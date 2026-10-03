@@ -17,7 +17,10 @@ use std::collections::HashSet;
 use crate::{CoedgeGeometry, EdgeId, Model, ShellId, VertexId};
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
-    intersection::{curve_curve_intersect, curve_surface_intersect},
+    intersection::{
+        curve_curve_intersect, curve_surface_intersect, refine_crossing,
+        refine_curve_curve_crossing,
+    },
     nurb_curve::NurbCurve3D,
 };
 use geop_core_math::{
@@ -142,7 +145,6 @@ pub(crate) fn cast_ray<S: Scalar>(
     seed: u64,
 ) -> GeopResult<Result<PointClassification, String>> {
     let shell = &model.shells[&shell_id];
-    let t_epsilon = epsilon.div(ray_length)?;
     let far = point.add(&direction.prod_scalar(ray_length));
     let ray = line3(point, far)?;
 
@@ -174,8 +176,19 @@ pub(crate) fn cast_ray<S: Scalar>(
         if hits.is_coincident() {
             return Ok(Err(format!("it runs along edge {edge_id}")));
         }
-        for (t_hit, _mid) in hits.into_vec() {
-            if t_hit.definitely_greater(t_epsilon) {
+        for (t_hit, s_hit) in hits.into_vec() {
+            // Only a crossing *ahead* of the query point is a graze. The point
+            // is not on this edge (checked by the caller), so a hit the
+            // search cannot place beyond it — refined, in case it is just
+            // close — is its own resolution around the query, not a crossing;
+            // and were it one, the faces meeting along the edge would be hit
+            // right on their trim, which they reject below.
+            let (t_hit, _) = if t_hit.definitely_greater(S::ZERO) {
+                (t_hit, s_hit)
+            } else {
+                refine_curve_curve_crossing(&ray, full_curve, t_hit, s_hit)
+            };
+            if t_hit.definitely_greater(S::ZERO) {
                 return Ok(Err(format!("it could cross edge {edge_id} at t={t_hit:?}")));
             }
         }
@@ -200,16 +213,27 @@ pub(crate) fn cast_ray<S: Scalar>(
             return Ok(Err(format!("it lies in face {face_id}'s surface")));
         }
         for (t_hit, uv) in hits.into_vec() {
-            if !t_hit.definitely_greater(t_epsilon) {
-                continue;
-            }
+            // As in `face::loops_contain`: a crossing next to the query point
+            // is still a crossing, so one the search cannot place beyond it
+            // is refined, not dropped.
+            let (t_hit, uv) = if t_hit.definitely_greater(S::ZERO) {
+                (t_hit, uv)
+            } else {
+                refine_crossing(&ray, surface, t_hit, uv)
+            };
             // Sharpen — `curve_surface_intersect` honestly returns the
             // whole surviving span of its converged leaf, not an
             // arbitrarily narrowed midpoint.
             let (u, v) = (uv[0].midpoint(), uv[1].midpoint());
             let face_seed = seed ^ face_id.0;
             match face_contains(model, face_id, u, v, max_nodes, epsilon, face_seed) {
-                Ok(FaceClassification::Inside) => count += 1,
+                Ok(FaceClassification::Inside) if t_hit.definitely_greater(S::ZERO) => count += 1,
+                // A hit inside the trim that still cannot be told from the
+                // query point: the query is on this face to within what the
+                // numbers can tell, though the sharp query passed the caller's
+                // own check (see `face::loops_contain`).
+                Ok(FaceClassification::Inside) => return Ok(Ok(PointClassification::OnFace)),
+                // Outside the trim, wherever along the ray: not a crossing.
                 Ok(FaceClassification::Outside) => {}
                 // A hit right on this face's own trim boundary, or an
                 // outright error resolving it, is the same ambiguity as a

@@ -57,24 +57,28 @@ use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
 
-/// A point where an edge of one solid pierces a face of the other,
-/// transversally rather than lying within it — recorded so its
-/// intersection curve can be traced once every such point across both
-/// solids has been found (see this module's own top doc comment for why
-/// that's a separate pass, not done inline while splitting).
+/// A vertex where an edge of one solid meets a face of the other without
+/// running along it — where the edge pierces the face, or ends on it —
+/// recorded so the intersection curves through it can be traced once every
+/// such point across both solids has been found (see this module's own top
+/// doc comment for why that's a separate pass, not done inline while
+/// splitting).
+///
+/// What is recorded is the vertex, not the edge that led to it. Every face
+/// of either solid holding the vertex may carry a curve leaving it, and the
+/// edge that happened to find it borders only some of them: several edges
+/// meet at a vertex, and a face holding it can be split by an earlier trace
+/// so that a given edge borders only one half. Which faces a curve can leave
+/// between is a property of the vertex — see [`trace_from_start_point`].
 struct TracingStartPoint {
     vertex: VertexId,
-    /// One of the (post-split) edges meeting at `vertex` that belongs to
-    /// the pierced-through edge's own solid. Only used to find that
-    /// original edge's own attached faces
-    /// (`Model::coedges_of_edge(edge)`'s `.face`s) — the two faces meeting
-    /// along it are what the tracing direction(s) get derived from. Either
-    /// of the two half-edges the piercing split produced works equally
-    /// well here, since both share the same attached faces.
-    edge: EdgeId,
-    /// The face `edge` pierces, as of when the point was found — only a
-    /// record of where to look: an earlier trace may have split it since, and
-    /// the curve may leave into the other half (see [`faces_at_vertex`]).
+    /// The solid whose edge ends at `vertex`, so `vertex` lies on the
+    /// boundary of its faces there.
+    edge_solid: SolidId,
+    /// The face of the other solid found holding `vertex`, as of when the
+    /// point was found — only a record of where to look: the vertex may lie
+    /// on none of that solid's boundaries, and an earlier trace may have
+    /// split the face since (see [`faces_at_vertex`]).
     face: FaceId,
     /// The solid `face` belongs to.
     face_solid: SolidId,
@@ -218,9 +222,14 @@ pub fn remesh_edges_x_faces<S: Scalar>(
     let mut starts =
         find_tracing_start_points(model, solid_a, solid_b, max_nodes, min_subdivision_size)
             .with_context(&ctx)?;
+    // A vertex found from both sides is one start point: tracing from it
+    // already tries every face pair through it.
+    let found: std::collections::HashSet<VertexId> = starts.iter().map(|s| s.vertex).collect();
     starts.extend(
         find_tracing_start_points(model, solid_b, solid_a, max_nodes, min_subdivision_size)
-            .with_context(&ctx)?,
+            .with_context(&ctx)?
+            .into_iter()
+            .filter(|s| !found.contains(&s.vertex)),
     );
 
     // Every vertex in the model is a candidate endpoint, not just the start
@@ -679,9 +688,9 @@ fn imprint_coincident_pairs<S: Scalar>(
 /// `face_solid` in the model's *current* (fully split/imprinted) state:
 /// for each edge's each endpoint vertex, for each face it doesn't already
 /// have a boundary coedge on, if that vertex's point lies on the face's
-/// surface, that's a piercing point. Deduped on `(vertex, face)` (an edge's
-/// two endpoint-vertex checks, or two different half-edges meeting at the
-/// same vertex, would otherwise rediscover the same point twice).
+/// surface, that's a piercing point. Deduped on the vertex (an edge's two
+/// endpoint-vertex checks, two different edges meeting at the same vertex,
+/// or two faces holding it would otherwise rediscover the same point).
 ///
 /// Like `curve_surface_intersect`/`surface_could_contain` throughout this
 /// codebase, this checks against a face's *untrimmed* surface function,
@@ -704,7 +713,7 @@ fn find_tracing_start_points<S: Scalar>(
         ))
     };
 
-    let mut seen: std::collections::HashSet<(VertexId, FaceId)> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<VertexId> = std::collections::HashSet::new();
     let mut starts = Vec::new();
 
     for edge_id in model.iter_solid_edges(edge_solid).with_context(&ctx)? {
@@ -727,7 +736,7 @@ fn find_tracing_start_points<S: Scalar>(
                 if edge_is_boundary_of_face(model, edge_id, face_id) {
                     continue;
                 }
-                if !seen.insert((vertex_id, face_id)) {
+                if seen.contains(&vertex_id) {
                     continue;
                 }
                 let surface = &model.get_face(face_id).with_context(&ctx)?.surface;
@@ -735,9 +744,10 @@ fn find_tracing_start_points<S: Scalar>(
                     .with_context(&ctx)?
                     .is_some()
                 {
+                    seen.insert(vertex_id);
                     starts.push(TracingStartPoint {
                         vertex: vertex_id,
-                        edge: edge_id,
+                        edge_solid,
                         face: face_id,
                         face_solid,
                     });
@@ -1030,16 +1040,28 @@ fn predictor_corrector_step<S: Scalar>(
     ))))
 }
 
-/// Trace the intersection curve(s) starting at `start.vertex`: `start.edge`
-/// belongs to one solid and pierces `start.face` (from the other solid) —
-/// `start.edge`'s own attached face(s) (from `Model::coedges_of_edge`, up
-/// to two, since it's an ordinary manifold edge of its own solid) are each,
-/// independently, the *other* surface an intersection-curve branch through
-/// this point can lie on: as you cross `start.edge` from one of its
-/// attached faces to the other, the branch of (that solid's boundary) x
-/// `start.face` you're following switches over from one attached face to
-/// the other, exactly at this point. So each attached face gets its own,
-/// separate trace attempt.
+/// Trace the intersection curve(s) starting at `start.vertex`: every curve
+/// leaving it runs between one face of `start.edge_solid` and one of
+/// `start.face_solid`, both holding the vertex, so each such pair gets its
+/// own, separate trace attempt (most find no direction and cost one
+/// predictor-corrector step each way).
+///
+/// Both sides are looked up afresh before every pair, not once: a trace
+/// splits the faces it runs between, so after one curve has left the vertex
+/// a face holding it may be two, with the vertex on both halves. A curve
+/// leaving into the half no earlier lookup named is then never tried —
+/// silently, since a wrong pair just finds no direction. So this runs until
+/// every pair of faces currently at the vertex has been tried once.
+///
+/// Measured twice. On `cube_minus_two_crossing_bores`, with the pierced
+/// face taken from when the start point was found: the second bore's lower
+/// curve in one quadrant went missing, the face it should have split was
+/// dropped whole, and the solid was left open. And on
+/// `cube_minus_two_inscribed_bores`, with both sides looked up once per
+/// start point: at a cube-edge midpoint the first pair traced the circle
+/// where the second bore leaves the cube, splitting its wall there, and the
+/// Steinmetz arc leaving into the inner half was tried against the outer one,
+/// rejected, and never traced.
 fn trace_from_start_point<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
@@ -1052,68 +1074,60 @@ fn trace_from_start_point<S: Scalar>(
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
-            "trace_from_start_point(vertex={}, edge={}, face={})",
-            start.vertex, start.edge, start.face
+            "trace_from_start_point(vertex={}, edge_solid={}, face={})",
+            start.vertex, start.edge_solid, start.face
         ))
     };
 
-    let model = part.topology();
-    let mut adjacent_faces: Vec<FaceId> = model
-        .coedges_of_edge(start.edge)
-        .into_iter()
-        .map(|coedge_id| model.get_coedge(coedge_id).map(|c| c.face))
-        .collect::<GeopResult<_>>()
+    let mut tried: std::collections::HashSet<(FaceId, FaceId)> = std::collections::HashSet::new();
+    loop {
+        let model = part.topology();
+        let faces_a = faces_at_vertex(
+            model,
+            start.edge_solid,
+            start.vertex,
+            None,
+            max_nodes,
+            min_subdivision_size,
+        )
         .with_context(&ctx)?;
-    adjacent_faces.sort_by_key(|f| f.0);
-    adjacent_faces.dedup();
-
-    // The pierced side is looked up now, not taken from `start.face`: the
-    // start points were all found before any tracing, and an earlier trace
-    // may have split the pierced face since. The start vertex then sits on
-    // the half the recorded id no longer names, and a curve leaving into
-    // that half was never tried — silently, since a wrong pair just finds no
-    // direction. Measured on `cube_minus_two_crossing_bores`: the second
-    // bore's lower curve in one quadrant went missing that way, the face it
-    // should have split was dropped whole, and the solid was left open.
-    let pierced = faces_at_vertex(
-        model,
-        start.face_solid,
-        start.vertex,
-        start.face,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?;
-
-    for face_a in adjacent_faces {
-        for &face_b in &pierced {
-            if face_a == face_b {
-                continue;
-            }
-            trace_one_side(
-                part,
-                naming,
-                start.vertex,
-                face_a,
-                face_b,
-                candidates,
-                max_nodes,
-                min_subdivision_size,
-                step_size,
-                max_trace_steps,
-            )
-            .with_context(&|e: GeopError| {
-                e.with_context(format!("face_a={face_a}, face_b={face_b}"))
-            })
-            .with_context(&ctx)?;
-        }
+        let faces_b = faces_at_vertex(
+            model,
+            start.face_solid,
+            start.vertex,
+            Some(start.face),
+            max_nodes,
+            min_subdivision_size,
+        )
+        .with_context(&ctx)?;
+        let untried = faces_a
+            .iter()
+            .flat_map(|&face_a| faces_b.iter().map(move |&face_b| (face_a, face_b)))
+            .find(|pair| !tried.contains(pair));
+        let Some((face_a, face_b)) = untried else {
+            return Ok(());
+        };
+        tried.insert((face_a, face_b));
+        trace_one_side(
+            part,
+            naming,
+            start.vertex,
+            face_a,
+            face_b,
+            candidates,
+            max_nodes,
+            min_subdivision_size,
+            step_size,
+            max_trace_steps,
+        )
+        .with_context(&|e: GeopError| e.with_context(format!("face_a={face_a}, face_b={face_b}")))
+        .with_context(&ctx)?;
     }
-    Ok(())
 }
 
 /// Every face of `solid` whose closure holds `vertex`, starting from
-/// `recorded` (the face the vertex was found piercing, which may since have
-/// been split).
+/// `recorded` (the face the vertex was found piercing, if any, which may
+/// since have been split).
 ///
 /// Topology answers this almost always: if the vertex lies on some faces'
 /// boundaries, those are exactly the faces holding it — within one closed
@@ -1125,7 +1139,7 @@ fn faces_at_vertex<S: Scalar>(
     model: &Model<S>,
     solid: SolidId,
     vertex: VertexId,
-    recorded: FaceId,
+    recorded: Option<FaceId>,
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Vec<FaceId>> {
@@ -1171,11 +1185,13 @@ fn faces_at_vertex<S: Scalar>(
             },
         )
     };
-    if faces.contains(&recorded) && holds(recorded)? {
+    if let Some(recorded) = recorded.filter(|f| faces.contains(f))
+        && holds(recorded)?
+    {
         return Ok(vec![recorded]);
     }
     for face_id in faces {
-        if face_id != recorded && holds(face_id)? {
+        if Some(face_id) != recorded && holds(face_id)? {
             return Ok(vec![face_id]);
         }
     }
@@ -1938,7 +1954,6 @@ mod splice_regression_tests {
     }
 
     #[test]
-    #[ignore = "known open defect, diagnosed — 154 full-validate errors, down from 7352 once the validation false positives were fixed. Two independent causes, both ruled in by measurement. (1) ~96: a pcurve fitted by `fit_pcurve` drifts ~2e-5 from its own edge's 3-D curve on strongly curved patches. Verified NOT a bad splice: `could_contain_curve` confirmed the edge does lie on the face's surface. Unfixable by any form of the check — the on-curve and fraction-matched forms are exact and so unsatisfiable, and the convex-hull form is satisfiable but cannot catch a genuinely bent edge (a bent curve's hull contains its own chord). Needs `fit_pcurve` to be exact, i.e. the deferred constrained-tangent interpolation; more samples do not help, since the error falls only as h^4 and reaching hull scale would take ~1000 of them. (2) ~53: faces of the cylinder (shell 247) and the figure-8 (shell 3) cross without the crossing curve being imprinted on both — the missing edge visible in outputs/topology_remesh (V437 to V453). Independent of (1) and the real remesh defect. `figure8_cylinder_engulfing_both_lobes` passes the identical check, so this is specific to this arrangement, not to full validation."]
     fn figure8_cylinder_engulfing_thin_slice_is_fully_valid_after_remesh() {
         check_engulfing_scene_fully_valid("figure8_cylinder_engulfing_thin_slice");
     }
