@@ -1,16 +1,13 @@
 //! 2-D constraint sketches: points, lines, arcs, circles and splines, the
-//! typical CAD constraints between them, a BFGS solver, and conversion of the
+//! typical CAD constraints between them, a solver, and conversion of the
 //! solved sketch into closed profiles for extrude and revolve.
 //!
-//! - [`sketch`]: the entities and constraints (plain `f64` design data).
+//! - [`sketch`]: the entities and constraints: design data, in any scalar.
 //! - [`solve`]: [`Sketch::solve`] / [`Sketch::solve_with_drag`], and
 //!   [`Sketch::enclose`]: the solution as the kernel builds on it.
 //! - [`profile`]: [`Sketch::regions`] and [`ProfileLoop::to_nurbs`].
 
-pub mod bfgs;
-pub mod dual;
 pub mod geometry;
-pub mod point;
 pub mod profile;
 pub mod sketch;
 pub mod solve;
@@ -36,8 +33,19 @@ mod tests {
         (a - b).abs() < 1e-7
     }
 
-    fn xy(s: &Sketch, p: PointId) -> [f64; 2] {
-        s.points[&p].xy()
+    type T = ScalInF64;
+
+    fn n(x: f64) -> T {
+        T::from_f64(x)
+    }
+
+    fn v2(p: [f64; 2]) -> Vector2<T> {
+        Vector2::from_array(p.map(T::from_f64))
+    }
+
+    fn xy(s: &Sketch<T>, p: PointId) -> [f64; 2] {
+        let q = s.points[&p].xy();
+        [q[0].to_f64(), q[1].to_f64()]
     }
 
     /// A sloppily drawn quadrilateral becomes an exact, fully constrained
@@ -46,16 +54,16 @@ mod tests {
     fn rectangle_is_solved_and_fully_constrained() {
         let mut s = Sketch::new();
         let p = [
-            s.add_point(0.1, -0.1),
-            s.add_point(2.2, 0.2),
-            s.add_point(1.9, 1.3),
-            s.add_point(-0.2, 0.8),
+            s.add_point(n(0.1), n(-0.1)),
+            s.add_point(n(2.2), n(0.2)),
+            s.add_point(n(1.9), n(1.3)),
+            s.add_point(n(-0.2), n(0.8)),
         ];
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
         s.constrain(Constraint::Fix {
             point: p[0],
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Horizontal { line: l[0] });
         s.constrain(Constraint::Horizontal { line: l[2] });
@@ -63,12 +71,12 @@ mod tests {
         s.constrain(Constraint::Vertical { line: l[3] });
         s.constrain(Constraint::Length {
             curve: l[0],
-            value: 2.0,
+            value: n(2.0),
         });
         s.constrain(Constraint::Distance {
             a: p[1],
             b: p[2],
-            value: 1.0,
+            value: n(1.0),
         });
 
         let report = s.solve().unwrap();
@@ -88,10 +96,10 @@ mod tests {
     fn unanchored_rectangle_has_two_dof() {
         let mut s = Sketch::new();
         let p = [
-            s.add_point(0.0, 0.0),
-            s.add_point(2.0, 0.1),
-            s.add_point(2.0, 1.0),
-            s.add_point(0.0, 1.0),
+            s.add_point(n(0.0), n(0.0)),
+            s.add_point(n(2.0), n(0.1)),
+            s.add_point(n(2.0), n(1.0)),
+            s.add_point(n(0.0), n(1.0)),
         ];
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
         s.constrain(Constraint::Horizontal { line: l[0] });
@@ -109,10 +117,10 @@ mod tests {
     #[test]
     fn coincident_points_merge() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(1.0, 0.0);
-        let c = s.add_point(1.1, 0.05);
-        let d = s.add_point(1.5, 1.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.0));
+        let c = s.add_point(n(1.1), n(0.05));
+        let d = s.add_point(n(1.5), n(1.0));
         s.add_line(a, b);
         s.add_line(c, d);
         s.constrain(Constraint::Coincident { a: b, b: c });
@@ -127,30 +135,30 @@ mod tests {
     #[test]
     fn line_arc_tangent_at_shared_endpoint() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(2.0, 0.0);
-        let c = s.add_point(2.0, 1.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(2.0), n(0.0));
+        let c = s.add_point(n(2.0), n(1.0));
         let line = s.add_line(a, b);
-        let arc = s.add_arc(b, c, 1.5);
+        let arc = s.add_arc(b, c, n(2.0 * 0.75f64.asin()));
         s.constrain(Constraint::Fix {
             point: a,
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Horizontal { line });
         s.constrain(Constraint::Length {
             curve: line,
-            value: 2.0,
+            value: n(2.0),
         });
         s.constrain(Constraint::Tangent { a: line, b: arc });
         s.constrain(Constraint::Radius {
             curve: arc,
-            value: 0.5,
+            value: n(0.5),
         });
         s.constrain(Constraint::Fix {
             point: c,
-            x: 2.0,
-            y: 1.0,
+            x: n(2.0),
+            y: n(1.0),
         });
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
@@ -158,7 +166,7 @@ mod tests {
             unreachable!()
         };
         // A half circle of radius 0.5 turning left from (2, 0) to (2, 1).
-        assert!(close(sweep, PI), "sweep {sweep}");
+        assert!(close(sweep.to_f64(), PI), "sweep {sweep:?}");
         assert_eq!(report.dof, 0, "{report:?}");
     }
 
@@ -167,25 +175,25 @@ mod tests {
     #[test]
     fn circle_tangent_to_lines() {
         let mut s = Sketch::new();
-        let o = s.add_point(0.0, 0.0);
-        let x = s.add_point(3.0, 0.0);
-        let y = s.add_point(0.0, 3.0);
+        let o = s.add_point(n(0.0), n(0.0));
+        let x = s.add_point(n(3.0), n(0.0));
+        let y = s.add_point(n(0.0), n(3.0));
         let lx = s.add_line(o, x);
         let ly = s.add_line(o, y);
-        let c = s.add_point(0.8, 1.3);
-        let circle = s.add_circle(c, 0.7);
+        let c = s.add_point(n(0.8), n(1.3));
+        let circle = s.add_circle(c, n(0.7));
         for (p, xy) in [(o, [0.0, 0.0]), (x, [3.0, 0.0]), (y, [0.0, 3.0])] {
             s.constrain(Constraint::Fix {
                 point: p,
-                x: xy[0],
-                y: xy[1],
+                x: n(xy[0]),
+                y: n(xy[1]),
             });
         }
         s.constrain(Constraint::Tangent { a: lx, b: circle });
         s.constrain(Constraint::Tangent { a: circle, b: ly });
         s.constrain(Constraint::Radius {
             curve: circle,
-            value: 1.0,
+            value: n(1.0),
         });
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
@@ -197,14 +205,18 @@ mod tests {
     #[test]
     fn conflicting_constraints_do_not_converge() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(1.0, 0.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.0));
         let l = s.add_line(a, b);
         s.constrain(Constraint::Length {
             curve: l,
-            value: 1.0,
+            value: n(1.0),
         });
-        s.constrain(Constraint::Distance { a, b, value: 2.0 });
+        s.constrain(Constraint::Distance {
+            a,
+            b,
+            value: n(2.0),
+        });
         let report = s.solve().unwrap();
         assert!(!report.converged);
         assert!(!report.failed_constraints.is_empty());
@@ -215,24 +227,24 @@ mod tests {
     #[test]
     fn drag_follows_cursor_only_where_free() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(1.0, 0.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.0));
         let l = s.add_line(a, b);
         s.constrain(Constraint::Fix {
             point: a,
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Length {
             curve: l,
-            value: 1.0,
+            value: n(1.0),
         });
-        let report = s.solve_with_drag(&[(b, [0.0, 3.0])]).unwrap();
+        let report = s.solve_with_drag(&[(b, v2([0.0, 3.0]))]).unwrap();
         assert!(report.converged, "{report:?}");
         let q = xy(&s, b);
-        assert!(close(q[0], 0.0) && close(q[1], 1.0), "{q:?}");
+        assert!(close(q[0], 0.0) && close(q[1], 1.0), "{q:?}: {report:?}");
 
-        let report = s.solve_with_drag(&[(a, [5.0, 5.0])]).unwrap();
+        let report = s.solve_with_drag(&[(a, v2([5.0, 5.0]))]).unwrap();
         assert!(report.converged);
         let q = xy(&s, a);
         assert!(close(q[0], 0.0) && close(q[1], 0.0), "{q:?}");
@@ -243,20 +255,20 @@ mod tests {
     #[test]
     fn equilateral_triangle_from_symmetry_and_angle() {
         let mut s = Sketch::new();
-        let a = s.add_point(-1.0, 0.1);
-        let b = s.add_point(1.2, -0.1);
-        let c = s.add_point(0.1, 1.5);
+        let a = s.add_point(n(-1.0), n(0.1));
+        let b = s.add_point(n(1.2), n(-0.1));
+        let c = s.add_point(n(0.1), n(1.5));
         let base = s.add_line(a, b);
         let left = s.add_line(c, a);
         let right = s.add_line(c, b);
-        let m = s.add_point(0.0, 0.0);
-        let axis_top = s.add_point(0.0, 2.0);
+        let m = s.add_point(n(0.0), n(0.0));
+        let axis_top = s.add_point(n(0.0), n(2.0));
         let axis = s.add_line(m, axis_top);
         s.set_construction(axis, true);
         s.constrain(Constraint::Fix {
             point: m,
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Vertical { line: axis });
         s.constrain(Constraint::Midpoint {
@@ -272,11 +284,11 @@ mod tests {
         s.constrain(Constraint::Angle {
             a: left,
             b: right,
-            value: PI / 3.0,
+            value: n(PI / 3.0),
         });
         s.constrain(Constraint::Length {
             curve: base,
-            value: 2.0,
+            value: n(2.0),
         });
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
@@ -290,19 +302,19 @@ mod tests {
     fn check_slot_with_hole_regions<S: Scalar>() {
         let mut s = Sketch::new();
         let p = [
-            s.add_point(0.0, 0.0),
-            s.add_point(2.0, 0.0),
-            s.add_point(2.0, 1.0),
-            s.add_point(0.0, 1.0),
+            s.add_point(n(0.0), n(0.0)),
+            s.add_point(n(2.0), n(0.0)),
+            s.add_point(n(2.0), n(1.0)),
+            s.add_point(n(0.0), n(1.0)),
         ];
         s.add_line(p[0], p[1]);
-        s.add_arc_with_sweep(p[1], p[2], PI);
+        s.add_arc(p[1], p[2], n(PI));
         s.add_line(p[2], p[3]);
-        s.add_arc_with_sweep(p[3], p[0], PI);
-        let c = s.add_point(1.0, 0.5);
-        s.add_circle(c, 0.25);
+        s.add_arc(p[3], p[0], n(PI));
+        let c = s.add_point(n(1.0), n(0.5));
+        s.add_circle(c, n(0.25));
         // A dangling helper line is ignored.
-        let q = s.add_point(-1.0, -1.0);
+        let q = s.add_point(n(-1.0), n(-1.0));
         s.add_line(p[0], q);
 
         let regions = s.regions().unwrap();
@@ -312,7 +324,7 @@ mod tests {
 
         let geometry = s.enclose::<S>().unwrap();
         for (lp, count) in [(&regions[0].outer, 6), (&regions[0].holes[0], 4)] {
-            let pieces = lp.to_nurbs::<S>(&s, &geometry).unwrap();
+            let pieces = lp.to_nurbs::<T, S>(&s, &geometry).unwrap();
             let curves: Vec<_> = pieces.iter().map(|p| &p.curve).collect();
             assert_eq!(curves.len(), count);
             // The joints chain up exactly like the curves do.
@@ -329,13 +341,17 @@ mod tests {
             }
         }
         // The half circle on the right passes through (2.5, 0.5).
-        let outer = regions[0].outer.to_nurbs::<S>(&s, &geometry).unwrap();
+        let outer = regions[0].outer.to_nurbs::<T, S>(&s, &geometry).unwrap();
         let far = Vector2::from_array([S::from_f64(2.5), S::from_f64(0.5)]);
         assert!(
             outer
                 .iter()
                 .any(|p| p.curve.evaluate(S::ONE).unwrap().could_be_equal(&far)),
-            "no quarter piece ends at the right apex"
+            "no quarter piece ends at the right apex: {:?}",
+            outer
+                .iter()
+                .map(|p| p.curve.evaluate(S::ONE).unwrap())
+                .collect::<Vec<_>>()
         );
     }
     #[test]
@@ -354,7 +370,10 @@ mod tests {
             if clockwise {
                 corners.reverse();
             }
-            let p: Vec<PointId> = corners.iter().map(|c| s.add_point(c[0], c[1])).collect();
+            let p: Vec<PointId> = corners
+                .iter()
+                .map(|c| s.add_point(n(c[0]), n(c[1])))
+                .collect();
             for i in 0..4 {
                 s.add_line(p[i], p[(i + 1) % 4]);
             }
@@ -376,10 +395,10 @@ mod tests {
     #[test]
     fn nesting_resolves_a_gap_finer_than_any_sampling() {
         let mut s = Sketch::new();
-        let outer = s.add_point(0.0, 0.0);
-        s.add_circle(outer, 1.0);
-        let inner = s.add_point(0.0, 0.0);
-        s.add_circle(inner, 1.0 - 5e-5);
+        let outer = s.add_point(n(0.0), n(0.0));
+        s.add_circle(outer, n(1.0));
+        let inner = s.add_point(n(0.0), n(0.0));
+        s.add_circle(inner, n(1.0 - 5e-5));
 
         let regions = s.regions().unwrap();
         assert_eq!(regions.len(), 1, "one region: the ring between them");
@@ -400,7 +419,7 @@ mod tests {
             let p: Vec<PointId> = (0..20)
                 .map(|k| {
                     let a = std::f64::consts::TAU * k as f64 / 20.0;
-                    s.add_point(radius * a.cos(), radius * a.sin())
+                    s.add_point(n(radius * a.cos()), n(radius * a.sin()))
                 })
                 .collect();
             for i in 0..20 {
@@ -424,7 +443,7 @@ mod tests {
         let mut s = Sketch::new();
         let p: Vec<PointId> = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
             .iter()
-            .map(|c| s.add_point(c[0], c[1]))
+            .map(|c| s.add_point(n(c[0]), n(c[1])))
             .collect();
         for i in 0..4 {
             s.add_line(p[i], p[(i + 1) % 4]);
@@ -437,40 +456,40 @@ mod tests {
     #[test]
     fn arc_from_curvature() {
         let mut s = Sketch::new();
-        let a = s.add_point(1.0, 0.0);
-        let b = s.add_point(0.0, 1.0);
-        let arc = s.add_arc(a, b, 1.0);
+        let a = s.add_point(n(1.0), n(0.0));
+        let b = s.add_point(n(0.0), n(1.0));
+        let arc = s.add_arc(a, b, n(FRAC_PI_2));
         let CurveKind::Arc { sweep, .. } = s.curves[&arc].kind else {
             unreachable!()
         };
-        assert!(close(sweep, FRAC_PI_2));
+        assert!(close(sweep.to_f64(), FRAC_PI_2));
     }
 
     /// A spline and an arc joined tangentially into a closed loop.
     #[test]
     fn spline_tangent_to_arc() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(1.0, 0.5);
-        let c = s.add_point(2.0, -0.3);
-        let d = s.add_point(3.0, 0.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.5));
+        let c = s.add_point(n(2.0), n(-0.3));
+        let d = s.add_point(n(3.0), n(0.0));
         let spline = s.add_spline(vec![a, b, c, d]);
-        let arc = s.add_arc_with_sweep(d, a, 2.5);
+        let arc = s.add_arc(d, a, n(2.5));
         s.constrain(Constraint::Tangent { a: spline, b: arc });
         s.constrain(Constraint::Fix {
             point: a,
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Fix {
             point: d,
-            x: 3.0,
-            y: 0.0,
+            x: n(3.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Fix {
             point: b,
-            x: 1.0,
-            y: 0.5,
+            x: n(1.0),
+            y: n(0.5),
         });
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
@@ -485,11 +504,11 @@ mod tests {
     #[test]
     fn profile_pieces_name_their_sketch_origin() {
         let mut s = Sketch::new();
-        let c = s.add_point(0.0, 0.0);
-        let circle = s.add_circle(c, 1.0);
+        let c = s.add_point(n(0.0), n(0.0));
+        let circle = s.add_circle(c, n(1.0));
         let p: Vec<PointId> = [[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]]
             .iter()
-            .map(|c| s.add_point(c[0], c[1]))
+            .map(|c| s.add_point(n(c[0]), n(c[1])))
             .collect();
         let lines: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
 
@@ -497,7 +516,7 @@ mod tests {
         let geometry = s.enclose::<ScalInF64>().unwrap();
         let outer = regions[0]
             .outer
-            .to_nurbs::<ScalInF64>(&s, &geometry)
+            .to_nurbs::<T, ScalInF64>(&s, &geometry)
             .unwrap();
         let names: Vec<String> = outer.iter().map(|p| p.name()).collect();
         assert_eq!(names.len(), 4);
@@ -512,7 +531,7 @@ mod tests {
 
         // The hole runs clockwise, against the circle's own direction.
         let hole = regions[0].holes[0]
-            .to_nurbs::<ScalInF64>(&s, &geometry)
+            .to_nurbs::<T, ScalInF64>(&s, &geometry)
             .unwrap();
         let joints: Vec<String> = hole.iter().map(|p| p.start.to_string()).collect();
         assert_eq!(
@@ -541,13 +560,13 @@ mod tests {
     #[test]
     fn sketch_json_round_trip_keeps_ids() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(1.0, 0.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.0));
         let l = s.add_line(a, b);
         s.constrain(Constraint::Horizontal { line: l });
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains(&format!("\"{}\":", l.0)), "{json}");
-        let back: Sketch = serde_json::from_str(&json).unwrap();
+        let back: Sketch<T> = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
         back.validate().unwrap();
     }
@@ -557,18 +576,18 @@ mod tests {
     #[test]
     fn remove_takes_what_depends_on_it() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.0, 0.0);
-        let b = s.add_point(1.0, 0.0);
-        let c = s.add_point(1.0, 1.0);
-        let lone = s.add_point(5.0, 5.0);
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.0));
+        let c = s.add_point(n(1.0), n(1.0));
+        let lone = s.add_point(n(5.0), n(5.0));
         let ab = s.add_line(a, b);
         let bc = s.add_line(b, c);
         let horizontal = s.constrain(Constraint::Horizontal { line: ab });
         let vertical = s.constrain(Constraint::Vertical { line: bc });
         let fix = s.constrain(Constraint::Fix {
             point: a,
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.remove(&[], &[ab], &[]);
         assert!(!s.curves.contains_key(&ab) && s.curves.contains_key(&bc));
@@ -593,16 +612,16 @@ mod tests {
     fn solutions_are_enclosed() {
         let mut s = Sketch::new();
         let p = [
-            s.add_point(0.1, -0.1),
-            s.add_point(2.2, 0.2),
-            s.add_point(1.9, 1.3),
-            s.add_point(-0.2, 0.8),
+            s.add_point(n(0.1), n(-0.1)),
+            s.add_point(n(2.2), n(0.2)),
+            s.add_point(n(1.9), n(1.3)),
+            s.add_point(n(-0.2), n(0.8)),
         ];
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
         s.constrain(Constraint::Fix {
             point: p[0],
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Horizontal { line: l[0] });
         s.constrain(Constraint::Horizontal { line: l[2] });
@@ -610,12 +629,12 @@ mod tests {
         s.constrain(Constraint::Vertical { line: l[3] });
         s.constrain(Constraint::Length {
             curve: l[0],
-            value: 2.0,
+            value: n(2.0),
         });
         s.constrain(Constraint::Distance {
             a: p[1],
             b: p[2],
-            value: 1.0,
+            value: n(1.0),
         });
         assert!(s.solve().unwrap().converged);
         let enclosed = s.enclose::<ScalInF64>().unwrap();
@@ -637,8 +656,8 @@ mod tests {
     #[test]
     fn free_choices_stay_sharp() {
         let mut s = Sketch::new();
-        let a = s.add_point(0.3, 0.7);
-        let b = s.add_point(1.9, 0.75);
+        let a = s.add_point(n(0.3), n(0.7));
+        let b = s.add_point(n(1.9), n(0.75));
         let line = s.add_line(a, b);
         s.constrain(Constraint::Horizontal { line });
         assert!(s.solve().unwrap().converged);
@@ -655,13 +674,13 @@ mod tests {
         s.constrain(Constraint::Vertical { line });
         s.constrain(Constraint::Fix {
             point: a,
-            x: 0.0,
-            y: 0.0,
+            x: n(0.0),
+            y: n(0.0),
         });
         s.constrain(Constraint::Fix {
             point: b,
-            x: 1.0,
-            y: 0.0,
+            x: n(1.0),
+            y: n(0.0),
         });
         let report = s.solve().unwrap();
         assert!(!report.converged);

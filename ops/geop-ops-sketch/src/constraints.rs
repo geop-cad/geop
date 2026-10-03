@@ -2,12 +2,18 @@
 //! selection ([`options`]), what each is called ([`name`]) and the glyph
 //! that marks it in the sketch ([`glyph`]).
 
-use geop_core_sketch::{Constraint, CurveId, CurveKind, PointId, Sketch, profile::curve_polyline};
+use geop_core_math::{
+    scalars::{Field, Scalar},
+    vector::Vector2,
+};
+use geop_core_sketch::{CurveId, PointId, geometry::Arc, geometry::V};
+use geop_ops::Design;
 use serde::{Deserialize, Serialize};
 
-use geop_core_sketch::point::{P2, add, cross, dist, dot, scale, sub};
-
-use crate::geometry::polyline_mid;
+use crate::{
+    Constraint, CurveKind, Sketch,
+    geometry::{P2, add, cross, dot, polyline, polyline_mid, scale, xy},
+};
 
 /// The points and curves selected in the sketch, in the order they were
 /// picked.
@@ -31,7 +37,7 @@ pub struct ConstraintOption {
     pub constraint: Constraint,
 }
 
-fn pt(sketch: &Sketch, p: PointId) -> P2 {
+fn pt(sketch: &Sketch, p: PointId) -> Vector2<Design> {
     sketch.points[&p].xy()
 }
 
@@ -40,38 +46,37 @@ fn is_round(kind: &CurveKind) -> bool {
 }
 
 /// `(start, end)` of a line.
-fn line_points(sketch: &Sketch, kind: &CurveKind) -> Option<(P2, P2)> {
+fn line_points(sketch: &Sketch, kind: &CurveKind) -> Option<(Vector2<Design>, Vector2<Design>)> {
     match kind {
         CurveKind::Line { start, end } => Some((pt(sketch, *start), pt(sketch, *end))),
         _ => None,
     }
 }
 
-/// The radius of a circle or arc.
-fn radius(sketch: &Sketch, kind: &CurveKind) -> f64 {
-    match kind {
-        CurveKind::Circle { radius, .. } => *radius,
-        CurveKind::Arc { start, end, sweep } => {
-            dist(pt(sketch, *start), pt(sketch, *end)) / (2.0 * (sweep / 2.0).sin().abs())
-        }
-        _ => 0.0,
-    }
+/// An arc, as the sketch's own geometry has it.
+fn arc(sketch: &Sketch, start: PointId, end: PointId, sweep: Design) -> Option<Arc<Design>> {
+    Some(Arc {
+        s: V::of(&pt(sketch, start)),
+        e: V::of(&pt(sketch, end)),
+        half: sweep.div(Design::TWO).ok()?,
+    })
 }
 
-/// The length along an arc.
-fn arc_length(sketch: &Sketch, start: PointId, end: PointId, sweep: f64) -> f64 {
-    let chord = dist(pt(sketch, start), pt(sketch, end));
-    let half = sweep / 2.0;
-    if half == 0.0 {
-        chord
-    } else {
-        chord * half / half.sin()
+/// The radius of a circle or arc — a value proposed for a constraint, so a
+/// free choice: sharp.
+fn radius(sketch: &Sketch, kind: &CurveKind) -> Option<Design> {
+    match *kind {
+        CurveKind::Circle { radius, .. } => Some(radius),
+        CurveKind::Arc { start, end, sweep } => {
+            Some(arc(sketch, start, end, sweep)?.radius().ok()?.sharpen())
+        }
+        _ => None,
     }
 }
 
 /// Every constraint that fits `sel` in `sketch`.
 pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
-    use Constraint::*;
+    use geop_core_sketch::Constraint::*;
     let mut out = Vec::new();
     let mut add = |label, title, constraint| {
         out.push(ConstraintOption {
@@ -85,21 +90,46 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
 
     match (points, curves) {
         (&[point], &[]) => {
-            let [x, y] = pt(sketch, point);
-            add("Fix", "Fix the point where it is", Fix { point, x, y });
+            let p = pt(sketch, point);
+            add(
+                "Fix",
+                "Fix the point where it is",
+                Fix {
+                    point,
+                    x: p[0],
+                    y: p[1],
+                },
+            );
         }
         (&[a, b], &[]) => {
-            let (pa, pb) = (pt(sketch, a), pt(sketch, b));
+            let d = pt(sketch, b).sub(&pt(sketch, a));
             add("Coincident", "Make the two points one", Coincident { a, b });
-            add("Horizontal", "Same y", DistanceY { a, b, value: 0.0 });
-            add("Vertical", "Same x", DistanceX { a, b, value: 0.0 });
+            add(
+                "Horizontal",
+                "Same y",
+                DistanceY {
+                    a,
+                    b,
+                    value: Design::ZERO,
+                },
+            );
+            add(
+                "Vertical",
+                "Same x",
+                DistanceX {
+                    a,
+                    b,
+                    value: Design::ZERO,
+                },
+            );
+            // Measured values are proposals, free choices: sharp.
             add(
                 "Distance",
                 "Distance between the points",
                 Distance {
                     a,
                     b,
-                    value: dist(pa, pb),
+                    value: d.norm().sharpen(),
                 },
             );
             add(
@@ -108,7 +138,7 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
                 DistanceX {
                     a,
                     b,
-                    value: pb[0] - pa[0],
+                    value: d[0].sharpen(),
                 },
             );
             add(
@@ -117,7 +147,7 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
                 DistanceY {
                     a,
                     b,
-                    value: pb[1] - pa[1],
+                    value: d[1].sharpen(),
                 },
             );
         }
@@ -131,27 +161,22 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
                     "Line length",
                     Length {
                         curve,
-                        value: dist(a, b),
+                        value: b.sub(&a).norm().sharpen(),
                     },
                 );
             }
-            if is_round(k) {
-                add(
-                    "Radius",
-                    "Radius",
-                    Radius {
-                        curve,
-                        value: radius(sketch, k),
-                    },
-                );
+            if let Some(value) = radius(sketch, k) {
+                add("Radius", "Radius", Radius { curve, value });
             }
-            if let CurveKind::Arc { start, end, sweep } = *k {
+            if let CurveKind::Arc { start, end, sweep } = *k
+                && let Some(length) = arc(sketch, start, end, sweep).and_then(|a| a.length().ok())
+            {
                 add(
                     "Arc length",
                     "Length along the arc",
                     Length {
                         curve,
-                        value: arc_length(sketch, start, end, sweep),
+                        value: length.sharpen(),
                     },
                 );
             }
@@ -168,14 +193,17 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
                 );
                 add("Collinear", "On one line", Collinear { a, b });
                 add("Equal", "Equal length", Equal { a, b });
-                let (da, db) = (sub(a1, a0), sub(b1, b0));
+                // The angle as drawn, measured on screen: a proposal the
+                // designer accepts or edits, so any nearby value would do.
+                let plain = |v: Vector2<Design>| [v[0].to_f64(), v[1].to_f64()];
+                let (da, db) = (plain(a1.sub(&a0)), plain(b1.sub(&b0)));
                 add(
                     "Angle",
                     "Angle from the first line to the second",
                     Angle {
                         a,
                         b,
-                        value: cross(da, db).atan2(dot(da, db)),
+                        value: Design::from_f64(cross(da, db).atan2(dot(da, db))),
                     },
                 );
             }
@@ -206,9 +234,14 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
                     Midpoint { point, curve },
                 );
             }
-            if let Some((a, b)) = line_points(sketch, k) {
-                let d = sub(b, a);
-                let value = (cross(d, sub(pt(sketch, point), a)) / dist(a, b)).abs();
+            if let Some((a, b)) = line_points(sketch, k)
+                && let Ok(value) = geop_core_sketch::geometry::line_distance(
+                    V::of(&a),
+                    V::of(&b),
+                    V::of(&pt(sketch, point)),
+                )
+            {
+                let value = value.abs().sharpen();
                 add(
                     "Distance",
                     "Distance from the line",
@@ -232,9 +265,9 @@ pub fn options(sketch: &Sketch, sel: &Selection) -> Vec<ConstraintOption> {
     out
 }
 
-/// The value of a dimensional constraint.
+/// The value of a dimensional constraint, as the dialog shows it.
 pub fn value(c: &Constraint) -> Option<f64> {
-    use Constraint::*;
+    use geop_core_sketch::Constraint::*;
     match *c {
         Distance { value, .. }
         | DistanceX { value, .. }
@@ -242,14 +275,14 @@ pub fn value(c: &Constraint) -> Option<f64> {
         | PointLineDistance { value, .. }
         | Length { value, .. }
         | Radius { value, .. }
-        | Angle { value, .. } => Some(value),
+        | Angle { value, .. } => Some(value.to_f64()),
         _ => None,
     }
 }
 
-/// `c` with its value set to `v`, if it has one.
+/// `c` with its value set to `v` — as the dialog gives it — if it has one.
 pub fn set_value(c: &mut Constraint, v: f64) {
-    use Constraint::*;
+    use geop_core_sketch::Constraint::*;
     if let Distance { value, .. }
     | DistanceX { value, .. }
     | DistanceY { value, .. }
@@ -258,17 +291,16 @@ pub fn set_value(c: &mut Constraint, v: f64) {
     | Radius { value, .. }
     | Angle { value, .. } = c
     {
-        *value = v;
+        *value = Design::from_f64(v);
     }
 }
 
 /// The glyph that marks `c` in the sketch, and where: `None` for a
 /// constraint the drawing shows by itself (coincident points are one).
 pub fn glyph(sketch: &Sketch, c: &Constraint) -> Option<(String, P2)> {
-    use Constraint::*;
-    let positions = sketch.positions();
-    let mid = |curve: CurveId| polyline_mid(&curve_polyline(sketch, &positions, curve));
-    let p = |point: PointId| pt(sketch, point);
+    use geop_core_sketch::Constraint::*;
+    let mid = |curve: CurveId| polyline_mid(&polyline(sketch, curve));
+    let p = |point: PointId| xy(sketch, point);
     let between = |a: PointId, b: PointId| scale(add(p(a), p(b)), 0.5);
     let fmt = |v: f64| {
         if v.abs() >= 100.0 {
@@ -277,6 +309,7 @@ pub fn glyph(sketch: &Sketch, c: &Constraint) -> Option<(String, P2)> {
             format!("{v:.2}")
         }
     };
+    let shown = |v: Design| v.to_f64();
     Some(match *c {
         Coincident { .. } => return None,
         PointOnCurve { point, .. } => ("◦".into(), p(point)),
@@ -291,33 +324,33 @@ pub fn glyph(sketch: &Sketch, c: &Constraint) -> Option<(String, P2)> {
         Midpoint { point, .. } => ("M".into(), p(point)),
         Symmetric { a, b, .. } => ("⇆".into(), between(a, b)),
         Fix { point, .. } => ("⚓".into(), p(point)),
-        Distance { a, b, value } => (fmt(value), between(a, b)),
+        Distance { a, b, value } => (fmt(shown(value)), between(a, b)),
         DistanceX { a, b, value } => (
-            if value == 0.0 {
+            if value.is_sharp() && value.could_be_equal(Design::ZERO) {
                 "|".into()
             } else {
-                format!("Δx {}", fmt(value))
+                format!("Δx {}", fmt(shown(value)))
             },
             between(a, b),
         ),
         DistanceY { a, b, value } => (
-            if value == 0.0 {
+            if value.is_sharp() && value.could_be_equal(Design::ZERO) {
                 "—".into()
             } else {
-                format!("Δy {}", fmt(value))
+                format!("Δy {}", fmt(shown(value)))
             },
             between(a, b),
         ),
-        PointLineDistance { point, value, .. } => (fmt(value), p(point)),
-        Length { curve, value } => (fmt(value), mid(curve)),
-        Radius { curve, value } => (format!("R{}", fmt(value)), mid(curve)),
-        Angle { b, value, .. } => (format!("{:.1}°", value.to_degrees()), mid(b)),
+        PointLineDistance { point, value, .. } => (fmt(shown(value)), p(point)),
+        Length { curve, value } => (fmt(shown(value)), mid(curve)),
+        Radius { curve, value } => (format!("R{}", fmt(shown(value))), mid(curve)),
+        Angle { b, value, .. } => (format!("{:.1}°", shown(value).to_degrees()), mid(b)),
     })
 }
 
 /// What `c` is called in the list of constraints.
 pub fn name(c: &Constraint) -> String {
-    use Constraint::*;
+    use geop_core_sketch::Constraint::*;
     match c {
         Coincident { a, b } => format!("Coincident {a}, {b}"),
         PointOnCurve { point, curve } => format!("{point} on {curve}"),

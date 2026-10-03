@@ -8,7 +8,7 @@ use geop_core_math::{
 };
 use geop_core_topology::SolidId;
 use geop_ops::{
-    Namer, Part,
+    Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
     ui::{Choice, Form},
 };
@@ -92,7 +92,7 @@ impl Operation for Boolean {
     /// The two solids, picked, and how to combine them.
     fn form<'a, S: Scalar>(
         &self,
-        _before: &'a Part<S>,
+        _: Context<'a, S>,
         args: &BooleanArgs,
         _: &(),
         _: &[String],
@@ -137,6 +137,7 @@ impl Operation for Boolean {
         mut part: Part<S>,
         operation_id: &str,
         args: &BooleanArgs,
+        _library: &dyn Library<S>,
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("boolean({operation_id}, {args:?})");
         let namer = Namer::new("boolean", operation_id)?;

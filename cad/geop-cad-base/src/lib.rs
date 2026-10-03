@@ -8,4 +8,4 @@ pub mod examples;
 pub mod operations;
 
 pub use editor::{Command, Editor, Update};
-pub use operations::{PartOperation, Program, ProgramRunner, Step};
+pub use operations::{PartOperation, Program, ProgramRunner, Step, Workspace};

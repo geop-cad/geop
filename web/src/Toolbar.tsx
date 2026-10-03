@@ -5,13 +5,16 @@ import { Privacy } from "./Privacy";
 
 interface Props {
   busy: boolean;
-  /** Whether the program is a file somebody else owns (VS Code): saving, loading and reporting are theirs. */
+  /** Whether the program files are somebody else's (VS Code): saving, loading and reporting are theirs. */
   hosted: boolean;
   hasSteps: boolean;
   onSave: () => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
+  /** Examples of several files: none where the files are not the app's own (VS Code). */
+  workspaceExampleNames: string[];
+  onLoadWorkspaceExample: (name: string) => void;
   canUndo: boolean;
   onUndo: () => void;
   canRedo: boolean;
@@ -40,6 +43,8 @@ export function Toolbar({
   onLoadFile,
   exampleNames,
   onLoadExample,
+  workspaceExampleNames,
+  onLoadWorkspaceExample,
   canUndo,
   onUndo,
   canRedo,
@@ -60,10 +65,10 @@ export function Toolbar({
       <div className="tools">
         {!hosted && (
           <>
-            <button disabled={busy || !hasSteps} onClick={onSave}>
+            <button disabled={busy || !hasSteps} onClick={onSave} title="Download the file edited">
               Save
             </button>
-            <label className={`file-button${busy ? " disabled" : ""}`}>
+            <label className={`file-button${busy ? " disabled" : ""}`} title="Upload a file, and edit it">
               Load
               <input
                 type="file"
@@ -82,15 +87,28 @@ export function Toolbar({
           value=""
           disabled={busy}
           onChange={(e) => {
-            if (e.target.value) onLoadExample(e.target.value);
+            const value = e.target.value;
+            if (value.startsWith("workspace:")) onLoadWorkspaceExample(value.slice("workspace:".length));
+            else if (value) onLoadExample(value);
           }}
         >
           <option value="">Examples…</option>
-          {exampleNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
+          <optgroup label="Parts">
+            {exampleNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+          {workspaceExampleNames.length > 0 && (
+            <optgroup label="Assemblies (several files)">
+              {workspaceExampleNames.map((name) => (
+                <option key={name} value={`workspace:${name}`}>
+                  {name}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button disabled={busy || !canUndo} onClick={onUndo}>
           Undo

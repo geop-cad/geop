@@ -15,15 +15,15 @@ impl<S: Scalar> Editing<'_, S> {
             return existing;
         }
         if hit.as_deref() == Some("origin") {
-            let id = sketch.add_point(0.0, 0.0);
+            let id = sketch.add_point(design(0.0), design(0.0));
             sketch.constrain(Constraint::Fix {
                 point: id,
-                x: 0.0,
-                y: 0.0,
+                x: Design::ZERO,
+                y: Design::ZERO,
             });
             return id;
         }
-        let id = sketch.add_point(p[0], p[1]);
+        let id = sketch.add_point(design(p[0]), design(p[1]));
         if let Some(curve) = hit.as_deref().and_then(curve_key)
             && !matches!(sketch.curves[&curve].kind, CurveKind::Spline { .. })
         {
@@ -86,8 +86,8 @@ impl<S: Scalar> Editing<'_, S> {
                 // are horizontal and vertical by constraint, so it stays a
                 // rectangle whatever is dragged later.
                 let opposite = self.place_point(&mut next, pointer, p);
-                let second = next.add_point(p[0], first[1]);
-                let fourth = next.add_point(first[0], p[1]);
+                let second = next.add_point(design(p[0]), design(first[1]));
+                let fourth = next.add_point(design(first[0]), design(p[1]));
                 let corners = [corner, second, opposite, fourth];
                 for i in 0..4 {
                     let line = next.add_line(corners[i], corners[(i + 1) % 4]);
@@ -125,7 +125,7 @@ impl<S: Scalar> Editing<'_, S> {
             ) => {
                 let sweep = sweep_through(pt(&next, start), pt(&next, end), p);
                 if sweep.is_finite() {
-                    next.add_arc_with_sweep(start, end, sweep);
+                    next.add_arc(start, end, design(sweep));
                     self.commit(next);
                 }
                 self.s.draft = None;
@@ -138,7 +138,7 @@ impl<S: Scalar> Editing<'_, S> {
             (Tool::Circle, Some(Draft::Circle { center })) => {
                 let radius = dist(pt(&next, center), p);
                 if radius > 0.0 {
-                    next.add_circle(center, radius);
+                    next.add_circle(center, design(radius));
                     self.commit(next);
                 }
                 self.s.draft = None;
@@ -229,7 +229,7 @@ impl<S: Scalar> Editing<'_, S> {
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Circle { radius, .. } = &mut c.kind
                 {
-                    *radius = r;
+                    *radius = design(r);
                 }
             }
             Drag::Arc { curve } => {
@@ -243,7 +243,7 @@ impl<S: Scalar> Editing<'_, S> {
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Arc { sweep, .. } = &mut c.kind
                 {
-                    *sweep = through;
+                    *sweep = design(through);
                 }
             }
         }

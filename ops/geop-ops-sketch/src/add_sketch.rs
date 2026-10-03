@@ -5,15 +5,17 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_sketch::Sketch;
 use geop_ops::{
-    Part, PlacedSketch,
+    Context, Library, Part, PlacedSketch,
     operation::{EntityRef, Operation},
     ui::{CanvasEvent, Edit, Form},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::editor::{self, SketchSession};
+use crate::{
+    Sketch,
+    editor::{self, SketchSession},
+};
 
 /// Adds a sketch on a plane to the part, named by the operation's id: a
 /// planar face, a datum plane or a frame's plane (see [`EntityRef`]). The plane is
@@ -50,6 +52,7 @@ impl Operation for AddSketch {
         mut part: Part<S>,
         operation_id: &str,
         args: &AddSketchArgs,
+        _library: &dyn Library<S>,
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("add_sketch({operation_id}, plane={:?})", args.plane);
         args.sketch.validate().with_context(ctx)?;
@@ -69,27 +72,21 @@ impl Operation for AddSketch {
     /// [`crate::editor`].
     fn form<'a, S: Scalar>(
         &self,
-        before: &'a Part<S>,
+        context: Context<'a, S>,
         args: &AddSketchArgs,
         s: &SketchSession,
         selection: &[String],
     ) -> Form<'a, S, AddSketchArgs, SketchSession> {
+        let before = context.before;
         editor::form(before, args, s, selection)
     }
 
     fn event<S: Scalar>(
         &self,
-        before: &Part<S>,
-        args: &mut AddSketchArgs,
-        session: &mut SketchSession,
-        selection: &mut Vec<String>,
+        context: Context<'_, S>,
+        edit: Edit<'_, AddSketchArgs, SketchSession>,
         event: &CanvasEvent<S>,
     ) {
-        let edit = Edit {
-            args,
-            session,
-            selection,
-        };
-        editor::event(before, edit, event);
+        editor::event(context.before, edit, event);
     }
 }

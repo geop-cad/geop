@@ -3,26 +3,27 @@
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_sketch::{Constraint, Sketch};
 use geop_core_topology::{
     boundary::BoundaryType,
     loop_sampling::sample_loop_to_polygon,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{EntityRef, ORIGIN, Part};
+use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
 use geop_ops_rasterize::face_triangles_uv;
 use geop_ops_sketch::AddSketchArgs;
+use geop_ops_sketch::{Constraint, Sketch};
 
 use crate::Program;
+use crate::examples::n;
 
 /// Checks the part `program` builds is a valid model — with every validation error's root message in
 /// the failure, one per line — and is drawn as it is (see
 /// [`assert_draws_its_trims`]).
 fn assert_builds_valid(program: &Program) {
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
         panic!(
@@ -122,10 +123,10 @@ fn cylinder_joined_over_a_hole() {
     let (left, right) = (-2.67283351891566, 2.92361789846824);
     let (bottom, top) = (-1.9899258884866573, 1.7575634084240286);
     let corners = [
-        plate.add_point(left, top),
-        plate.add_point(right, bottom),
-        plate.add_point(right, top),
-        plate.add_point(left, bottom),
+        plate.add_point(n(left), n(top)),
+        plate.add_point(n(right), n(bottom)),
+        plate.add_point(n(right), n(top)),
+        plate.add_point(n(left), n(bottom)),
     ];
     for (i, [a, b]) in [[0, 2], [2, 1], [1, 3], [3, 0]].into_iter().enumerate() {
         let line = plate.add_line(corners[a], corners[b]);
@@ -135,8 +136,8 @@ fn cylinder_joined_over_a_hole() {
             Constraint::Vertical { line }
         });
     }
-    let center = plate.add_point(-0.15839013445426114, -0.010618161245098214);
-    plate.add_circle(center, 1.1037893580479698);
+    let center = plate.add_point(n(-0.15839013445426114), n(-0.010618161245098214));
+    plate.add_circle(center, n(1.1037893580479698));
     program.push(
         "sketch1",
         AddSketchArgs {
@@ -171,8 +172,8 @@ fn cylinder_joined_over_a_hole() {
         },
     );
     let mut boss = Sketch::new();
-    let center = boss.add_point(1.4470132029404787, 0.7057548548938737);
-    boss.add_circle(center, 1.1539711985023275);
+    let center = boss.add_point(n(1.4470132029404787), n(0.7057548548938737));
+    boss.add_circle(center, n(1.1539711985023275));
     program.push(
         "sketch2",
         AddSketchArgs {
@@ -224,7 +225,7 @@ fn outline_revolved_around_its_edge_joined_to_its_box() {
         .find(|(_, c)| {
             c.points()
                 .iter()
-                .all(|p| (sketch.points[p].xy()[0] - 2.0).abs() < 1e-9)
+                .all(|p| (sketch.points[p].x.to_f64() - 2.0).abs() < 1e-9)
         })
         .map(|(&id, _)| id)
         .unwrap();
@@ -283,13 +284,13 @@ fn spline_revolved_then_extruded_and_joined() {
         (-1.3584048099029444, 1.0913093781025136),
     ]
     .into_iter()
-    .map(|(x, y)| sketch.add_point(x, y))
+    .map(|(x, y)| sketch.add_point(n(x), n(y)))
     .collect();
     let mut control_points = outline.clone();
     control_points.push(outline[0]);
     sketch.add_spline(control_points);
-    let top = sketch.add_point(0.4655769138883318, 2.6284122396718033);
-    let bottom = sketch.add_point(0.4655769138883318, -0.7084336105288418);
+    let top = sketch.add_point(n(0.4655769138883318), n(2.6284122396718033));
+    let bottom = sketch.add_point(n(0.4655769138883318), n(-0.7084336105288418));
     let axis = sketch.add_line(top, bottom);
     sketch.constrain(Constraint::Vertical { line: axis });
     program.push(

@@ -6,7 +6,7 @@ use geop_core_math::{
     scalars::ScalInF64 as S,
 };
 use geop_ops::{
-    EntityRef, ORIGIN, Operations, Part,
+    Context, EntityRef, NoFiles, ORIGIN, Operations, Part,
     ui::{Control, PartView, Presentation, Reach, StepEditEvent, StepEditor},
 };
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,11 @@ struct Editor {
     presentation: Presentation<S>,
 }
 
+/// Editing the step `sketch` on `part`, which places no other parts.
+fn context(part: &Part<S>) -> Context<'_, S> {
+    Context::new(part, "sketch", &NoFiles)
+}
+
 impl Editor {
     /// A new sketch step — or, not `new`, one on the origin's `xy` plane
     /// being edited again.
@@ -44,8 +49,8 @@ impl Editor {
                 DatumComponent::Plane(FrameAxis::Z),
             ));
         }
-        let editor = StepEditor::new(step, &part, new);
-        let presentation = editor.presentation(&part);
+        let editor = StepEditor::new(step, context(&part), new);
+        let presentation = editor.presentation(context(&part), &part, &view);
         let Ops::AddSketch(args) = editor.step().clone();
         Editor {
             part,
@@ -57,10 +62,12 @@ impl Editor {
     }
 
     fn send(&mut self, event: StepEditEvent<S>) {
-        self.editor.handle(&self.part, &self.view, &event);
+        self.editor.handle(context(&self.part), &self.view, &event);
         let Ops::AddSketch(args) = self.editor.step().clone();
         self.args = args;
-        self.presentation = self.editor.presentation(&self.part);
+        self.presentation = self
+            .editor
+            .presentation(context(&self.part), &self.part, &self.view);
     }
 
     fn session(&self) -> &SketchSession {
@@ -191,15 +198,15 @@ fn lines_snap_by_constraint() {
     let has = |pred: &dyn Fn(&Constraint) -> bool| s.constraints.values().any(pred);
     assert!(has(&|c| matches!(
         c,
-        Constraint::Fix { x: 0.0, y: 0.0, .. }
+        Constraint::Fix { x, y, .. } if x.to_f64() == 0.0 && y.to_f64() == 0.0
     )));
     assert!(has(&|c| matches!(c, Constraint::Horizontal { .. })));
     assert!(has(&|c| matches!(c, Constraint::Vertical { .. })));
     // Solved: horizontal and vertical hold exactly.
     let corner = s
         .points
-        .values()
-        .map(|p| p.xy())
+        .keys()
+        .map(|&id| xy(s, id))
         .find(|p| p[0] > 0.5 && p[1] < 0.5)
         .unwrap();
     assert!(corner[1].abs() < 1e-6, "{corner:?}");
@@ -308,7 +315,7 @@ fn dragging_points() {
         done: true,
     });
     let s = e.sketch();
-    let ends: Vec<P2> = s.points.values().map(|p| p.xy()).collect();
+    let ends: Vec<P2> = s.points.keys().map(|&id| xy(s, id)).collect();
     // The line starts fixed at the origin and is horizontal by
     // constraint: the end follows the pointer along it, not up.
     assert!(ends.iter().any(|&p| close(p, [0.0, 0.0])), "{ends:?}");
@@ -334,7 +341,7 @@ fn constraint_values_are_edited_in_the_list() {
         value: Value::Number(2.0),
     });
     let s = e.sketch();
-    let ends: Vec<P2> = s.points.values().map(|p| p.xy()).collect();
+    let ends: Vec<P2> = s.points.keys().map(|&id| xy(s, id)).collect();
     assert!((dist(ends[0], ends[1]) - 2.0).abs() < 1e-6, "{ends:?}");
 }
 

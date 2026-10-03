@@ -40,6 +40,22 @@ construction, not by the diligence of each caller.
 - **Lookups by name** (`vertex_id`, `edge_id`, `face_id`, `solid_id`,
   `sketch_id`, `datum_id`, and `coedge_id(edge, face)`) are what every
   operation that refers to existing entities is built on.
+- **Instances** are other parts placed in this one, each a `Component` —
+  what a program file builds, shared by every instance of it and drawn once
+  — at a `Pose`, `fixed` or free to be moved by the **mates**: constraints
+  between two entities (see the `assembly` module, which solves them with
+  [geop-core-solve](../core/geop-core-solve.md)). A placed part is a
+  part too, so a part is a tree. An entity of a placed part is named behind
+  its instance's name — `bolt/extrude(head,end)` — and resolves where it is
+  placed: `Aspects::of`, `resolve_plane` and `resolve_datum` move what they
+  find by the instance's pose, so any operation can build on it.
+- **State**: the parameters a program is built with, kept in the
+  program's `state` apart from its steps. A step reads one by
+  name, declaring it (`Part::pose_parameter`): `add_part` places its part
+  where `<id>.pose` says. Solving a program's mates (`Part::solve_mates`)
+  gives new values for them, which the editor keeps — so every step sees
+  every placed part where the mates put it, however late in the program
+  those mates are.
 - **`PartDescription::of`** describes the topology in names only, with no
   internal id anywhere, so two parts built by the same program describe
   identically and the description diffs well as text.
@@ -79,16 +95,23 @@ Every operation is a unit struct implementing `Operation`, with an `Args`
 struct of plain, serializable design data. Built, a step maps
 
 ```text
-(part, args) -> part                                            apply
+(part, args, library) -> part                                   apply
 ```
 
+— the library being where it finds the parts it places, if it places any —
 and edited, it shows a `Form` — fields and visuals — whose fields an editor
 sets:
 
 ```text
-(part, args)                 -> form                            form
-(part, args, field, value)   -> args                            set
+(context, args)                 -> form                         form
+(context, args, field, value)   -> args                         set
 ```
+
+with the `Context` the part before the step, the step's id, the library,
+the program's state, and what the step built when it last ran. A
+setter may also set a parameter (`Edit::state`), and a form may ask
+for placed parts to be dragged (`Form::drags`): solving them is the
+editor's.
 
 `form` never fails: an editor needs a dialog most exactly when the arguments
 do not build, so whatever goes wrong is said in it. Besides these, an
@@ -109,7 +132,7 @@ before it holds).
   Each field is described once: the form (`Form`) holds, next to each
   control, the setter its value goes to, and `Operation::set` finds it by
   the field's key — an operation never matches keys itself. A setter may
-  capture the part before the step, for what setting one field implies for
+  capture the context, for what setting one field implies for
   others: a selection picks the construction it fits, another sketch brings
   its own axis.
 
@@ -135,8 +158,13 @@ the operation understands:
   now. A new step whose first reference field is still empty starts with it
   armed: what it is built on is what it needs first. One that already holds
   something — an extrude's newest sketch — waits for no click, so its
-  handles can be dragged straight away. While a field waits for a pick, the
-  part is shown as it stands, not the plane the step works in.
+  handles can be dragged straight away. So does a field that appears empty
+  as the step is edited — a mate just added waits for its entities — and a
+  field that goes away stops waiting. While a field waits for a pick, the
+  part is shown as it stands, not the plane the step works in. Picks test
+  against the part before the step, or — for an operation whose references
+  point into what it adds itself (`PICKS_BUILT`), a placed part's mates —
+  against what it builds.
 - **Handles** of number fields are drawn by the editor and dragged along
   their direction, the value following how far the pointer has moved along
   the handle's track, from the ray where the drag started to the ray where
@@ -148,7 +176,8 @@ the operation understands:
   is selected and what the pointer is over.
 - **Dragging** a draggable visual is the editor's too: it is grabbed where
   the drag starts, and the operation is sent where to, in the plane worked
-  in.
+  in — or, with none, in the plane through where it was grabbed, facing the
+  eye.
 
 An operation that draws in a canvas of its own — a sketch — also takes what
 the editor passes on (`Operation::event`, a `CanvasEvent`): clicks while it
@@ -239,9 +268,14 @@ program.push("hole", ExtrudeArgs {
 });
 ```
 
-`Program::build` builds a part from scratch and checks after every step that
-every entity has a name. `ProgramRunner` builds incrementally for an editor:
-`run(program, stop)` runs the first `stop` steps, reuses whatever earlier
+`Program::build(library)` builds a part from scratch and checks after every
+step that every entity has a name. The `Library` is where the program finds
+the parts it places: `Workspace` is the library of a set of files, by path,
+each program built with the `Scope` of its own file, so references resolve
+relative to it. A workspace keeps what it built until its files change, and
+refuses a placement that would make files place each other in a cycle,
+naming the cycle: the files must form a DAG. `ProgramRunner` builds incrementally for an editor:
+`run(program, stop, library)` runs the first `stop` steps, reuses whatever earlier
 runs built that still applies, and stops at the first failing step, since
 the steps after it would fail for lack of what it should have built; the
 part after any number of them is `part_at`. `to_json` pretty-prints one

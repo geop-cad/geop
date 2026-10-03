@@ -33,6 +33,16 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
         Self { data }
     }
 
+    /// Its components, as an array.
+    pub fn to_array(&self) -> [S; N] {
+        self.data
+    }
+
+    /// Every component mapped by `f` — into another scalar type, say.
+    pub fn map<T: Scalar>(&self, f: impl Fn(S) -> T) -> Vector<T, N> {
+        Vector::from_array(self.data.map(f))
+    }
+
     /// Element access using a multi-index slice; only the first index is used
     /// (vectors are 1-D).  Panics if `idx` is empty.
     pub fn get(&self, idx: &[usize]) -> S {

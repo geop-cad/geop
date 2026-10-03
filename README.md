@@ -83,7 +83,8 @@ after `npm run build`. See
 ### Programs
 
 A part is described by a *program*: an ordered list of steps, each an
-operation (`add_sketch`, `extrude`, `revolve`, `boolean`, `add_datum`) with its arguments.
+operation (`add_sketch`, `extrude`, `revolve`, `boolean`, `add_datum`,
+`add_part`) with its arguments.
 Steps refer to what earlier steps made only by stable names — `extrude(box)`
 is the solid the step `box` extruded, `extrude(box,end)` its end cap — never
 by a kernel id, so a program is self-contained and rebuilds the same part,
@@ -117,7 +118,21 @@ coordinate system's axes or planes is referred to on its own by a
 "x"}}`, or its xy plane, normal to its z axis, `{"type": "Datum", "name":
 "origin", "component": {"plane": "z"}}`.
 
-"Save" in the web app downloads the program as `part.geop`, and
-"Load" reads one back. The VS Code extension in `vscode-extension/` opens any
+A program can place the part another program file builds: `add_part`
+names the file relative to its own (`"file": "pin.geop"`) and mates
+entities of it — named behind the step's id, `pin/extrude(pin,start)` — to
+those of the parts placed before or of the program's own part. Where each
+placed part is, is the program's `state`
+(`"pin.pose": {"position": [...], "rotation": [w, x, y, z]}`), which the
+editor solves the program's mates for after every edit, moving any part
+that is not fixed — so a later step's mates move an earlier part for every
+step. Dragging a placed part moves it as far as the mates allow, and placed
+`flexible`, a sub-assembly's own parts move with the program's mates too.
+Files place each other as a DAG: a file that places itself, directly or
+through others, is an error naming the cycle. `geop compile assembly.geop`
+reads the placed files next to it.
+
+The web app keeps its program files in the browser, in an explorer sidebar
+like VS Code's: new, rename, delete, upload and download them there. The VS Code extension in `vscode-extension/` opens any
 `.geop` file as the editor, with the kernel running natively (`geop serve`). `outputs/parts/` has the examples of
 `cad/geop-cad-base/src/examples.rs` as program files.

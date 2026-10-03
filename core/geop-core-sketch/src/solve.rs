@@ -1,6 +1,8 @@
 //! Solving a sketch: every constraint contributes residuals that are zero
-//! exactly when it holds, and [`crate::bfgs::minimize`] drives the sum of
-//! their squares to zero.
+//! exactly when it holds — a [`Residual`] of the sketch's variables — and
+//! the solver every system of the kernel shares ([`geop_core_solve`])
+//! drives the sum of their squares to zero, pulls a dragged point, and
+//! encloses the exact solution.
 //!
 //! **Variables.** Each class of coincident points (see
 //! [`Sketch::point_classes`]) is one `(x, y)` pair — coincidence is not a
@@ -12,33 +14,31 @@
 //! constraint kind dominates the objective just by its choice of units, and
 //! the convergence test is a single relative length.
 //!
-//! **Floating point variables, interval-scalar residuals.** A sketch is
-//! design intent, not a geometric claim: the solved positions are the
-//! designer's free choice, entering the kernel as exact inputs through
-//! [`crate::profile`]. So [`bfgs::minimize`] itself still walks plain `f64`
-//! variables and its tolerances only decide when to stop iterating — but
-//! each residual along the way is computed as a [`Dual<ScalInF64>`], so the
-//! `sin`/`sqrt`/`PI` a geometric formula can't help but need are honestly
+//! **Honest enclosures.** Everything is computed in the sketch's own scalar
+//! — any [`Scalar`] — each residual as a [`geop_core_math::dual::Dual`] of
+//! it, so the `sin`/`sqrt`/`PI` a geometric formula can't help but need are
 //! enclosed rather than quietly rounded away. A residual that becomes
 //! genuinely undecidable (a division or square root at the edge of its
-//! domain) is treated as "this point is infeasible" — the same outcome a
-//! plain `f64` computing `inf`/`nan` there would already have produced.
+//! domain) makes that point infeasible.
 use crate::{
-    bfgs::{BfgsOptions, minimize},
-    dual::{Dual, MAX_LOCAL_VARS},
     geometry::{Arc, V, line_distance},
-    point::P2,
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, Enclosure, PointId, Sketch},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, Scalar, scal_in_f64::ScalInF64},
+    scalars::{Ring, Scalar, as_f64},
     vector::Vector2,
 };
+use geop_core_solve::{Param, Phase, Pull, Residual, System, Value};
 
-/// The scalar every residual is computed in: an honest enclosure, not a bare
-/// `f64` — see the module docs.
-type S = ScalInF64;
+/// The most variables a single constraint may depend on. The largest
+/// constraints (tangency or equality between two arcs) touch two arcs of
+/// five variables each.
+const MAX_LOCAL_VARS: usize = 10;
+
+/// A residual with its gradient with respect to its constraint's own
+/// variables.
+type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -53,7 +53,7 @@ struct Layout {
 }
 
 impl Layout {
-    fn new(sketch: &Sketch) -> Self {
+    fn new<S: Scalar>(sketch: &Sketch<S>) -> Self {
         let class = sketch.point_classes();
         let mut n = 0;
         let mut class_var = BTreeMap::new();
@@ -80,9 +80,11 @@ impl Layout {
         }
     }
 
-    /// The current variable values, read from the sketch.
-    fn read(&self, sketch: &Sketch) -> Vec<f64> {
-        let mut x = vec![0.0; self.n];
+    /// The current variable values, read from the sketch. Where things are
+    /// is the sketch's state — a free choice — so the variables are sharp,
+    /// and so is what [`Layout::write`] writes back.
+    fn read<S: Scalar>(&self, sketch: &Sketch<S>) -> GeopResult<Vec<S>> {
+        let mut x = vec![S::ZERO; self.n];
         // Iterate in reverse so a class takes its representative's (lowest
         // id) position.
         for (id, p) in sketch.points.iter().rev() {
@@ -91,31 +93,35 @@ impl Layout {
         }
         for (id, c) in &sketch.curves {
             match c.kind {
-                CurveKind::Arc { sweep, .. } => x[self.curve_var[id]] = sweep / 2.0,
+                CurveKind::Arc { sweep, .. } => {
+                    x[self.curve_var[id]] = sweep.div(S::TWO)?.sharpen()
+                }
                 CurveKind::Circle { radius, .. } => x[self.curve_var[id]] = radius,
                 _ => {}
             }
         }
-        x
+        Ok(x)
     }
 
     /// Write variable values back into the sketch.
-    fn write(&self, sketch: &mut Sketch, x: &[f64]) {
+    fn write<S: Scalar>(&self, sketch: &mut Sketch<S>, x: &[S]) {
         for (id, p) in sketch.points.iter_mut() {
             p.x = x[self.point_var[id]];
             p.y = x[self.point_var[id] + 1];
         }
         for (id, c) in sketch.curves.iter_mut() {
             match &mut c.kind {
-                CurveKind::Arc { sweep, .. } => *sweep = 2.0 * x[self.curve_var[id]],
-                CurveKind::Circle { radius, .. } => *radius = x[self.curve_var[id]].abs(),
+                CurveKind::Arc { sweep, .. } => {
+                    *sweep = S::TWO.mul(x[self.curve_var[id]]).sharpen()
+                }
+                CurveKind::Circle { radius, .. } => *radius = x[self.curve_var[id]].abs().sharpen(),
                 _ => {}
             }
         }
     }
 
     /// The variables a curve depends on.
-    fn curve_vars(&self, sketch: &Sketch, c: CurveId, out: &mut Vec<usize>) {
+    fn curve_vars<S: Scalar>(&self, sketch: &Sketch<S>, c: CurveId, out: &mut Vec<usize>) {
         for p in sketch.curves[&c].points() {
             out.extend([self.point_var[&p], self.point_var[&p] + 1]);
         }
@@ -125,20 +131,19 @@ impl Layout {
 
 /// Read-only view of the variables for evaluating one constraint, with that
 /// constraint's own variables `seeded` as [`Scalar`] values.
-struct Geo<'a, T> {
-    sketch: &'a Sketch,
+struct Geo<'a, S: Scalar, T> {
+    sketch: &'a Sketch<S>,
     layout: &'a Layout,
-    x: &'a [f64],
     seeded: &'a [(usize, T)],
 }
 
-impl<T: Scalar> Geo<'_, T> {
+impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
     fn var(&self, i: usize) -> T {
         self.seeded
             .iter()
             .find(|(j, _)| *j == i)
             .map(|(_, t)| *t)
-            .unwrap_or_else(|| T::from_f64(self.x[i]))
+            .expect("every variable a constraint reads is seeded")
     }
     fn point(&self, p: PointId) -> V<T> {
         let i = self.layout.point_var[&p];
@@ -219,50 +224,53 @@ enum TangentMode {
 }
 
 /// One constraint, ready to evaluate.
-struct Prepared<'a> {
-    constraint: &'a Constraint,
+struct Prepared<'a, S: Scalar> {
+    id: ConstraintId,
+    constraint: &'a Constraint<S>,
     vars: Vec<usize>,
     tangent: Option<TangentMode>,
 }
 
 /// Everything needed to evaluate the objective, fixed for one solve.
-struct Problem<'a> {
-    sketch: &'a Sketch,
+struct Problem<'a, S: Scalar> {
+    sketch: &'a Sketch<S>,
     layout: Layout,
-    constraints: Vec<Prepared<'a>>,
+    constraints: Vec<Prepared<'a, S>>,
     /// Characteristic length of the sketch; see the module docs.
-    scale: f64,
-    /// Extra residuals `weight * (point - target)` pulling points towards a
-    /// cursor while dragging.
-    drags: Vec<(PointId, P2, f64)>,
+    scale: S,
 }
 
-impl<'a> Problem<'a> {
-    fn new(sketch: &'a Sketch) -> GeopResult<Self> {
+impl<'a, S: Scalar> Problem<'a, S> {
+    fn new(sketch: &'a Sketch<S>) -> GeopResult<Self> {
         sketch.validate()?;
         let layout = Layout::new(sketch);
-        let x0 = layout.read(sketch);
+        let x0 = layout.read(sketch)?;
 
-        let mut lo = [f64::INFINITY; 2];
-        let mut hi = [f64::NEG_INFINITY; 2];
-        for p in sketch.points.values() {
-            lo = [lo[0].min(p.x), lo[1].min(p.y)];
-            hi = [hi[0].max(p.x), hi[1].max(p.y)];
-        }
-        let diagonal = crate::point::dist(lo, hi);
-        let radii = sketch.curves.values().filter_map(|c| match c.kind {
-            CurveKind::Circle { radius, .. } => Some(2.0 * radius.abs()),
-            _ => None,
-        });
-        let scale = radii.fold(diagonal, f64::max);
-        let scale = if scale.is_finite() && scale > 0.0 {
+        // The diagonal of the points' bounding box, or a circle's diameter
+        // if that is larger — one, where the sketch has no size at all.
+        let span = |k: usize| {
+            let values = || sketch.points.values().map(move |p| p.xy()[k]);
+            let hi = values().reduce(S::max).unwrap_or(S::ZERO);
+            let lo = values().reduce(S::min).unwrap_or(S::ZERO);
+            hi.sub(lo)
+        };
+        let diagonal = span(0).mul(span(0)).add(span(1).mul(span(1))).sqrt()?;
+        let scale = sketch
+            .curves
+            .values()
+            .filter_map(|c| match c.kind {
+                CurveKind::Circle { radius, .. } => Some(S::TWO.mul(radius.abs())),
+                _ => None,
+            })
+            .fold(diagonal, S::max);
+        let scale = if scale.is_finite() && scale.definitely_greater(S::ZERO) {
             scale
         } else {
-            1.0
+            S::ONE
         };
 
         let mut constraints = Vec::new();
-        for c in sketch.constraints.values() {
+        for (&id, c) in &sketch.constraints {
             use Constraint::*;
             let mut vars = Vec::new();
             let pt = |p: &PointId, vars: &mut Vec<usize>| {
@@ -317,6 +325,7 @@ impl<'a> Problem<'a> {
                 _ => None,
             };
             constraints.push(Prepared {
+                id,
                 constraint: c,
                 vars,
                 tangent,
@@ -328,14 +337,13 @@ impl<'a> Problem<'a> {
             layout,
             constraints,
             scale,
-            drags: Vec::new(),
         })
     }
 
     fn tangent_mode(
-        sketch: &Sketch,
+        sketch: &Sketch<S>,
         layout: &Layout,
-        x: &[f64],
+        x: &[S],
         a: CurveId,
         b: CurveId,
     ) -> GeopResult<TangentMode> {
@@ -349,41 +357,42 @@ impl<'a> Problem<'a> {
         if is_line(b) {
             return Ok(TangentMode::LineRound { line: b, round: a });
         }
-        let geo = Geo::<S> {
+        let seeded: Vec<(usize, S)> = x.iter().copied().enumerate().collect();
+        let geo = Geo {
             sketch,
             layout,
-            x,
-            seeded: &[],
+            seeded: &seeded,
         };
         let ((ca, ra), (cb, rb)) = (geo.round(a)?, geo.round(b)?);
-        let d = ca.sub(cb).norm()?.to_f64();
-        let (ra, rb) = (ra.to_f64(), rb.to_f64());
+        let d = ca.sub(cb).norm()?;
+        let internal = d.sub(ra.sub(rb).abs()).abs();
+        let external = d.sub(ra.add(rb)).abs();
         Ok(TangentMode::RoundRound {
-            internal: (d - (ra - rb).abs()).abs() < (d - (ra + rb)).abs(),
+            internal: internal.definitely_less(external),
         })
     }
 
-    fn residuals<T: Scalar>(&self, p: &Prepared, geo: &Geo<T>, out: &mut Vec<T>) -> GeopResult<()> {
+    fn residuals(
+        &self,
+        p: &Prepared<'_, S>,
+        geo: &Geo<'_, S, Dual<S>>,
+        out: &mut Vec<Dual<S>>,
+    ) -> GeopResult<()> {
         use Constraint::*;
-        let scale = T::from_f64(self.scale);
+        let c = Dual::cst;
+        let scale = c(self.scale);
+        let half = c(S::ONE.div(S::TWO)?);
         match *p.constraint {
             Coincident { .. } => {}
             Fix { point, x, y } => {
                 let q = geo.point(point);
-                out.extend([q.x.sub(T::from_f64(x)), q.y.sub(T::from_f64(y))]);
+                out.extend([q.x.sub(c(x)), q.y.sub(c(y))]);
             }
-            Distance { a, b, value } => out.push(
-                geo.point(b)
-                    .sub(geo.point(a))
-                    .norm()?
-                    .sub(T::from_f64(value)),
-            ),
-            DistanceX { a, b, value } => {
-                out.push(geo.point(b).x.sub(geo.point(a).x).sub(T::from_f64(value)))
+            Distance { a, b, value } => {
+                out.push(geo.point(b).sub(geo.point(a)).norm()?.sub(c(value)))
             }
-            DistanceY { a, b, value } => {
-                out.push(geo.point(b).y.sub(geo.point(a).y).sub(T::from_f64(value)))
-            }
+            DistanceX { a, b, value } => out.push(geo.point(b).x.sub(geo.point(a).x).sub(c(value))),
+            DistanceY { a, b, value } => out.push(geo.point(b).y.sub(geo.point(a).y).sub(c(value))),
             PointOnCurve { point, curve } => {
                 let q = geo.point(point);
                 out.push(match &self.sketch.curves[&curve].kind {
@@ -404,7 +413,7 @@ impl<'a> Problem<'a> {
                     Some(a) => a.arc_mid()?,
                     None => {
                         let (s, e) = geo.line(curve);
-                        s.add(e).scale(T::from_f64(0.5))
+                        s.add(e).scale(half)
                     }
                 };
                 out.extend([q.x.sub(m.x), q.y.sub(m.y)]);
@@ -412,17 +421,13 @@ impl<'a> Problem<'a> {
             Symmetric { a, b, line } => {
                 let (pa, pb) = (geo.point(a), geo.point(b));
                 let (s, e) = geo.line(line);
-                let mid = pa.add(pb).scale(T::from_f64(0.5));
+                let mid = pa.add(pb).scale(half);
                 out.push(line_distance(s, e, mid)?);
                 out.push(pb.sub(pa).dot(e.sub(s).unit()?));
             }
             PointLineDistance { point, line, value } => {
                 let (s, e) = geo.line(line);
-                out.push(
-                    line_distance(s, e, geo.point(point))?
-                        .abs()
-                        .sub(T::from_f64(value)),
-                );
+                out.push(line_distance(s, e, geo.point(point))?.abs().sub(c(value)));
             }
             Horizontal { line } => {
                 let (s, e) = geo.line(line);
@@ -441,9 +446,7 @@ impl<'a> Problem<'a> {
                 let r = match *p.constraint {
                     Parallel { .. } => cross,
                     Perpendicular { .. } => dot,
-                    Angle { value, .. } => cross
-                        .mul(T::from_f64(value.cos()))
-                        .sub(dot.mul(T::from_f64(value.sin()))),
+                    Angle { value, .. } => cross.mul(c(value.cos())).sub(dot.mul(c(value.sin()))),
                     _ => unreachable!(),
                 };
                 out.push(r.mul(scale));
@@ -475,7 +478,7 @@ impl<'a> Problem<'a> {
                 }
             },
             Equal { a, b } => {
-                let size = |c: CurveId| -> GeopResult<T> {
+                let size = |c: CurveId| -> GeopResult<Dual<S>> {
                     Ok(match &self.sketch.curves[&c].kind {
                         CurveKind::Line { .. } => {
                             let (s, e) = geo.line(c);
@@ -498,137 +501,103 @@ impl<'a> Problem<'a> {
                         e.sub(s).norm()?
                     }
                 };
-                out.push(length.sub(T::from_f64(value)));
+                out.push(length.sub(c(value)));
             }
             Radius { curve, value } => out.push(match geo.arc(curve) {
                 // `2 R |sin θ| - L` rather than `L / (2 |sin θ|) - R`: the
                 // same zero set, but finite for a nearly straight arc.
-                Some(a) => T::from_f64(2.0 * value)
+                Some(a) => c(S::TWO.mul(value))
                     .mul(a.half.sin().abs())
                     .sub(a.chord_length()?),
-                None => geo.round(curve)?.1.sub(T::from_f64(value)),
+                None => geo.round(curve)?.1.sub(c(value)),
             }),
         }
         Ok(())
     }
 
-    /// Objective `Σ r²` and its gradient. A residual that hits a degenerate
-    /// division/sqrt (see the module docs) makes the whole point infeasible
-    /// — `f = ∞` — exactly as a plain `f64` computing `inf`/`nan` there would
-    /// already have made the line search back off.
-    fn objective(&self, x: &[f64]) -> (f64, Vec<f64>) {
-        let mut f = 0.0;
-        let mut g = vec![0.0; x.len()];
-        let mut rs = Vec::new();
-        for p in &self.constraints {
-            let seeded: Vec<(usize, Dual<S>)> = p
-                .vars
-                .iter()
-                .enumerate()
-                .map(|(slot, &i)| (i, Dual::var(S::from_f64(x[i]), slot)))
-                .collect();
-            let geo = Geo {
-                sketch: self.sketch,
-                layout: &self.layout,
-                x,
-                seeded: &seeded,
-            };
-            rs.clear();
-            if self.residuals(p, &geo, &mut rs).is_err() {
-                return (f64::INFINITY, vec![0.0; x.len()]);
-            }
-            for r in &rs {
-                let rv = r.v.to_f64();
-                f += rv * rv;
-                for (slot, &i) in p.vars.iter().enumerate() {
-                    g[i] += 2.0 * rv * r.d[slot].to_f64();
-                }
-            }
-        }
-        for &(point, target, weight) in &self.drags {
-            let i = self.layout.point_var[&point];
-            for k in 0..2 {
-                let r = weight * (x[i + k] - target[k]);
-                f += r * r;
-                g[i + k] += 2.0 * weight * r;
-            }
-        }
-        (f, g)
+    /// Every constraint, as a residual of the sketch's variables.
+    fn residuals_of(&self) -> Vec<SketchResidual<'_, 'a, S>> {
+        self.constraints
+            .iter()
+            .map(|prepared| SketchResidual {
+                problem: self,
+                prepared,
+            })
+            .collect()
     }
 
-    /// Every constraint residual (no drags), and its Jacobian row by row. A
-    /// constraint whose residual hits a degenerate division/sqrt at `x` (see
-    /// the module docs) contributes no rows — [`Problem::report`] catches
-    /// the same failure independently and lists it as unsatisfied.
-    fn jacobian(&self, x: &[f64]) -> (Vec<f64>, Vec<Vec<f64>>) {
-        let mut values = Vec::new();
-        let mut rows = Vec::new();
-        let mut rs = Vec::new();
-        for p in &self.constraints {
-            let seeded: Vec<(usize, Dual<S>)> = p
-                .vars
+    /// The system of `residuals`, every variable free, at `x`.
+    fn system<'r>(
+        &self,
+        residuals: &'r [SketchResidual<'_, 'a, S>],
+        x: &[S],
+    ) -> System<'r, S, MAX_LOCAL_VARS> {
+        System {
+            params: x.iter().map(|&v| Param::Scalar(v)).collect(),
+            free: vec![true; x.len()],
+            residuals: residuals
                 .iter()
-                .enumerate()
-                .map(|(slot, &i)| (i, Dual::var(S::from_f64(x[i]), slot)))
-                .collect();
-            let geo = Geo {
-                sketch: self.sketch,
-                layout: &self.layout,
-                x,
-                seeded: &seeded,
-            };
-            rs.clear();
-            if self.residuals(p, &geo, &mut rs).is_err() {
-                continue;
-            }
-            for r in &rs {
-                values.push(r.v.to_f64());
-                let mut row = vec![0.0; x.len()];
-                for (slot, &i) in p.vars.iter().enumerate() {
-                    row[i] += r.d[slot].to_f64();
-                }
-                rows.push(row);
-            }
+                .map(|r| r as &dyn Residual<S, MAX_LOCAL_VARS>)
+                .collect(),
+            scale: self.scale,
         }
-        (values, rows)
-    }
-
-    fn minimize(&self, x: Vec<f64>, max_iterations: usize) -> (Vec<f64>, usize) {
-        let tol = RELATIVE_TOLERANCE * self.scale;
-        let r = minimize(
-            |x| self.objective(x),
-            x,
-            BfgsOptions {
-                max_iterations,
-                f_tolerance: (0.01 * tol).powi(2),
-                g_tolerance: 0.0,
-            },
-        );
-        (r.x, r.iterations)
     }
 }
 
-/// A constraint counts as satisfied once its residual is within this
-/// fraction of the sketch's size.
-const RELATIVE_TOLERANCE: f64 = 1e-9;
+/// The variables of a system of a sketch, as they are now.
+fn values<S: Scalar>(system: &System<'_, S, MAX_LOCAL_VARS>) -> Vec<S> {
+    system
+        .params
+        .iter()
+        .map(|p| match p {
+            Param::Scalar(v) => *v,
+            Param::Pose { .. } => unreachable!("a sketch's variables are numbers"),
+        })
+        .collect()
+}
 
-/// Newton steps polishing a solution before it is enclosed: each squares
-/// the error, so a handful take BFGS's `RELATIVE_TOLERANCE` to rounding.
-const POLISH_STEPS: usize = 6;
+/// One constraint as a residual of the variables it depends on.
+struct SketchResidual<'p, 'a, S: Scalar> {
+    problem: &'p Problem<'a, S>,
+    prepared: &'p Prepared<'a, S>,
+}
 
-/// How many candidate boxes [`Problem::enclose`] tries, each twice as wide
-/// as the last one needed: how hard it tries, never what a verified box
-/// means.
-const ENCLOSE_ATTEMPTS: usize = 24;
+impl<S: Scalar> Residual<S, MAX_LOCAL_VARS> for SketchResidual<'_, '_, S> {
+    fn params(&self) -> &[usize] {
+        &self.prepared.vars
+    }
+
+    fn eval(&self, values: &[Value<Dual<S>>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
+        let seeded = self
+            .prepared
+            .vars
+            .iter()
+            .zip(values)
+            .map(|(&i, v)| Ok((i, v.scalar()?)))
+            .collect::<GeopResult<Vec<_>>>()?;
+        let geo = Geo {
+            sketch: self.problem.sketch,
+            layout: &self.problem.layout,
+            seeded: &seeded,
+        };
+        self.problem.residuals(self.prepared, &geo, out)
+    }
+}
 
 /// The outcome of a solve.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SolveReport {
-    /// Every constraint holds (to [`RELATIVE_TOLERANCE`] of the sketch size).
+#[serde(bound = "S: Scalar")]
+pub struct SolveReport<S: Scalar> {
+    /// Every constraint holds (to [`geop_core_solve::RELATIVE_TOLERANCE`] of
+    /// the sketch size).
     pub converged: bool,
-    /// Largest remaining constraint residual, in sketch units.
-    pub max_residual: f64,
+    /// Largest remaining constraint residual, in sketch units: an upper
+    /// bound.
+    #[serde(with = "as_f64")]
+    pub max_residual: S,
     pub iterations: usize,
+    /// Each minimization of the solve.
+    pub phases: Vec<Phase<S>>,
     /// Remaining degrees of freedom: variables minus independent constraints.
     pub dof: usize,
     /// Per point: whether it can still move without violating a constraint.
@@ -641,11 +610,11 @@ pub struct SolveReport {
     pub failed_constraints: Vec<ConstraintId>,
 }
 
-impl Sketch {
+impl<S: Scalar> Sketch<S> {
     /// The sketch's geometry as the kernel builds on it (see [`Enclosure`]):
     /// an enclosure of the exact solution of its constraints near the
     /// solved positions, each variable the constraints leave free exactly
-    /// as drawn (see [`Problem::enclose`]).
+    /// as drawn (see [`System::enclose`]).
     ///
     /// A sketch whose constraints are not met is no solution of them, and is
     /// built exactly as drawn: that is all there is to build. Fails if the
@@ -654,12 +623,13 @@ impl Sketch {
     pub fn enclose<T: Scalar>(&self) -> GeopResult<Enclosure<T>> {
         let ctx = |e: GeopError| e.with_context("enclosing the sketch's solution");
         let problem = Problem::new(self).map_err(ctx)?;
-        let x = problem.layout.read(self);
-        if !problem.report(&x, 0).converged {
+        let residuals = problem.residuals_of();
+        let system = problem.system(&residuals, &problem.layout.read(self)?);
+        if !problem.report(&system, 0, Vec::new())?.converged {
             return Ok(Enclosure::as_drawn(self));
         }
-        let x = problem.enclose(&x).map_err(ctx)?;
-        let to_t = |v: S| T::from_f64(v.lower().to_f64()).union(T::from_f64(v.upper().to_f64()));
+        let x = system.enclose().map_err(ctx)?;
+        let to_t = |v: S| -> T { v.cast() };
         let layout = &problem.layout;
         Ok(Enclosure {
             points: layout
@@ -687,238 +657,56 @@ impl Sketch {
     /// The sketch is updated even if the solve does not converge, to the
     /// closest configuration found — the report says which constraints could
     /// not be met.
-    pub fn solve(&mut self) -> GeopResult<SolveReport> {
+    pub fn solve(&mut self) -> GeopResult<SolveReport<S>> {
         self.solve_with_drag(&[])
     }
 
     /// Like [`Sketch::solve`], while pulling each `(point, target)` towards
     /// its target as far as the constraints allow — interactive dragging.
-    pub fn solve_with_drag(&mut self, drags: &[(PointId, P2)]) -> GeopResult<SolveReport> {
-        let mut problem = Problem::new(self)?;
-        let x0 = problem.layout.read(self);
-        let mut iterations = 0;
-        let mut x = x0;
-        if !drags.is_empty() {
-            // Pull softly first, then solve the constraints alone from there:
-            // a dragged point follows the cursor exactly when it is free to,
-            // and the constraints win wherever they disagree with it.
-            problem.drags = drags.iter().map(|&(p, t)| (p, t, 0.1)).collect();
-            let (x1, it) = problem.minimize(x, 200);
-            problem.drags.clear();
-            x = x1;
-            iterations += it;
-        }
-        let (x, it) = problem.minimize(x, 2000);
-        iterations += it;
-
-        let report = problem.report(&x, iterations);
-        let layout = problem.layout;
-        layout.write(self, &x);
+    pub fn solve_with_drag(
+        &mut self,
+        drags: &[(PointId, Vector2<S>)],
+    ) -> GeopResult<SolveReport<S>> {
+        let problem = Problem::new(self)?;
+        let residuals = problem.residuals_of();
+        let mut system = problem.system(&residuals, &problem.layout.read(self)?);
+        // A dragged point is pulled towards the cursor among the
+        // configurations that meet the constraints: it follows the cursor
+        // exactly where it is free to.
+        let pulls: Vec<Pull<S>> = drags
+            .iter()
+            .flat_map(|&(point, target)| {
+                let i = problem.layout.point_var[&point];
+                (0..2).map(move |k| Pull::Scalar {
+                    param: i + k,
+                    target: target[k],
+                })
+            })
+            .collect();
+        let solved = system.solve(&pulls)?;
+        let report = problem.report(&system, solved.iterations, solved.phases)?;
+        let x = values(&system);
+        problem.layout.write(self, &x);
         Ok(report)
     }
 }
 
-impl Problem<'_> {
-    /// Every constraint residual over the box `x`, and its gradient with
-    /// respect to every variable: an enclosure of both, for every point of
-    /// the box. Fails where a residual is undecidable somewhere in it.
-    fn rows_over(&self, x: &[S]) -> GeopResult<Vec<(S, Vec<S>)>> {
-        let mid: Vec<f64> = x.iter().map(|v| v.to_f64()).collect();
-        let mut out = Vec::new();
-        let mut rs = Vec::new();
-        for p in &self.constraints {
-            let seeded: Vec<(usize, Dual<S>)> = p
-                .vars
-                .iter()
-                .enumerate()
-                .map(|(slot, &i)| (i, Dual::var(x[i], slot)))
-                .collect();
-            let geo = Geo {
-                sketch: self.sketch,
-                layout: &self.layout,
-                x: &mid,
-                seeded: &seeded,
-            };
-            rs.clear();
-            self.residuals(p, &geo, &mut rs)?;
-            for r in &rs {
-                let mut row = vec![S::ZERO; x.len()];
-                for (slot, &i) in p.vars.iter().enumerate() {
-                    row[i] = row[i].add(r.d[slot]);
-                }
-                out.push((r.v, row));
-            }
-        }
-        Ok(out)
-    }
-
-    /// An enclosure of the exact solution near `x`, a solution of the
-    /// constraints to the solver's tolerance.
-    ///
-    /// The constraints determine some variables and leave the rest free
-    /// (see [`eliminate`]). The free ones are the designer's choice, and stay
-    /// exactly as drawn. The determined ones are first polished by Newton's
-    /// method on the independent constraints, then enclosed by the Krawczyk
-    /// test: for a box `X` around the polished `x̃`, with `Y` any
-    /// approximate inverse of the Jacobian at `x̃`,
-    ///
-    /// ```text
-    /// K(X) = x̃ - Y f(x̃) + (I - Y J(X)) (X - x̃)
-    /// ```
-    ///
-    /// and `K(X) ⊆ X` proves `X` holds a solution — in interval arithmetic,
-    /// so the proof is rigorous. The box is widened until the test passes;
-    /// its width is then how precisely the constraints pin the solution
-    /// down, and `K(X) ∩ X` is returned. Fails if no box passes: a singular
-    /// Jacobian — a tangency the constraints only just meet, say — leaves the
-    /// solution unproven, and nothing narrower than that is honest.
-    ///
-    /// Redundant constraints (a rectangle's fourth side, say) are left out
-    /// of the test: they hold wherever the independent ones do, when the
-    /// sketch is consistent, which a converged solve says it is.
-    fn enclose(&self, x: &[f64]) -> GeopResult<Vec<S>> {
-        let sharp = |x: &[f64]| -> Vec<S> { x.iter().map(|&v| S::from_f64(v)).collect() };
-        let mids = |rows: &[(S, Vec<S>)]| -> Vec<Vec<f64>> {
-            rows.iter()
-                .map(|(_, d)| d.iter().map(|v| v.to_f64()).collect())
-                .collect()
-        };
-        let n = x.len();
-        let rows = self.rows_over(&sharp(x))?;
-        let pivots = eliminate(mids(&rows), n).pivots;
-        if pivots.is_empty() {
-            return Ok(sharp(x));
-        }
-        let (cols, picked): (Vec<usize>, Vec<usize>) = pivots.into_iter().unzip();
-        let m = cols.len();
-        let square = |rows: &[(S, Vec<S>)]| -> Vec<Vec<f64>> {
-            picked
-                .iter()
-                .map(|&r| cols.iter().map(|&c| rows[r].1[c].to_f64()).collect())
-                .collect()
-        };
-        let singular = || GeopError::new("the sketch's constraints are singular at its solution");
-
-        // Newton, on the determined variables: every iterate is only a seed
-        // for the next, and the last one only the box's center — a free
-        // choice (see `AGENTS.md`).
-        let mut xt = x.to_vec();
-        for _ in 0..POLISH_STEPS {
-            let rows = self.rows_over(&sharp(&xt))?;
-            let y = inverse(&square(&rows)).ok_or_else(singular)?;
-            for (k, &c) in cols.iter().enumerate() {
-                let step: f64 = (0..m).map(|j| y[k][j] * rows[picked[j]].0.to_f64()).sum();
-                xt[c] -= step;
-            }
-        }
-
-        let rows = self.rows_over(&sharp(&xt))?;
-        let y = inverse(&square(&rows)).ok_or_else(singular)?;
-        let yf: Vec<S> = (0..m)
-            .map(|k| {
-                (0..m).fold(S::ZERO, |sum, j| {
-                    sum.add(S::from_f64(y[k][j]).mul(rows[picked[j]].0))
-                })
-            })
-            .collect();
-        let center: Vec<f64> = cols.iter().map(|&c| xt[c]).collect();
-        // Half-widths of the candidate box: at least what the Newton step
-        // from `x̃` still reaches, and a rounding step either side.
-        let mut radius: Vec<f64> = (0..m)
-            .map(|k| {
-                let reach = yf[k]
-                    .lower()
-                    .to_f64()
-                    .abs()
-                    .max(yf[k].upper().to_f64().abs());
-                let ulp = center[k].next_up() - center[k];
-                reach.max(ulp)
-            })
-            .collect();
-        for _ in 0..ENCLOSE_ATTEMPTS {
-            let candidate: Vec<S> = (0..m)
-                .map(|k| {
-                    let (c, r) = (center[k], 2.0 * radius[k]);
-                    S::from_f64(c - r).union(S::from_f64(c + r))
-                })
-                .collect();
-            let mut boxed = sharp(&xt);
-            for (k, &c) in cols.iter().enumerate() {
-                boxed[c] = candidate[k];
-            }
-            let over = self.rows_over(&boxed)?;
-            let offset: Vec<S> = (0..m)
-                .map(|k| candidate[k].sub(S::from_f64(center[k])))
-                .collect();
-            let krawczyk: Vec<S> = (0..m)
-                .map(|k| {
-                    let spread = (0..m).fold(S::ZERO, |sum, l| {
-                        // Row `k` of `I - Y J(X)`, column `l`.
-                        let yj = (0..m).fold(S::ZERO, |sum, j| {
-                            sum.add(S::from_f64(y[k][j]).mul(over[picked[j]].1[cols[l]]))
-                        });
-                        let identity = if k == l { S::ONE } else { S::ZERO };
-                        sum.add(identity.sub(yj).mul(offset[l]))
-                    });
-                    S::from_f64(center[k]).sub(yf[k]).add(spread)
-                })
-                .collect();
-            if (0..m).all(|k| krawczyk[k].is_subset_of(candidate[k])) {
-                for (k, &c) in cols.iter().enumerate() {
-                    boxed[c] = krawczyk[k].intersect(candidate[k]);
-                }
-                return Ok(boxed);
-            }
-            for k in 0..m {
-                let reach = krawczyk[k].sub(S::from_f64(center[k]));
-                let reach = reach
-                    .lower()
-                    .to_f64()
-                    .abs()
-                    .max(reach.upper().to_f64().abs());
-                radius[k] = radius[k].max(reach);
-                if !radius[k].is_finite() {
-                    return Err(singular());
-                }
-            }
-        }
-        Err(GeopError::new(format!(
-            "could not enclose the sketch's solution: no box around it passed the Krawczyk test in {ENCLOSE_ATTEMPTS} attempts"
-        )))
-    }
-
-    fn report(&self, x: &[f64], iterations: usize) -> SolveReport {
-        let tol = RELATIVE_TOLERANCE * self.scale;
-        let (values, rows) = self.jacobian(x);
-        let max_residual = values.iter().fold(0.0f64, |m, r| m.max(r.abs()));
-
-        let mut failed_constraints = Vec::new();
-        let mut rs = Vec::new();
-        let mut prepared = self.constraints.iter();
-        for (&i, c) in &self.sketch.constraints {
-            if matches!(c, Constraint::Coincident { .. }) {
-                continue;
-            }
-            let p = prepared.next().unwrap();
-            let geo = Geo::<S> {
-                sketch: self.sketch,
-                layout: &self.layout,
-                x,
-                seeded: &[],
-            };
-            rs.clear();
-            if self.residuals(p, &geo, &mut rs).is_err() {
-                failed_constraints.push(i);
-                continue;
-            }
-            if rs.iter().any(|r| !r.is_finite() || r.to_f64().abs() > tol) {
-                failed_constraints.push(i);
-            }
-        }
-
-        let free_vars = free_variables(rows, self.layout.n);
-        let dof = free_vars.1;
-        let free_vars = free_vars.0;
+impl<S: Scalar> Problem<'_, S> {
+    /// How the sketch stands at the variables `system` has: which
+    /// constraints hold, and what can still move.
+    fn report(
+        &self,
+        system: &System<'_, S, MAX_LOCAL_VARS>,
+        iterations: usize,
+        phases: Vec<Phase<S>>,
+    ) -> GeopResult<SolveReport<S>> {
+        let solved = system.report()?;
+        let failed_constraints = solved
+            .failed
+            .iter()
+            .map(|&i| self.constraints[i].id)
+            .collect::<Vec<_>>();
+        let (free_vars, dof) = system.free_variables();
         let free_points = self
             .layout
             .point_var
@@ -935,113 +723,73 @@ impl Problem<'_> {
                 (c, vars.iter().any(|&i| free_vars[i]))
             })
             .collect();
-
-        SolveReport {
+        Ok(SolveReport {
             converged: failed_constraints.is_empty(),
-            max_residual,
+            max_residual: solved.max_residual,
             iterations,
+            phases,
             dof,
             free_points,
             free_curves,
             failed_constraints,
-        }
-    }
-}
-
-/// The outcome of Gauss-Jordan elimination (see [`eliminate`]).
-struct Elimination {
-    /// The rows, reduced: row `k` has a one at `pivots[k].0` and zeros at
-    /// every other pivot column.
-    rows: Vec<Vec<f64>>,
-    /// Per pivot: its column, and the index of the row it was among the
-    /// rows eliminated.
-    pivots: Vec<(usize, usize)>,
-}
-
-/// Gauss-Jordan elimination of `rows` (each over `n` variables) with partial
-/// pivoting; a pivot counts as zero below a fixed fraction of the largest
-/// entry. Which constraints are independent and which variables they
-/// determine is a classification, not a claim: where it matters for
-/// correctness, [`Problem::enclose`] verifies what it is used for.
-fn eliminate(mut rows: Vec<Vec<f64>>, n: usize) -> Elimination {
-    let largest = rows.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
-    let zero = 1e-9 * largest.max(1e-300);
-    let mut origin: Vec<usize> = (0..rows.len()).collect();
-    let mut pivots = Vec::new();
-    let mut r = 0;
-    for col in 0..n {
-        let Some(best) =
-            (r..rows.len()).max_by(|&a, &b| rows[a][col].abs().total_cmp(&rows[b][col].abs()))
-        else {
-            break;
-        };
-        if rows[best][col].abs() <= zero {
-            continue;
-        }
-        rows.swap(r, best);
-        origin.swap(r, best);
-        let pivot = rows[r][col];
-        for v in &mut rows[r] {
-            *v /= pivot;
-        }
-        for i in 0..rows.len() {
-            if i != r && rows[i][col] != 0.0 {
-                let factor = rows[i][col];
-                let (pivot_row, row) = if i < r {
-                    let (lo, hi) = rows.split_at_mut(r);
-                    (&hi[0], &mut lo[i])
-                } else {
-                    let (lo, hi) = rows.split_at_mut(i);
-                    (&lo[r], &mut hi[0])
-                };
-                for (v, p) in row.iter_mut().zip(pivot_row) {
-                    *v -= factor * p;
-                }
-            }
-        }
-        pivots.push((col, origin[r]));
-        r += 1;
-    }
-    Elimination { rows, pivots }
-}
-
-/// Which of `n` variables can move to first order without changing any
-/// residual (those with a nonzero component in the Jacobian's null space),
-/// and the null space's dimension. This only classifies entities for
-/// display — the solve itself does not depend on it.
-fn free_variables(rows: Vec<Vec<f64>>, n: usize) -> (Vec<bool>, usize) {
-    let Elimination { rows, pivots } = eliminate(rows, n);
-    // Null space basis: one vector per non-pivot column `f`, with `v_f = 1`
-    // and `v_{pivots[i].0} = -rows[i][f]`.
-    let mut free = vec![false; n];
-    let is_pivot: Vec<bool> = (0..n).map(|c| pivots.iter().any(|p| p.0 == c)).collect();
-    for f in (0..n).filter(|&c| !is_pivot[c]) {
-        free[f] = true;
-        for (i, &(pc, _)) in pivots.iter().enumerate() {
-            if rows[i][f].abs() > 1e-7 {
-                free[pc] = true;
-            }
-        }
-    }
-    (free, n - pivots.len())
-}
-
-/// The inverse of the square matrix `a`, by Gauss-Jordan elimination with
-/// partial pivoting — `None` if it is singular.
-fn inverse(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
-    let m = a.len();
-    let mut rows: Vec<Vec<f64>> = a
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let mut row = row.clone();
-            row.extend((0..m).map(|j| if i == j { 1.0 } else { 0.0 }));
-            row
         })
-        .collect();
-    let Elimination { rows, pivots } = eliminate(std::mem::take(&mut rows), 2 * m);
-    if pivots.len() < m || pivots.iter().any(|p| p.0 >= m) {
-        return None;
     }
-    Some(rows.into_iter().map(|row| row[m..].to_vec()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f64::consts::PI;
+
+    use geop_core_math::scalars::ScalInF64;
+
+    use super::*;
+
+    type S = ScalInF64;
+
+    fn n(x: f64) -> S {
+        S::from_f64(x)
+    }
+
+    /// At points drawn exactly, every residual and every slope of it is
+    /// known to rounding: the solver takes a step only where the merit
+    /// definitely drops, and a residual wider than its arithmetic needs
+    /// would hide every step.
+    #[test]
+    fn residuals_are_sharp_where_the_points_are() {
+        let mut s = Sketch::<S>::new();
+        let a = s.add_point(n(-1.0), n(0.1));
+        let b = s.add_point(n(1.2), n(-0.1));
+        let c = s.add_point(n(0.1), n(1.5));
+        let base = s.add_line(a, b);
+        let left = s.add_line(c, a);
+        let right = s.add_line(c, b);
+        let m = s.add_point(n(0.0), n(0.0));
+        let axis_top = s.add_point(n(0.0), n(2.0));
+        let axis = s.add_line(m, axis_top);
+        s.constrain(Constraint::Midpoint {
+            point: m,
+            curve: base,
+        });
+        s.constrain(Constraint::Symmetric { a, b, line: axis });
+        s.constrain(Constraint::Equal { a: left, b: right });
+        s.constrain(Constraint::Angle {
+            a: left,
+            b: right,
+            value: n(PI / 3.0),
+        });
+        let problem = Problem::new(&s).unwrap();
+        let residuals = problem.residuals_of();
+        let system = problem.system(&residuals, &problem.layout.read(&s).unwrap());
+        let n = system.params.len();
+        let e = system.evaluate(&vec![S::ZERO; n], &[], false).unwrap();
+        for (k, (v, row)) in e.sum.values.iter().zip(&e.sum.jacobian).enumerate() {
+            for x in std::iter::once(v).chain(row) {
+                let width = x.width().to_f64();
+                assert!(
+                    width <= 1e-12 * (1.0 + x.to_f64().abs()),
+                    "residual {k}: {x:?} in {v:?}, {row:?}"
+                );
+            }
+        }
+    }
 }

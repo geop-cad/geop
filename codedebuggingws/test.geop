@@ -93,12 +93,152 @@
       "operation": "extrude",
       "args": {
         "sketch": "sketch1",
-        "distance": 1,
+        "distance": 0.78,
         "symmetric": false,
         "combine": {
           "mode": "new_body"
         }
       }
+    },
+    {
+      "id": "part1",
+      "operation": "add_part",
+      "args": {
+        "file": "bar.geop",
+        "fixed": false,
+        "flexible": false,
+        "mates": {}
+      }
+    },
+    {
+      "id": "part2",
+      "operation": "add_part",
+      "args": {
+        "file": "bar.geop",
+        "fixed": false,
+        "flexible": false,
+        "mates": {
+          "m1": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Face",
+                "name": "part1/extrude(extrude1,sketch1,c13#2)"
+              },
+              {
+                "type": "Face",
+                "name": "part2/extrude(extrude1,sketch1,c15#2)"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": -5.596456628682593,
+              "y": 2.031998374548548
+            },
+            "1": {
+              "x": 1.8294786054971568,
+              "y": -1.6286727648597141
+            },
+            "2": {
+              "x": 1.8294786054971568,
+              "y": 2.031998374548548
+            },
+            "3": {
+              "x": -5.596456628682591,
+              "y": -1.6286727648597141
+            }
+          },
+          "curves": {
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": false
+            },
+            "6": {
+              "type": "Line",
+              "start": 2,
+              "end": 1,
+              "construction": false
+            },
+            "8": {
+              "type": "Line",
+              "start": 1,
+              "end": 3,
+              "construction": false
+            },
+            "10": {
+              "type": "Line",
+              "start": 3,
+              "end": 0,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "5": {
+              "type": "Horizontal",
+              "line": 4
+            },
+            "7": {
+              "type": "Vertical",
+              "line": 6
+            },
+            "9": {
+              "type": "Horizontal",
+              "line": 8
+            },
+            "11": {
+              "type": "Vertical",
+              "line": 10
+            }
+          },
+          "next_id": 12
+        }
+      }
     }
-  ]
+  ],
+  "state": {
+    "part1.pose": {
+      "position": [
+        -3.4406967799687127,
+        0.914035732550278,
+        0.12282693231034333
+      ],
+      "rotation": [
+        0.9456951926182566,
+        0.010111701150514331,
+        0.04931846803053751,
+        -0.3211324413223966
+      ]
+    },
+    "part2.pose": {
+      "position": [
+        -5.713880530525239,
+        2.5508546257699223,
+        1.46889545161422
+      ],
+      "rotation": [
+        0.9567036503829095,
+        0.01189096609149217,
+        0.04891996233082266,
+        -0.2866767649374079
+      ]
+    }
+  }
 }

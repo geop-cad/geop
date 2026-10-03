@@ -8,7 +8,7 @@ use geop_core_math::{
 use geop_core_topology::{CoedgeId, EdgeId, FaceId, Sense, SolidId, VertexId};
 
 use super::Part;
-use super::ids::{DatumId, RefId, SketchId};
+use super::ids::{DatumId, InstanceId, RefId, SketchId};
 
 impl<S: Scalar> Part<S> {
     /// `name`'s id, checked to be the particular kind `extract` accepts.
@@ -80,6 +80,13 @@ impl<S: Scalar> Part<S> {
     pub fn datum_id(&self, name: &str) -> GeopResult<DatumId> {
         self.named(name, "datum", |r| match r {
             RefId::Datum(id) => Some(id),
+            _ => None,
+        })
+    }
+
+    pub fn instance_id(&self, name: &str) -> GeopResult<InstanceId> {
+        self.named(name, "placed part", |r| match r {
+            RefId::Instance(id) => Some(id),
             _ => None,
         })
     }

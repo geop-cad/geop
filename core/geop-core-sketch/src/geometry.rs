@@ -1,5 +1,5 @@
 //! The geometry of sketch entities, generic over [`Scalar`] so every formula
-//! serves both the residuals (differentiated with [`crate::dual::Dual`])
+//! serves both the residuals (differentiated with [`geop_core_math::dual::Dual`])
 //! and plain evaluation (profiles, rendering).
 //!
 //! An arc is stored as `(start, end, sweep)`. Its signed curvature follows
@@ -17,9 +17,7 @@
 //! surfaces as a [`GeopResult`] error instead of silently producing an
 //! `inf`/`nan` that would then have to be caught downstream.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-
-use crate::point::P2;
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
 /// A 2-D vector.
 #[derive(Clone, Copy, Debug)]
@@ -35,8 +33,8 @@ impl<T: Scalar> V<T> {
     pub fn new(x: T, y: T) -> Self {
         V { x, y }
     }
-    pub fn cst(p: P2) -> Self {
-        V::new(T::from_f64(p[0]), T::from_f64(p[1]))
+    pub fn of(p: &Vector2<T>) -> Self {
+        V::new(p[0], p[1])
     }
     pub fn add(self, o: Self) -> Self {
         V::new(self.x.add(o.x), self.y.add(o.y))
@@ -70,8 +68,8 @@ impl<T: Scalar> V<T> {
             self.x.mul(s).add(self.y.mul(c)),
         )
     }
-    pub fn value(self) -> P2 {
-        [self.x.to_f64(), self.y.to_f64()]
+    pub fn vector(self) -> Vector2<T> {
+        Vector2::from_array([self.x, self.y])
     }
 }
 
@@ -92,7 +90,7 @@ impl<T: Scalar> Arc<T> {
         self.chord().norm()
     }
     pub fn chord_mid(&self) -> V<T> {
-        self.s.add(self.e).scale(T::from_f64(0.5))
+        self.s.add(self.e).scale(half::<T>())
     }
     /// Unit normal to the chord, pointing to its left: the side the center is
     /// on for a counter-clockwise minor arc.
@@ -112,7 +110,7 @@ impl<T: Scalar> Arc<T> {
     pub fn center(&self) -> GeopResult<V<T>> {
         let d = self
             .chord_length()?
-            .mul(T::from_f64(0.5))
+            .mul(half::<T>())
             .mul(self.half.cos())
             .div(self.half.sin())?;
         Ok(self.chord_mid().add(self.left()?.scale(d)))
@@ -120,7 +118,7 @@ impl<T: Scalar> Arc<T> {
     /// The point halfway along the arc: `chord_mid - left * (L / 2) tan(half / 2)`.
     pub fn arc_mid(&self) -> GeopResult<V<T>> {
         let tan_quarter = self.half.sin().div(T::ONE.add(self.half.cos()))?;
-        let sagitta = self.chord_length()?.mul(T::from_f64(0.5)).mul(tan_quarter);
+        let sagitta = self.chord_length()?.mul(half::<T>()).mul(tan_quarter);
         Ok(self.chord_mid().sub(self.left()?.scale(sagitta)))
     }
     /// Signed distance-like residual of `p` against the arc's full circle,
@@ -139,8 +137,8 @@ impl<T: Scalar> Arc<T> {
         let g = k
             .mul(q.dot(q))
             .sub(T::TWO.mul(self.half.cos()).mul(self.left()?.dot(q)))
-            .sub(k.mul(l).mul(l).mul(T::from_f64(0.25)));
-        Ok(g.mul(T::from_f64(0.5)))
+            .sub(k.mul(l).mul(l).mul(half::<T>().mul(half::<T>())));
+        Ok(g.mul(half::<T>()))
     }
     /// Unit tangent at `s`, in the direction of travel.
     pub fn tangent_start(&self) -> GeopResult<V<T>> {
@@ -153,20 +151,37 @@ impl<T: Scalar> Arc<T> {
         Ok(c.rotate(self.half.cos(), self.half.sin()))
     }
     /// Arc length `L * half / sin(half)`.
+    ///
+    /// Where `sin(half)` could be zero — a straight arc — the quotient is not
+    /// even defined, and the series `x / sin x = 1 + x²/6 + 7x⁴/360 + R(x)`
+    /// stands in, finite with a finite slope through `x = 0`. Its
+    /// coefficients are all positive and shrink by about `π²` each, so for
+    /// `|x| ≤ 1` the rest `R` lies in `[0, x⁶/300]` and its slope in
+    /// `6x⁵ [0, 1/300]`: the term enclosing both is added, so the series is as
+    /// honest an enclosure as the quotient.
     pub fn length(&self) -> GeopResult<T> {
         let l = self.chord_length()?;
         let h = self.half;
-        Ok(if h.to_f64().abs() < 1e-4 {
-            // Series of `x / sin x`, to keep the derivative finite at 0.
-            l.mul(
-                T::ONE
-                    .add(h.mul(h).mul(T::from_f64(1.0 / 6.0)))
-                    .add(h.mul(h).mul(h).mul(h).mul(T::from_f64(7.0 / 360.0))),
-            )
-        } else {
-            l.mul(h).div(h.sin())?
-        })
+        let sin = h.sin();
+        if sin.definitely_not_equal(T::ZERO) || !h.abs().definitely_less(T::ONE) {
+            return l.mul(h).div(sin);
+        }
+        let ratio = |num, den| T::from_ratio(num, den).expect("a positive denominator");
+        let h2 = h.mul(h);
+        let h4 = h2.mul(h2);
+        let rest = T::ZERO.union(ratio(1, 300)).mul(h4).mul(h2);
+        Ok(l.mul(
+            T::ONE
+                .add(h2.mul(ratio(1, 6)))
+                .add(h4.mul(ratio(7, 360)))
+                .add(rest),
+        ))
     }
+}
+
+/// `1/2`.
+fn half<T: Scalar>() -> T {
+    T::ONE.div(T::TWO).expect("2 is not zero")
 }
 
 /// Signed distance of `p` from the line through `a` and `b`, positive on its
@@ -189,20 +204,20 @@ mod tests {
         }
     }
 
-    fn close(a: [f64; 2], b: [f64; 2]) -> bool {
-        (a[0] - b[0]).abs() < 1e-12 && (a[1] - b[1]).abs() < 1e-12
+    fn close(a: V<ScalInF64>, b: [f64; 2]) -> bool {
+        (a.x.to_f64() - b[0]).abs() < 1e-12 && (a.y.to_f64() - b[1]).abs() < 1e-12
     }
 
     #[test]
     fn quarter_circle_has_unit_radius_around_origin() {
         let a = quarter();
-        assert!(close(a.center().unwrap().value(), [0.0, 0.0]));
+        assert!(close(a.center().unwrap(), [0.0, 0.0]));
         assert!((a.radius().unwrap().to_f64() - 1.0).abs() < 1e-12);
         assert!((a.curvature().unwrap().to_f64() - 1.0).abs() < 1e-12);
         let s = std::f64::consts::FRAC_1_SQRT_2;
-        assert!(close(a.arc_mid().unwrap().value(), [s, s]));
-        assert!(close(a.tangent_start().unwrap().value(), [0.0, 1.0]));
-        assert!(close(a.tangent_end().unwrap().value(), [-1.0, 0.0]));
+        assert!(close(a.arc_mid().unwrap(), [s, s]));
+        assert!(close(a.tangent_start().unwrap(), [0.0, 1.0]));
+        assert!(close(a.tangent_end().unwrap(), [-1.0, 0.0]));
         assert!((a.length().unwrap().to_f64() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         assert!(
             a.circle_residual(V::new(ScalInF64::from_f64(-s), ScalInF64::from_f64(-s)))
@@ -228,7 +243,7 @@ mod tests {
             half: ScalInF64::from_f64(3.0 * std::f64::consts::FRAC_PI_4),
             ..quarter()
         };
-        assert!(close(a.center().unwrap().value(), [1.0, 1.0]));
+        assert!(close(a.center().unwrap(), [1.0, 1.0]));
         assert!((a.length().unwrap().to_f64() - 3.0 * std::f64::consts::FRAC_PI_2).abs() < 1e-12);
     }
 
@@ -247,6 +262,6 @@ mod tests {
                 .abs()
                 < 1e-12
         );
-        assert!(close(a.arc_mid().unwrap().value(), [0.5, 0.5]));
+        assert!(close(a.arc_mid().unwrap(), [0.5, 0.5]));
     }
 }

@@ -17,15 +17,22 @@ the web app (bug reports).
 
 ```
 core/geop-core-math          scalars, interval arithmetic, linear algebra,
-                              convex hulls, error type, frames, rays, datums
+                              convex hulls, error type, frames, rays, datums,
+                              poses (dual quaternions), constrained least
+                              squares and dual numbers for the solvers
 core/geop-core-geometry       NURBS curves/surfaces, containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation
-core/geop-core-sketch         2-D constraint sketches: entities, constraints,
-                               BFGS solver, profile extraction
-ops/geop-ops                  parts (topology, sketches, datums, every entity
-                               with a stable name), what an operation is and
-                               how it is edited (events, dialogs, visuals, hit
-                               tests), programs and running them (+ `geop-ops-derive`)
+core/geop-core-solve          the constraint solver every system shares:
+                               parameters, residuals, pulls, enclosure;
+                               rigid bodies and mates
+core/geop-core-sketch         2-D constraint sketches: entities, constraints
+                               as residuals, profile extraction
+ops/geop-ops                  parts (topology, sketches, datums, placed parts
+                               and their mates, every entity with a stable
+                               name), what an operation is and how it is
+                               edited (events, dialogs, visuals, hit tests),
+                               programs, the files they place parts from, and
+                               running them (+ `geop-ops-derive`)
 ops/geop-ops-sketch           the sketch operation
 ops/geop-ops-datums           the datum operation: reference points, axes,
                                planes and coordinate systems
@@ -33,6 +40,8 @@ ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),
                                the boolean operation
 ops/geop-ops-extrude-revolve  extrude/revolve, the extrude and revolve
                                operations, and basic shapes for tests
+ops/geop-ops-assembly         the part operation: place another file's part,
+                               mate it, drag it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
 cad/geop-cad-base             the operations the editor offers, the editor engine,

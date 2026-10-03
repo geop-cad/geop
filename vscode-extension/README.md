@@ -19,6 +19,12 @@ VS Code ── webview (web/, built with `--mode vscode`)
   dirty markers, diffs and source control all work. A `.geop` file is JSON;
   "Reopen Editor With… → Text Editor" shows it.
 - An empty `.geop` file is an empty program.
+- A program places the parts other `.geop` files build ("Part" operation), by
+  their paths relative to its own — `bolt.geop`, `../parts/bolt.geop`. The
+  page is sent every `.geop` file of the document's workspace folder, open
+  ones as edited (saved or not), and again whenever one changes, so an
+  assembly follows its parts live. Files must not place each other in a
+  cycle.
 
 ## Build
 

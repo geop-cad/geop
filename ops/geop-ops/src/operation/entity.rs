@@ -1,5 +1,7 @@
 //! [`EntityRef`]: how a step refers to geometry it builds on — a vertex,
-//! edge, face, datum, solid or sketch of the part, by name.
+//! edge, face, datum, solid or sketch of the part, by name — or of a part
+//! placed in it, by its name there behind the instance's
+//! ([`INSTANCE_SEPARATOR`]).
 
 use crate::Part;
 use geop_core_math::{
@@ -11,6 +13,14 @@ use geop_core_math::{
 };
 use geop_core_sketch::{CurveId, PointId};
 use serde::{Deserialize, Serialize};
+
+/// What separates an instance's name from the name of an entity of the part
+/// it places: `bolt/extrude(head,end)` is the face `extrude(head,end)` of the
+/// part placed as `bolt` — where it is placed — and `asm/bolt/...` reaches
+/// into an instance of an instance. Instances are named by their step's id,
+/// which cannot contain it (see [`crate::validate_operation_id`]), so the
+/// first one always ends the instance's name.
+pub const INSTANCE_SEPARATOR: char = '/';
 
 /// Something picked in the viewport, to build on or to use.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +104,39 @@ impl EntityRef {
 }
 
 impl EntityRef {
+    /// The name it is found by: its own, or its sketch's.
+    fn name_mut(&mut self) -> &mut String {
+        match self {
+            EntityRef::Vertex { name }
+            | EntityRef::Edge { name }
+            | EntityRef::Face { name }
+            | EntityRef::Datum { name, .. }
+            | EntityRef::Solid { name }
+            | EntityRef::Sketch { name } => name,
+            EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. } => sketch,
+        }
+    }
+
+    /// If it lies in a part placed in this one: the instance's name, and the
+    /// entity as the placed part names it.
+    pub fn split_instance(&self) -> Option<(String, EntityRef)> {
+        let mut inner = self.clone();
+        let name = inner.name_mut();
+        let (instance, rest) = name.split_once(INSTANCE_SEPARATOR)?;
+        let instance = instance.to_string();
+        *name = rest.to_string();
+        Some((instance, inner))
+    }
+
+    /// The entity, of the part placed as `instance`, as the part it is
+    /// placed in names it.
+    pub fn in_instance(&self, instance: &str) -> EntityRef {
+        let mut outer = self.clone();
+        let name = outer.name_mut();
+        *name = format!("{instance}{INSTANCE_SEPARATOR}{name}");
+        outer
+    }
+
     /// Whether it is `scope` or part of it: a curve or a point of a sketch.
     pub fn lies_in(&self, scope: &EntityRef) -> bool {
         match (self, scope) {
@@ -156,6 +199,14 @@ impl EntityRef {
     /// part.
     pub fn resolve_datum<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Datum<S>> {
         let ctx = with_context!("resolving {self}");
+        if let Some((name, inner)) = self.split_instance() {
+            let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
+            let datum = inner.resolve_datum(instance.part()).with_context(ctx)?;
+            return Ok(Datum {
+                kind: datum.kind,
+                frame: instance.pose.motion().apply_frame(&datum.frame)?,
+            });
+        }
         let EntityRef::Datum { name, component } = self else {
             return Err(GeopError::new(format!("{self} is not a datum")));
         };
@@ -174,6 +225,11 @@ impl EntityRef {
     /// for anything else.
     pub fn resolve_plane<S: Scalar>(&self, part: &Part<S>) -> GeopResult<CoordinateSystem<S>> {
         let ctx = with_context!("resolving the plane of {self}");
+        if let Some((name, inner)) = self.split_instance() {
+            let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
+            let plane = inner.resolve_plane(instance.part()).with_context(ctx)?;
+            return instance.pose.motion().apply_frame(&plane);
+        }
         match self {
             EntityRef::Face { name } => {
                 let id = part.face_id(name).with_context(ctx)?;

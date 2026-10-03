@@ -2,7 +2,8 @@
 
 > Brief overview only — full documentation is coming later.
 
-2-D constraint sketches: entities, constraints, a BFGS-based solver, and
+2-D constraint sketches: entities, constraints solved by the engine every
+system shares ([geop-core-solve](./geop-core-solve.md)), and
 profile extraction. Sketches are what get extruded or revolved into solids.
 
 ## Entities and constraints
@@ -62,8 +63,10 @@ points and curves are still free to move, and which constraints failed.
   freedom by construction.
 - **Residuals.** Every constraint contributes residuals that are zero exactly
   when it holds, all scaled to lengths so that no constraint kind dominates
-  through its units. `bfgs::minimize` (dense BFGS with an Armijo line search)
-  drives the sum of their squares to zero.
+  through its units. Each is a `Residual` of the sketch's variables, and
+  the shared `System` of [geop-core-solve](./geop-core-solve.md) drives
+  the sum of their squares to zero, pulls dragged points, reports degrees
+  of freedom and encloses the exact solution.
 - **Derivatives.** Residuals are written once, generic over `Scalar`, and
   evaluated with `Dual` numbers (forward-mode automatic differentiation) for
   exact gradients.

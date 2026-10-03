@@ -1,6 +1,7 @@
-//! [`Part`]: the topology, sketches and datums of a part, each named, and
-//! the names themselves ([`NameRegistry`], [`Namer`]) — changed only through
-//! `Part`'s own methods, so no entity is ever without a name.
+//! [`Part`]: the topology, sketches and datums of a part, the parts placed
+//! in it and the mates between them, each named, and the names themselves
+//! ([`NameRegistry`], [`Namer`]) — changed only through `Part`'s own
+//! methods, so no entity is ever without a name.
 
 use std::collections::BTreeMap;
 
@@ -12,23 +13,34 @@ use geop_core_math::{
 };
 use geop_core_topology::Model;
 
+use crate::assembly::Mate;
+
 mod datum;
 mod describe;
 mod edit;
 mod euler;
 mod ids;
+mod instance;
 mod names;
 mod resolve;
 mod sketch;
+mod state;
 
-pub use describe::{EdgeDescription, FaceDescription, PartDescription};
-pub use ids::{DatumId, RefId, SketchId};
+pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
+pub use ids::{DatumId, InstanceId, RefId, SketchId};
+pub use instance::{Component, Instance};
 pub use names::{NameRegistry, Namer, validate_operation_id};
 pub use sketch::PlacedSketch;
+pub use state::{ParamValue, State, pose_parameter};
 
 /// A complete, editable CAD part: its boundary-representation topology, the
 /// sketches and datums used to build it — starting with the frame
-/// [`ORIGIN`] — and a name for every one of those entities.
+/// [`ORIGIN`] — the other parts placed in it and the mates holding those
+/// together, and a name for every one of those entities.
+///
+/// A part placed in another is a part too, so a part is a tree: an
+/// assembly of assemblies, as deep as its program files place each other
+/// (see [`crate::program::Library`]).
 ///
 /// The fields are private: the only way to change a part is through its
 /// methods, each of which forwards straight to the identically named
@@ -43,8 +55,14 @@ pub struct Part<S: Scalar> {
     pub(crate) names: NameRegistry,
     pub(crate) sketches: BTreeMap<SketchId, PlacedSketch<S>>,
     pub(crate) datums: BTreeMap<DatumId, Datum<S>>,
-    /// The next sketch or datum id: ids count up in the order they are
-    /// added, so iterating either map goes oldest first.
+    pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
+    pub(crate) mates: BTreeMap<String, Mate>,
+    /// The parameter values the part is built with (see [`Part::pose_parameter`]).
+    inputs: State,
+    /// The parameters its steps declared, with the values they read.
+    declared: State,
+    /// The next sketch, datum or instance id: ids count up in the order
+    /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,
 }
 
@@ -61,6 +79,10 @@ impl<S: Scalar> Part<S> {
             names: NameRegistry::new(),
             sketches: BTreeMap::new(),
             datums: BTreeMap::new(),
+            instances: BTreeMap::new(),
+            mates: BTreeMap::new(),
+            inputs: State::new(),
+            declared: State::new(),
             next_id: 1,
         };
         let origin = Datum {
@@ -96,7 +118,7 @@ impl<S: Scalar> Part<S> {
         self.names.rename(id, new_name)
     }
 
-    /// A sketch or datum id no entity has had yet.
+    /// A sketch, datum or instance id no entity has had yet.
     pub(crate) fn fresh_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -111,6 +133,7 @@ impl<S: Scalar> Part<S> {
             RefId::Solid(id) => self.topology.solids.contains_key(&id),
             RefId::Sketch(id) => self.sketches.contains_key(&id),
             RefId::Datum(id) => self.datums.contains_key(&id),
+            RefId::Instance(id) => self.instances.contains_key(&id),
         }
     }
 
@@ -128,8 +151,8 @@ impl<S: Scalar> Part<S> {
     }
 
     /// Checks the invariant every method keeps: every vertex, edge, face,
-    /// solid, sketch and datum has a name, and every name belongs to one of
-    /// them.
+    /// solid, sketch, datum and instance has a name, and every name belongs
+    /// to one of them.
     pub fn check_names(&self) -> GeopResult<()> {
         let topology = &self.topology;
         let entities = topology
@@ -140,7 +163,8 @@ impl<S: Scalar> Part<S> {
             .chain(topology.faces.keys().map(|&id| id.into()))
             .chain(topology.solids.keys().map(|&id| id.into()))
             .chain(self.sketches.keys().map(|&id| id.into()))
-            .chain(self.datums.keys().map(|&id| id.into()));
+            .chain(self.datums.keys().map(|&id| id.into()))
+            .chain(self.instances.keys().map(|&id| id.into()));
         let unnamed: Vec<String> = entities
             .filter(|&id| self.names.name_of(id).is_none())
             .map(|id| id.to_string())

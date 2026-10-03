@@ -3,16 +3,20 @@
 //!
 //! Every operation is defined by a crate of its own — placing sketches in
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
-//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`. Which of them
+//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, placed parts
+//! in `geop_ops_assembly`. Which of them
 //! an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
+use geop_ops_assembly::{AddPart, AddPartArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
 use geop_ops_extrude_revolve::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod assembly_tests;
 #[cfg(test)]
 mod datum_tests;
 #[cfg(test)]
@@ -47,6 +51,10 @@ pub enum PartOperation {
     /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]
     AddDatum(AddDatumArgs),
+    /// Place the part another program file builds, and mate it to what is
+    /// already there.
+    #[operation(label = "Part")]
+    AddPart(AddPartArgs),
 }
 
 /// A program of the editor's operations.
@@ -55,3 +63,6 @@ pub type Program = geop_ops::Program<PartOperation>;
 pub type Step = geop_ops::Step<PartOperation>;
 /// Builds a [`Program`] incrementally.
 pub type ProgramRunner<S> = geop_ops::ProgramRunner<S, PartOperation>;
+/// The program files a [`Program`] places parts from.
+pub type Workspace<S, F = std::collections::BTreeMap<String, String>> =
+    geop_ops::Workspace<PartOperation, S, F>;

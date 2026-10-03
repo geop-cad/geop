@@ -7,23 +7,35 @@
 //! on screen. The same goes for what the viewer draws besides the part: the
 //! datums are laid out here, by the sizes the viewer draws them with, and
 //! picked by the same rules.
+//!
+//! The parts placed in a part are drawn by reference: each placed part —
+//! however deep — is listed once, with where it is ([`ViewInstance`]), and
+//! drawn from its component's own view, built once and shared by every
+//! instance of it. Moving a placed part changes where it is, not what is
+//! drawn. A pick moves the pointer into each placed part's own frame and
+//! names what it hits as the part it is placed in names it — behind the
+//! instance's name (see [`crate::operation::INSTANCE_SEPARATOR`]) — so a
+//! pick of one is a reference like any other.
+
+use std::sync::Arc;
 
 use geop_core_math::{
     geop_error::GeopResult,
     polygon::loops_contain,
-    primitives::{CoordinateSystem, DatumComponent, DatumKind, FrameAxis},
+    primitives::{CoordinateSystem, DatumComponent, DatumKind, FrameAxis, Motion, Pose, Ray},
     scalars::{Scalar, as_f64},
     vector::{Vector2, Vector3},
 };
-use geop_core_sketch::{CurveId, PointId, point::P2, profile::curve_polyline};
+use geop_core_sketch::{CurveId, PointId, profile::curve_polyline};
 use geop_core_topology::{FaceId, Model, SolidId};
 use geop_ops_rasterize::rasterize;
 use serde::Serialize;
 
 use super::{Pointer, hit::nearer};
+use crate::Design;
 use crate::{
-    Part,
-    operation::{Aspects, EntityRef, Role},
+    Component, Part,
+    operation::{Aspects, EntityRef, INSTANCE_SEPARATOR, Role},
 };
 
 /// Samples per edge and per parametric direction of a face. A face's grid is
@@ -143,6 +155,60 @@ pub struct Extent<S: Scalar> {
     pub size: S,
 }
 
+/// A part placed in the part drawn — directly or in a part placed in it —
+/// drawn as its component's own view ([`Component::view`]) moved to where
+/// it is. Serialized, a viewer gets the component by its key
+/// ([`Component::key`]) and where to draw it.
+#[derive(Clone, Serialize)]
+#[serde(bound = "S: Scalar")]
+pub struct ViewInstance<S: Scalar> {
+    /// Its name in the part drawn: `bolt`, or `asm/bolt` for one placed in
+    /// a placed part.
+    pub name: String,
+    /// The key of its component.
+    pub component: String,
+    /// Where it is: its own frame in the part drawn.
+    pub frame: CoordinateSystem<S>,
+    #[serde(skip)]
+    pose: Pose<S>,
+    #[serde(skip)]
+    source: Arc<Component<S>>,
+    /// The parameter of the part drawn its pose is — `None` for a part
+    /// placed in one placed rigid, whose pose is that part's own.
+    #[serde(skip)]
+    parameter: Option<String>,
+    /// Whether no mate moves it.
+    #[serde(skip)]
+    fixed: bool,
+}
+
+impl<S: Scalar> std::fmt::Debug for ViewInstance<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ViewInstance({}, {}, {:?})",
+            self.name, self.component, self.pose
+        )
+    }
+}
+
+impl<S: Scalar> ViewInstance<S> {
+    /// Its component.
+    pub fn component(&self) -> &Arc<Component<S>> {
+        &self.source
+    }
+
+    /// Where it is in the part drawn.
+    pub fn pose(&self) -> &Pose<S> {
+        &self.pose
+    }
+
+    /// The parameter of the part drawn its pose is, if it is one.
+    pub fn parameter(&self) -> Option<&str> {
+        self.parameter.as_deref()
+    }
+}
+
 /// A part as the viewport draws it, every entity by name — and, serialized,
 /// what a viewer draws.
 #[derive(Clone, Debug, Serialize)]
@@ -155,7 +221,55 @@ pub struct PartView<S: Scalar> {
     pub datums: Vec<ViewDatum<S>>,
     /// The part's solids, oldest first.
     pub solids: Vec<String>,
+    /// Every part placed in it, and in those, however deep.
+    pub instances: Vec<ViewInstance<S>>,
     pub extent: Extent<S>,
+}
+
+/// One part of what a pick tests: the part drawn itself, or a placed part,
+/// with the pointer moved into its own frame.
+struct Layer<'v, S: Scalar> {
+    view: &'v PartView<S>,
+    pointer: Pointer<S>,
+    /// Where it is, and back; `None` for the part drawn itself.
+    motion: Option<(Motion<S>, Motion<S>)>,
+    /// The instance's name, for a placed part.
+    instance: Option<&'v str>,
+}
+
+impl<S: Scalar> Layer<'_, S> {
+    /// `entity` of this layer as the part drawn names it.
+    fn name(&self, entity: EntityRef) -> EntityRef {
+        match self.instance {
+            Some(instance) => entity.in_instance(instance),
+            None => entity,
+        }
+    }
+
+    /// The point `p` of this layer where the part drawn has it.
+    fn world(&self, p: Vector3<S>) -> Vector3<S> {
+        match &self.motion {
+            Some((there, _)) => there.apply(&p),
+            None => p,
+        }
+    }
+
+    /// The point `p` of the part drawn in this layer's own frame.
+    fn local(&self, p: Vector3<S>) -> Vector3<S> {
+        match &self.motion {
+            Some((_, back)) => back.apply(&p),
+            None => p,
+        }
+    }
+
+    /// `hit`, of this layer, as a hit of the part drawn.
+    fn hit(&self, hit: PartHit<S>) -> PartHit<S> {
+        PartHit {
+            entity: self.name(hit.entity),
+            point: self.world(hit.point),
+            t: hit.t,
+        }
+    }
 }
 
 /// The solid that owns `face`: a face is part of exactly one shell, and a
@@ -174,11 +288,8 @@ impl<S: Scalar> PartView<S> {
         let model = part.topology();
         let raster = rasterize(model, RESOLUTION)?;
         let name = |id: crate::RefId| part.name_of(id).unwrap_or_default().to_string();
-        let uv = |polyline: Vec<P2>| {
-            polyline
-                .into_iter()
-                .map(|p| Vector2::from_array(p.map(S::from_f64)))
-                .collect::<Vec<_>>()
+        let uv = |polyline: Vec<Vector2<Design>>| -> Vec<Vector2<S>> {
+            polyline.iter().map(|p| p.map(|c| c.cast())).collect()
         };
 
         let mut vertices: Vec<_> = raster.vertices.iter().collect();
@@ -200,48 +311,50 @@ impl<S: Scalar> PartView<S> {
                 // hit on its curves.
                 let regions = s
                     .regions()
-                    .map(|regions| {
+                    .and_then(|regions| {
                         regions
                             .iter()
                             .map(|r| {
                                 std::iter::once(&r.outer)
                                     .chain(&r.holes)
-                                    .map(|l| uv(l.polyline(s, &positions)))
+                                    .map(|l| Ok(uv(l.polyline(s)?)))
                                     .collect()
                             })
                             .collect()
                     })
                     .unwrap_or_default();
-                ViewSketch {
+                Ok(ViewSketch {
                     name: sketch.clone(),
                     plane: placed.plane.clone(),
                     regions,
                     curves: s
                         .curves
                         .iter()
-                        .map(|(&id, c)| ViewCurve {
-                            id,
-                            construction: c.construction,
-                            polyline: uv(curve_polyline(s, &positions, id)),
-                            roles: roles_of(
-                                &EntityRef::SketchCurve {
-                                    sketch: sketch.clone(),
-                                    curve: id,
-                                },
-                                part,
-                            ),
+                        .map(|(&id, c)| {
+                            Ok(ViewCurve {
+                                id,
+                                construction: c.construction,
+                                polyline: uv(curve_polyline(s, id)?),
+                                roles: roles_of(
+                                    &EntityRef::SketchCurve {
+                                        sketch: sketch.clone(),
+                                        curve: id,
+                                    },
+                                    part,
+                                ),
+                            })
                         })
-                        .collect(),
+                        .collect::<GeopResult<_>>()?,
                     points: positions
                         .iter()
-                        .map(|(&id, &p)| ViewSketchPoint {
+                        .map(|(&id, p)| ViewSketchPoint {
                             id,
-                            at: Vector2::from_array(p.map(S::from_f64)),
+                            at: p.map(|c| c.cast()),
                         })
                         .collect(),
-                }
+                })
             })
-            .collect();
+            .collect::<GeopResult<_>>()?;
 
         let mut view = PartView {
             vertices: vertices
@@ -288,17 +401,128 @@ impl<S: Scalar> PartView<S> {
                 })
                 .collect(),
             solids: solids.into_iter().map(|s| name(s.into())).collect(),
+            instances: Vec::new(),
             extent: Extent {
                 center: Vector3::zero(),
                 size: S::ONE,
             },
         };
-        view.extent = view.measure();
+        for (id, instance) in part.instances() {
+            let instance_name = name(id.into());
+            view.add_instance(
+                instance_name.clone(),
+                instance.pose,
+                &instance.component,
+                Some(instance.parameter.clone()),
+                instance.fixed,
+            )?;
+            // Those placed in it, where it puts them: its view has them all
+            // already, however deep — their poses parameters of this part's state
+            // only if it is placed flexibly.
+            for nested in &instance.component.view()?.instances {
+                let parameter = nested
+                    .parameter
+                    .as_ref()
+                    .filter(|_| instance.flexible)
+                    .map(|p| format!("{instance_name}{INSTANCE_SEPARATOR}{p}"));
+                view.add_instance(
+                    format!("{instance_name}{INSTANCE_SEPARATOR}{}", nested.name),
+                    instance.pose.compose(&nested.pose),
+                    &nested.source,
+                    parameter,
+                    nested.fixed,
+                )?;
+            }
+        }
+        view.extent = view.measure()?;
         Ok(view)
     }
 
-    /// The box around everything drawn: the union of every point of it.
-    fn measure(&self) -> Extent<S> {
+    fn add_instance(
+        &mut self,
+        name: String,
+        pose: Pose<S>,
+        component: &Arc<Component<S>>,
+        parameter: Option<String>,
+        fixed: bool,
+    ) -> GeopResult<()> {
+        self.instances.push(ViewInstance {
+            name,
+            component: component.key(),
+            frame: pose
+                .motion()
+                .apply_frame(&CoordinateSystem::world_at(Vector3::zero()))?,
+            pose,
+            source: component.clone(),
+            parameter,
+            fixed,
+        });
+        Ok(())
+    }
+
+    /// The part drawn itself, then every placed part, each with `pointer`
+    /// moved into its frame.
+    fn layers(&self, pointer: &Pointer<S>) -> GeopResult<Vec<Layer<'_, S>>> {
+        let mut layers = vec![Layer {
+            view: self,
+            pointer: *pointer,
+            motion: None,
+            instance: None,
+        }];
+        for instance in &self.instances {
+            let back = instance.pose.inverse().motion();
+            let ray = &pointer.ray;
+            let Ok(ray) = Ray::try_new(back.apply(ray.origin()), back.rotate(ray.dir())) else {
+                continue;
+            };
+            layers.push(Layer {
+                view: instance.source.view()?,
+                pointer: Pointer {
+                    ray,
+                    reach: pointer.reach,
+                },
+                motion: Some((instance.pose.motion(), back)),
+                instance: Some(&instance.name),
+            });
+        }
+        Ok(layers)
+    }
+
+    /// The placed part a drag at `pointer` moves, and how far along the ray
+    /// it is hit: the one whose face the ray enters first — or, for a part
+    /// placed in one placed rigid, the innermost one around it whose pose is
+    /// a parameter of the part drawn: what moves it. None for a fixed one:
+    /// no drag moves it.
+    pub fn part_to_drag(&self, pointer: &Pointer<S>) -> Option<(&ViewInstance<S>, S)> {
+        let layers = self.layers(pointer).ok()?;
+        // The part's own faces hide what is behind them too.
+        let (t, hit) = layers
+            .iter()
+            .filter_map(|l| Some((l.view.pick_face(&l.pointer)?.0, l.instance)))
+            .min_by(|a, b| nearer(a.0, b.0))?;
+        let hit = hit?;
+        let moved = self
+            .instances
+            .iter()
+            .filter(|i| i.parameter.is_some())
+            .filter(|i| {
+                i.name == hit || hit.starts_with(&format!("{}{INSTANCE_SEPARATOR}", i.name))
+            })
+            .max_by_key(|i| i.name.len())?;
+        (!moved.fixed).then_some((moved, t))
+    }
+
+    /// How far along `pointer`'s ray it first enters the placed part
+    /// `instance`, if it does.
+    pub fn pick_instance(&self, instance: &str, pointer: &Pointer<S>) -> Option<S> {
+        let layers = self.layers(pointer).ok()?;
+        let layer = layers.iter().find(|l| l.instance == Some(instance))?;
+        layer.view.pick_face(&layer.pointer).map(|(t, _)| t)
+    }
+
+    /// The box around everything drawn: the union of every point of it,
+    /// and of the corners of every placed part's own box, where it is.
+    fn measure(&self) -> GeopResult<Extent<S>> {
         let sketch_points = self.sketches.iter().flat_map(|sketch| {
             sketch
                 .curves
@@ -317,115 +541,166 @@ impl<S: Scalar> PartView<S> {
                     .flat_map(|f| f.triangles.iter().flatten().copied()),
             )
             .chain(sketch_points)
-            .reduce(|a, b| a.union(&b));
+            .collect::<Vec<_>>();
+        let mut corners = Vec::new();
+        for instance in &self.instances {
+            let view = instance.source.view()?;
+            // An empty part has no box of its own to place.
+            if view.vertices.is_empty() && view.faces.is_empty() && view.instances.is_empty() {
+                continue;
+            }
+            let Extent { center, size } = view.extent;
+            let half = size.div(S::TWO)?;
+            let motion = instance.pose.motion();
+            for i in 0..8 {
+                let corner = Vector3::from_array([0, 1, 2].map(|k| match i >> k & 1 {
+                    0 => center[k].sub(half),
+                    _ => center[k].add(half),
+                }));
+                corners.push(motion.apply(&corner));
+            }
+        }
+        let hull = hull.into_iter().chain(corners).reduce(|a, b| a.union(&b));
         let Some(hull) = hull else {
-            return Extent {
+            return Ok(Extent {
                 center: Vector3::zero(),
                 size: S::ONE,
-            };
+            });
         };
         let size = Vector3::from_array([0, 1, 2].map(|k| hull[k].width())).norm();
-        Extent {
+        Ok(Extent {
             center: Vector3::from_array([0, 1, 2].map(|k| hull[k].midpoint())),
             size: if size.definitely_less(S::ONE) {
                 S::ONE
             } else {
                 size
             },
-        }
+        })
     }
 
     /// Whatever the pointer is over that can fill one of `roles` — and, with
     /// a `scope`, is part of it: a line of one sketch. Frame datums are drawn
     /// on top of everything, so they are picked first. Otherwise a vertex or
-    /// a sketch point, else an edge or a sketch curve, near the pointer — and not hidden behind a
-    /// face — wins: the smallest entity under the pointer is the one meant.
-    /// Else the nearest along the ray of the faces, solids, sketches and
-    /// other datums hit.
+    /// a sketch point, else an edge or a sketch curve, near the pointer — and
+    /// not hidden behind a face — wins: the smallest entity under the pointer
+    /// is the one meant. Else the nearest along the ray of the faces, solids,
+    /// sketches and other datums hit. The parts placed in the part count
+    /// alike, each where it is (see [`PartView::layers`]): a vertex of one is
+    /// hidden behind a face of another.
     pub fn pick(
         &self,
         pointer: &Pointer<S>,
         roles: &[Role],
         scope: Option<&EntityRef>,
     ) -> Option<PartHit<S>> {
-        let accept = |entity: &EntityRef, its: &[Role]| {
-            its.iter().any(|r| roles.contains(r)) && scope.is_none_or(|s| entity.lies_in(s))
+        let layers = self.layers(pointer).ok()?;
+        // What `layer` names `entity`, as the part drawn names it, can take.
+        let accept = |layer: &Layer<'_, S>, entity: &EntityRef, its: &[Role]| {
+            its.iter().any(|r| roles.contains(r))
+                && scope.is_none_or(|s| layer.name(entity.clone()).lies_in(s))
         };
-        if let Some(hit) = self.pick_frame(pointer, &accept) {
+        let nearest = |hits: Vec<PartHit<S>>| hits.into_iter().min_by(|a, b| nearer(a.t, b.t));
+
+        let frames = layers
+            .iter()
+            .filter_map(|l| {
+                let hit = l.view.pick_frame(&l.pointer, &|e, r| accept(l, e, r))?;
+                Some(l.hit(hit))
+            })
+            .collect();
+        if let Some(hit) = nearest(frames) {
             return Some(hit);
         }
-        let ray = &pointer.ray;
-        let face = self.pick_face(pointer);
+
+        // The nearest face of any layer: a rigid motion keeps distances
+        // along the ray, so every layer's `t` is the part drawn's.
+        let face = layers
+            .iter()
+            .filter_map(|l| l.view.pick_face(&l.pointer).map(|(t, f)| (t, l, f)))
+            .min_by(|a, b| nearer(a.0, b.0));
         // In front of the face hit, give or take the reach: a vertex or an
         // edge on the face's own boundary lies right at it.
         let visible = |t: S| {
             face.as_ref()
-                .is_none_or(|(ft, _)| !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft))))
+                .is_none_or(|(ft, _, _)| !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft))))
         };
-        let near = |(dist, t): (S, S)| (pointer.within(dist, t, 1.0) && visible(t)).then_some(t);
-        let nearest = |hits: Vec<PartHit<S>>| hits.into_iter().min_by(|a, b| nearer(a.t, b.t));
 
-        let vertices = self.vertices.iter().map(|v| {
-            let entity = EntityRef::Vertex {
-                name: v.name.clone(),
-            };
-            (entity, v.at)
-        });
-        let sketch_points = self.sketches.iter().flat_map(|sketch| {
-            sketch.points.iter().map(|p| {
-                let entity = EntityRef::SketchPoint {
-                    sketch: sketch.name.clone(),
-                    point: p.id,
+        let mut points = Vec::new();
+        for l in &layers {
+            let ray = &l.pointer.ray;
+            let near =
+                |(dist, t): (S, S)| (l.pointer.within(dist, t, 1.0) && visible(t)).then_some(t);
+            let vertices = l.view.vertices.iter().map(|v| {
+                let entity = EntityRef::Vertex {
+                    name: v.name.clone(),
                 };
-                (entity, sketch.plane.uv_to_xyz(&p.at))
-            })
-        });
-        let points = vertices
-            .chain(sketch_points)
-            .filter(|(entity, _)| accept(entity, &[Role::Point]))
-            .filter_map(|(entity, at)| {
-                near(ray.distance_to_point(&at)).map(|t| PartHit {
-                    entity,
-                    point: at,
-                    t,
+                (entity, v.at)
+            });
+            let sketch_points = l.view.sketches.iter().flat_map(|sketch| {
+                sketch.points.iter().map(|p| {
+                    let entity = EntityRef::SketchPoint {
+                        sketch: sketch.name.clone(),
+                        point: p.id,
+                    };
+                    (entity, sketch.plane.uv_to_xyz(&p.at))
                 })
-            })
-            .collect();
+            });
+            for (entity, at) in vertices.chain(sketch_points) {
+                if accept(l, &entity, &[Role::Point])
+                    && let Some(t) = near(ray.distance_to_point(&at))
+                {
+                    points.push(l.hit(PartHit {
+                        entity,
+                        point: at,
+                        t,
+                    }));
+                }
+            }
+        }
         if let Some(hit) = nearest(points) {
             return Some(hit);
         }
 
-        let polyline_hit =
-            |entity: EntityRef, polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>| {
-                polyline
-                    .filter_map(|(a, b)| near(ray.distance_to_segment(&a, &b)))
-                    .min_by(|&a, &b| nearer(a, b))
-                    .map(|t| PartHit {
-                        entity: entity.clone(),
-                        point: ray.at(t),
-                        t,
-                    })
-            };
         let mut curves = Vec::new();
-        for e in &self.edges {
-            let entity = EntityRef::Edge {
-                name: e.name.clone(),
-            };
-            if accept(&entity, &e.roles) {
-                let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
-                curves.extend(polyline_hit(entity, &mut segments));
-            }
-        }
-        for sketch in &self.sketches {
-            for c in &sketch.curves {
-                let entity = EntityRef::SketchCurve {
-                    sketch: sketch.name.clone(),
-                    curve: c.id,
+        for l in &layers {
+            let ray = &l.pointer.ray;
+            let near =
+                |(dist, t): (S, S)| (l.pointer.within(dist, t, 1.0) && visible(t)).then_some(t);
+            let mut polyline_hit =
+                |entity: EntityRef,
+                 polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>| {
+                    let t = polyline
+                        .filter_map(|(a, b)| near(ray.distance_to_segment(&a, &b)))
+                        .min_by(|&a, &b| nearer(a, b));
+                    if let Some(t) = t {
+                        curves.push(l.hit(PartHit {
+                            entity,
+                            point: ray.at(t),
+                            t,
+                        }));
+                    }
                 };
-                if accept(&entity, &c.roles) {
-                    let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
-                    let mut segments = c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
-                    curves.extend(polyline_hit(entity, &mut segments));
+            for e in &l.view.edges {
+                let entity = EntityRef::Edge {
+                    name: e.name.clone(),
+                };
+                if accept(l, &entity, &e.roles) {
+                    let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
+                    polyline_hit(entity, &mut segments);
+                }
+            }
+            for sketch in &l.view.sketches {
+                for c in &sketch.curves {
+                    let entity = EntityRef::SketchCurve {
+                        sketch: sketch.name.clone(),
+                        curve: c.id,
+                    };
+                    if accept(l, &entity, &c.roles) {
+                        let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
+                        let mut segments =
+                            c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
+                        polyline_hit(entity, &mut segments);
+                    }
                 }
             }
         }
@@ -434,30 +709,51 @@ impl<S: Scalar> PartView<S> {
         }
 
         let mut hits: Vec<PartHit<S>> = Vec::new();
-        if let Some((t, f)) = face {
+        if let Some((t, l, f)) = face {
             let face = EntityRef::Face {
                 name: f.name.clone(),
             };
             let solid = f.solid.clone().map(|name| EntityRef::Solid { name });
-            let entity = if accept(&face, &f.roles) {
+            let entity = if accept(l, &face, &f.roles) {
                 Some(face)
             } else {
-                solid.filter(|solid| accept(solid, &[Role::Solid]))
+                solid.filter(|solid| accept(l, solid, &[Role::Solid]))
             };
-            hits.extend(entity.map(|entity| PartHit {
-                entity,
-                point: ray.at(t),
-                t,
+            hits.extend(entity.map(|entity| {
+                l.hit(PartHit {
+                    entity,
+                    point: l.pointer.ray.at(t),
+                    t,
+                })
             }));
         }
-        hits.extend(self.pick_sketch(pointer, &accept));
-        hits.extend(self.pick_datum(pointer, &accept));
+        for l in &layers {
+            let accept = |e: &EntityRef, r: &[Role]| accept(l, e, r);
+            hits.extend(l.view.pick_sketch(&l.pointer, &accept).map(|h| l.hit(h)));
+            let extent = Extent {
+                center: l.local(self.extent.center),
+                size: self.extent.size,
+            };
+            hits.extend(
+                l.view
+                    .pick_datum(&l.pointer, &accept, extent)
+                    .map(|h| l.hit(h)),
+            );
+        }
         nearest(hits)
     }
 
     /// Whether `entity` — a sketch or a datum — or a part of it can fill one
     /// of `roles`: whether a pick for them could take something of it.
     pub fn can_fill(&self, entity: &EntityRef, roles: &[Role]) -> bool {
+        if let Some((instance, inner)) = entity.split_instance() {
+            return self
+                .instances
+                .iter()
+                .find(|i| i.name == instance)
+                .and_then(|i| i.source.view().ok())
+                .is_some_and(|view| view.can_fill(&inner, roles));
+        }
         let fills = |its: &[Role]| its.iter().any(|r| roles.contains(r));
         match entity {
             EntityRef::Sketch { name } => self.sketches.iter().any(|s| {
@@ -526,14 +822,15 @@ impl<S: Scalar> PartView<S> {
 
     /// The nearest datum other than a frame `accept`ed the ray hits, as the
     /// viewer draws it: a point at its origin, an axis as a line and a plane
-    /// as a square, each [`Extent::size`] long around the point of it
-    /// nearest the extent's center.
+    /// as a square, each [`Extent::size`] of `extent` — the whole drawing's —
+    /// long around the point of it nearest the extent's center.
     fn pick_datum(
         &self,
         pointer: &Pointer<S>,
         accept: &impl Fn(&EntityRef, &[Role]) -> bool,
+        extent: Extent<S>,
     ) -> Option<PartHit<S>> {
-        let Extent { center, size } = self.extent;
+        let Extent { center, size } = extent;
         let ray = &pointer.ray;
         let half = size.div(S::TWO).ok()?;
         self.datums

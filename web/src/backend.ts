@@ -8,16 +8,23 @@
 import init, { handle, init_panic_hook } from "./wasm/pkg/geop.js";
 
 /**
- * The program as a file somebody else owns — a VS Code document. `null`
- * where the app owns it itself (the browser, which saves and loads by
- * download and upload).
+ * The program files as somebody else owns them — a VS Code workspace, the
+ * program edited being one of its documents. `null` where the app owns them
+ * itself (the browser: see `files.ts`).
  */
 export interface Host {
   /**
-   * Call `onText` with the document's text now, and again whenever it is
-   * changed from outside the app (a text edit, VS Code's own undo).
+   * Call `onText` with the document's text and its path — which the files
+   * it places are named relative to — now, and again whenever it is changed
+   * from outside the app (a text edit, VS Code's own undo).
    */
-  onDocument(onText: (text: string) => void): void;
+  onDocument(onText: (text: string, path: string) => void): void;
+  /**
+   * Call `onFiles` with the other program files of the workspace, by path,
+   * once the document has been sent, and with those that changed — their
+   * text, or `null` for one that is gone — whenever any do.
+   */
+  onFiles(onFiles: (files: Record<string, string | null>) => void): void;
   /** The program is now this (a JSON value): write it to the document. */
   programChanged(program: unknown): void;
 }

@@ -63,6 +63,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
     let mut infos = Vec::new();
     let mut new_arms = Vec::new();
     let mut apply_arms = Vec::new();
+    let mut picks_built_arms = Vec::new();
     let mut session_arms = Vec::new();
     let mut form_arms = Vec::new();
     let mut set_arms = Vec::new();
@@ -110,7 +111,10 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
             #kind => ::std::result::Result::Ok(#name::#op(#operation::new_args(&#op, before))),
         });
         apply_arms.push(quote! {
-            #name::#op(args) => #operation::apply(&#op, part, operation_id, args),
+            #name::#op(args) => #operation::apply(&#op, part, operation_id, args, library),
+        });
+        picks_built_arms.push(quote! {
+            #name::#op(_) => <#op as #operation>::PICKS_BUILT,
         });
         let session = quote!(<#op as #operation>::Session);
         let expect = quote!(.expect("a session made for a step of the same operation"));
@@ -119,18 +123,26 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
         });
         form_arms.push(quote! {
             #name::#op(args) => #operation::form(
-                &#op, before, args, session.downcast_ref::<#session>()#expect, selection,
+                &#op, context, args, session.downcast_ref::<#session>()#expect, selection,
             ).erase(),
         });
         set_arms.push(quote! {
             #name::#op(args) => #operation::set(
-                &#op, before, args, session.downcast_mut::<#session>()#expect, selection, key,
-                value,
+                &#op, context, args, session.downcast_mut::<#session>()#expect, selection,
+                state, key, value,
             ),
         });
         event_arms.push(quote! {
             #name::#op(args) => #operation::event(
-                &#op, before, args, session.downcast_mut::<#session>()#expect, selection, event,
+                &#op,
+                context,
+                ::geop_ops::ui::Edit {
+                    args,
+                    session: session.downcast_mut::<#session>()#expect,
+                    selection,
+                    state,
+                },
+                event,
             ),
         });
         kind_arms.push(quote! { #name::#op(_) => #kind, });
@@ -166,9 +178,16 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 &self,
                 part: ::geop_ops::Part<S>,
                 operation_id: &str,
+                library: &dyn ::geop_ops::Library<S>,
             ) -> #private::GeopResult<::geop_ops::Part<S>> {
                 match self {
                     #(#apply_arms)*
+                }
+            }
+
+            fn picks_built(&self) -> bool {
+                match self {
+                    #(#picks_built_arms)*
                 }
             }
 
@@ -180,7 +199,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
 
             fn form<'a, S: #private::Scalar>(
                 &self,
-                before: &'a ::geop_ops::Part<S>,
+                context: ::geop_ops::Context<'a, S>,
                 session: &dyn ::std::any::Any,
                 selection: &[::std::string::String],
             ) -> ::geop_ops::ui::Form<'a, S> {
@@ -191,9 +210,10 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
 
             fn set<S: #private::Scalar>(
                 &mut self,
-                before: &::geop_ops::Part<S>,
+                context: ::geop_ops::Context<'_, S>,
                 session: &mut dyn ::std::any::Any,
                 selection: &mut ::std::vec::Vec<::std::string::String>,
+                state: &mut ::geop_ops::part::State,
                 key: &str,
                 value: ::geop_ops::ui::Value,
             ) {
@@ -204,9 +224,10 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
 
             fn event<S: #private::Scalar>(
                 &mut self,
-                before: &::geop_ops::Part<S>,
+                context: ::geop_ops::Context<'_, S>,
                 session: &mut dyn ::std::any::Any,
                 selection: &mut ::std::vec::Vec<::std::string::String>,
+                state: &mut ::geop_ops::part::State,
                 event: &::geop_ops::ui::CanvasEvent<S>,
             ) {
                 match self {

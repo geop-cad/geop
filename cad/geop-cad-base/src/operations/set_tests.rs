@@ -2,7 +2,7 @@
 //! steps before built.
 
 use geop_core_math::scalars::ScalInF64 as S;
-use geop_ops::Operations;
+use geop_ops::{NoFiles, Operations};
 use geop_ops_booleans::Combine;
 
 use crate::{PartOperation, ProgramRunner, examples};
@@ -14,7 +14,14 @@ fn every_operation_is_offered() {
     let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
     assert_eq!(
         kinds,
-        ["add_sketch", "extrude", "revolve", "boolean", "add_datum"]
+        [
+            "add_sketch",
+            "extrude",
+            "revolve",
+            "boolean",
+            "add_datum",
+            "add_part"
+        ]
     );
     assert_eq!(infos[0].label, "Sketch");
     assert!(infos[1].doc.starts_with("Sweep a sketch"));
@@ -31,7 +38,7 @@ fn every_operation_is_offered() {
 #[test]
 fn new_steps_start_from_what_was_built() {
     let mut runner = ProgramRunner::<S>::new();
-    runner.run(&examples::box_with_drill_hole(), None);
+    runner.run(&examples::box_with_drill_hole(), None, &NoFiles);
     let part = runner.part();
     let PartOperation::Extrude(extrude) = PartOperation::new_step("extrude", part).unwrap() else {
         panic!("an extrude");

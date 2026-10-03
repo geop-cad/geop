@@ -6,11 +6,11 @@
 
 use geop_core_geometry::{
     nurb_curve::NurbCurve3D,
-    shape::{Arc, Axis},
+    shape::{Arc, Axis, Circle},
 };
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
-    primitives::{CoordinateSystem, DatumKind},
+    primitives::{CoordinateSystem, DatumKind, Pose},
     scalars::Scalar,
     vector::Vector3,
     with_context,
@@ -51,6 +51,12 @@ impl<S: Scalar> Aspects<S> {
     /// What `entity` is in `part`. Fails if the part has no such entity.
     pub fn of(entity: &EntityRef, part: &Part<S>) -> GeopResult<Self> {
         let ctx = with_context!("resolving {entity}");
+        if let Some((name, inner)) = entity.split_instance() {
+            let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
+            return Aspects::of(&inner, instance.part())
+                .with_context(ctx)?
+                .placed(&instance.pose);
+        }
         let mut g = Aspects::default();
         match entity {
             EntityRef::Vertex { name } => {
@@ -122,6 +128,37 @@ impl<S: Scalar> Aspects<S> {
             }
         }
         Ok(g)
+    }
+
+    /// What it is once its part is moved by `pose`: a part placed in
+    /// another is used as it is placed.
+    pub fn placed(self, placement: &Pose<S>) -> GeopResult<Self> {
+        let motion = placement.motion();
+        let pose = &motion;
+        let axis = |a: Axis<S>| Axis {
+            point: pose.apply(&a.point),
+            direction: pose.rotate(&a.direction),
+        };
+        let frame = |f: Option<CoordinateSystem<S>>| f.map(|f| pose.apply_frame(&f)).transpose();
+        Ok(Aspects {
+            point: self.point.map(|p| pose.apply(&p)),
+            line: self.line.map(axis),
+            plane: frame(self.plane)?,
+            arc: self.arc.map(|arc| Arc {
+                circle: Circle {
+                    center: pose.apply(&arc.circle.center),
+                    normal: pose.rotate(&arc.circle.normal),
+                    radius: arc.circle.radius,
+                },
+                start: pose.apply(&arc.start),
+                end: pose.apply(&arc.end),
+            }),
+            round: self.round.map(axis),
+            curve: self.curve.map(|c| c.place(placement)),
+            frame: frame(self.frame)?,
+            solid: self.solid,
+            sketch: self.sketch,
+        })
     }
 
     /// Every role it can fill.

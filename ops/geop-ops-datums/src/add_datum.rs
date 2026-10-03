@@ -19,7 +19,7 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use geop_ops::{
-    Part,
+    Context, Library, Part,
     operation::{Aspects, EntityRef, Operation, Role, frame_along},
     ui::{Form, Unit},
 };
@@ -603,6 +603,7 @@ impl Operation for AddDatum {
         mut part: Part<S>,
         operation_id: &str,
         args: &AddDatumArgs,
+        _library: &dyn Library<S>,
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("add_datum({operation_id}, {args:?})");
         let frame = args
@@ -621,11 +622,12 @@ impl Operation for AddDatum {
     /// it, and offsets as handles: see [`crate::editor`].
     fn form<'a, S: Scalar>(
         &self,
-        before: &'a Part<S>,
+        context: Context<'a, S>,
         args: &AddDatumArgs,
         _: &(),
         _: &[String],
     ) -> Form<'a, S, AddDatumArgs> {
+        let before = context.before;
         editor::form(before, args)
     }
 }
@@ -638,7 +640,7 @@ mod tests {
     };
 
     use geop_ops::{
-        ORIGIN, Operations,
+        NoFiles, ORIGIN, Operations,
         ui::{
             Button, Control, PartView, Pointer, Presentation, Reach, Shape, StepEditEvent,
             StepEditor, Tone, Value,
@@ -698,7 +700,7 @@ mod tests {
             selection: vec![origin()],
             construction: Construction::Offset { distance: 1.0 },
         };
-        let Err(e) = AddDatum.apply(Part::<S>::new(), "d", &args) else {
+        let Err(e) = AddDatum.apply(Part::<S>::new(), "d", &args, &NoFiles) else {
             panic!("an offset plane from a point");
         };
         assert!(e.to_string().contains("needs a plane selected"), "{e}");
@@ -714,7 +716,7 @@ mod tests {
                 selection,
                 construction,
             };
-            match AddDatum.apply(part.clone(), "d", &args) {
+            match AddDatum.apply(part.clone(), "d", &args, &NoFiles) {
                 Ok(_) => panic!("{args:?} built a datum"),
                 Err(e) => format!("{e:?}"),
             }
@@ -766,12 +768,13 @@ mod tests {
         events: &[StepEditEvent<S>],
     ) -> (AddDatumArgs, Presentation<S>) {
         let view = PartView::of(part).unwrap();
-        let mut editor = StepEditor::new(Ops::AddDatum(args), part, new);
+        let context = Context::new(part, "d", &NoFiles);
+        let mut editor = StepEditor::new(Ops::AddDatum(args), context, new);
         for event in events {
-            editor.handle(part, &view, event);
+            editor.handle(context, &view, event);
         }
         let Ops::AddDatum(args) = editor.step().clone();
-        (args, editor.presentation(part))
+        (args, editor.presentation(context, part, &view))
     }
 
     /// Offsets are handles: dragging one along its direction edits the
@@ -823,7 +826,7 @@ mod tests {
             construction: Construction::Offset { distance: 1.0 },
         };
         let part = Part::<S>::new();
-        assert!(AddDatum.apply(part.clone(), "d", &args).is_err());
+        assert!(AddDatum.apply(part.clone(), "d", &args, &NoFiles).is_err());
         let dialog = edited(&part, args.clone(), false, &[]).1.dialog;
         let Some(Control::Reference(selection)) = dialog.get("selection") else {
             panic!("the selection is a reference field");

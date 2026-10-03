@@ -1,7 +1,7 @@
 //! Programs of the editor's operations, run.
 
 use geop_core_math::scalars::ScalInF64 as S;
-use geop_ops::{Part, PartDescription};
+use geop_ops::{NoFiles, Part, PartDescription};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::ExtrudeArgs;
 
@@ -26,12 +26,15 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     let describe = |part: &Part<S>| PartDescription::of(part).unwrap();
     let mut runner = ProgramRunner::<S>::new();
 
-    runner.run(&program, None);
+    runner.run(&program, None, &NoFiles);
     assert!(runner.results().iter().all(|r| r.error.is_none()));
-    assert_eq!(describe(runner.part()), describe(&program.build().unwrap()));
+    assert_eq!(
+        describe(runner.part()),
+        describe(&program.build(&NoFiles).unwrap())
+    );
 
     // Back in time: only the box.
-    runner.run(&program, Some(2));
+    runner.run(&program, Some(2), &NoFiles);
     assert_eq!(runner.results().len(), 2);
     let description = describe(runner.part());
     assert_eq!(
@@ -44,9 +47,12 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     let mut edited = program.clone();
     let hole = edited.index_of("hole").unwrap();
     edited.steps[hole].operation = extrude("hole_sketch", -0.25);
-    runner.run(&edited, None);
+    runner.run(&edited, None, &NoFiles);
     assert!(runner.results().iter().all(|r| r.error.is_none()));
-    assert_eq!(describe(runner.part()), describe(&edited.build().unwrap()));
+    assert_eq!(
+        describe(runner.part()),
+        describe(&edited.build(&NoFiles).unwrap())
+    );
 }
 
 /// A step that fails ends the run there, reported by id; the part is
@@ -65,7 +71,7 @@ fn runner_reports_the_failing_step() {
     }
     .into();
     let mut runner = ProgramRunner::<S>::new();
-    runner.run(&program, None);
+    runner.run(&program, None, &NoFiles);
     let last = runner.results().last().unwrap();
     assert_eq!(last.id, "hole");
     assert!(last.error.as_deref().unwrap().contains("extrude(nothing)"));

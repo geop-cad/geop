@@ -13,18 +13,27 @@ declare function acquireVsCodeApi(): VsCodeApi;
 type FromHost =
   | { type: "answer"; id: number; update: string }
   | { type: "failure"; id: number; message: string }
-  | { type: "document"; text: string };
+  | { type: "document"; text: string; path: string }
+  | { type: "files"; files: Record<string, string | null> };
 
 const vscode = acquireVsCodeApi();
 
 let nextId = 0;
 const waiting = new Map<number, { resolve: (update: string) => void; reject: (e: Error) => void }>();
-let onText: ((text: string) => void) | null = null;
+let onText: ((text: string, path: string) => void) | null = null;
+let onFiles: ((files: Record<string, string | null>) => void) | null = null;
+/** Files that came before anyone listened for them: the host sends them right after the document. */
+let unheard: Record<string, string | null> = {};
 
 window.addEventListener("message", (e: MessageEvent<FromHost>) => {
   const message = e.data;
   if (message.type === "document") {
-    onText?.(message.text);
+    onText?.(message.text, message.path);
+    return;
+  }
+  if (message.type === "files") {
+    if (onFiles) onFiles(message.files);
+    else unheard = { ...unheard, ...message.files };
     return;
   }
   const pending = waiting.get(message.id);
@@ -39,6 +48,11 @@ export const host: Host = {
     onText = callback;
     // The host sends the document once the page can take it.
     vscode.postMessage({ type: "ready" });
+  },
+  onFiles(callback) {
+    onFiles = callback;
+    if (Object.keys(unheard).length > 0) callback(unheard);
+    unheard = {};
   },
   programChanged(program) {
     vscode.postMessage({ type: "program", program });

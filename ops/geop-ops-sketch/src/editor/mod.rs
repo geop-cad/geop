@@ -23,13 +23,9 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_core_sketch::{
-    Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch, SolveReport,
-    point::{P2, add, dist, sub},
-    profile::curve_polyline,
-};
+use geop_core_sketch::{ConstraintId, CurveId, PointId};
 use geop_ops::{
-    Part,
+    Design, Part,
     operation::Role,
     ui::{
         Action, Button, CanvasEvent, Edit, Form, ListItem, Pointer, Shape, Style, Tone, Value,
@@ -38,10 +34,12 @@ use geop_ops::{
 };
 
 use crate::{
-    AddSketchArgs,
+    AddSketchArgs, Constraint, CurveKind, Sketch,
     constraints::{self, Selection},
-    geometry::sweep_through,
+    geometry::{P2, add, design, dist, loop_polyline, polyline, sub, sweep_through, xy},
 };
+
+type SolveReport = geop_core_sketch::SolveReport<Design>;
 
 /// Lines drawn within this slope of horizontal or vertical get that
 /// constraint.
@@ -190,7 +188,7 @@ fn hit_key<S: Scalar>(
     stages: &[&dyn Fn(&str) -> bool],
 ) -> Option<String> {
     stages.iter().find_map(|accept| {
-        hit_visuals(visuals, pointer, |v| accept(&v.key)).map(|h| h.visual.key.clone())
+        hit_visuals(visuals, pointer, None, |v| accept(&v.key)).map(|h| h.visual.key.clone())
     })
 }
 
@@ -206,9 +204,9 @@ fn is_origin(key: &str) -> bool {
     key == "origin"
 }
 
-/// The point `id` of `sketch`.
+/// The point `id` of `sketch`, as drawn.
 fn pt(sketch: &Sketch, id: PointId) -> P2 {
-    sketch.points[&id].xy()
+    xy(sketch, id)
 }
 
 /// The edit in progress: what it works on, what is selected, and where the
@@ -228,7 +226,11 @@ fn to_world<S: Scalar>(frame: &CoordinateSystem<S>, p: P2) -> Vector3<S> {
 /// Solves `sketch`, pulling `drags` towards their targets, and records how
 /// that went. A sketch the solver rejects outright stays as drawn.
 fn solve(sketch: &mut Sketch, s: &mut SketchSession, drags: &[(PointId, P2)]) {
-    s.solved = Some(match sketch.solve_with_drag(drags) {
+    let drags: Vec<_> = drags
+        .iter()
+        .map(|&(p, at)| (p, Vector2::from_array(at.map(design))))
+        .collect();
+    s.solved = Some(match sketch.solve_with_drag(&drags) {
         Ok(report) => Solved::Solved { report },
         Err(e) => Solved::Failed {
             error: e.root_message().to_string(),
@@ -328,6 +330,7 @@ fn editing<S: Scalar>(
         args,
         session: s,
         selection,
+        ..
     } = edit;
     let Some(Ok(frame)) = args.plane.as_ref().map(|p| p.resolve_plane(before)) else {
         return;

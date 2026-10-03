@@ -10,12 +10,9 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_sketch::{
-    CurveKind, Enclosure, PointId, ProfileLoop,
-    point::{P2, dot, sub},
-};
+use geop_core_sketch::{CurveKind, Enclosure, PointId, ProfileLoop, profile::curve_polyline};
 use geop_ops::{
-    Namer, Part, PlacedSketch,
+    Context, Library, Namer, Part, PlacedSketch,
     operation::{Aspects, EntityRef, Operation, Role},
     ui::Form,
 };
@@ -93,9 +90,9 @@ struct SketchAxis<S: Scalar> {
     /// A point on it, and its unit direction, enclosed.
     point: Vector2<S>,
     direction: Vector2<S>,
-    /// The same, as drawn: which side of it a region lies on is a question
-    /// about the sketch as drawn.
-    drawn: (P2, P2),
+    /// A point on it and its direction (of any length), as drawn: which side
+    /// of it a region lies on is a question about the sketch as drawn.
+    drawn: (Vector2<S>, Vector2<S>),
     /// The points of the sketch the constraints put on it — none, unless it
     /// is a line of the sketch.
     on_axis: BTreeSet<PointId>,
@@ -115,7 +112,6 @@ impl<S: Scalar> SketchAxis<S> {
     ) -> GeopResult<Self> {
         let ctx = with_context!("revolving around {axis}");
         let unit = |d: Vector2<S>| d.normalize().with_context(ctx);
-        let drawn = |p: &Vector2<S>| [p[0].to_f64(), p[1].to_f64()];
         if let EntityRef::SketchCurve { sketch, curve } = axis
             && sketch == name
         {
@@ -124,14 +120,12 @@ impl<S: Scalar> SketchAxis<S> {
             else {
                 return Err(GeopError::new(format!("{axis} is not a line"))).with_context(ctx);
             };
-            let positions = sketch.positions();
-            let (a, b) = (positions[&start], positions[&end]);
-            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let drawn = |p: PointId| sketch.points[&p].xy().map(|c| c.cast::<S>());
             let point = geometry.points[&start];
             return Ok(SketchAxis {
                 point,
                 direction: unit(geometry.points[&end].sub(&point))?,
-                drawn: (a, [(b[0] - a[0]) / length, (b[1] - a[1]) / length]),
+                drawn: (drawn(start), drawn(end).sub(&drawn(start))),
                 on_axis: sketch.on_line(*curve).with_context(ctx)?,
             });
         }
@@ -153,7 +147,7 @@ impl<S: Scalar> SketchAxis<S> {
         let point = Vector2::from_array([point[0], point[1]]);
         let direction = unit(Vector2::from_array([direction[0], direction[1]]))?;
         Ok(SketchAxis {
-            drawn: (drawn(&point), drawn(&direction)),
+            drawn: (point, direction),
             point,
             direction,
             on_axis: BTreeSet::new(),
@@ -180,11 +174,12 @@ impl Operation for Revolve {
     /// axis that was a line of the old one back to the new one's default.
     fn form<'a, S: Scalar>(
         &self,
-        before: &'a Part<S>,
+        context: Context<'a, S>,
         args: &RevolveArgs,
         _: &(),
         _: &[String],
     ) -> Form<'a, S, RevolveArgs> {
+        let before = context.before;
         let mut f = Form::<S, RevolveArgs>::new();
         sketch_field(&mut f, before, &args.sketch, move |args, sketch| {
             let old = std::mem::replace(&mut args.sketch, sketch);
@@ -215,6 +210,7 @@ impl Operation for Revolve {
         mut part: Part<S>,
         operation_id: &str,
         args: &RevolveArgs,
+        _library: &dyn Library<S>,
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("revolve({operation_id}, {args:?})");
         let namer = Namer::new("revolve", operation_id)?;
@@ -227,9 +223,7 @@ impl Operation for Revolve {
         };
         let geometry = sketch.enclose::<S>().with_context(ctx)?;
         let axis = SketchAxis::of(axis, &part, &args.sketch, &placed, &geometry)?;
-        let positions = sketch.positions();
         let (a, dir) = axis.drawn;
-        let left = [-dir[1], dir[0]];
         let axis_left = Vector2::from_array([axis.direction[1].neg(), axis.direction[0]]);
         let on_axis = &axis.on_axis;
 
@@ -244,46 +238,61 @@ impl Operation for Revolve {
                 ))
                 .with_context(ctx);
             }
-            // Which side of the axis the region lies on, from its outline; it
-            // must not cross. Vertices on the axis sit within rounding of it on
-            // either side, so crossing means reaching measurably across,
-            // relative to the region's extent and distance from the axis — a
-            // classification of design data, like the nesting test in
-            // `Sketch::regions`.
-            let outline = region.outer.polyline(sketch, &positions);
-            let side = |p: &P2| dot(sub(*p, a), left);
-            let (lo, hi) = outline
-                .iter()
-                .map(side)
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), s| {
-                    (lo.min(s), hi.max(s))
-                });
-            let tolerance = 1e-9 * (hi.max(0.0) - lo.min(0.0));
-            if lo < -tolerance && hi > tolerance {
+            // Which side of the axis the region lies on, from its outline as
+            // drawn; it must not cross. The points the constraints put on the
+            // axis are on it — known, not measured — so they and the edges
+            // between two of them say nothing; every other point of the
+            // outline must lie definitely on one side, and all on the same.
+            let mut left = false;
+            let mut right = false;
+            let mut touches = false;
+            for edge in &region.outer.edges {
+                let ends = sketch.curves[&edge.curve].endpoints();
+                let on = |p: Option<PointId>| p.is_some_and(|p| on_axis.contains(&p));
+                let (start_on, end_on) = (on(ends.map(|e| e.0)), on(ends.map(|e| e.1)));
+                touches |= start_on || end_on;
+                if start_on
+                    && end_on
+                    && matches!(sketch.curves[&edge.curve].kind, CurveKind::Line { .. })
+                {
+                    continue;
+                }
+                let samples = curve_polyline(sketch, edge.curve).with_context(ctx)?;
+                let last = samples.len().saturating_sub(1);
+                for (k, q) in samples.iter().enumerate() {
+                    if (k == 0 && start_on) || (k == last && end_on) {
+                        continue;
+                    }
+                    let side = dir.prod_cross(&q.map(|c| c.cast::<S>()).sub(&a));
+                    left |= side.definitely_greater(S::ZERO);
+                    right |= side.definitely_less(S::ZERO);
+                    touches |= side.could_be_equal(S::ZERO);
+                }
+            }
+            if left && right {
                 return Err(GeopError::new("the profile crosses the revolve axis"))
                     .with_context(ctx);
             }
-            let sign = if hi > -lo { 1.0 } else { -1.0 };
-            sides.push(sign);
-            if sides.iter().any(|&s| s != sign) {
+            if !left && !right {
+                return Err(GeopError::new("the profile lies on the revolve axis"))
+                    .with_context(ctx);
+            }
+            sides.push(left);
+            if sides.iter().any(|&s| s != left) {
                 return Err(GeopError::new(
                     "the sketch has regions on both sides of the revolve axis, which would overlap \
                      once revolved; revolve them in separate operations",
                 ))
                 .with_context(ctx);
             }
-            let clear = if sign > 0.0 {
-                lo > tolerance
-            } else {
-                hi < -tolerance
-            };
+            let clear = !touches;
 
             // `(r, z)` coordinates: `r` towards the region, `z` along the axis,
             // oriented like the sketch (`z` is `r` turned counter-clockwise), so
             // loops keep their winding — a rigid motion, which leaves sweeps
             // and radii as they are. Points the constraints put on the axis
             // get `r = 0` exactly: that is what the constraints say.
-            let r_dir = axis_left.prod_scalar(S::from_f64(sign));
+            let r_dir = axis_left.prod_scalar(if left { S::ONE } else { S::ONE.neg() });
             let z_dir = Vector2::from_array([r_dir[1].neg(), r_dir[0]]);
             let rz = Enclosure {
                 points: geometry

@@ -41,6 +41,12 @@ pub enum Shape<S: Scalar> {
         at: Vector3<S>,
         direction: Vector3<S>,
     },
+    /// A part placed in the part, by its instance's name, as the viewer
+    /// draws it already (see [`super::PartView::instances`]): drawn lit when
+    /// hovered or selected, hit where its faces are.
+    Instance {
+        name: String,
+    },
 }
 
 impl<S: Scalar> Shape<S> {

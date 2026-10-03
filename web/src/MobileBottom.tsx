@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type MobileTab = "buttons" | "program" | "detail" | "bug";
+export type MobileTab = "buttons" | "files" | "program" | "detail" | "bug";
 
 interface Props {
   tab: MobileTab;
@@ -10,6 +10,8 @@ interface Props {
   operationButtons: ReactNode;
   programPanel: ReactNode;
   detailPanel: ReactNode;
+  /** The program files, where they are the app's own; `null` in VS Code. */
+  filesPanel: ReactNode;
   /**
    * The "Bug" pane's DOM node, once mounted (or null once unmounted) — the
    * bug-report form (opened from the toolbar's "Report bug" button)
@@ -22,7 +24,7 @@ interface Props {
 
 /**
  * The bottom half of the mobile layout: a tab bar switching between the
- * operation buttons, the program timeline, the dialog of the step being
+ * operation buttons, the program files, the program timeline, the dialog of the step being
  * edited, and (while open) the bug-report form — the 3-D view stays up
  * top; only these panels move down here. Hidden entirely above the
  * mobile breakpoint (see .mobile-bottom in App.css).
@@ -35,6 +37,7 @@ export function MobileBottom({
   operationButtons,
   programPanel,
   detailPanel,
+  filesPanel,
   onBugReportHost,
 }: Props) {
   return (
@@ -43,6 +46,11 @@ export function MobileBottom({
         <button className={tab === "buttons" ? "active" : ""} onClick={() => onTab("buttons")}>
           Operations
         </button>
+        {filesPanel && (
+          <button className={tab === "files" ? "active" : ""} onClick={() => onTab("files")}>
+            Files
+          </button>
+        )}
         <button className={tab === "program" ? "active" : ""} onClick={() => onTab("program")}>
           Program
         </button>
@@ -59,6 +67,7 @@ export function MobileBottom({
       </nav>
       <div className="mobile-tab-content">
         {tab === "buttons" && operationButtons}
+        {tab === "files" && filesPanel}
         {tab === "program" && programPanel}
         {tab === "detail" && detailPanel}
         {bugReportOpen && <div className="panel-host" hidden={tab !== "bug"} ref={onBugReportHost} />}

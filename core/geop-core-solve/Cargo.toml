@@ -1,0 +1,8 @@
+[package]
+name = "geop-core-solve"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+serde.workspace = true

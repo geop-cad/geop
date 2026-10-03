@@ -115,7 +115,10 @@ fn bad_commands_are_refused() {
             id: "box".into(),
             index: before.steps.len(),
         },
-        Command::Load { program: twice },
+        Command::Load {
+            program: twice,
+            path: None,
+        },
         Command::Commit,
         Command::New {
             kind: "fillet".into(),

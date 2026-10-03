@@ -355,12 +355,18 @@ button.small {
   color: #ff8c8c;
 }
 .dialog-list .item-label {
-  flex: 1;
+  flex: 1 0 auto;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .dialog-list .item-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #888;
   font-size: 0.65rem;
 }
@@ -709,4 +715,216 @@ button.inline {
 /* Where the bug-report form portals to on mobile. */
 .panel-host {
   height: 100%;
+}
+
+/* ── the explorer: the browser's program files, as VS Code shows a
+   workspace (see Explorer.tsx) ───────────────────────────────────────── */
+
+.explorer-bar {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: #181818;
+  border-right: 1px solid #2b2b2b;
+}
+
+.explorer {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  color: #ccc;
+  user-select: none;
+}
+
+.explorer .icon {
+  flex-shrink: 0;
+  display: block;
+}
+
+.explorer-title {
+  padding: 0 0.75rem 0 1.25rem;
+  height: 35px;
+  line-height: 35px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #bbb;
+}
+
+.explorer-section-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 0.25rem 0 0.125rem;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-top: 1px solid #2b2b2b;
+}
+
+.explorer-section-name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.explorer-actions,
+.explorer-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.explorer-actions {
+  visibility: hidden;
+}
+.explorer:hover .explorer-actions,
+.explorer-actions:focus-within {
+  visibility: visible;
+}
+
+.explorer-actions button,
+.explorer-row-actions button {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 2px;
+  color: #ccc;
+  line-height: 0;
+}
+.explorer-actions button:hover:not(:disabled),
+.explorer-row-actions button:hover:not(:disabled) {
+  background: #ffffff1f;
+}
+
+.explorer-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.explorer-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding-right: 0.5rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.explorer-row:hover {
+  background: #2a2d2e;
+}
+.explorer-row.active {
+  background: #37373d;
+  border-color: #0078d4;
+  color: #fff;
+}
+.explorer-row.disabled:not(.active) {
+  cursor: default;
+  color: #888;
+}
+
+.explorer-chevron-space {
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.explorer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.explorer-row-actions {
+  visibility: hidden;
+}
+.explorer-row:hover .explorer-row-actions {
+  visibility: visible;
+}
+
+.explorer-row.editing {
+  height: auto;
+  min-height: 22px;
+  align-items: flex-start;
+  cursor: default;
+}
+.explorer-row.editing:hover {
+  background: none;
+}
+
+.explorer-input {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.explorer-input input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 20px;
+  background: #313131;
+  color: #eee;
+  border: 1px solid #0078d4;
+  outline: none;
+  padding: 0 4px;
+  font: inherit;
+}
+.explorer-input input.invalid {
+  border-color: #be1100;
+}
+.explorer-problem {
+  background: #5a1d1d;
+  border: 1px solid #be1100;
+  border-top: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: #eee;
+  white-space: normal;
+}
+
+/* The editor's tab: which file is edited, as VS Code's tab strip says. */
+.editor-area {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-tabs {
+  display: flex;
+  height: 35px;
+  flex-shrink: 0;
+  background: #181818;
+  border-bottom: 1px solid #2b2b2b;
+}
+
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  font-size: 13px;
+  color: #999;
+  border-right: 1px solid #2b2b2b;
+  max-width: 50%;
+}
+.editor-tab.active {
+  background: #1a1a1a;
+  color: #fff;
+  border-top: 1px solid #0078d4;
+}
+.editor-tab-name {
+  white-space: nowrap;
+}
+.editor-tab-folder {
+  font-size: 12px;
+  color: #888;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

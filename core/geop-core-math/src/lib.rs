@@ -1,6 +1,8 @@
 pub mod disjoint_set;
+pub mod dual;
 pub mod geop_error;
 pub mod interval_newton;
+pub mod least_squares;
 pub mod matrix;
 pub mod polygon;
 pub mod primitives;

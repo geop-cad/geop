@@ -10,6 +10,7 @@ use geop_core_sketch::Sketch;
 
 use super::Part;
 use super::ids::SketchId;
+use crate::Design;
 
 /// A sketch together with the plane it lies on: `plane.u`/`plane.v` are the
 /// sketch's `x`/`y` (unit, orthogonal), `plane.w = u x v` its unit normal.
@@ -20,7 +21,7 @@ use super::ids::SketchId;
 #[derive(Clone, Debug)]
 pub struct PlacedSketch<S: Scalar> {
     pub plane: CoordinateSystem<S>,
-    pub sketch: Sketch,
+    pub sketch: Sketch<Design>,
 }
 
 impl<S: Scalar> Part<S> {

@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 
 use geop_core_math::scalars::Scalar;
 
-use super::{Pointer, Shape, Visual};
+use super::{PartView, Pointer, Shape, Visual};
 
 /// A handle's radius, in reaches; its arrows reach three times as far along
 /// its direction.
@@ -35,8 +35,13 @@ pub struct VisualHit<'a, S: Scalar> {
 
 /// How near the pointer is to `visual`, in reaches, and where along the
 /// ray — `None` if not near enough to count. `rank` orders kinds of shapes:
-/// what is drawn small and on top wins over what is drawn large.
-fn distance<S: Scalar>(pointer: &Pointer<S>, visual: &Visual<S>) -> Option<(u8, S, S)> {
+/// what is drawn small and on top wins over what is drawn large. A placed
+/// part is hit as `view` draws it; without a view, not at all.
+fn distance<S: Scalar>(
+    pointer: &Pointer<S>,
+    visual: &Visual<S>,
+    view: Option<&PartView<S>>,
+) -> Option<(u8, S, S)> {
     let ray = &pointer.ray;
     let within = |dist: S, t: S, reaches: f64| {
         pointer
@@ -77,21 +82,24 @@ fn distance<S: Scalar>(pointer: &Pointer<S>, visual: &Visual<S>) -> Option<(u8, 
             .filter_map(|[a, b, c]| ray.intersect_triangle(a, b, c))
             .min_by(|&a, &b| nearer(a, b))
             .map(|t| (3, S::ZERO, t)),
+        Shape::Instance { name } => view?.pick_instance(name, pointer).map(|t| (3, S::ZERO, t)),
     }
 }
 
 /// The visual among those `accept` takes that the pointer is over: handles
 /// and labels first, then points, curves and areas — within each, the one
-/// nearest the pointer on screen.
+/// nearest the pointer on screen. Placed parts are hit as `view` draws
+/// them.
 pub fn hit_visuals<'a, S: Scalar>(
     visuals: &'a [Visual<S>],
     pointer: &Pointer<S>,
+    view: Option<&PartView<S>>,
     accept: impl Fn(&Visual<S>) -> bool,
 ) -> Option<VisualHit<'a, S>> {
     visuals
         .iter()
         .filter(|v| accept(v))
-        .filter_map(|v| distance(pointer, v).map(|(rank, reaches, t)| (rank, reaches, t, v)))
+        .filter_map(|v| distance(pointer, v, view).map(|(rank, reaches, t)| (rank, reaches, t, v)))
         .min_by(|a, b| a.0.cmp(&b.0).then(nearer(a.1, b.1)))
         .map(|(_, _, t, visual)| VisualHit { visual, t })
 }
@@ -139,7 +147,7 @@ mod tests {
             point("end", v(1.0, 0.0, 0.0)),
         ];
         let key = |x: f64, y: f64| {
-            hit_visuals(&visuals, &down(x, y), |_| true).map(|h| h.visual.key.clone())
+            hit_visuals(&visuals, &down(x, y), None, |_| true).map(|h| h.visual.key.clone())
         };
         assert_eq!(key(0.95, 0.0).as_deref(), Some("end"));
         assert_eq!(key(0.5, 0.05).as_deref(), Some("line"));
@@ -159,8 +167,8 @@ mod tests {
             },
             Style::Free,
         )];
-        assert!(hit_visuals(&visuals, &down(0.2, 0.1), |_| true).is_some());
-        assert!(hit_visuals(&visuals, &down(0.0, 0.0), |_| true).is_none());
+        assert!(hit_visuals(&visuals, &down(0.2, 0.1), None, |_| true).is_some());
+        assert!(hit_visuals(&visuals, &down(0.0, 0.0), None, |_| true).is_none());
     }
 
     /// In perspective, what is further away is hit from further off.
@@ -173,7 +181,7 @@ mod tests {
                 slope: S::from_f64(0.01),
             },
         };
-        assert!(hit_visuals(&visuals, &from(10.0), |_| true).is_none());
-        assert!(hit_visuals(&visuals, &from(40.0), |_| true).is_some());
+        assert!(hit_visuals(&visuals, &from(10.0), None, |_| true).is_none());
+        assert!(hit_visuals(&visuals, &from(40.0), None, |_| true).is_some());
     }
 }

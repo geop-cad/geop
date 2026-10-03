@@ -188,7 +188,11 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
                 <span className="item-label" title={item.label}>
                   {item.label}
                 </span>
-                {item.detail && <span className="item-detail">{item.detail}</span>}
+                {item.detail && (
+                  <span className="item-detail" title={item.detail}>
+                    {item.detail}
+                  </span>
+                )}
                 {item.value != null && (
                   <NumberInput
                     value={item.value}

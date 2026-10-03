@@ -1,4 +1,5 @@
-//! Forward-mode automatic differentiation for constraint residuals.
+//! Forward-mode automatic differentiation, for the residuals of the
+//! constraint solvers (sketches, assemblies).
 //!
 //! Every residual is written once, generically over [`Scalar`] (the same
 //! trait the rest of the kernel runs on), and evaluated either with a plain
@@ -6,7 +7,7 @@
 //! exact partial derivatives with respect to the constraint's own
 //! variables). A constraint touches only a handful of variables, so a dual
 //! number carries a small fixed-size gradient rather than one entry per
-//! sketch variable.
+//! solver variable.
 //!
 //! Building `Dual` over an interval [`Scalar`] rather than a bare `f64`
 //! means a residual's value is a rigorous enclosure of the true real number
@@ -15,50 +16,51 @@
 //! uncertainty about an irrational quantity shows up as interval width
 //! instead of vanishing.
 
-use geop_core_math::{
+use crate::{
     geop_error::GeopResult,
     scalars::{Field, Ring, Scalar},
 };
 
-/// The most variables a single constraint may depend on. The largest
-/// constraints (tangency or equality between two arcs) touch two arcs of
-/// five variables each.
-pub const MAX_LOCAL_VARS: usize = 10;
-
-/// A value together with its gradient with respect to up to
-/// [`MAX_LOCAL_VARS`] seeded variables.
+/// A value together with its gradient with respect to up to `N` seeded
+/// variables — as many as the residual it is computed for depends on.
 #[derive(Clone, Copy, Debug)]
-pub struct Dual<S: Scalar> {
+pub struct Dual<S: Scalar, const N: usize> {
     pub v: S,
-    pub d: [S; MAX_LOCAL_VARS],
+    pub d: [S; N],
 }
 
-impl<S: Scalar> core::fmt::Display for Dual<S> {
+impl<S: Scalar, const N: usize> core::fmt::Display for Dual<S, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(&self.v, f)
     }
 }
 
-impl<S: Scalar> Default for Dual<S> {
+impl<S: Scalar, const N: usize> Default for Dual<S, N> {
     fn default() -> Self {
         Dual::cst(S::default())
     }
 }
 
-impl<S: Scalar> Dual<S> {
+impl<S: Scalar, const N: usize> Dual<S, N> {
     /// A constant, with no dependence on any variable.
     pub fn cst(v: S) -> Self {
-        Dual {
-            v,
-            d: [S::ZERO; MAX_LOCAL_VARS],
-        }
+        Dual { v, d: [S::ZERO; N] }
     }
 
     /// The `slot`-th independent variable, with value `v`.
     pub fn var(v: S, slot: usize) -> Self {
-        let mut d = [S::ZERO; MAX_LOCAL_VARS];
+        let mut d = [S::ZERO; N];
         d[slot] = S::ONE;
         Dual { v, d }
+    }
+
+    /// The same value in a gradient of `M` variables: its own first `vars`
+    /// the ones from `slot` on — and no dependence on any other (its own
+    /// beyond `vars` it has none of).
+    pub fn embed<const M: usize>(self, slot: usize, vars: usize) -> Dual<S, M> {
+        let mut d = [S::ZERO; M];
+        d[slot..slot + vars].copy_from_slice(&self.d[..vars]);
+        Dual { v: self.v, d }
     }
 
     /// `f(self)` for a scalar function with value `v` and derivative `df =
@@ -72,7 +74,7 @@ impl<S: Scalar> Dual<S> {
     }
 }
 
-impl<S: Scalar> Ring for Dual<S> {
+impl<S: Scalar, const N: usize> Ring for Dual<S, N> {
     fn add(self, o: Self) -> Self {
         let mut d = self.d;
         for (x, y) in d.iter_mut().zip(o.d) {
@@ -96,7 +98,7 @@ impl<S: Scalar> Ring for Dual<S> {
     }
 
     fn mul(self, o: Self) -> Self {
-        let mut d = [S::ZERO; MAX_LOCAL_VARS];
+        let mut d = [S::ZERO; N];
         for (i, x) in d.iter_mut().enumerate() {
             *x = self.d[i].mul(o.v).add(o.d[i].mul(self.v));
         }
@@ -111,10 +113,10 @@ impl<S: Scalar> Ring for Dual<S> {
     }
 }
 
-impl<S: Scalar> Field for Dual<S> {
+impl<S: Scalar, const N: usize> Field for Dual<S, N> {
     fn div(self, o: Self) -> GeopResult<Self> {
         let v = self.v.div(o.v)?;
-        let mut d = [S::ZERO; MAX_LOCAL_VARS];
+        let mut d = [S::ZERO; N];
         for (i, x) in d.iter_mut().enumerate() {
             // Quotient rule: (self' - v * o') / o.v.
             *x = self.d[i].sub(v.mul(o.d[i])).div(o.v)?;
@@ -130,34 +132,34 @@ impl<S: Scalar> Field for Dual<S> {
 // because [`Scalar`] requires them, not because a constraint ever calls
 // them: the sketch solver only ever adds, multiplies, divides, and takes
 // `sqrt`/`sin`/`cos`/`abs` of a residual.
-impl<S: Scalar> Scalar for Dual<S> {
+impl<S: Scalar, const N: usize> Scalar for Dual<S, N> {
     const ZERO: Self = Dual {
         v: S::ZERO,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
     const ONE: Self = Dual {
         v: S::ONE,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
     const TWO: Self = Dual {
         v: S::TWO,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
     const E: Self = Dual {
         v: S::E,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
     const PI: Self = Dual {
         v: S::PI,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
     const INFINITY: Self = Dual {
         v: S::INFINITY,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
     const ENTIRE: Self = Dual {
         v: S::ENTIRE,
-        d: [S::ZERO; MAX_LOCAL_VARS],
+        d: [S::ZERO; N],
     };
 
     fn from_i64(v: i64) -> Self {
@@ -292,7 +294,7 @@ impl<S: Scalar> Scalar for Dual<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::scalars::scal_in_f64::ScalInF64;
+    use crate::scalars::scal_in_f64::ScalInF64;
 
     /// Every operation's derivative against a central difference.
     #[test]
@@ -304,8 +306,8 @@ mod tests {
         }
         let (x, y) = (0.7, -1.3);
         let d = f(
-            Dual::<ScalInF64>::var(ScalInF64::from_f64(x), 0),
-            Dual::<ScalInF64>::var(ScalInF64::from_f64(y), 1),
+            Dual::<ScalInF64, 2>::var(ScalInF64::from_f64(x), 0),
+            Dual::<ScalInF64, 2>::var(ScalInF64::from_f64(y), 1),
         );
         let h = 1e-6;
         let fv = |x: f64, y: f64| f(ScalInF64::from_f64(x), ScalInF64::from_f64(y)).to_f64();

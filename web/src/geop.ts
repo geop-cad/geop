@@ -27,7 +27,8 @@ export type DatumComponent = { axis: FrameAxis } | { plane: FrameAxis };
  * Something picked in the viewport (see `geop_ops::EntityRef`): an entity
  * of the part by name — for a frame datum, perhaps one of its axes or
  * planes; for a sketch, perhaps one of its curves, by id. Every part has the
- * frame datum `origin`.
+ * frame datum `origin`. An entity of a part placed in this one is named
+ * behind the placing step's id: `bolt/extrude(head,end)`.
  */
 export type EntityRef =
   | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch"; name: string }
@@ -81,6 +82,18 @@ export interface Extent {
   size: number;
 }
 
+/**
+ * A part placed in the part drawn — however deep — drawn as its component's
+ * view (see [[SceneState.components]]) in its own `frame`.
+ */
+export interface ViewInstance {
+  /** Its name in the part drawn: `bolt`, or `asm/bolt`. Its entities are named behind it. */
+  name: string;
+  /** The key of its component's view. */
+  component: string;
+  frame: Frame;
+}
+
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
   vertices: { name: string; at: Vec3 }[];
@@ -97,6 +110,8 @@ export interface PartView {
   datums: DatumInfo[];
   /** The part's solids, oldest first. */
   solids: string[];
+  /** The parts placed in it, drawn by reference. */
+  instances: ViewInstance[];
   extent: Extent;
 }
 
@@ -117,8 +132,19 @@ export interface Step {
   args: unknown;
 }
 
+/** A pose, as a file has it: a position and a rotation quaternion `[w, x, y, z]`. */
+export interface Pose {
+  position: Vec3;
+  rotation: [number, number, number, number];
+}
+
+/**
+ * A program: its steps — its structure — and its state — the parameters it is built with,
+ * by name: where every placed part is (`bolt.pose`), solved by the kernel.
+ */
 export interface Program {
   steps: Step[];
+  state?: Record<string, number | Pose>;
 }
 
 // ── editing ──────────────────────────────────────────────────────────────────
@@ -237,7 +263,9 @@ export type Shape =
   | { shape: "triangles"; triangles: [Vec3, Vec3, Vec3][] }
   /** Moved by `offset`, in reaches (see [[REACH_PX]]). */
   | { shape: "label"; at: Vec3; text: string; offset: Vec3 }
-  | { shape: "handle"; at: Vec3; direction: Vec3 };
+  | { shape: "handle"; at: Vec3; direction: Vec3 }
+  /** A placed part, by its instance's name, drawn lit when hovered or selected. */
+  | { shape: "instance"; name: string };
 
 export type Style =
   | "free"
@@ -279,10 +307,17 @@ export type Command =
   | { command: "remove"; id: string }
   | { command: "move"; id: string; index: number }
   | { command: "seek"; marker: number | null }
-  | { command: "load"; program: Program }
+  /** `path`: the file the program is in, which the files it places are named relative to. */
+  | { command: "load"; program: Program; path?: string }
+  /** The other program files are now these, by path: their text, or `null` for one that is gone. */
+  | { command: "files"; files: Record<string, string | null> }
   | { command: "load_example"; name: string }
+  /** Add the files of an example of several files, put in `folder`, and edit the first. */
+  | { command: "load_workspace_example"; name: string; folder?: string }
   | { command: "undo" }
-  | { command: "redo" };
+  | { command: "redo" }
+  /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
+  | { command: "drag_tool"; on: boolean };
 
 /** A step of the program, as a list of steps shows it. */
 export interface StepInfo {
@@ -299,19 +334,27 @@ export interface StepInfo {
 
 export interface ProgramState {
   program: Program;
+  /** The file it is in. */
+  path: string;
   steps: StepInfo[];
   /** How many steps run: new steps go there. */
   marker: number;
   can_undo: boolean;
   can_redo: boolean;
+  /** Whether the drag tool is in hand. */
+  drag_tool: boolean;
   operations: OperationInfo[];
   examples: string[];
+  /** Examples of several files, for [[Command]] `load_workspace_example`. */
+  workspace_examples: string[];
 }
 
 export interface SceneState {
   part: PartView;
   /** Sketches and datums, by name, not to draw. */
   hidden: string[];
+  /** The views of components not sent before, by key: keep them, they are not sent again. */
+  components: Record<string, PartView>;
 }
 
 export interface StepState {
@@ -336,6 +379,10 @@ export interface Update {
   scene: SceneState | null;
   /** The step being edited, if one is. */
   step: StepState | null;
+  /** The program files the command added, the one now edited first. */
+  files: { path: string; program: Program }[] | null;
+  /** What the drag tool shows, while it is in hand and no step is edited. */
+  tool: Presentation | null;
 }
 
 /** Apply `command` in the kernel, and get back what to show now. */

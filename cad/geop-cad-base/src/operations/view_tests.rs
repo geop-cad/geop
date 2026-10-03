@@ -1,17 +1,18 @@
 //! Picking with a [`PartView`]: what a pointer is over, as drawn.
 
+use crate::examples::n;
 use geop_core_math::{
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_sketch::Sketch;
 use geop_ops::{
     EntityRef, ORIGIN, Part, PlacedSketch,
     operation::Role,
     ui::{PartView, Pointer, Reach},
 };
 use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_sketch::Sketch;
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
@@ -92,7 +93,7 @@ fn sketches() {
     let mut square = Sketch::new();
     let p: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
         .iter()
-        .map(|c| square.add_point(c[0], c[1]))
+        .map(|c| square.add_point(n(c[0]), n(c[1])))
         .collect();
     for i in 0..4 {
         square.add_line(p[i], p[(i + 1) % 4]);
@@ -195,7 +196,7 @@ fn sketch_lines() {
     let mut square = Sketch::new();
     let p: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
         .iter()
-        .map(|c| square.add_point(c[0], c[1]))
+        .map(|c| square.add_point(n(c[0]), n(c[1])))
         .collect();
     let right = square.add_line(p[1], p[2]);
     for i in [0, 2, 3] {

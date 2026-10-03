@@ -7,7 +7,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops::operation::{Aspects, Role};
-use geop_ops::{EntityRef, ORIGIN, Operation, Part};
+use geop_ops::{EntityRef, NoFiles, ORIGIN, Operation, Part};
 use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, fitting_constructions};
 
 use crate::examples;
@@ -35,7 +35,7 @@ fn base(normal: FrameAxis) -> EntityRef {
 /// The 2 x 2 x 1 box with a hole of radius 0.4 drilled 0.5 deep into
 /// the middle of its top.
 fn drilled_box() -> Part<S> {
-    examples::box_with_drill_hole().build().unwrap()
+    examples::box_with_drill_hole().build(&NoFiles).unwrap()
 }
 
 /// The datum built from `selection` by `construction` in `part`.
@@ -44,7 +44,7 @@ fn datum(part: &Part<S>, selection: Vec<EntityRef>, construction: Construction) 
         selection,
         construction,
     };
-    let part = AddDatum.apply(part.clone(), "d", &args).unwrap();
+    let part = AddDatum.apply(part.clone(), "d", &args, &NoFiles).unwrap();
     part.datum(part.datum_id("d").unwrap()).unwrap().clone()
 }
 
@@ -132,7 +132,7 @@ fn sketch_points_and_lines() {
             .sketch
             .points
             .iter()
-            .find(|(_, p)| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9)
+            .find(|(_, p)| (p.x.to_f64() - x).abs() < 1e-9 && (p.y.to_f64() - y).abs() < 1e-9)
             .unwrap();
         EntityRef::SketchPoint {
             sketch: "outline".into(),
@@ -179,7 +179,9 @@ fn points() {
         selection: vec![edge("extrude(box,outline,c4,end)")],
         construction: Construction::EdgePoint { position: 0.25 },
     };
-    let with_point = AddDatum.apply(part.clone(), "on_edge", &on_edge).unwrap();
+    let with_point = AddDatum
+        .apply(part.clone(), "on_edge", &on_edge, &NoFiles)
+        .unwrap();
     let d = with_point
         .datum(with_point.datum_id("on_edge").unwrap())
         .unwrap();
@@ -356,6 +358,7 @@ fn planes() {
                 selection: vec![top.clone()],
                 construction: Construction::Offset { distance: 1.0 },
             },
+            &NoFiles,
         )
         .unwrap();
     let d = datum(
@@ -436,7 +439,7 @@ fn planes() {
 #[test]
 fn sketches_go_on_datum_planes() {
     let program = examples::boss_on_reference_plane();
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     part.check_names().unwrap();
     let placed = part.sketch(part.sketch_id("boss_sketch").unwrap()).unwrap();
     let lifted = part.datum(part.datum_id("lifted").unwrap()).unwrap();
@@ -459,7 +462,7 @@ fn frames() {
         ],
         construction: Construction::FrameThreePoints {},
     };
-    let part = AddDatum.apply(part, "cs", &args).unwrap();
+    let part = AddDatum.apply(part, "cs", &args, &NoFiles).unwrap();
     let d = part.datum(part.datum_id("cs").unwrap()).unwrap();
     assert_eq!(d.kind, DatumKind::Frame);
     // x from (2, 0, 1) to (2, 2, 1); the third point (0, 0, 0) tilts the
@@ -490,7 +493,7 @@ fn frames() {
         ],
         ..args
     };
-    let Err(e) = AddDatum.apply(part, "degenerate", &args) else {
+    let Err(e) = AddDatum.apply(part, "degenerate", &args, &NoFiles) else {
         panic!("a frame with no x axis");
     };
     assert!(e.to_string().contains("one line"), "{e}");

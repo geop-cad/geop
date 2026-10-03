@@ -8,8 +8,11 @@
 //!
 //! - [`part`]: a complete CAD [`Part`] — a [`geop_core_topology::Model`],
 //!   the sketches and datums used to build it, starting with the frame
-//!   [`ORIGIN`], and a stable name for every entity in it (see
+//!   [`ORIGIN`], the parts placed in it — each a part of its own, at a pose
+//!   — and a stable name for every entity in it (see
 //!   [Topological naming](#topological-naming)).
+//! - [`assembly`]: the mates holding the parts placed in a part together,
+//!   and solving them.
 //! - [`operation`]: what an operation is. Built, a step maps a part and
 //!   its arguments to a new part; edited, it shows a
 //!   [`Form`](ui::Form) — fields and visuals — and has its fields set:
@@ -40,7 +43,9 @@
 //!   from scratch. A program is design data: it serializes to JSON and
 //!   back without losing anything, and rebuilding the read-back program
 //!   gives the same part, name for name. [`ProgramRunner`] builds it
-//!   incrementally, stopping wherever an editor asks.
+//!   incrementally, stopping wherever an editor asks. The parts a program
+//!   places come from other programs, found in a [`Library`] — a
+//!   [`Workspace`] of files, which must not place each other in a cycle.
 //!
 //! # Parts
 //!
@@ -74,23 +79,36 @@
 //! Operation ids are restricted to [`validate_operation_id`]'s alphabet, so
 //! the arguments of a name — which may themselves be names — can always be
 //! told apart.
+//!
+//! A part placed in another is named by the step that placed it, and its
+//! entities by their names in it behind that one:
+//! `bolt/extrude(head,end)` (see [`operation::INSTANCE_SEPARATOR`]). The
+//! part placed keeps every name it has in its own file, so a reference into
+//! it is as stable as one into the part itself.
 
 // The derives in `geop_ops_derive` name this crate by its path, which has
 // to resolve inside it too.
 extern crate self as geop_ops;
 
+/// The scalar a program holds its design data in — a sketch's points, the
+/// poses of the parts it places, the values of its mates: what a file
+/// holds, read as sharp values and written as their midpoints. A part is
+/// built in any scalar; the design data is cast to it.
+pub type Design = geop_core_math::scalars::ScalInF64;
+
+pub mod assembly;
 pub mod operation;
 pub mod part;
 pub mod program;
 pub mod ui;
 
 pub use part::{
-    DatumId, EdgeDescription, FaceDescription, NameRegistry, Namer, ORIGIN, Part, PartDescription,
-    PlacedSketch, RefId, SketchId, validate_operation_id,
+    Component, DatumId, EdgeDescription, FaceDescription, Instance, InstanceId, NameRegistry,
+    Namer, ORIGIN, Part, PartDescription, PlacedSketch, RefId, SketchId, validate_operation_id,
 };
 
-pub use operation::{EntityRef, Operation, OperationInfo, Operations};
-pub use program::{Program, ProgramRunner, Step, StepResult};
+pub use operation::{Context, EntityRef, Operation, OperationInfo, Operations};
+pub use program::{Files, Library, NoFiles, Program, ProgramRunner, Step, StepResult, Workspace};
 
 #[doc(hidden)]
 /// What `#[derive(Operations)]` writes refers to, so a crate using it needs

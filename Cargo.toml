@@ -5,12 +5,14 @@ members = [
     "core/geop-core-geometry",
     "core/geop-core-topology",
     "core/geop-core-sketch",
+    "core/geop-core-solve",
     "ops/geop-ops",
     "ops/geop-ops-derive",
     "ops/geop-ops-sketch",
     "ops/geop-ops-datums",
     "ops/geop-ops-extrude-revolve",
     "ops/geop-ops-booleans",
+    "ops/geop-ops-assembly",
     "ops/geop-ops-rasterize",
     "cad/geop-cad-base",
     "cad/geop-cad-web",
@@ -26,12 +28,14 @@ geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }
 geop-core-sketch = { path = "core/geop-core-sketch" }
+geop-core-solve = { path = "core/geop-core-solve" }
 geop-ops = { path = "ops/geop-ops" }
 geop-ops-derive = { path = "ops/geop-ops-derive" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-datums = { path = "ops/geop-ops-datums" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
 geop-ops-booleans = { path = "ops/geop-ops-booleans" }
+geop-ops-assembly = { path = "ops/geop-ops-assembly" }
 geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: without it, parsing a float may land one ULP off the

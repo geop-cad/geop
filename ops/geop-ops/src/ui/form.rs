@@ -5,7 +5,7 @@
 //! value goes to, side by side (see [`Form::number`], [`Form::reference`],
 //! ...). [`crate::Operation::set`] finds a field's setter by its key, so an
 //! operation never matches keys itself. A setter may capture what the form
-//! was built from — the part before the step — for what setting a field
+//! was built from — the step's context, the part before it — for what setting a field
 //! implies for others: another sketch picked brings its own axis, a
 //! selection picks the construction it fits.
 
@@ -14,14 +14,20 @@ use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar};
 use super::{
     Action, Choice, Control, Dialog, ListItem, Number, Picked, Reference, Tone, Value, Visual,
 };
-use crate::operation::{EntityRef, Role};
+use crate::{
+    assembly::Drag,
+    operation::{EntityRef, Role},
+    part::State,
+};
 
-/// What a setter edits: the step's arguments, its session, and the keys of
-/// the visuals selected.
+/// What a setter edits: the step's arguments, its session, the keys of the
+/// visuals selected, and the program's state — the parameters its steps
+/// read, which an edit may set: where a placed part is put.
 pub struct Edit<'e, A, T> {
     pub args: &'e mut A,
     pub session: &'e mut T,
     pub selection: &'e mut Vec<String>,
+    pub state: &'e mut State,
 }
 
 /// What setting a field does.
@@ -40,6 +46,9 @@ pub struct Form<'a, S: Scalar, A = (), T = ()> {
     /// Whether the operation has a tool in hand — drawing a line, say — so
     /// that clicks go to it rather than select.
     pub tool: bool,
+    /// The placed parts the step is dragging, by the parameters their poses
+    /// are: the editor solves the program with them pulled.
+    pub drags: Vec<Drag<S>>,
     setters: Vec<(String, Setter<'a, A, T>)>,
 }
 
@@ -50,6 +59,7 @@ impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
             visuals: Vec::new(),
             focus: None,
             tool: false,
+            drags: Vec::new(),
             setters: Vec::new(),
         }
     }
@@ -69,13 +79,14 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
     }
 
     /// The form as an editor reads it: what it shows, without what setting
-    /// its fields does.
-    pub fn erase(self) -> Form<'a, S> {
+    /// its fields does — and so borrowing nothing its setters did.
+    pub fn erase<'b>(self) -> Form<'b, S> {
         Form {
             dialog: self.dialog,
             visuals: self.visuals,
             focus: self.focus,
             tool: self.tool,
+            drags: self.drags,
             setters: Vec::new(),
         }
     }

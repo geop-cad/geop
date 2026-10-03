@@ -6,6 +6,7 @@ import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, type CameraPose, type Projection } 
 import { DatumLayer } from "./datums3d";
 import {
   sameEntity,
+  type DatumInfo,
   type DatumKind,
   type EntityRef,
   type Frame,
@@ -15,6 +16,7 @@ import {
   type Reach,
   type Role,
   type Vec3,
+  type ViewInstance,
   type Visual,
 } from "./geop";
 import { PlaneGrid } from "./planeGrid";
@@ -126,6 +128,8 @@ function flatten(part: PartView): Scene {
 interface Props {
   /** The part to draw, with its datums. */
   part: PartView;
+  /** The views of the components the part's instances are drawn from, by key. */
+  components: Record<string, PartView>;
   /** What the step being edited shows, drawn over the model. */
   visuals?: Visual[];
   /** What to draw highlighted — what is picked, what a click would pick. */
@@ -141,8 +145,11 @@ interface Props {
   plane?: Frame | null;
   /** Whether a press where the pointer hovers starts a drag, sent to [[Props.onPointer]], rather than moving the camera. */
   grab?: boolean;
-  /** What the user does with the pointer: hovers, clicks, drags — as rays. */
-  onPointer?: (event: PointerEvent_) => void;
+  /**
+   * What the user does with the pointer: hovers, clicks, drags — as rays.
+   * Resolves to whether a press where the pointer now is grabs.
+   */
+  onPointer?: (event: PointerEvent_) => Promise<boolean>;
   /** How the view projects; switching keeps the view (see [[Projection]]). */
   projection: Projection;
   /** A pose to glide to; set it to move the camera, `null` to leave it alone. */
@@ -360,6 +367,42 @@ function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[
   group.add(overlay);
 }
 
+/** Where `frame` puts what is drawn in its own coordinates. */
+function frameMatrix(frame: Frame): THREE.Matrix4 {
+  return new THREE.Matrix4().makeBasis(vec(frame.u), vec(frame.v), vec(frame.w)).setPosition(vec(frame.origin));
+}
+
+/** The entities of `refs` that lie in the placed part `instance`, as it names them. */
+function localTo(instance: string, refs: EntityRef[]): EntityRef[] {
+  const prefix = `${instance}/`;
+  return refs.flatMap((r): EntityRef[] => {
+    if (r.type === "SketchCurve" || r.type === "SketchPoint") {
+      return r.sketch.startsWith(prefix) ? [{ ...r, sketch: r.sketch.slice(prefix.length) }] : [];
+    }
+    return r.name.startsWith(prefix) ? [{ ...r, name: r.name.slice(prefix.length) }] : [];
+  });
+}
+
+/** The datums of the placed part `instance` — drawn from `view` — where it is, named behind it. */
+function placedDatums(instance: ViewInstance, view: PartView | undefined): DatumInfo[] {
+  if (!view) return [];
+  const m = frameMatrix(instance.frame);
+  const point = (p: Vec3) => arr(vec(p).applyMatrix4(m));
+  const direction = (d: Vec3) => arr(vec(d).transformDirection(m));
+  return view.datums.map((d) => ({
+    name: `${instance.name}/${d.name}`,
+    kind: d.kind,
+    frame: { origin: point(d.frame.origin), u: direction(d.frame.u), v: direction(d.frame.v), w: direction(d.frame.w) },
+  }));
+}
+
+/** A placed part as drawn: its component's scene, in a group moved to where it is. */
+interface Placed {
+  component: string;
+  scene: Scene;
+  group: THREE.Group;
+}
+
 /** Free every geometry and material a group owns. */
 function disposeGroup(group: THREE.Object3D) {
   group.traverse((o) => {
@@ -387,6 +430,7 @@ function disposeGroup(group: THREE.Object3D) {
  */
 export function SceneViewer({
   part,
+  components,
   visuals,
   highlights,
   pickable,
@@ -410,6 +454,14 @@ export function SceneViewer({
   pickableRef.current = pickable ?? [];
   const partRef = useRef(part);
   partRef.current = part;
+  // Every datum drawn: the part's own, and those of the parts placed in it,
+  // where they are.
+  const datums = useMemo(
+    () => [...part.datums, ...part.instances.flatMap((i) => placedDatums(i, components[i.component]))],
+    [part, components],
+  );
+  const datumsRef = useRef(datums);
+  datumsRef.current = datums;
   const hiddenRef = useRef(hidden ?? []);
   hiddenRef.current = hidden ?? [];
   const planeRef = useRef(plane ?? null);
@@ -437,9 +489,14 @@ export function SceneViewer({
   const projectionRef = useRef(projection);
   projectionRef.current = projection;
 
+  // The placed parts drawn, by instance name: groups of the three.js scene
+  // below, so gone with it.
+  const placedRef = useRef(new Map<string, Placed>());
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const placed = placedRef.current;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -559,29 +616,78 @@ export function SceneViewer({
           : { type: "cone", slope: (REACH_PX * 2 * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2)) / height };
       return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach };
     };
-    const send = (event: PointerEvent_) => onPointerRef.current?.(event);
+    const send = (event: PointerEvent_) => onPointerRef.current?.(event) ?? Promise.resolve(false);
 
     // A press: a click if it does not move, else the camera's — or, where
     // the hover offered a grab, a drag of what is under it.
-    let press: { x: number; y: number; button: number; grabbed: boolean; from: Pointer; moved: boolean } | null = null;
+    let press: {
+      id: number;
+      x: number;
+      y: number;
+      button: number;
+      grabbed: boolean;
+      from: Pointer;
+      moved: boolean;
+    } | null = null;
     let lastClick: { x: number; y: number; time: number } | null = null;
     // The latest pointer position, handled once per frame.
     let pendingHover: { x: number; y: number } | "leave" | null = null;
     let pendingDrag: { x: number; y: number } | null = null;
+    /** Whether a hover or drag is sent and not yet answered. */
+    let following = false;
 
-    const onPointerDown = (e: PointerEvent) => {
-      if (moveRef.current) return;
-      const grabbed = e.button === 0 && grabRef.current;
-      press = { x: e.clientX, y: e.clientY, button: e.button, grabbed, from: pointerAt(e.clientX, e.clientY), moved: false };
+    // A finger never hovers, so whether its press grabs is not known yet
+    // when it lands: the press is held back from the controls while the
+    // kernel is asked, and handed to them after all if it does not grab.
+    let asking: number | null = null;
+    let replaying = false;
+    const take = (e: PointerEvent, grabbed: boolean) => {
+      press = {
+        id: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        button: e.button,
+        grabbed,
+        from: pointerAt(e.clientX, e.clientY),
+        moved: false,
+      };
       if (grabbed) {
         // The drag is the step's: neither the controls nor a click see it.
-        e.stopPropagation();
         controls.enabled = false;
         container.setPointerCapture(e.pointerId);
       }
     };
+    const onPointerDown = (e: PointerEvent) => {
+      if (moveRef.current || replaying) return;
+      // A second finger is the camera's: a pinch, or a two-finger pan.
+      if (e.pointerType === "touch" && (asking != null || press != null)) {
+        if (press?.grabbed) e.stopPropagation();
+        return;
+      }
+      if (e.pointerType === "touch" && e.button === 0) {
+        e.stopPropagation();
+        asking = e.pointerId;
+        const landed = new PointerEvent("pointerdown", e);
+        void send({ type: "hover", pointer: pointerAt(e.clientX, e.clientY) }).then((grabbed) => {
+          // Lifted, or the view moved, while asking: the press is gone.
+          if (asking !== e.pointerId) return;
+          asking = null;
+          take(e, grabbed);
+          if (!grabbed) {
+            replaying = true;
+            renderer.domElement.dispatchEvent(landed);
+            replaying = false;
+          }
+        });
+        return;
+      }
+      const grabbed = e.button === 0 && grabRef.current;
+      take(e, grabbed);
+      if (grabbed) e.stopPropagation();
+    };
     const onPointerMove = (e: PointerEvent) => {
       if (press) {
+        if (e.pointerId !== press.id) return;
         if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_PX) press.moved = true;
         if (press.grabbed && press.moved) pendingDrag = { x: e.clientX, y: e.clientY };
         return;
@@ -589,9 +695,14 @@ export function SceneViewer({
       if (e.buttons === 0) pendingHover = { x: e.clientX, y: e.clientY };
     };
     const onPointerUp = (e: PointerEvent) => {
+      if (asking === e.pointerId) {
+        // Lifted before the kernel answered: a tap.
+        asking = null;
+        take(e, false);
+      }
       const done = press;
+      if (!done || e.pointerId !== done.id) return;
       press = null;
-      if (!done) return;
       if (done.grabbed) {
         controls.enabled = !moveRef.current;
         pendingDrag = null;
@@ -616,6 +727,17 @@ export function SceneViewer({
         shift: e.shiftKey,
       });
     };
+    // Taken from us — by the system, say: a drag ends where it was, a
+    // press is no click.
+    const onPointerCancel = (e: PointerEvent) => {
+      if (asking === e.pointerId) asking = null;
+      if (press?.id !== e.pointerId) return;
+      if (press.grabbed && press.moved) onPointerUp(e);
+      else {
+        if (press.grabbed) controls.enabled = !moveRef.current;
+        press = null;
+      }
+    };
     const onPointerLeave = () => {
       pendingHover = "leave";
     };
@@ -625,6 +747,7 @@ export function SceneViewer({
     container.addEventListener("pointerdown", onPointerDown, { capture: true });
     container.addEventListener("pointermove", onPointerMove);
     container.addEventListener("pointerup", onPointerUp);
+    container.addEventListener("pointercancel", onPointerCancel);
     container.addEventListener("pointerleave", onPointerLeave);
     container.addEventListener("contextmenu", onContextMenu);
 
@@ -658,19 +781,33 @@ export function SceneViewer({
       if (camera === orthographic) fitOrthographic();
       const height = container.clientHeight;
 
-      const hover = pendingHover;
-      pendingHover = null;
-      if (hover === "leave") send({ type: "leave" });
-      else if (hover) send({ type: "hover", pointer: pointerAt(hover.x, hover.y) });
-      const drag = pendingDrag;
-      pendingDrag = null;
-      if (drag && press) send({ type: "drag", from: press.from, to: pointerAt(drag.x, drag.y), done: false });
+      // One hover or drag in flight at a time, the latest pointer sent once
+      // it is answered: a kernel slower than a frame — a native one, a
+      // message away — falls behind by one answer, not by a growing queue.
+      if (!following) {
+        const hover = pendingHover;
+        pendingHover = null;
+        const drag = pendingDrag;
+        pendingDrag = null;
+        const event: PointerEvent_ | null =
+          drag && press
+            ? { type: "drag", from: press.from, to: pointerAt(drag.x, drag.y), done: false }
+            : hover === "leave"
+              ? { type: "leave" }
+              : hover
+                ? { type: "hover", pointer: pointerAt(hover.x, hover.y) }
+                : null;
+        if (event) {
+          following = true;
+          void send(event).finally(() => (following = false));
+        }
+      }
       renderer.domElement.style.cursor = press?.grabbed ? "grabbing" : grabRef.current ? "grab" : "";
 
       const lit = highlightsRef.current;
       const hidden = hiddenRef.current.filter((name) => !lit.some((l) => sameEntity(l, { type: "Datum", name })));
-      const { datums, extent } = partRef.current;
-      datumLayer.sync(datums, hidden, extent.size, vec(extent.center));
+      const { extent } = partRef.current;
+      datumLayer.sync(datumsRef.current, hidden, extent.size, vec(extent.center));
       datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);
       visualLayer.sync(visualsRef.current);
       visualLayer.update(camera, height, controls.target);
@@ -688,6 +825,7 @@ export function SceneViewer({
       container.removeEventListener("pointerdown", onPointerDown, { capture: true });
       container.removeEventListener("pointermove", onPointerMove);
       container.removeEventListener("pointerup", onPointerUp);
+      container.removeEventListener("pointercancel", onPointerCancel);
       container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("contextmenu", onContextMenu);
       controls.dispose();
@@ -697,6 +835,9 @@ export function SceneViewer({
       sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
+      // The placed parts were groups of this scene: built again in the next.
+      for (const entry of placed.values()) disposeGroup(entry.group);
+      placed.clear();
     };
   }, []);
 
@@ -731,13 +872,75 @@ export function SceneViewer({
     applyHighlight(group, scene, highlightsRef.current, hiddenRef.current);
   }, [scene]);
 
-  // Re-tint in place when the highlights or what is hidden change: nothing is rebuilt.
-  const appearanceKey = JSON.stringify([highlights ?? [], hidden ?? []]);
+  // The placed parts: each built once from its component's view, and only
+  // moved — its group's matrix set — when it moves.
+  /** Light the placed parts as the highlights, what is hidden and the visuals lighting them say. */
+  const lightPlaced = () => {
+    const lit = new Set(
+      visualsRef.current.flatMap((v) =>
+        v.shape === "instance" && (v.style === "hover" || v.style === "selected") ? [v.name] : [],
+      ),
+    );
+    for (const [name, placed] of placedRef.current) {
+      const highlights = localTo(name, highlightsRef.current);
+      if (lit.has(name)) {
+        const view = components[placed.component];
+        highlights.push(...(view?.solids ?? []).map((solid): EntityRef => ({ type: "Solid", name: solid })));
+      }
+      const hiddenHere = hiddenRef.current.flatMap((h) => (h.startsWith(`${name}/`) ? [h.slice(name.length + 1)] : []));
+      applyHighlight(placed.group, placed.scene, highlights, hiddenHere);
+    }
+  };
+  useEffect(() => {
+    const threeScene = sceneRef.current;
+    if (!threeScene) return;
+    const placed = placedRef.current;
+    const present = new Set(part.instances.map((i) => i.name));
+    for (const [name, entry] of placed) {
+      const instance = part.instances.find((i) => i.name === name);
+      if (present.has(name) && instance?.component === entry.component) continue;
+      threeScene.remove(entry.group);
+      disposeGroup(entry.group);
+      placed.delete(name);
+    }
+    for (const instance of part.instances) {
+      let entry = placed.get(instance.name);
+      if (!entry) {
+        const view = components[instance.component];
+        if (!view) continue;
+        const scene = flatten(view);
+        const group = buildSceneGroup(scene);
+        group.matrixAutoUpdate = false;
+        threeScene.add(group);
+        entry = { component: instance.component, scene, group };
+        placed.set(instance.name, entry);
+      }
+      entry.group.matrix.copy(frameMatrix(instance.frame));
+      entry.group.matrixWorldNeedsUpdate = true;
+    }
+    lightPlaced();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [part, components]);
+
+  // Re-tint in place when the highlights, what is hidden or what the
+  // visuals light change: nothing is rebuilt.
+  const appearanceKey = JSON.stringify([
+    highlights ?? [],
+    hidden ?? [],
+    (visuals ?? []).flatMap((v) => (v.shape === "instance" ? [[v.name, v.style]] : [])),
+  ]);
   useEffect(() => {
     if (groupRef.current) applyHighlight(groupRef.current, scene, highlightsRef.current, hiddenRef.current);
+    lightPlaced();
     // `scene` is the one the group was built from: a new one rebuilds it above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appearanceKey]);
 
-  return <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%", minHeight: 0 }} />;
+  // No touch is the browser's to scroll or zoom the page by: every one is the view's.
+  return (
+    <div
+      ref={containerRef}
+      style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, touchAction: "none" }}
+    />
+  );
 }

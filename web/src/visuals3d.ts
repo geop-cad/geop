@@ -78,6 +78,9 @@ function build(visual: Visual): THREE.Object3D {
       label.position.set(...visual.at);
       return label;
     }
+    case "instance":
+      // Drawn by the scene already; the scene lights it (see SceneViewer).
+      return new THREE.Group();
     case "handle": {
       const group = new THREE.Group();
       const material = () => overlay(new THREE.MeshBasicMaterial({ color }));

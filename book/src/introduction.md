@@ -16,8 +16,8 @@ core/geop-core-math          scalars, interval arithmetic, linear algebra,
                               convex hulls, error type, frames, rays, datums
 core/geop-core-geometry      NURBS curves/surfaces, containment, intersection
 core/geop-core-topology      B-rep structures, Euler operators, edit/validation
-core/geop-core-sketch        2-D constraint sketches: entities, constraints,
-                              BFGS solver, profile extraction
+core/geop-core-sketch        2-D constraint sketches: entities, constraints
+                              as residuals, profile extraction
 ops/geop-ops                 parts (topology, sketches, datums, every entity
                               with a stable name), what an operation is and
                               how it is edited (events, dialogs, visuals, hit

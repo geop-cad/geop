@@ -37,6 +37,7 @@ jobs:
             --only cross_drilled_shaft \
             --only handle_with_hole \
             --only luggage_tag \
+            --only four_bar \
             --only bracket
 
       # three.js is served from the site itself rather than a CDN, so a

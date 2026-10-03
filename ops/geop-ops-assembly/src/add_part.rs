@@ -1,0 +1,165 @@
+//! [`AddPart`]: place the part another program file builds in the part.
+
+use std::collections::BTreeMap;
+
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult, WithContext},
+    primitives::Pose,
+    scalars::Scalar,
+    with_context,
+};
+use geop_ops::{
+    Context, Instance, Library, Namer, Part,
+    assembly::Mate,
+    operation::INSTANCE_SEPARATOR,
+    operation::Operation,
+    part::{ParamValue, State, pose_parameter},
+    ui::{CanvasEvent, Edit, Form},
+};
+use serde::{Deserialize, Serialize};
+
+use crate::editor::{self, PartSession};
+
+/// Places the part the program in another file builds, named by the
+/// step's id: its entities are then the part's, behind that name —
+/// `bolt/extrude(head,end)` (see [`geop_ops::operation::INSTANCE_SEPARATOR`]).
+///
+/// The part goes where the program's parameter `<id>.pose` puts it (see
+/// [`geop_ops::part::State`]), and the step adds its mates. It solves
+/// nothing: where every placed part is, so that every mate of the program
+/// holds, is the program's state, which solving the program changes (see
+/// [`geop_ops::assembly`]). So every step sees each placed part where it
+/// ends up, however late the mates that put it there are.
+///
+/// Mates that cannot hold do not fail the step — the parts are left as near
+/// to holding them as they get, as a sketch whose constraints conflict is —
+/// and the step's editor says which.
+///
+/// Placed `flexible`, every parameter of the program placed becomes one of
+/// this program's, named behind the step's id and starting where that
+/// program has it, and the part is built with them (see
+/// [`geop_ops::Library::component`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AddPart;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AddPartArgs {
+    /// The program file whose part is placed, relative to this program's
+    /// own file; empty until one is chosen.
+    #[serde(default)]
+    pub file: String,
+    /// Never moved by any mate — this step's or a later one's.
+    #[serde(default)]
+    pub fixed: bool,
+    /// Whether the parts placed in the part placed are this program's to
+    /// move: their poses become parameters of this program's state, named behind the
+    /// step's id — `hinge/pin.pose` — and the mates holding them are solved
+    /// with this program's. Placed rigid, the part moves as one, its parts
+    /// where its own file puts them.
+    #[serde(default)]
+    pub flexible: bool,
+    /// The mates this step adds, by an id of their own: `m1`, `m2`, ...
+    /// Each is named `add_part(step,id)` in the part.
+    #[serde(default)]
+    pub mates: BTreeMap<String, Mate>,
+}
+
+impl Operation for AddPart {
+    type Args = AddPartArgs;
+    type Session = PartSession;
+
+    const PICKS_BUILT: bool = true;
+
+    /// No file yet; the first part placed is fixed, the ones after it are
+    /// not — something has to stay put for the others to mate to.
+    fn new_args<S: Scalar>(&self, before: &Part<S>) -> AddPartArgs {
+        AddPartArgs {
+            file: String::new(),
+            fixed: before.instances().next().is_none(),
+            flexible: false,
+            mates: BTreeMap::new(),
+        }
+    }
+
+    fn apply<S: Scalar>(
+        &self,
+        mut part: Part<S>,
+        operation_id: &str,
+        args: &AddPartArgs,
+        library: &dyn Library<S>,
+    ) -> GeopResult<Part<S>> {
+        let ctx = with_context!("add_part({operation_id}, file={:?})", args.file);
+        if args.file.is_empty() {
+            return Err(GeopError::new("choose a file to place")).with_context(ctx);
+        }
+        // Placed flexibly, its parameters are this program's.
+        let mut overrides = State::new();
+        if args.flexible {
+            let own = library
+                .component(&args.file, &State::new())
+                .with_context(ctx)?;
+            for (name, value) in own.part.state() {
+                let outer = format!("{operation_id}{INSTANCE_SEPARATOR}{name}");
+                let value = match *value {
+                    ParamValue::Pose(pose) => {
+                        ParamValue::Pose(part.pose_parameter(&outer, pose).with_context(ctx)?)
+                    }
+                    ParamValue::Number(_) => {
+                        return Err(GeopError::new(format!(
+                            "the number parameter {name:?} cannot be placed flexibly yet"
+                        )))
+                        .with_context(ctx);
+                    }
+                };
+                overrides.insert(name.clone(), value);
+            }
+        }
+        let component = library
+            .component(&args.file, &overrides)
+            .with_context(ctx)?;
+        let parameter = pose_parameter(operation_id);
+        let pose = part
+            .pose_parameter(&parameter, Pose::identity())
+            .with_context(ctx)?;
+        let instance = Instance {
+            component,
+            pose: pose.cast(),
+            parameter,
+            fixed: args.fixed,
+            flexible: args.flexible,
+        };
+        part.add_instance(instance, operation_id)
+            .with_context(ctx)?;
+        let namer = Namer::new("add_part", operation_id)?;
+        for (mate_id, mate) in &args.mates {
+            if mate.pair().is_some() {
+                part.add_mate(mate.clone(), namer.name(&[mate_id]))
+                    .with_context(ctx)?;
+            }
+        }
+        Ok(part)
+    }
+
+    /// The file, where it goes, and its mates: see [`crate::editor`].
+    fn form<'a, S: Scalar>(
+        &self,
+        context: Context<'a, S>,
+        args: &AddPartArgs,
+        session: &PartSession,
+        _: &[String],
+    ) -> Form<'a, S, AddPartArgs, PartSession> {
+        editor::form(context, args, session)
+    }
+
+    fn event<S: Scalar>(
+        &self,
+        context: Context<'_, S>,
+        edit: Edit<'_, AddPartArgs, PartSession>,
+        event: &CanvasEvent<S>,
+    ) {
+        editor::event(context, edit, event);
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -174,6 +174,24 @@ pub trait Scalar: Field + Copy + Display + Default {
     /// enclosure just to throw it away; implementations should compare
     /// bounds directly.
     fn is_subset_of(self, other: Self) -> bool;
+
+    /// The larger of the two: an enclosure of `max(a, b)` for every `a` and
+    /// `b` the two could be — sharp where both are.
+    fn max(self, other: Self) -> Self {
+        let pick = |a: Self, b: Self| if b.definitely_greater(a) { b } else { a };
+        pick(self.lower(), other.lower()).union(pick(self.upper(), other.upper()))
+    }
+
+    /// The smaller of the two (see [`Scalar::max`]).
+    fn min(self, other: Self) -> Self {
+        self.neg().max(other.neg()).neg()
+    }
+
+    /// The same value in the scalar type `T`: the smallest enclosure there
+    /// of everything `self` could be — exactly `self` where `T` can hold it.
+    fn cast<T: Scalar>(self) -> T {
+        T::from_f64(self.lower().to_f64()).union(T::from_f64(self.upper().to_f64()))
+    }
 }
 
 // ── Serialization ─────────────────────────────────────────────────────────────

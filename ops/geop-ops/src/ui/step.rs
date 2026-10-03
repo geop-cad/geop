@@ -12,7 +12,8 @@ use super::{
 };
 use crate::{
     Part,
-    operation::{Aspects, EntityRef, Operations, Role, describe_roles},
+    operation::{Aspects, Context, EntityRef, Operations, Role, describe_roles},
+    part::State,
     ui::Form,
 };
 
@@ -21,11 +22,16 @@ use crate::{
 pub const DRAG_SNAP: f64 = 0.01;
 
 /// What a drag holds, as it was grabbed.
-enum Grab {
+enum Grab<S: Scalar> {
     /// The handle of the number field `key`, and the value that had.
     Handle { key: String, value: f64 },
-    /// A draggable visual of the operation's.
-    Visual { key: String },
+    /// A draggable visual of the operation's, dragged in the plane worked
+    /// in — or, with none, in the plane through where it was grabbed,
+    /// facing the eye: `(point, normal)`.
+    Visual {
+        key: String,
+        plane: Option<(Vector3<S>, Vector3<S>)>,
+    },
 }
 
 /// A step being edited: the step with its arguments as they now are, and
@@ -47,8 +53,9 @@ enum Grab {
 ///   selection again; a click on nothing clears the selection, unless shift
 ///   is held, and Escape clears it. The selection is the operation's to
 ///   read, and to change as its fields are used.
-/// - A draggable visual is dragged in the plane worked in, as a
-///   [`CanvasEvent::Move`].
+/// - A draggable visual is dragged in the plane worked in — or, where there
+///   is none, in the plane through where it was grabbed, facing the eye —
+///   as a [`CanvasEvent::Move`].
 ///
 /// Whatever else the pointer and the keys do goes to the operation as a
 /// [`CanvasEvent`]: clicks while it has a tool in hand, and those on
@@ -64,7 +71,10 @@ pub struct StepEditor<O, S: Scalar> {
     hover: Option<EntityRef>,
     /// Where the pointer last was, if over the viewport.
     pointer: Option<Pointer<S>>,
-    grab: Option<Grab>,
+    grab: Option<Grab<S>>,
+    /// The program's state as the step's edits leave it: what it is
+    /// edited with, and what it is committed with.
+    state: State,
 }
 
 /// Takes `x` out of `xs`, or adds it at the end.
@@ -146,16 +156,16 @@ fn describe<S: Scalar>(part: &Part<S>, reference: &mut Reference) {
 }
 
 impl<O: Operations, S: Scalar> StepEditor<O, S> {
-    /// Editing `step` against `before`. A new step whose first reference
+    /// Editing `step` in `context`. A new step whose first reference
     /// field is still empty starts by picking for it: what it is built on
     /// is what it needs first. One that already holds something — the
     /// newest sketch, say — needs no click, and leaves the pointer to the
     /// rest of the step: its handles, its drawing.
-    pub fn new(step: O, before: &Part<S>, new: bool) -> Self {
+    pub fn new(step: O, context: Context<'_, S>, new: bool) -> Self {
         let session = step.new_session();
         let armed = new
             .then(|| {
-                step.form(before, &*session, &[])
+                step.form(context, &*session, &[])
                     .dialog
                     .0
                     .into_iter()
@@ -172,7 +182,23 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             hover: None,
             pointer: None,
             grab: None,
+            state: context.state.clone(),
         }
+    }
+
+    /// The program's state as the step's edits leave it.
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    /// The placed parts the step is dragging (see [`Form::drags`]).
+    pub fn drags(&self, context: Context<'_, S>) -> Vec<crate::assembly::Drag<S>> {
+        self.form(context).drags
+    }
+
+    /// The program's state is `state` now: solved anew.
+    pub fn set_state(&mut self, state: State) {
+        self.state = state;
     }
 
     /// The step, with its arguments as they now are.
@@ -190,26 +216,90 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         &self.selection
     }
 
-    fn form<'a>(&self, before: &'a Part<S>) -> Form<'a, S> {
-        self.step.form(before, &*self.session, &self.selection)
-    }
-
-    fn set(&mut self, before: &Part<S>, key: &str, value: Value) {
+    /// The step's form, with the state as its edits left them.
+    fn form(&self, context: Context<'_, S>) -> Form<'static, S> {
+        let context = context.state(&self.state);
         self.step
-            .set(before, &mut *self.session, &mut self.selection, key, value);
+            .form(context, &*self.session, &self.selection)
+            .erase()
     }
 
-    fn pass(&mut self, before: &Part<S>, event: CanvasEvent<S>) {
-        self.step
-            .event(before, &mut *self.session, &mut self.selection, &event);
+    fn set(&mut self, context: Context<'_, S>, key: &str, value: Value) {
+        let references = self.references(context);
+        let state = self.state.clone();
+        self.step.set(
+            context.state(&state),
+            &mut *self.session,
+            &mut self.selection,
+            &mut self.state,
+            key,
+            value,
+        );
+        self.follow_references(context, &references);
     }
 
-    /// Applies `event` — `view` is `before` as drawn, what picks test
-    /// against.
-    pub fn handle(&mut self, before: &Part<S>, view: &PartView<S>, event: &StepEditEvent<S>) {
-        let form = self.form(before);
+    fn pass(&mut self, context: Context<'_, S>, event: CanvasEvent<S>) {
+        let references = self.references(context);
+        let state = self.state.clone();
+        self.step.event(
+            context.state(&state),
+            &mut *self.session,
+            &mut self.selection,
+            &mut self.state,
+            &event,
+        );
+        self.follow_references(context, &references);
+    }
+
+    /// The keys of the form's reference fields.
+    fn references(&self, context: Context<'_, S>) -> Vec<String> {
+        self.form(context)
+            .dialog
+            .0
+            .into_iter()
+            .filter(|f| matches!(f.control, Control::Reference(_)))
+            .map(|f| f.key)
+            .collect()
+    }
+
+    /// After the step changed, with `before` the keys its reference fields
+    /// had: a field that is gone waits for no pick any more, and one that
+    /// appeared empty waits for one — what the step needs picked next, as
+    /// for a new step (see [`StepEditor::new`]).
+    fn follow_references(&mut self, context: Context<'_, S>, before: &[String]) {
+        let form = self.form(context);
+        let fields = || {
+            form.dialog.0.iter().filter_map(|f| match &f.control {
+                Control::Reference(r) => Some((f.key.as_str(), r)),
+                _ => None,
+            })
+        };
+        if let Some(armed) = &self.armed
+            && !fields().any(|(key, _)| key == armed)
+        {
+            self.armed = None;
+            self.hover = None;
+        }
+        if let Some((key, _)) =
+            fields().find(|(key, r)| r.value.is_empty() && !before.iter().any(|b| b == key))
+        {
+            self.armed = Some(key.to_string());
+            self.hover = None;
+        }
+    }
+
+    /// Applies `event` — `view` is what picks test against: the part before
+    /// the step as drawn, or, for an operation whose picks test against
+    /// what it builds (see [`crate::Operation::PICKS_BUILT`]), that.
+    pub fn handle(
+        &mut self,
+        context: Context<'_, S>,
+        view: &PartView<S>,
+        event: &StepEditEvent<S>,
+    ) {
+        let form = self.form(context);
         if let StepEditEvent::Dialog { key, value } = event {
-            self.dialog(before, &form.dialog, key, value.clone());
+            self.dialog(context, &form.dialog, key, value.clone());
             return;
         }
         match event {
@@ -221,7 +311,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         }
         if let Some(key) = self.armed.clone() {
             if let Some(Control::Reference(reference)) = form.dialog.get(&key) {
-                self.pick(before, view, event, &key, reference);
+                self.pick(context, view, event, &key, reference);
                 return;
             }
             self.armed = None;
@@ -229,9 +319,9 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         match event {
             StepEditEvent::Dialog { .. } => unreachable!("handled above"),
             StepEditEvent::Hover { pointer } => {
-                self.pass(before, CanvasEvent::Hover { pointer: *pointer })
+                self.pass(context, CanvasEvent::Hover { pointer: *pointer })
             }
-            StepEditEvent::Leave => self.pass(before, CanvasEvent::Leave),
+            StepEditEvent::Leave => self.pass(context, CanvasEvent::Leave),
             StepEditEvent::Click {
                 pointer,
                 button,
@@ -240,7 +330,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             } => {
                 let selectable = |v: &Visual<S>| v.selectable;
                 let hit = (*button == Button::Primary && !*double && !form.tool)
-                    .then(|| hit_visuals(&form.visuals, pointer, selectable))
+                    .then(|| hit_visuals(&form.visuals, pointer, Some(view), selectable))
                     .flatten();
                 match hit {
                     Some(hit) => toggle(&mut self.selection, hit.visual.key.clone()),
@@ -249,7 +339,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                             self.selection.clear();
                         }
                         self.pass(
-                            before,
+                            context,
                             CanvasEvent::Click {
                                 pointer: *pointer,
                                 button: *button,
@@ -260,21 +350,23 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                     }
                 }
             }
-            StepEditEvent::Drag { from, to, done } => self.drag(before, &form, from, to, *done),
+            StepEditEvent::Drag { from, to, done } => {
+                self.drag(context, view, &form, from, to, *done)
+            }
             StepEditEvent::Key { key } => {
                 if key == "Escape" {
                     self.selection.clear();
                 }
-                self.pass(before, CanvasEvent::Key { key: key.clone() });
+                self.pass(context, CanvasEvent::Key { key: key.clone() });
             }
         }
     }
 
     /// The dialog field `key` used: a reference field armed, or an entity
     /// taken out of it, or all of them; any other field set.
-    fn dialog(&mut self, before: &Part<S>, dialog: &Dialog<S>, key: &str, value: Value) {
+    fn dialog(&mut self, context: Context<'_, S>, dialog: &Dialog<S>, key: &str, value: Value) {
         let Some(Control::Reference(reference)) = dialog.get(key) else {
-            self.set(before, key, value);
+            self.set(context, key, value);
             return;
         };
         let mut entities: Vec<EntityRef> = reference.entities().cloned().collect();
@@ -291,7 +383,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             Value::Entities(set) => entities = set,
             _ => return,
         }
-        self.set(before, key, Value::Entities(entities));
+        self.set(context, key, Value::Entities(entities));
     }
 
     /// A pointer event while the reference field `key` waits for a click:
@@ -299,7 +391,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     /// field of one entity, is done. Escape stops picking.
     fn pick(
         &mut self,
-        before: &Part<S>,
+        context: Context<'_, S>,
         view: &PartView<S>,
         event: &StepEditEvent<S>,
         key: &str,
@@ -323,7 +415,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                         entities = vec![hit.entity];
                         self.armed = None;
                     }
-                    self.set(before, key, Value::Entities(entities));
+                    self.set(context, key, Value::Entities(entities));
                 }
             }
             StepEditEvent::Key { key } if key == "Escape" => {
@@ -336,7 +428,9 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
 
     /// A drag: of a number field's handle — its value when grabbed, moved
     /// by how far the pointer has moved along the handle's track, snapped
-    /// to [`DRAG_SNAP`] — or of a draggable visual, in the plane worked in.
+    /// to [`DRAG_SNAP`] — or of a draggable visual, in the plane worked in
+    /// or, with none, in the plane through where it was grabbed, facing
+    /// the eye.
     ///
     /// What is dragged is hit-tested where the drag started, once: while
     /// dragged, it moves away from there. After that it is found by its key.
@@ -345,7 +439,8 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     /// along the plane).
     fn drag(
         &mut self,
-        before: &Part<S>,
+        context: Context<'_, S>,
+        view: &PartView<S>,
         form: &Form<S>,
         from: &Pointer<S>,
         to: &Pointer<S>,
@@ -354,7 +449,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         let handles = handles(&form.dialog);
         if self.grab.is_none() {
             let visuals: Vec<Visual<S>> = form.visuals.iter().chain(&handles).cloned().collect();
-            let Some(hit) = hit_visuals(&visuals, from, |v| grabs(v, form.tool)) else {
+            let Some(hit) = hit_visuals(&visuals, from, Some(view), |v| grabs(v, form.tool)) else {
                 return;
             };
             let key = hit.visual.key.clone();
@@ -363,7 +458,13 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                     key,
                     value: n.value,
                 },
-                _ => Grab::Visual { key },
+                _ => Grab::Visual {
+                    key,
+                    plane: form
+                        .focus
+                        .is_none()
+                        .then(|| (from.ray.at(hit.t), *from.ray.dir())),
+                },
             });
         }
         let Some(grab) = &self.grab else {
@@ -393,21 +494,28 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 if let Some(moved) = moved {
                     let value = value + moved.to_f64();
                     let snapped = (value / DRAG_SNAP).round() * DRAG_SNAP;
-                    self.set(before, &key, Value::Number(snapped));
+                    self.set(context, &key, Value::Number(snapped));
                 }
             }
-            Grab::Visual { key } => {
-                let key = key.clone();
+            Grab::Visual { key, plane } => {
+                let (key, plane) = (key.clone(), *plane);
                 if done {
                     self.grab = None;
                 }
                 let in_plane = |pointer: &Pointer<S>| -> Option<Vector3<S>> {
-                    let (t, _) = pointer.ray.intersect_uv_plane(form.focus.as_ref()?)?;
-                    Some(pointer.ray.at(t))
+                    let (origin, normal) = match (&form.focus, &plane) {
+                        (Some(focus), _) => (focus.origin(), focus.w()),
+                        (None, Some((point, normal))) => (point, normal),
+                        (None, None) => return None,
+                    };
+                    pointer
+                        .ray
+                        .intersect_plane(origin, normal)
+                        .map(|(_, at)| at)
                 };
                 if let (Some(from), Some(to)) = (in_plane(from), in_plane(to)) {
                     self.pass(
-                        before,
+                        context,
                         CanvasEvent::Move {
                             key,
                             from,
@@ -421,16 +529,23 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     }
 
     /// What to show: the step's form, with its reference fields saying what
-    /// they hold, the handles of its number fields, what is selected and
-    /// what the pointer is over drawn so, what the reference fields hold
-    /// and what a click would pick lit, and what a click picks now. While a
-    /// field waits for a pick, there is no plane to work in: what can be
-    /// picked is shown in the part as it stands.
-    pub fn presentation(&self, before: &Part<S>) -> Presentation<S> {
-        let mut form = self.form(before);
+    /// they hold — in `picks_in`, the part they pick from, drawn as `view` —
+    /// the handles of
+    /// its number fields, what is selected and what the pointer is over
+    /// drawn so, what the reference fields hold and what a click would pick
+    /// lit, and what a click picks now. While a field waits for a pick,
+    /// there is no plane to work in: what can be picked is shown in the
+    /// part as it stands.
+    pub fn presentation(
+        &self,
+        context: Context<'_, S>,
+        picks_in: &Part<S>,
+        view: &PartView<S>,
+    ) -> Presentation<S> {
+        let mut form = self.form(context);
         let mut pickable = Vec::new();
         for (key, reference) in form.dialog.references_mut() {
-            describe(before, reference);
+            describe(picks_in, reference);
             if self.armed.as_deref() == Some(key) {
                 reference.armed = true;
                 pickable = reference.roles.clone();
@@ -443,8 +558,10 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             .pointer
             .filter(|_| self.armed.is_none())
             .and_then(|pointer| {
-                hit_visuals(&visuals, &pointer, |v| v.selectable || grabs(v, tool))
-                    .map(|hit| (hit.visual.key.clone(), grabs(hit.visual, tool)))
+                hit_visuals(&visuals, &pointer, Some(view), |v| {
+                    v.selectable || grabs(v, tool)
+                })
+                .map(|hit| (hit.visual.key.clone(), grabs(hit.visual, tool)))
             });
         for visual in &mut visuals {
             if is_handle(visual) {

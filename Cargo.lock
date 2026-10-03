@@ -196,6 +196,7 @@ dependencies = [
  "geop-core-sketch",
  "geop-core-topology",
  "geop-ops",
+ "geop-ops-assembly",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
@@ -229,6 +230,7 @@ name = "geop-core-math"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -237,8 +239,17 @@ version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
+ "geop-core-solve",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "geop-core-solve"
+version = "0.1.0"
+dependencies = [
+ "geop-core-math",
+ "serde",
 ]
 
 [[package]]
@@ -256,9 +267,21 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-sketch",
+ "geop-core-solve",
  "geop-core-topology",
  "geop-ops-derive",
  "geop-ops-rasterize",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "geop-ops-assembly"
+version = "0.1.0"
+dependencies = [
+ "geop-core-math",
+ "geop-ops",
+ "geop-ops-extrude-revolve",
  "serde",
  "serde_json",
 ]

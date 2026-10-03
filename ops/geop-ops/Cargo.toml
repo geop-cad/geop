@@ -8,6 +8,7 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
+geop-core-solve.workspace = true
 geop-ops-derive.workspace = true
 geop-ops-rasterize.workspace = true
 serde.workspace = true

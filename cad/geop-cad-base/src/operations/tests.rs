@@ -5,15 +5,17 @@ use std::f64::consts::PI;
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_sketch::{Constraint, PointId, Sketch};
+use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::Part;
-use geop_ops::{EntityRef, ORIGIN};
+use geop_ops::{EntityRef, NoFiles, ORIGIN};
 use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
 use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
 use geop_ops_sketch::AddSketchArgs;
+use geop_ops_sketch::{Constraint, Sketch};
 
 use crate::Program;
+use crate::examples::n;
 
 fn assert_valid(part: &Part<S>) {
     let params = ValidationParameters::default();
@@ -27,7 +29,10 @@ fn assert_valid(part: &Part<S>) {
 
 /// A closed polygon through `corners`, returning its point ids.
 fn polygon(s: &mut Sketch, corners: &[[f64; 2]]) -> Vec<PointId> {
-    let p: Vec<PointId> = corners.iter().map(|c| s.add_point(c[0], c[1])).collect();
+    let p: Vec<PointId> = corners
+        .iter()
+        .map(|c| s.add_point(n(c[0]), n(c[1])))
+        .collect();
     for i in 0..p.len() {
         s.add_line(p[i], p[(i + 1) % p.len()]);
     }
@@ -66,7 +71,7 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
         ),
     );
     program.push("slab", extrude("square", 1.0, true));
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     for v in part.topology().vertices.values() {
         assert!(
@@ -84,17 +89,17 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
 fn extrude_slot_plate_with_hole() {
     let mut s = Sketch::new();
     let p = [
-        s.add_point(0.0, 0.0),
-        s.add_point(2.0, 0.0),
-        s.add_point(2.0, 1.0),
-        s.add_point(0.0, 1.0),
+        s.add_point(n(0.0), n(0.0)),
+        s.add_point(n(2.0), n(0.0)),
+        s.add_point(n(2.0), n(1.0)),
+        s.add_point(n(0.0), n(1.0)),
     ];
     s.add_line(p[0], p[1]);
-    s.add_arc_with_sweep(p[1], p[2], PI);
+    s.add_arc(p[1], p[2], n(PI));
     s.add_line(p[2], p[3]);
-    s.add_arc_with_sweep(p[3], p[0], PI);
-    let c = s.add_point(1.0, 0.5);
-    s.add_circle(c, 0.25);
+    s.add_arc(p[3], p[0], n(PI));
+    let c = s.add_point(n(1.0), n(0.5));
+    s.add_circle(c, n(0.25));
     let mut program = Program::new();
     program.push(
         "slot",
@@ -104,7 +109,7 @@ fn extrude_slot_plate_with_hole() {
         ),
     );
     program.push("plate", extrude("slot", 0.5, false));
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     // 2 caps + 6 outer walls (the half circles are split in quarters) + 4
     // hole walls.
@@ -121,8 +126,8 @@ fn boss_on_block_top_face() {
         &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     );
     let mut boss = Sketch::new();
-    let c = boss.add_point(0.5, 0.5);
-    boss.add_circle(c, 0.3);
+    let c = boss.add_point(n(0.5), n(0.5));
+    boss.add_circle(c, n(0.3));
     let mut program = Program::new();
     program.push(
         "base",
@@ -150,7 +155,7 @@ fn boss_on_block_top_face() {
             op: BooleanOp::Union,
         },
     );
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
     // The boss sits on top of the block, not below the sketch plane.
@@ -167,8 +172,8 @@ fn boss_on_block_top_face() {
 #[test]
 fn revolve_rectangle_about_construction_axis() {
     let mut s = Sketch::new();
-    let a0 = s.add_point(0.0, -1.0);
-    let a1 = s.add_point(0.0, 2.0);
+    let a0 = s.add_point(n(0.0), n(-1.0));
+    let a1 = s.add_point(n(0.0), n(2.0));
     let axis = s.add_line(a0, a1);
     s.set_construction(axis, true);
     let p = polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
@@ -199,7 +204,7 @@ fn revolve_rectangle_about_construction_axis() {
             combine: Combine::NewBody,
         },
     );
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     // Three profile edges off the axis, a quadrant face each per 90°.
     assert_eq!(part.topology().faces.len(), 12);
@@ -210,10 +215,10 @@ fn revolve_rectangle_about_construction_axis() {
 #[test]
 fn revolve_half_disc_is_sphere() {
     let mut s = Sketch::new();
-    let top = s.add_point(0.0, 1.0);
-    let bottom = s.add_point(0.0, -1.0);
+    let top = s.add_point(n(0.0), n(1.0));
+    let bottom = s.add_point(n(0.0), n(-1.0));
     let axis = s.add_line(bottom, top);
-    s.add_arc_with_sweep(top, bottom, PI);
+    s.add_arc(top, bottom, n(PI));
     let mut program = Program::new();
     program.push(
         "half_disc",
@@ -233,7 +238,7 @@ fn revolve_half_disc_is_sphere() {
             combine: Combine::NewBody,
         },
     );
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     // The half circle is split into two quarters.
     assert_eq!(part.topology().faces.len(), 8);
@@ -244,8 +249,8 @@ fn revolve_half_disc_is_sphere() {
 #[test]
 fn revolve_across_axis_fails() {
     let mut s = Sketch::new();
-    let a0 = s.add_point(0.0, -1.0);
-    let a1 = s.add_point(0.0, 2.0);
+    let a0 = s.add_point(n(0.0), n(-1.0));
+    let a1 = s.add_point(n(0.0), n(2.0));
     let axis = s.add_line(a0, a1);
     s.set_construction(axis, true);
     polygon(&mut s, &[[-0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [-0.5, 1.0]]);
@@ -268,7 +273,7 @@ fn revolve_across_axis_fails() {
             combine: Combine::NewBody,
         },
     );
-    assert!(program.build::<S>().is_err());
+    assert!(program.build::<S>(&NoFiles).is_err());
 }
 
 /// Revolves `s`, sketched on the origin's zx plane, around `axis`.
@@ -289,7 +294,7 @@ fn revolved_on_zx(s: Sketch, axis: EntityRef) -> geop_core_math::geop_error::Geo
             combine: Combine::NewBody,
         },
     );
-    program.build::<S>()
+    program.build::<S>(&NoFiles)
 }
 
 /// A square clear of an axis from outside the sketch — the origin's z axis,
@@ -310,12 +315,12 @@ fn revolve_square_around_an_outside_axis_is_a_ring() {
 #[test]
 fn revolve_circle_clear_of_its_axis_is_a_torus() {
     let mut s = Sketch::new();
-    let a0 = s.add_point(0.0, -1.0);
-    let a1 = s.add_point(0.0, 1.0);
+    let a0 = s.add_point(n(0.0), n(-1.0));
+    let a1 = s.add_point(n(0.0), n(1.0));
     let axis = s.add_line(a0, a1);
     s.set_construction(axis, true);
-    let center = s.add_point(3.0, 0.0);
-    s.add_circle(center, 1.0);
+    let center = s.add_point(n(3.0), n(0.0));
+    s.add_circle(center, n(1.0));
     let part = revolved_on_zx(
         s,
         EntityRef::SketchCurve {
@@ -368,7 +373,7 @@ fn extrude_of_non_sketch_fails() {
     );
     program.push("slab", extrude("square", 1.0, false));
     program.push("again", extrude("extrude(slab)", 1.0, false));
-    assert!(program.build::<S>().is_err());
+    assert!(program.build::<S>(&NoFiles).is_err());
 }
 
 /// The boss again, joined to the block by its own extrude: the result is
@@ -381,8 +386,8 @@ fn extrude_combines_with_its_target() {
         &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     );
     let mut boss = Sketch::new();
-    let c = boss.add_point(0.5, 0.5);
-    boss.add_circle(c, 0.3);
+    let c = boss.add_point(n(0.5), n(0.5));
+    boss.add_circle(c, n(0.3));
     let mut program = Program::new();
     program.push(
         "base",
@@ -410,7 +415,7 @@ fn extrude_combines_with_its_target() {
             ..extrude("boss_sketch", 0.4, false)
         },
     );
-    let part = program.build::<S>().unwrap();
+    let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.solid_id("extrude(boss)").is_ok());

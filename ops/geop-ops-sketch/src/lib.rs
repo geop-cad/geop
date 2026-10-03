@@ -9,3 +9,12 @@ pub mod editor;
 mod geometry;
 
 pub use add_sketch::{AddSketch, AddSketchArgs};
+
+use geop_ops::Design;
+
+/// A sketch as a program holds it.
+pub type Sketch = geop_core_sketch::Sketch<Design>;
+/// A sketch constraint as a program holds it.
+pub type Constraint = geop_core_sketch::Constraint<Design>;
+/// A sketch curve's kind as a program holds it.
+pub type CurveKind = geop_core_sketch::CurveKind<Design>;

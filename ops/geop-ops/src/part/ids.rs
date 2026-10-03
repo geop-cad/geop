@@ -20,9 +20,20 @@ impl std::fmt::Display for DatumId {
     }
 }
 
+/// A [`crate::Part`]'s own id for one of the parts placed in it (see
+/// [`crate::part::Instance`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InstanceId(pub u64);
+
+impl std::fmt::Display for InstanceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "InstanceId({})", self.0)
+    }
+}
+
 /// Every kind of entity a [`crate::Part`] names: the topology entities a user
-/// can pick in isolation (a coedge or shell never is), its sketches and its
-/// datums.
+/// can pick in isolation (a coedge or shell never is), its sketches, its
+/// datums and the parts placed in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RefId {
     Vertex(VertexId),
@@ -31,6 +42,7 @@ pub enum RefId {
     Solid(SolidId),
     Sketch(SketchId),
     Datum(DatumId),
+    Instance(InstanceId),
 }
 
 impl std::fmt::Display for RefId {
@@ -42,6 +54,7 @@ impl std::fmt::Display for RefId {
             RefId::Solid(id) => write!(f, "{id}"),
             RefId::Sketch(id) => write!(f, "{id}"),
             RefId::Datum(id) => write!(f, "{id}"),
+            RefId::Instance(id) => write!(f, "{id}"),
         }
     }
 }
@@ -74,5 +87,10 @@ impl From<SketchId> for RefId {
 impl From<DatumId> for RefId {
     fn from(id: DatumId) -> Self {
         RefId::Datum(id)
+    }
+}
+impl From<InstanceId> for RefId {
+    fn from(id: InstanceId) -> Self {
+        RefId::Instance(id)
     }
 }

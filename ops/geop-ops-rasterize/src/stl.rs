@@ -46,7 +46,7 @@ fn f32s<S: Scalar>(v: &Vector3<S>) -> [f32; 3] {
 
 /// `t` as an STL facet, wound to face the way its surface does: outward.
 /// A triangle without surface normals (at a pole) keeps its winding.
-fn outward<S: Scalar>(t: &TriangleFace<S>) -> StlTriangle {
+pub fn outward<S: Scalar>(t: &TriangleFace<S>) -> StlTriangle {
     let flat = f32s(&t.normal);
     let surface = t.vertex_normals.map(|ns| {
         ns.iter().map(f32s).fold([0.0; 3], |acc, n| {

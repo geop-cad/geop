@@ -106,6 +106,20 @@ and every comparison downstream depends on that statement being honest.
   One step either proves that a box holds exactly one root (`verified`),
   proves that it holds none (`empty`), or tightens it without deciding.
 
+## Solver numerics
+
+What the constraint solvers of sketches and assemblies share:
+
+- `least_squares::minimize`: constrained Levenberg–Marquardt over any
+  `Scalar` — a sum of squares minimized where other residuals vanish
+  exactly, with a BFGS estimate of the constraints' curvature. Steps are
+  free choices and sharpened; one is taken only where the merit definitely
+  drops, so no tolerance decides when it has converged.
+- `dual::Dual<S, N>`: forward-mode automatic differentiation over any
+  `Scalar`, carrying the gradient with respect to the `N` variables one
+  residual depends on. Built over an interval scalar, a residual's value is
+  an enclosure rather than a rounded float.
+
 ## Search helpers
 
 - `ConvexHull<S, N>`: a point set such as a NURBS control polygon, never
@@ -163,7 +177,18 @@ geometric search comes with a 3-D picture of what the search was looking at.
 ## Primitives
 
 The `primitives` module holds `CoordinateSystem`, `TriangleFace` (a mesh
-triangle with the surface normals at its corners), `Ray` and `Datum`.
+triangle with the surface normals at its corners), `Ray`, `Datum` and
+`Pose`.
+
+`Pose` is where a rigid body sits, kept as a unit dual quaternion
+(`DualQuaternion`, generic over the scalar type, with `Quaternion`): no
+singular configurations, and polynomial in its rotation and translation,
+which keeps gradients through it well behaved. A file stores it as a
+position and a rotation quaternion; angles about `x`, `y` and `z`
+(`euler`, `from_euler`) are only for showing it to people. It is plain
+`f64` design data — where the designer, or a solver acting for them, chose
+to put a body — but what it does to geometry (`motion`) is computed in the
+geometry's own scalar type.
 
 `Datum` is reference geometry: a right-handed orthonormal
 `CoordinateSystem` and the `DatumKind` saying which part of it the datum

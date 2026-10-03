@@ -4,7 +4,8 @@
 //! editor saves (see `geop_cad_base::Program`) — and writes the part it
 //! makes as an STL mesh. The mesh is the one the editor draws (see
 //! `geop_ops_rasterize::stl`), so a compiled file looks exactly like the
-//! part on screen.
+//! part on screen — the parts it places included, each where it is placed,
+//! read from the program files next to it.
 //!
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
@@ -18,14 +19,16 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{Editor, Program};
+use geop_cad_base::{Editor, Program, Workspace};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    primitives::{Pose, TriangleFace},
     scalars::scal_in_f64::ScalInF64,
 };
+use geop_ops::{Files, Part, operation::INSTANCE_SEPARATOR};
 use geop_ops_rasterize::{
     rasterize,
-    stl::{StlFormat, stl_triangles, write_stl},
+    stl::{StlFormat, StlTriangle, outward, write_stl},
 };
 
 type S = ScalInF64;
@@ -102,6 +105,9 @@ struct Compiled {
     steps: usize,
     solids: usize,
     triangles: usize,
+    /// The mates the program's state did not hold, which it was
+    /// solved for before it was written; none if they all held.
+    solved_for: Vec<String>,
 }
 
 /// `program`'s path with its extension replaced by `.stl`: `part.geop`
@@ -110,48 +116,115 @@ fn default_output(program: &Path) -> PathBuf {
     program.with_extension("stl")
 }
 
+/// The program files on disk, by their paths.
+struct Disk;
+
+impl Files for Disk {
+    fn read(&self, path: &str) -> GeopResult<String> {
+        std::fs::read_to_string(path).map_err(|e| GeopError::new(format!("reading {path}: {e}")))
+    }
+
+    /// Nothing: a compile only reads what the program places.
+    fn list(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// Every solid of `part` and of the parts placed in it, by name — a placed
+/// part's behind its instance's name — as triangles, moved by `pose` and
+/// meshed `quality` fine.
+fn solids(
+    part: &Part<S>,
+    pose: &Pose<S>,
+    prefix: &str,
+    quality: usize,
+    out: &mut Vec<(String, Vec<TriangleFace<S>>)>,
+) -> GeopResult<()> {
+    let model = part.topology();
+    let raster = rasterize(model, quality)?;
+    let motion = pose.motion();
+    let place = |t: &TriangleFace<S>| TriangleFace {
+        a: motion.apply(&t.a),
+        b: motion.apply(&t.b),
+        c: motion.apply(&t.c),
+        normal: motion.rotate(&t.normal),
+        vertex_normals: t.vertex_normals.map(|ns| ns.map(|n| motion.rotate(&n))),
+    };
+    for &solid in model.solids.keys() {
+        let mut faces = model.solid_faces(solid)?;
+        faces.sort_by_key(|f| f.0);
+        let triangles = faces
+            .iter()
+            .filter_map(|f| raster.faces.get(f))
+            .flatten()
+            .map(place)
+            .collect();
+        let name = part.name_of(solid).unwrap_or_default();
+        out.push((format!("{prefix}{name}"), triangles));
+    }
+    for (id, instance) in part.instances() {
+        let name = part.name_of(id).unwrap_or_default();
+        let prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
+        solids(
+            instance.part(),
+            &pose.compose(&instance.pose),
+            &prefix,
+            quality,
+            out,
+        )?;
+    }
+    Ok(())
+}
+
 fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     let io_err = |what: &str, path: &Path| {
         let what = what.to_string();
         let path = path.display().to_string();
         move |e: std::io::Error| GeopError::new(format!("{what} {path}: {e}"))
     };
-    let json = std::fs::read_to_string(&args.program).map_err(io_err("reading", &args.program))?;
-    let program = Program::from_json(&json)?;
-    let part = program.build::<S>()?;
-    let model = part.topology();
+    let path = args.program.to_string_lossy();
+    let mut program = Program::from_json(&Disk.read(&path)?)?;
+    let workspace = Workspace::<S, Disk>::new(Disk);
+    let library = workspace.scope(&path);
+    let mut part = program.build(&library)?;
+    // State stale — a file it places changed since it was saved — are
+    // solved for here, not in the file: that is the editor's to write.
+    let report = part.check_mates()?;
+    if !report.converged {
+        let (moved, _) = part.solve_mates(None, &[])?;
+        program.state.extend(moved);
+        part = program.build(&library)?;
+    }
 
     // The solids to write, in name order so the file does not depend on
     // how the part stores them.
-    let solids = if args.solids.is_empty() {
-        let mut solids: Vec<_> = model.solids.keys().copied().collect();
-        solids.sort_by(|a, b| part.name_of(*a).cmp(&part.name_of(*b)));
-        solids
+    let mut all = Vec::new();
+    solids(
+        &part,
+        &Pose::identity(),
+        "",
+        usize::from(args.quality),
+        &mut all,
+    )?;
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    let chosen: Vec<&(String, Vec<TriangleFace<S>>)> = if args.solids.is_empty() {
+        all.iter().collect()
     } else {
         args.solids
             .iter()
             .map(|name| {
-                part.solid_id(name).map_err(|e| {
-                    let mut known: Vec<_> = model
-                        .solids
-                        .keys()
-                        .filter_map(|&s| part.name_of(s))
-                        .collect();
-                    known.sort();
-                    e.with_context(format!("the part's solids are: {}", known.join(", ")))
+                all.iter().find(|(n, _)| n == name).ok_or_else(|| {
+                    let known: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
+                    GeopError::new(format!("no solid is named {name:?}"))
+                        .with_context(format!("the part's solids are: {}", known.join(", ")))
                 })
             })
             .collect::<GeopResult<_>>()?
     };
-    let mut faces = Vec::new();
-    for &solid in &solids {
-        let mut of_solid = model.solid_faces(solid)?;
-        of_solid.sort_by_key(|f| f.0);
-        faces.extend(of_solid);
-    }
-
-    let raster = rasterize(model, usize::from(args.quality))?;
-    let triangles = stl_triangles(&raster, &faces);
+    let triangles: Vec<StlTriangle> = chosen
+        .iter()
+        .flat_map(|(_, triangles)| triangles.iter().map(outward))
+        .collect();
 
     let output = args
         .output
@@ -174,50 +247,76 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     Ok(Compiled {
         output,
         steps: program.steps.len(),
-        solids: solids.len(),
+        solids: chosen.len(),
         triangles: triangles.len(),
+        solved_for: report.failed,
     })
 }
 
 /// Write every built-in example as `<out_dir>/<name>.geop` and
-/// `<out_dir>/<name>.stl`, via [`compile`] — so an example's mesh is
-/// generated exactly the way any other program's would be.
+/// `<out_dir>/<name>.stl` — and every example of several files as those
+/// files in `<out_dir>/<name>/`, its first one compiled — via [`compile`],
+/// so an example's mesh is generated exactly the way any other program's
+/// would be.
 fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
-    std::fs::create_dir_all(&args.out_dir)
-        .map_err(|e| GeopError::new(format!("creating {}: {e}", args.out_dir.display())))?;
-    let all = geop_cad_base::examples::all();
-    let selected: Vec<_> = if args.only.is_empty() {
-        all
-    } else {
-        args.only
-            .iter()
-            .map(|name| {
-                all.iter().find(|(n, _)| n == name).cloned().ok_or_else(|| {
-                    let known: Vec<_> = all.iter().map(|(n, _)| *n).collect();
-                    GeopError::new(format!(
-                        "no example named {name:?}; the built-in examples are: {}",
-                        known.join(", ")
-                    ))
-                })
-            })
-            .collect::<GeopResult<_>>()?
+    let dir_err = |dir: &Path| {
+        let dir = dir.display().to_string();
+        move |e: std::io::Error| GeopError::new(format!("creating {dir}: {e}"))
     };
-    selected
-        .into_iter()
-        .map(|(name, program)| {
-            let json_path = args.out_dir.join(format!("{name}.geop"));
-            std::fs::write(&json_path, program.to_json()?)
-                .map_err(|e| GeopError::new(format!("writing {}: {e}", json_path.display())))?;
-            compile(&CompileArgs {
-                program: json_path,
-                output: Some(args.out_dir.join(format!("{name}.stl"))),
-                solids: Vec::new(),
-                ascii: args.ascii,
-                quality: args.quality,
-            })
-            .map_err(|e| e.with_context(format!("export_examples(name={name})")))
+    std::fs::create_dir_all(&args.out_dir).map_err(dir_err(&args.out_dir))?;
+    let singles = geop_cad_base::examples::all();
+    let workspaces = geop_cad_base::examples::workspaces();
+    let known = || -> Vec<&str> {
+        singles
+            .iter()
+            .map(|(n, _)| *n)
+            .chain(workspaces.iter().map(|(n, _)| *n))
+            .collect()
+    };
+    if let Some(unknown) = args.only.iter().find(|n| !known().contains(&n.as_str())) {
+        return Err(GeopError::new(format!(
+            "no example named {unknown:?}; the built-in examples are: {}",
+            known().join(", ")
+        )));
+    }
+    let chosen = |name: &str| args.only.is_empty() || args.only.iter().any(|n| n == name);
+    let write = |path: &Path, program: &geop_cad_base::Program| {
+        std::fs::write(path, program.to_json()?)
+            .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))
+    };
+    let compile_to = |program: PathBuf, output: PathBuf| {
+        compile(&CompileArgs {
+            program,
+            output: Some(output),
+            solids: Vec::new(),
+            ascii: args.ascii,
+            quality: args.quality,
         })
-        .collect()
+    };
+    let mut compiled = Vec::new();
+    for (name, program) in singles.iter().filter(|(n, _)| chosen(n)) {
+        let path = args.out_dir.join(format!("{name}.geop"));
+        write(&path, program)?;
+        let output = args.out_dir.join(format!("{name}.stl"));
+        compiled.push(
+            compile_to(path, output)
+                .map_err(|e| e.with_context(format!("export_examples(name={name})")))?,
+        );
+    }
+    for (name, files) in workspaces.iter().filter(|(n, _)| chosen(n)) {
+        let dir = args.out_dir.join(name);
+        std::fs::create_dir_all(&dir).map_err(dir_err(&dir))?;
+        for (file, program) in files {
+            write(&dir.join(file), program)?;
+        }
+        let (main, _) = files.first().expect("an example has files");
+        let output = args.out_dir.join(format!("{name}.stl"));
+        compiled.push(
+            compile_to(dir.join(main), output)
+                .map_err(|e| e.with_context(format!("export_examples(name={name})")))?,
+        );
+    }
+    Ok(compiled)
 }
 
 /// Run one [`Editor`] until stdin closes: every line is a command, and the
@@ -261,6 +360,12 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Serve => serve(),
         Command::Compile(args) => compile(&args).map(|c| {
+            if !c.solved_for.is_empty() {
+                eprintln!(
+                    "warning: the program's parts are not where its mates hold them ({}); compiled where they do",
+                    c.solved_for.join(", ")
+                );
+            }
             eprintln!(
                 "{} steps, {} solid{}, {} triangles -> {}",
                 c.steps,
@@ -293,6 +398,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use geop_cad_base::examples;
+
+    use geop_core_math::scalars::Scalar;
 
     use super::*;
 
@@ -366,11 +473,72 @@ mod tests {
             quality: DEFAULT_QUALITY,
         })
         .unwrap();
-        assert_eq!(compiled.len(), examples::all().len());
+        assert_eq!(
+            compiled.len(),
+            examples::all().len() + examples::workspaces().len()
+        );
         for (name, _) in examples::all() {
             assert!(dir.join(format!("{name}.geop")).is_file(), "{name}");
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
+        for (name, files) in examples::workspaces() {
+            for (file, _) in files {
+                assert!(dir.join(name).join(file).is_file(), "{name}/{file}");
+            }
+            assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
+        }
+    }
+
+    /// An assembly compiles with the parts it places, each where it is
+    /// placed, read from the files beside it; one solid of a placed part is
+    /// chosen by its name behind the instance's.
+    #[test]
+    fn compiles_an_assembly_from_its_files() {
+        let dir = scratch("assembly");
+        let mut sizes = std::collections::BTreeMap::new();
+        let (_, files) = examples::workspaces()
+            .into_iter()
+            .find(|(name, _)| *name == "pin_in_plate")
+            .unwrap();
+        {
+            for (file, program) in &files {
+                std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+            }
+            for (file, _) in files {
+                sizes.insert(file, compile(&args(dir.join(file))).unwrap().triangles);
+            }
+        }
+        assert_eq!(
+            sizes["assembly.geop"],
+            sizes["plate.geop"] + sizes["pin.geop"]
+        );
+        let pin = compile(&CompileArgs {
+            solids: vec!["pin/extrude(pin)".into()],
+            ..args(dir.join("assembly.geop"))
+        })
+        .unwrap();
+        assert_eq!(pin.triangles, sizes["pin.geop"]);
+
+        // Its state stale, it is solved for before it is written.
+        let mut stale = examples::pin_in_plate_assembly();
+        stale.state.insert(
+            geop_ops::part::pose_parameter("pin"),
+            geop_ops::part::ParamValue::Pose(
+                Pose::from_euler(
+                    geop_core_math::vector::Vector3::from_array([3.5, 1.0, 0.0].map(S::from_f64)),
+                    [S::ZERO; 3],
+                )
+                .unwrap(),
+            ),
+        );
+        let path = dir.join("stale.geop");
+        std::fs::write(&path, stale.to_json().unwrap()).unwrap();
+        let compiled = compile(&args(path)).unwrap();
+        assert_eq!(
+            compiled.solved_for,
+            ["add_part(pin,m1)", "add_part(pin,m2)"]
+        );
+        assert_eq!(compiled.triangles, sizes["assembly.geop"]);
     }
 
     #[test]

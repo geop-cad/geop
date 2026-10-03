@@ -17,6 +17,12 @@ type FromPage =
  * diffs and source control are all VS Code's — so the page writes every
  * change to the program into it as a text edit, and is sent the text again
  * whenever it is changed some other way.
+ *
+ * A program places the parts other `.geop` files build, by their paths
+ * relative to its own. So the page is told the document's path within its
+ * workspace folder, and sent every other `.geop` file of the folder — the
+ * text of an open document as edited, saved or not — and again whenever
+ * one changes, appears or goes.
  */
 export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = "geop.editor";
@@ -43,6 +49,34 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
 
     /** The program last exchanged with the page, canonically written: what the document already says, so it need not be sent or written again. */
     let known: string | null = null;
+    /**
+     * The programs written into the document whose change has not come back
+     * yet, canonically: the page's own writes, which are no news to it. A
+     * drag writes one per frame, and their change events can arrive after
+     * the next is already written — so not just the last one.
+     */
+    const written = new Set<string>();
+    /** The newest program the page sent and that is not written yet: only it is, once the write before it is done. */
+    let latest: unknown = null;
+    let writing = false;
+    const write = async () => {
+      writing = true;
+      try {
+        while (latest !== null) {
+          const program = latest;
+          latest = null;
+          const text = canonicalOf(program);
+          if (text === canonical(document.getText())) continue;
+          known = text;
+          written.add(text);
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), JSON.stringify(program, null, 2) + "\n");
+          await vscode.workspace.applyEdit(edit);
+        }
+      } finally {
+        writing = false;
+      }
+    };
     const canonical = (text: string): string | null => {
       if (text.trim() === "") return canonicalOf({ steps: [] });
       try {
@@ -51,21 +85,82 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
         return null;
       }
     };
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri ?? vscode.Uri.joinPath(document.uri, "..");
+    /** `uri`'s path as the kernel names files: relative to the folder, `/`-separated. */
+    const pathOf = (uri: vscode.Uri) => path.posix.relative(folder.path, uri.path);
+    const isOther = (uri: vscode.Uri) =>
+      uri.path.endsWith(".geop") && uri.toString() !== document.uri.toString() && !pathOf(uri).startsWith("..");
+    /** The text of the program file `uri`: as edited, if it is open. */
+    const textOf = async (uri: vscode.Uri): Promise<string> => {
+      const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+      if (open) return open.getText();
+      return new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+    };
+    const sendFiles = (files: Record<string, string | null>) => {
+      if (Object.keys(files).length > 0) void panel.webview.postMessage({ type: "files", files });
+    };
+    const sendAllFiles = async () => {
+      const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*.geop"), "**/node_modules/**");
+      const files: Record<string, string | null> = {};
+      for (const uri of uris.filter(isOther)) {
+        try {
+          files[pathOf(uri)] = await textOf(uri);
+        } catch (e) {
+          this.log.appendLine(`could not read ${uri.fsPath}: ${e}`);
+        }
+      }
+      sendFiles(files);
+    };
     const sendDocument = () => {
       known = canonical(document.getText());
-      void panel.webview.postMessage({ type: "document", text: document.getText() });
+      void panel.webview.postMessage({ type: "document", text: document.getText(), path: pathOf(document.uri) });
+    };
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, "**/*.geop"));
+    /** A file changed on disk: sent, unless it is open — then its edits are what counts, and were sent as made. */
+    const onDisk = async (uri: vscode.Uri) => {
+      if (!isOther(uri) || vscode.workspace.textDocuments.some((d) => d.uri.toString() === uri.toString() && d.isDirty)) return;
+      try {
+        sendFiles({ [pathOf(uri)]: await textOf(uri) });
+      } catch (e) {
+        this.log.appendLine(`could not read ${uri.fsPath}: ${e}`);
+      }
     };
 
     subscriptions.push(
+      watcher,
+      watcher.onDidCreate(onDisk),
+      watcher.onDidChange(onDisk),
+      watcher.onDidDelete((uri) => {
+        if (isOther(uri)) sendFiles({ [pathOf(uri)]: null });
+      }),
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (isOther(e.document.uri) && e.contentChanges.length > 0) {
+          sendFiles({ [pathOf(e.document.uri)]: e.document.getText() });
+        }
+      }),
+      // Closed unsaved, a document's file is what is on disk again.
+      vscode.workspace.onDidCloseTextDocument((closed) => void onDisk(closed.uri)),
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.toString() !== document.uri.toString() || e.contentChanges.length === 0) return;
         // The page's own writes come back here: they are not news to it.
-        if (known !== null && canonical(document.getText()) === known) return;
+        const text = canonical(document.getText());
+        if (text !== null && written.has(text)) {
+          // This write has landed, and every one before it: none of those
+          // can still come back.
+          for (const pending of written) {
+            written.delete(pending);
+            if (pending === text) break;
+          }
+          return;
+        }
+        if (known !== null && text === known) return;
         sendDocument();
       }),
       panel.webview.onDidReceiveMessage(async (message: FromPage) => {
         switch (message.type) {
           case "ready":
+            // The files first: the document is built with what it places.
+            await sendAllFiles();
             sendDocument();
             break;
           case "command":
@@ -76,19 +171,10 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
               void panel.webview.postMessage({ type: "failure", id: message.id, message: String(e) });
             }
             break;
-          case "program": {
-            const written = canonicalOf(message.program);
-            if (written === canonical(document.getText())) break;
-            known = written;
-            const edit = new vscode.WorkspaceEdit();
-            edit.replace(
-              document.uri,
-              new vscode.Range(0, 0, document.lineCount, 0),
-              JSON.stringify(message.program, null, 2) + "\n",
-            );
-            await vscode.workspace.applyEdit(edit);
+          case "program":
+            latest = message.program;
+            if (!writing) await write();
             break;
-          }
         }
       }),
     );

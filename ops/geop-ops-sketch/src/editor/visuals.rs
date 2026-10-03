@@ -26,7 +26,6 @@ pub(super) fn visuals<S: Scalar>(
     let failed_points: Vec<PointId> = failed.iter().flat_map(|c| c.points()).collect();
     let failed_curves: Vec<CurveId> = failed.iter().flat_map(|c| c.curves()).collect();
     let world = |p: P2| to_world(frame, p);
-    let positions = sketch.positions();
     let mut out = Vec::new();
 
     out.push(Visual::new(
@@ -44,11 +43,11 @@ pub(super) fn visuals<S: Scalar>(
                     .map(|p| Vector2::from_array(p.map(S::from_f64)))
                     .collect()
             };
-            let outer = uv(region.outer.polyline(sketch, &positions));
+            let outer = uv(loop_polyline(sketch, &region.outer));
             let holes: Vec<_> = region
                 .holes
                 .iter()
-                .map(|h| uv(h.polyline(sketch, &positions)))
+                .map(|h| uv(loop_polyline(sketch, h)))
                 .collect();
             out.push(Visual::new(
                 format!("region{i}"),
@@ -72,10 +71,7 @@ pub(super) fn visuals<S: Scalar>(
             Visual::new(
                 key,
                 Shape::Polyline {
-                    points: curve_polyline(sketch, &positions, id)
-                        .into_iter()
-                        .map(world)
-                        .collect(),
+                    points: polyline(sketch, id).into_iter().map(world).collect(),
                 },
                 style,
             )
@@ -107,7 +103,7 @@ pub(super) fn visuals<S: Scalar>(
             ));
         }
     }
-    for (&id, p) in &sketch.points {
+    for &id in sketch.points.keys() {
         let key = id.to_string();
         let style = if failed_points.contains(&id) {
             Style::Failed
@@ -117,9 +113,15 @@ pub(super) fn visuals<S: Scalar>(
             Style::Fixed
         };
         out.push(
-            Visual::new(key, Shape::Point { at: world(p.xy()) }, style)
-                .selectable()
-                .draggable(),
+            Visual::new(
+                key,
+                Shape::Point {
+                    at: world(xy(sketch, id)),
+                },
+                style,
+            )
+            .selectable()
+            .draggable(),
         );
     }
     // Glyphs of one spot stack sideways, so each can be read and clicked.
@@ -160,7 +162,7 @@ fn draft_preview(sketch: &Sketch, draft: &Draft, cursor: P2) -> Vec<P2> {
     // Previewed as the sketch itself would draw the curve: in a copy, with
     // a point at the cursor.
     let mut temp = sketch.clone();
-    let at = temp.add_point(cursor[0], cursor[1]);
+    let at = temp.add_point(design(cursor[0]), design(cursor[1]));
     let curve = match draft {
         Draft::Line { start } => temp.add_line(*start, at),
         Draft::Arc { start, end: None } => temp.add_line(*start, at),
@@ -172,11 +174,11 @@ fn draft_preview(sketch: &Sketch, draft: &Draft, cursor: P2) -> Vec<P2> {
             if !sweep.is_finite() {
                 return Vec::new();
             }
-            temp.add_arc_with_sweep(*start, *end, sweep)
+            temp.add_arc(*start, *end, design(sweep))
         }
         Draft::Circle { center } => {
             let radius = dist(pt(&temp, *center), cursor);
-            temp.add_circle(*center, radius)
+            temp.add_circle(*center, design(radius))
         }
         Draft::Rectangle { corner } => {
             let [x0, y0] = pt(&temp, *corner);
@@ -188,5 +190,5 @@ fn draft_preview(sketch: &Sketch, draft: &Draft, cursor: P2) -> Vec<P2> {
             temp.add_spline(points)
         }
     };
-    curve_polyline(&temp, &temp.positions(), curve)
+    polyline(&temp, curve)
 }

@@ -8,9 +8,10 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_sketch::{ProfilePiece, Sketch, point::P2, profile::curve_polyline};
+use geop_core_sketch::{ProfilePiece, Sketch, profile::curve_polyline};
+use geop_ops::Design;
 use geop_ops::{
-    Namer, Part,
+    Context, Library, Namer, Part,
     operation::Operation,
     ui::{Form, Number, Track, Unit},
 };
@@ -101,11 +102,12 @@ impl Operation for Extrude {
     /// and how to combine.
     fn form<'a, S: Scalar>(
         &self,
-        before: &'a Part<S>,
+        context: Context<'a, S>,
         args: &ExtrudeArgs,
         _: &(),
         _: &[String],
     ) -> Form<'a, S, ExtrudeArgs> {
+        let before = context.before;
         let mut f = Form::<S, ExtrudeArgs>::new();
         sketch_field(&mut f, before, &args.sketch, |args, sketch| {
             args.sketch = sketch
@@ -132,6 +134,7 @@ impl Operation for Extrude {
         mut part: Part<S>,
         operation_id: &str,
         args: &ExtrudeArgs,
+        _library: &dyn Library<S>,
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("extrude({operation_id}, {args:?})");
         let namer = Namer::new("extrude", operation_id)?;
@@ -235,23 +238,17 @@ pub(crate) fn sketch_profile<S: Scalar>(
 
 /// The centre of the box around what `sketch` draws — its profile curves,
 /// or its points if it has none — in sketch coordinates.
-fn sketch_center<S: Scalar>(sketch: &Sketch) -> Option<Vector2<S>> {
-    let positions = sketch.positions();
-    let mut drawn: Vec<P2> = sketch
+fn sketch_center<S: Scalar>(sketch: &Sketch<Design>) -> Option<Vector2<S>> {
+    let mut drawn: Vec<Vector2<Design>> = sketch
         .curves
         .iter()
         .filter(|(_, c)| !c.construction)
-        .flat_map(|(&id, _)| curve_polyline(sketch, &positions, id))
+        .flat_map(|(&id, _)| curve_polyline(sketch, id).unwrap_or_default())
         .collect();
     if drawn.is_empty() {
-        drawn = positions.into_values().collect();
+        drawn = sketch.positions().into_values().collect();
     }
-    let hull = drawn
-        .into_iter()
-        .map(|p| Vector2::from_array(p.map(S::from_f64)))
-        .reduce(|a, b| a.union(&b))?;
-    Some(Vector2::from_array([
-        hull[0].midpoint(),
-        hull[1].midpoint(),
-    ]))
+    let hull = drawn.into_iter().reduce(|a, b| a.union(&b))?;
+    // The middle of the box is a free choice: sharp.
+    Some(hull.map(|c| c.cast::<S>().midpoint()))
 }

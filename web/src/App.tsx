@@ -6,6 +6,8 @@ import {
   type Command,
   type EditEvent,
   type OperationInfo,
+  type PartView,
+  type Presentation,
   type Program,
   type ProgramState,
   type SceneState,
@@ -16,6 +18,15 @@ import {
 import { host } from "./backend";
 import { DEFAULT_POSE, headOnPose, type CameraPose, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
+import { Explorer } from "./Explorer";
+import {
+  freePath,
+  loadWorkspace,
+  parseProgram,
+  programText,
+  saveWorkspace,
+  type Workspace,
+} from "./files";
 import { SceneViewer } from "./SceneViewer";
 import { Timeline, type TimelineStep } from "./Timeline";
 import { Toolbar } from "./Toolbar";
@@ -32,12 +43,28 @@ function typing(e: KeyboardEvent): boolean {
 /** The commands that change the program, for statistics. */
 const EDITS: Command["command"][] = ["commit", "remove", "move", "load", "load_example", "undo", "redo"];
 
+/** Download `text` as the file `name`. */
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** The last segment of `path`. */
+function baseName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
 /**
  * The editor: a view of the one the kernel runs (see `geop_cad_base::editor`).
  * Every button, click and key is a command sent to it, and what comes back
  * — the program, the part to draw, the step being edited — is shown; so
  * nothing here knows any operation, and the only state kept here is how
- * things are laid out and where the camera is.
+ * things are laid out, where the camera is — and, in the browser, the
+ * program files (see `files.ts`), which VS Code keeps for the extension.
  */
 function App() {
   const [wasmReady, setWasmReady] = useState(false);
@@ -45,7 +72,11 @@ function App() {
 
   const [program, setProgram] = useState<ProgramState | null>(null);
   const [scene, setScene] = useState<SceneState | null>(null);
+  /** Every component view the kernel sent, by key: it sends each once. */
+  const [components, setComponents] = useState<Record<string, PartView>>({});
   const [step, setStep] = useState<StepState | null>(null);
+  /** What the drag tool shows, while it is in hand and no step is edited. */
+  const [tool, setTool] = useState<Presentation | null>(null);
   /** Why the last command was refused, if it was. */
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +86,20 @@ function App() {
   /** The mobile "Bug" tab's pane, once mounted — where the bug-report form portals to when open. */
   const [bugReportHost, setBugReportHost] = useState<HTMLDivElement | null>(null);
   const [bugReportOpen, setBugReportOpen] = useState(false);
+
+  /** The browser's program files; unused in VS Code, whose workspace they are. */
+  const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  /**
+   * Whether the kernel is editing one of the files yet. Until it is, what
+   * it shows is its own empty starting program, which must not be written
+   * over any file.
+   */
+  const editingFile = useRef(false);
+  useEffect(() => {
+    if (!host) saveWorkspace(workspace);
+  }, [workspace]);
 
   const [focus, setFocus] = useState<CameraPose | null>(null);
   const [projection, setProjection] = useState<Projection>("perspective");
@@ -70,8 +115,27 @@ function App() {
         setProgram(update.program);
         trackFailures(update.program.steps);
       }
-      if (update.scene) setScene(update.scene);
+      if (!host && update.files) {
+        const added = Object.fromEntries(update.files.map((f) => [f.path, programText(f.program)]));
+        setWorkspace((w) => ({ ...w, files: { ...w.files, ...added } }));
+      }
+      // The program edited is the file the kernel says it is in: kept as
+      // the kernel has it, with every change.
+      const edited = update.program;
+      if (!host && edited?.path != null && editingFile.current) {
+        const { path } = edited;
+        const text = programText(edited.program);
+        setWorkspace((w) =>
+          w.files[path] === text && w.active === path ? w : { files: { ...w.files, [path]: text }, active: path },
+        );
+      }
+      if (update.scene) {
+        setScene(update.scene);
+        const sent = update.scene.components;
+        if (Object.keys(sent).length > 0) setComponents((known) => ({ ...known, ...sent }));
+      }
       setStep(update.step);
+      setTool(update.tool);
       setError(update.error);
       if (!update.error && EDITS.includes(command.command)) {
         trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
@@ -85,15 +149,23 @@ function App() {
 
   useEffect(() => {
     loadGeop()
-      .then(() => {
-        dispatch({ command: "show" });
+      .then(async () => {
+        if (host) {
+          await dispatch({ command: "show" });
+        } else {
+          // Every file, then the one edited — as it was left.
+          const { files, active } = workspaceRef.current;
+          await dispatch({ command: "files", files });
+          editingFile.current = true;
+          await dispatch({ command: "load", program: parseProgram(files[active]), path: active });
+        }
         setWasmReady(true);
       })
       .catch((e) => setWasmError(String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const presentation = step?.presentation ?? null;
+  const presentation = step?.presentation ?? tool;
   const plane = presentation?.focus ?? null;
 
   // Working in a plane: the camera turns to face it, and comes back to
@@ -149,42 +221,104 @@ function App() {
 
   const steps = program?.steps ?? [];
 
-  function loadProgram(p: Program) {
-    return dispatch({ command: "load", program: p });
+  // ── the files (in the browser) ─────────────────────────────────────────
+
+  /** Edit the file `path`, whose program is `text`. */
+  function openFile(path: string, text = workspaceRef.current.files[path]) {
+    return dispatch({ command: "load", program: parseProgram(text), path });
   }
 
-  function saveProgram() {
-    if (!program) return;
-    const json = JSON.stringify(program.program, null, 2);
-    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "part.geop";
-    a.click();
-    URL.revokeObjectURL(url);
+  /** Tell the kernel that the files `files` changed — `null` for one gone — and keep them. */
+  async function changeFiles(files: Record<string, string | null>) {
+    setWorkspace((w) => {
+      const next = { ...w.files };
+      for (const [path, text] of Object.entries(files)) {
+        if (text == null) delete next[path];
+        else next[path] = text;
+      }
+      return { ...w, files: next };
+    });
+    await dispatch({ command: "files", files });
+  }
+
+  async function createFile(path: string, program: Program = { steps: [] }) {
+    const text = programText(program);
+    // Opened first, so the kernel rebuilds the empty new file, not the
+    // one left, when told of it.
+    await openFile(path, text);
+    await changeFiles({ [path]: text });
+  }
+
+  async function renameFile(from: string, to: string) {
+    const text = workspaceRef.current.files[from];
+    if (from === workspaceRef.current.active) await openFile(to, text);
+    await changeFiles({ [from]: null, [to]: text });
+  }
+
+  /** Delete the files `paths` — a file, or every file of a folder — opening another if the one edited goes. */
+  async function deleteFiles(paths: string[]) {
+    const { files, active } = workspaceRef.current;
+    const gone = new Set(paths);
+    if (gone.has(active)) {
+      const other = Object.keys(files)
+        .filter((p) => !gone.has(p))
+        .sort()[0];
+      if (other) await openFile(other);
+      else await createFile(freePath({}, "part.geop"));
+    }
+    await changeFiles(Object.fromEntries(paths.map((p) => [p, null])));
+  }
+
+  async function uploadFiles(uploaded: File[]) {
+    const added: Record<string, string> = {};
+    const taken = { ...workspaceRef.current.files };
+    for (const file of uploaded) {
+      try {
+        const text = await file.text();
+        parseProgram(text);
+        const name = file.name.endsWith(".geop") ? file.name : `${file.name.replace(/\.json$/, "")}.geop`;
+        const path = freePath(taken, name);
+        taken[path] = text;
+        added[path] = text;
+      } catch (e) {
+        setError(`${file.name} is not a geop program: ${e}`);
+      }
+    }
+    const paths = Object.keys(added);
+    if (paths.length === 0) return;
+    await changeFiles(added);
+    await openFile(paths[0], added[paths[0]]);
+    trackFile("loaded");
+  }
+
+  function downloadFile(path: string) {
+    const text = workspaceRef.current.files[path];
+    if (text == null) return;
+    download(baseName(path), text);
     trackFile("saved");
   }
 
-  function loadFile(file: File) {
-    file
-      .text()
-      .then((text) => {
-        loadProgram(JSON.parse(text) as Program);
-        trackFile("loaded");
-      })
-      .catch((e) => setError(String(e)));
-  }
-
   async function loadExample(name: string) {
+    // In the browser an example gets a file of its own, rather than
+    // replacing the one edited.
+    if (!host) await createFile(freePath(workspaceRef.current.files, `${name}.geop`));
     if ((await dispatch({ command: "load_example", name }))?.error == null) trackExample(name);
   }
 
-  // A shared link — app.geop-cad.dev/?example=<name> — loads that example
-  // once the kernel is up, in place of the (still-empty) starting program.
+  async function loadWorkspaceExample(name: string) {
+    const folder = Object.keys(workspaceRef.current.files).some((p) => p.startsWith(`examples/${name}/`))
+      ? `examples/${name} ${Date.now()}`
+      : `examples/${name}`;
+    if ((await dispatch({ command: "load_workspace_example", name, folder }))?.error == null) trackExample(name);
+  }
+
+  // A shared link — app.geop-cad.dev/?example=<name> — opens that example
+  // once the kernel is up.
   useEffect(() => {
     if (!wasmReady) return;
     const name = new URLSearchParams(window.location.search).get("example");
     if (name && program?.examples.includes(name)) void loadExample(name);
+    else if (name && program?.workspace_examples.includes(name)) void loadWorkspaceExample(name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wasmReady]);
 
@@ -192,21 +326,24 @@ function App() {
   // from it, and every change to the program is written back. Until the
   // document has been loaded, the starting program must not be written
   // over it — and one that cannot be read is never written over either.
+  // The other program files of the workspace are sent along, and again
+  // whenever they change.
   const documentLoaded = useRef(false);
   useEffect(() => {
     if (!wasmReady || !host) return;
-    host.onDocument((text) => {
+    host.onDocument((text, path) => {
       let loaded: Program;
       try {
-        loaded = text.trim() === "" ? { steps: [] } : (JSON.parse(text) as Program);
+        loaded = parseProgram(text);
       } catch (e) {
         setError(`Not a geop program: ${e}`);
         return;
       }
-      void loadProgram(loaded).then((update) => {
+      void dispatch({ command: "load", program: loaded, path }).then((update) => {
         if (update && !update.error) documentLoaded.current = true;
       });
     });
+    host.onFiles((files) => void dispatch({ command: "files", files }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wasmReady]);
   const programValue = program?.program;
@@ -216,7 +353,10 @@ function App() {
 
   const infos = program?.operations ?? [];
   const stepCount = steps.length;
-  const triangleCount = scene?.part.faces.reduce((n, f) => n + f.triangles.length, 0) ?? 0;
+  const triangles = (view: PartView | undefined) => view?.faces.reduce((n, f) => n + f.triangles.length, 0) ?? 0;
+  const triangleCount =
+    triangles(scene?.part) +
+    (scene?.part.instances ?? []).reduce((n, i) => n + triangles(components[i.component]), 0);
   const timelineSteps: TimelineStep[] = steps.map((s) => ({
     id: s.id,
     title: `${s.label}: ${s.summary}`,
@@ -225,8 +365,17 @@ function App() {
     editing: s.editing,
   }));
 
+  const dragTool = program?.drag_tool ?? false;
   const operationButtonsRow = (
     <div className="tools operation-tools">
+      <button
+        title="Drag placed parts as far as their mates let them"
+        className={dragTool ? "active" : ""}
+        disabled={!wasmReady || step != null}
+        onClick={() => dispatch({ command: "drag_tool", on: !dragTool })}
+      >
+        Drag
+      </button>
       {infos.map((info) => (
         <button
           key={info.kind}
@@ -256,6 +405,19 @@ function App() {
     </section>
   );
 
+  const explorer = !host && (
+    <Explorer
+      workspace={workspace}
+      enabled={wasmReady && step == null}
+      onOpen={(path) => void openFile(path)}
+      onCreate={(path) => void createFile(path)}
+      onRename={(from, to) => void renameFile(from, to)}
+      onDelete={(paths) => void deleteFiles(paths)}
+      onUpload={(files) => void uploadFiles(files)}
+      onDownload={downloadFile}
+    />
+  );
+
   const detailPanel = step && (
     <DialogView
       step={step}
@@ -273,10 +435,12 @@ function App() {
         busy={!wasmReady}
         hosted={host != null}
         hasSteps={stepCount > 0}
-        onSave={saveProgram}
-        onLoadFile={loadFile}
+        onSave={() => downloadFile(workspace.active)}
+        onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}
+        workspaceExampleNames={host ? [] : (program?.workspace_examples ?? [])}
+        onLoadWorkspaceExample={(name) => void loadWorkspaceExample(name)}
         canUndo={(program?.can_undo ?? false) && step == null}
         onUndo={() => dispatch({ command: "undo" })}
         canRedo={(program?.can_redo ?? false) && step == null}
@@ -298,39 +462,56 @@ function App() {
         }}
       />
       <div className="body">
+        {explorer && <aside className="explorer-bar desktop-only">{explorer}</aside>}
         <aside className="sidebar desktop-only">{programPanel}</aside>
-        <main className="viewport">
-          {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
-          {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
-          {error && !step && <p className="error">{error}</p>}
-          {wasmReady && scene && (
-            <SceneViewer
-              part={scene.part}
-              visuals={presentation?.visuals}
-              highlights={presentation?.highlights}
-              pickable={presentation?.pickable}
-              hidden={scene.hidden}
-              plane={plane}
-              grab={presentation?.grab ?? false}
-              onPointer={event}
-              projection={projection}
-              focus={focus}
-              onFocusReached={(pose) => {
-                poseRef.current = pose;
-                setFocus(null);
-              }}
-              onPose={(pose) => (poseRef.current = pose)}
-            />
+        <div className="editor-area">
+          {!host && (
+            <div className="editor-tabs desktop-only">
+              <div className="editor-tab active" title={workspace.active}>
+                <span className="editor-tab-name">{baseName(workspace.active)}</span>
+                {workspace.active.includes("/") && (
+                  <span className="editor-tab-folder">{workspace.active.slice(0, workspace.active.lastIndexOf("/"))}</span>
+                )}
+              </div>
+            </div>
           )}
-          <button
-            className="projection-toggle"
-            title="Switch between a perspective and an orthographic view"
-            onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
-          >
-            {projection === "perspective" ? "Perspective" : "Orthographic"}
-          </button>
-          <div className="desktop-only">{detailPanel}</div>
-        </main>
+          <main className="viewport">
+            {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
+            {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
+            {error && !step && <p className="error">{error}</p>}
+            {wasmReady && scene && (
+              <SceneViewer
+                part={scene.part}
+                components={components}
+                visuals={presentation?.visuals}
+                highlights={presentation?.highlights}
+                pickable={presentation?.pickable}
+                hidden={scene.hidden}
+                plane={plane}
+                grab={presentation?.grab ?? false}
+                onPointer={async (e) => {
+                  const update = await dispatch({ command: "event", event: e });
+                  return (update?.step?.presentation ?? update?.tool)?.grab ?? false;
+                }}
+                projection={projection}
+                focus={focus}
+                onFocusReached={(pose) => {
+                  poseRef.current = pose;
+                  setFocus(null);
+                }}
+                onPose={(pose) => (poseRef.current = pose)}
+              />
+            )}
+            <button
+              className="projection-toggle"
+              title="Switch between a perspective and an orthographic view"
+              onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
+            >
+              {projection === "perspective" ? "Perspective" : "Orthographic"}
+            </button>
+            <div className="desktop-only">{detailPanel}</div>
+          </main>
+        </div>
       </div>
       <MobileBottom
         tab={mobileTab}
@@ -340,6 +521,7 @@ function App() {
         operationButtons={operationButtonsRow}
         programPanel={programPanel}
         detailPanel={detailPanel}
+        filesPanel={explorer || null}
         onBugReportHost={setBugReportHost}
       />
     </div>

@@ -1,10 +1,75 @@
-//! What editing a sketch needs of its plane's geometry beyond
-//! [`geop_core_sketch::point`]: the arc a tool draws through the pointer,
-//! and where a curve's label goes. Distances here are UI tolerances and
-//! previews, not results the kernel reasons about; what the sketch *is*
-//! comes from its solver.
+//! The sketch editor's own plane geometry, in plain numbers: where the
+//! pointer is, the arc a tool draws through it, where a curve's label goes.
+//! This is the editor's side of the browser boundary — pointer positions,
+//! previews and UI tolerances, never results the kernel reasons about.
+//! What the sketch *is* is its design data, in [`Design`] scalars, read here
+//! with [`xy`] and written back as sharp values; what it means comes from
+//! its solver.
 
-use geop_core_sketch::point::{P2, add, cross, dist, dot, scale, sub};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
+use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
+use geop_ops::Design;
+
+/// `[x, y]`, as the pointer and the screen have it.
+pub type P2 = [f64; 2];
+
+pub fn add(a: P2, b: P2) -> P2 {
+    [a[0] + b[0], a[1] + b[1]]
+}
+
+pub fn sub(a: P2, b: P2) -> P2 {
+    [a[0] - b[0], a[1] - b[1]]
+}
+
+pub fn scale(a: P2, s: f64) -> P2 {
+    [a[0] * s, a[1] * s]
+}
+
+pub fn dot(a: P2, b: P2) -> f64 {
+    a[0] * b[0] + a[1] * b[1]
+}
+
+pub fn cross(a: P2, b: P2) -> f64 {
+    a[0] * b[1] - a[1] * b[0]
+}
+
+pub fn dist(a: P2, b: P2) -> f64 {
+    let d = sub(a, b);
+    d[0].hypot(d[1])
+}
+
+/// A number from the pointer or a dialog, as design data: sharp.
+pub fn design(x: f64) -> Design {
+    Design::from_f64(x)
+}
+
+/// Where the sketch point `p` is drawn.
+pub fn xy(sketch: &Sketch<Design>, p: geop_core_sketch::PointId) -> P2 {
+    let q = sketch.points[&p].xy();
+    [q[0].to_f64(), q[1].to_f64()]
+}
+
+/// Points as drawn.
+fn plain(points: GeopResult<Vec<Vector2<Design>>>) -> Vec<P2> {
+    points
+        .map(|points| {
+            points
+                .iter()
+                .map(|q| [q[0].to_f64(), q[1].to_f64()])
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The polyline a curve is drawn as (empty where it cannot be drawn).
+pub fn polyline(sketch: &Sketch<Design>, curve: geop_core_sketch::CurveId) -> Vec<P2> {
+    plain(curve_polyline(sketch, curve))
+}
+
+/// The polyline a loop is drawn as (empty where it cannot be drawn).
+pub fn loop_polyline(sketch: &Sketch<Design>, lp: &ProfileLoop) -> Vec<P2> {
+    plain(lp.polyline(sketch))
+}
 
 /// The signed sweep of the arc from `s` to `e` through `p`, by the
 /// inscribed angle theorem: counter-clockwise (positive) when `p` lies right
