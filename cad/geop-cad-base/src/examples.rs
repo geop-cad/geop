@@ -1049,10 +1049,6 @@ pub fn parametric_plate() -> Program {
     projection
         .update(&mut hole, &built, &plane)
         .expect("the top projects");
-    // Only to measure against: no profile of its own.
-    for curve in projection.curves.values() {
-        hole.set_construction(*curve, true);
-    }
     let corner = |p: &str| projection.points[&format!("extrude(plate,outline,{p},end)")];
     let diagonal = hole.add_line(corner("p0"), corner("p2"));
     hole.set_construction(diagonal, true);

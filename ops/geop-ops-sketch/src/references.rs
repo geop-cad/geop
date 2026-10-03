@@ -12,8 +12,10 @@
 //!
 //! Projecting reads what an edge *is* from its NURBS curve: a straight one
 //! becomes a line, a circular one in a plane parallel to the sketch an arc
-//! or a circle, so that it can be constrained like one — anything else a
-//! spline, the exact NURBS the edge projects to.
+//! or a circle, so that it can be constrained like one, one seen edge-on
+//! the line it collapses to — anything else a spline, the exact NURBS the
+//! edge projects to. All of it is reference geometry: fixed, construction,
+//! drawn as such, and never part of a profile.
 
 use std::collections::BTreeMap;
 
@@ -141,9 +143,10 @@ impl Reference {
         Ok(())
     }
 
-    /// Makes its points and curves in `sketch` `geometry`.
+    /// Makes its points and curves in `sketch` `geometry` — every curve
+    /// fixed, and construction geometry: something to measure against and
+    /// snap to, never part of a profile.
     fn sync(&mut self, sketch: &mut Sketch, geometry: &Geometry) {
-        let construction = matches!(self.source, Source::Frame);
         for (key, &[x, y]) in &geometry.points {
             let at = (Design::from_f64(x), Design::from_f64(y));
             match self.points.get(key).and_then(|p| sketch.points.get_mut(p)) {
@@ -185,12 +188,13 @@ impl Reference {
                 Some(curve) => {
                     curve.kind = kind;
                     curve.fixed = true;
+                    curve.construction = true;
                 }
                 None => {
                     let id = sketch.add_curve(kind);
                     let curve = sketch.curves.get_mut(&id).expect("just added");
                     curve.fixed = true;
-                    curve.construction = construction;
+                    curve.construction = true;
                     self.curves.insert(key.clone(), id);
                 }
             }
@@ -373,8 +377,9 @@ fn plain<S: Scalar>(p: &Vector2<S>) -> [f64; 2] {
 /// The edge curve `curve` — from the vertex keyed `start` to the one keyed
 /// `end` — projected into `plane`, reverse-engineered from its NURBS: a
 /// straight curve a line, a circular one in a plane parallel to the
-/// sketch's an arc or a circle, anything else the spline it projects to
-/// exactly. `None` for a curve that projects to a point. Points it needs
+/// sketch's an arc or a circle, one seen edge-on a line, anything else the
+/// spline it projects to exactly. `None` for a curve that projects to a
+/// point. Points it needs
 /// beyond its end points — a circle's center, a spline's inner control
 /// points — are added to `points`, keyed behind `key`.
 fn project_curve<S: Scalar>(
@@ -417,6 +422,102 @@ fn project_curve<S: Scalar>(
             return Ok(Some(Shape::Arc { start, end, sweep }));
         }
     }
+    // Seen edge-on — a circle whose plane holds the plane's normal, say —
+    // a curve projects onto a line: all its control points do, and the
+    // curve lies in their hull. It is that line, from end to end if its
+    // ends are its extremes along it. Otherwise an arc is the line between
+    // its extremes, found on its circle — its control polygon reaches
+    // further than it does — and any other curve is left to be the spline
+    // it projects to: its control points only bound where it goes.
+    let projected: Vec<Vector2<S>> = curve
+        .control_points
+        .iter()
+        .map(|cp| {
+            let w = cp[3];
+            let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
+            Ok(in_plane(plane, &p))
+        })
+        .collect::<GeopResult<_>>()?;
+    let Some(far) = projected.iter().find(|p| !p.could_be_equal(&a)) else {
+        // All of it at one spot: only a point.
+        return Ok(None);
+    };
+    let d = far.sub(&a);
+    if projected
+        .iter()
+        .all(|p| p.sub(&a).prod_cross(&d).could_be_equal(S::ZERO))
+    {
+        let arc = curve.as_arc()?;
+        // Where it could reach furthest either way: an arc's ends, and the
+        // points of its circle furthest along the line where they are on
+        // the arc; another curve's control points.
+        let candidates: Vec<Vector2<S>> = match &arc {
+            Some(arc) => {
+                let (c, n) = (&arc.circle, &arc.circle.normal);
+                let u = plane
+                    .u()
+                    .prod_scalar(d[0])
+                    .add(&plane.v().prod_scalar(d[1]));
+                let reach = u
+                    .sub(&n.prod_scalar(n.prod_dot(&u)))
+                    .normalize()?
+                    .prod_scalar(c.radius);
+                let (from, to) = (arc.start.sub(&c.center), arc.end.sub(&c.center));
+                // Whether `y` is a counter-clockwise turn of less than a
+                // half from `x`, seen with the normal towards the viewer.
+                let turn = |x: &Vector3<S>, y: &Vector3<S>| n.prod_dot(&x.prod_cross(y));
+                let minor = !turn(&from, &to).definitely_less(S::ZERO);
+                let on_arc = |p: &Vector3<S>| {
+                    arc.could_be_closed()
+                        || if minor {
+                            !turn(&from, p).definitely_less(S::ZERO)
+                                && !turn(p, &to).definitely_less(S::ZERO)
+                        } else {
+                            !(turn(&to, p).definitely_greater(S::ZERO)
+                                && turn(p, &from).definitely_greater(S::ZERO))
+                        }
+                };
+                let mut candidates = vec![a, b];
+                for side in [reach, reach.neg()] {
+                    if on_arc(&side) {
+                        candidates.push(in_plane(plane, &c.center.add(&side)));
+                    }
+                }
+                candidates
+            }
+            None => projected.clone(),
+        };
+        let along = |p: &Vector2<S>| p.sub(&a).prod_dot(&d);
+        let extreme = |further: fn(S, S) -> bool| {
+            candidates
+                .iter()
+                .copied()
+                .reduce(|best, p| {
+                    if further(along(&p), along(&best)) {
+                        p
+                    } else {
+                        best
+                    }
+                })
+                .expect("its ends are candidates")
+        };
+        let lo = extreme(|x, y| x.definitely_less(y));
+        let hi = extreme(|x, y| x.definitely_greater(y));
+        let is_end = |p: &Vector2<S>| p.could_be_equal(&a) || p.could_be_equal(&b);
+        if !a.could_be_equal(&b) && is_end(&lo) && is_end(&hi) {
+            return Ok(Some(Shape::Line { start, end }));
+        }
+        if arc.is_some() {
+            let (from, to) = (format!("{key}#lo"), format!("{key}#hi"));
+            points.insert(from.clone(), plain(&lo));
+            points.insert(to.clone(), plain(&hi));
+            return Ok(Some(Shape::Line {
+                start: from,
+                end: to,
+            }));
+        }
+    }
+
     // Any other curve, as the NURBS it projects to: projecting along the
     // normal is affine, so it moves the control points and keeps the
     // weights and knots — exactly.
@@ -450,4 +551,67 @@ fn project_curve<S: Scalar>(
                 .collect(),
         },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use geop_core_geometry::nurb_curve::NurbCurve;
+    use geop_core_math::{scalars::ScalInF64 as S, vector::Vector};
+
+    use super::*;
+
+    /// A quarter of the unit circle in the world's `xy` plane, from `x` to
+    /// `y`: an exact rational quadratic, as the kernel builds arcs.
+    fn quarter() -> NurbCurve3D<S> {
+        let w = 0.5f64.sqrt();
+        let p =
+            |x: f64, y: f64, w: f64| Vector::from_array([x * w, y * w, 0.0, w].map(S::from_f64));
+        NurbCurve::try_new(
+            2,
+            vec![p(1.0, 0.0, 1.0), p(1.0, 1.0, w), p(0.0, 1.0, 1.0)],
+            [0.0, 0.0, 0.0, 1.0, 1.0, 1.0].map(S::from_f64).to_vec(),
+        )
+        .unwrap()
+    }
+
+    fn projected(normal: [f64; 3]) -> (Option<Shape>, BTreeMap<String, [f64; 2]>) {
+        let n = Vector3::from_array(normal.map(S::from_f64));
+        let plane = geop_ops::operation::frame_along(Vector3::zero(), &n).unwrap();
+        let mut points = BTreeMap::new();
+        let shape =
+            project_curve(&quarter(), &plane, "e", "a".into(), "b".into(), &mut points).unwrap();
+        (shape, points)
+    }
+
+    /// Seen from above it is an arc; seen edge-on, the line it collapses
+    /// to — not a degenerate spline lying along it, which no region could
+    /// tell the winding of; seen at a slant, the spline it projects to.
+    #[test]
+    fn arcs_project_by_how_they_are_seen() {
+        let (above, points) = projected([0.0, 0.0, 1.0]);
+        assert!(
+            matches!(above, Some(Shape::Arc { sweep, .. }) if (sweep.abs() - std::f64::consts::FRAC_PI_2).abs() < 1e-12),
+            "{above:?}"
+        );
+        assert!(points.contains_key("e#center"));
+        let (edge_on, _) = projected([0.0, 1.0, 0.0]);
+        assert_eq!(
+            edge_on,
+            Some(Shape::Line {
+                start: "a".into(),
+                end: "b".into()
+            })
+        );
+        let (slanted, _) = projected([0.0, 1.0, 1.0]);
+        assert!(matches!(slanted, Some(Shape::Spline { .. })), "{slanted:?}");
+        // Seen edge-on across its chord, its ends meet, and its middle is
+        // its far extreme: from where its ends are, out to the circle's
+        // radius — not to the corner of its control polygon beyond.
+        let (sideways, points) = projected([1.0, -1.0, 0.0]);
+        assert!(matches!(sideways, Some(Shape::Line { .. })), "{sideways:?}");
+        let reach = |k: &str| points[k][0].hypot(points[k][1]);
+        let (lo, hi) = (reach("e#lo"), reach("e#hi"));
+        assert!((lo.min(hi) - 0.5f64.sqrt()).abs() < 1e-12, "{points:?}");
+        assert!((lo.max(hi) - 1.0).abs() < 1e-12, "{points:?}");
+    }
 }

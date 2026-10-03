@@ -314,6 +314,8 @@ export type Style =
   | "hover"
   | "failed"
   | "construction"
+  /** Given rather than drawn: a sketch's axes, what it projects. */
+  | "reference"
   | "draft"
   | "region"
   | "guide"
@@ -439,6 +441,9 @@ export interface StepState {
   /** Why it does not build, once it has what it needs; only a step that builds can be committed. */
   error: string | null;
   preview: boolean;
+  /** Whether one of its own edits can be undone, or redone. */
+  can_undo: boolean;
+  can_redo: boolean;
 }
 
 /** What to show after a command; what did not change is left out. */

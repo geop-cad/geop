@@ -201,6 +201,20 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         self.state = state;
     }
 
+    /// Makes `step` the step, and `state` the program's state, as an edit
+    /// left them before: undoing one. The editing starts afresh from there
+    /// — a new session, nothing selected or picked for — as what the old
+    /// one held may not be in the step any more.
+    pub fn restore(&mut self, step: O, state: State) {
+        self.session = step.new_session();
+        self.step = step;
+        self.state = state;
+        self.selection.clear();
+        self.armed = None;
+        self.hover = None;
+        self.grab = None;
+    }
+
     /// The step, with its arguments as they now are.
     pub fn step(&self) -> &O {
         &self.step

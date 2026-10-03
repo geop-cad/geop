@@ -30,9 +30,15 @@ that the solver never moves and constraints are measured against.
 
 Projecting reads what an edge *is* from its NURBS curve: a straight one is
 a line, a circular one in a plane parallel to the sketch an arc or a circle
-— to be constrained like one — and anything else the spline it projects to
-exactly (projection along the normal is affine: it moves the control points
-and keeps weights and knots). An edge seen end-on is only a point.
+— to be constrained like one — one seen edge-on the line it collapses to
+(an arc's extent found on its circle, not on its control polygon, which
+reaches further), and anything else the spline it projects to exactly
+(projection along the normal is affine: it moves the control points and
+keeps weights and knots). An edge seen end-on is only a point.
+
+Reference geometry is always construction geometry, drawn dotted: drawn
+geometry snaps to it and is constrained against it, but it never bounds a
+region itself.
 
 ## Dimensions as formulas
 
@@ -92,6 +98,9 @@ Every tool is a button of its own, shown as an icon.
 - **Dragging** a point, a line or a spline moves its points as far as the
   constraints let them (`Sketch::solve_with_drag`); dragging a circle sets
   its radius, an arc its sweep. Reference geometry is not dragged.
+
+Undo and redo go edit by edit while a sketch is edited — a drag is one
+edit — and back to the program's own once it is put away.
 
 Every change is solved before it is returned, and one line of the dialog
 says how that went: degrees of freedom left, or how many constraints

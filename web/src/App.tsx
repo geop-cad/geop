@@ -184,6 +184,25 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planeKey]);
 
+  // Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes — a step's own edits
+  // while one is edited — unless typed into a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e) || !(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        void dispatch({ command: "undo" });
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        void dispatch({ command: "redo" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── editing a step ─────────────────────────────────────────────────────
 
   async function open(command: Command) {
@@ -461,9 +480,9 @@ function App() {
         onLoadExample={(name) => void loadExample(name)}
         workspaceExampleNames={host ? [] : (program?.workspace_examples ?? [])}
         onLoadWorkspaceExample={(name) => void loadWorkspaceExample(name)}
-        canUndo={(program?.can_undo ?? false) && step == null}
+        canUndo={step ? step.can_undo : (program?.can_undo ?? false)}
         onUndo={() => dispatch({ command: "undo" })}
-        canRedo={(program?.can_redo ?? false) && step == null}
+        canRedo={step ? step.can_redo : (program?.can_redo ?? false)}
         onRedo={() => dispatch({ command: "redo" })}
         operationButtons={operationButtonsRow}
         badge={step && plane ? `${step.label}: working in its plane` : null}

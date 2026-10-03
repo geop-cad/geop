@@ -73,7 +73,9 @@ fn projections_read_lines_arcs_and_splines() {
     assert!(round >= 1, "{:?}", kinds(&sketch));
     assert!(!kinds(&sketch).contains(&"spline"));
     assert!(sketch.points.values().all(|p| p.fixed));
-    assert!(sketch.curves.values().all(|c| c.fixed && !c.construction));
+    // Reference geometry: fixed, and construction — never a profile.
+    assert!(sketch.curves.values().all(|c| c.fixed && c.construction));
+    assert!(sketch.regions().map_or(true, |r| r.is_empty()));
     // The hole's circle: around (1, 1), radius 0.4.
     for c in sketch.curves.values() {
         if let CurveKind::Circle { center, radius } = c.kind {
@@ -85,12 +87,14 @@ fn projections_read_lines_arcs_and_splines() {
     // Every curve is keyed by the name of the edge it comes from.
     assert!(reference.curves.keys().all(|k| k.starts_with("extrude(")));
 
+    // Seen from the front the top is edge-on: its edges along the view are
+    // points, the others lines, and the hole's circle the line it collapses
+    // to — no spline lying flat along one.
     let (front, _) = projected(&part, &origin_plane(FrameAxis::Y), top);
     assert!(front.validate().is_ok());
     let kinds = kinds(&front);
-    assert!(kinds.contains(&"spline"), "{kinds:?}");
     assert!(
-        kinds.iter().filter(|k| **k == "line").count() == 2,
+        !kinds.is_empty() && kinds.iter().all(|k| *k == "line"),
         "{kinds:?}"
     );
 }
@@ -394,11 +398,14 @@ fn the_project_field_projects_what_is_picked() {
         let crate::PartOperation::AddSketch(args) = open else {
             panic!("a sketch")
         };
-        args.sketch
-            .curves
-            .values()
-            .filter(|c| c.fixed && !c.construction)
-            .count()
+        let curves: Vec<_> = args
+            .references
+            .iter()
+            .filter(|r| matches!(r.source, Source::Projection { .. }))
+            .flat_map(|r| r.curves.values())
+            .collect();
+        assert!(curves.iter().all(|c| args.sketch.curves[c].construction));
+        curves.len()
     };
     assert_eq!(projected(&editor), 1);
     editor.handle(dialog("project", Value::Entities(vec![])));
@@ -729,4 +736,169 @@ fn runners_rebuild_when_parameters_change() {
         "{}",
         corner(runner.part())
     );
+}
+
+/// Undo and redo work while a sketch is edited, edit by edit — a drag one
+/// edit however many events it takes — and the program's own undo comes
+/// back once the sketch is put away.
+#[test]
+fn sketches_undo_their_own_edits() {
+    use crate::{Command, Editor};
+    use geop_core_math::primitives::Ray;
+    use geop_ops::ui::{Button, Pointer, Reach, StepEditEvent};
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::Load {
+        program: Program::new(),
+        path: None,
+    });
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let event = |editor: &mut Editor<S>, event| editor.handle(Command::Event { event });
+    let down = |x: f64, y: f64| Pointer {
+        ray: Ray::try_new(
+            geop_core_math::vector::Vector3::from_array([x, y, 10.0].map(S::from_f64)),
+            geop_core_math::vector::Vector3::from_array([0.0, 0.0, -1.0].map(S::from_f64)),
+        )
+        .unwrap(),
+        reach: Reach::Tube {
+            radius: S::from_f64(0.009),
+        },
+    };
+    let click = |editor: &mut Editor<S>, x, y| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: down(x, y),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    // The origin's xy plane's square, picked from above.
+    click(&mut editor, 0.04, 0.04);
+    event(&mut editor, StepEditEvent::Key { key: "l".into() });
+    click(&mut editor, 0.5, 0.5);
+    click(&mut editor, 1.5, 0.9);
+    click(&mut editor, 1.2, 1.8);
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    let drawn = |editor: &Editor<S>| {
+        let crate::PartOperation::AddSketch(args) = editor.editing().unwrap() else {
+            panic!("a sketch")
+        };
+        args.sketch.curves.values().filter(|c| !c.fixed).count()
+    };
+    let end = |editor: &Editor<S>| {
+        let crate::PartOperation::AddSketch(args) = editor.editing().unwrap() else {
+            panic!("a sketch")
+        };
+        let p = args
+            .sketch
+            .points
+            .values()
+            .filter(|p| !p.fixed)
+            .last()
+            .unwrap()
+            .xy();
+        [p[0].to_f64(), p[1].to_f64()]
+    };
+    assert_eq!(drawn(&editor), 2);
+    // A drag, of three events: one edit.
+    let before = end(&editor);
+    event(
+        &mut editor,
+        StepEditEvent::Hover {
+            pointer: down(before[0], before[1]),
+            shift: false,
+        },
+    );
+    for (to, done) in [([1.3, 1.9], false), ([1.4, 2.0], false), ([1.5, 2.1], true)] {
+        event(
+            &mut editor,
+            StepEditEvent::Drag {
+                from: down(before[0], before[1]),
+                to: down(to[0], to[1]),
+                done,
+                shift: true,
+            },
+        );
+    }
+    assert!((end(&editor)[0] - 1.5).abs() < 1e-6, "{:?}", end(&editor));
+    let update = editor.handle(Command::Undo);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert!(
+        (end(&editor)[0] - before[0]).abs() < 1e-9,
+        "{:?} vs {before:?}",
+        end(&editor)
+    );
+    assert_eq!(drawn(&editor), 2);
+    editor.handle(Command::Undo);
+    assert_eq!(drawn(&editor), 1);
+    let update = editor.handle(Command::Redo);
+    let step = update.step.unwrap();
+    assert!(step.can_undo && step.can_redo);
+    assert_eq!(drawn(&editor), 2);
+    editor.handle(Command::Redo);
+    assert!((end(&editor)[0] - 1.5).abs() < 1e-6);
+    // Put away, the program's own undo is back: the sketch added.
+    let update = editor.handle(Command::Commit);
+    assert!(update.program.unwrap().can_undo);
+    editor.handle(Command::Undo);
+    assert!(editor.program().steps.is_empty());
+}
+
+/// The box's top, with its hole, projected onto a plane seen from the side
+/// — its hole's circle edge-on — and a rectangle drawn on its projected
+/// corners: the sketch's regions are found — "could not tell which way it
+/// winds" was a projected circle left as a spline lying flat along a line
+/// — and only what was drawn bounds one.
+#[test]
+fn drawing_on_an_edge_on_projection() {
+    let part = examples::box_with_drill_hole()
+        .build::<S>(&NoFiles)
+        .unwrap();
+    let top = EntityRef::Face {
+        name: "extrude(box,end)".into(),
+    };
+    let (mut sketch, reference) = projected(&part, &origin_plane(FrameAxis::Y), top);
+    // Down from the top's two projected corners, and across.
+    let corners: Vec<_> = reference.points.values().copied().collect();
+    let xs: Vec<f64> = corners
+        .iter()
+        .map(|p| sketch.points[p].x.to_f64())
+        .collect();
+    let (lo, hi) = (
+        corners[xs
+            .iter()
+            .position(|&x| x == xs.iter().cloned().fold(f64::MAX, f64::min))
+            .unwrap()],
+        corners[xs
+            .iter()
+            .position(|&x| x == xs.iter().cloned().fold(f64::MIN, f64::max))
+            .unwrap()],
+    );
+    let below = |p: geop_core_sketch::PointId, s: &mut Sketch| {
+        let q = s.points[&p];
+        s.add_point(q.x, S::from_f64(q.y.to_f64() - 1.0))
+    };
+    let (lo2, hi2) = (below(lo, &mut sketch), below(hi, &mut sketch));
+    for (a, b) in [(lo, hi), (hi, hi2), (hi2, lo2), (lo2, lo)] {
+        sketch.add_line(a, b);
+    }
+    sketch.validate().unwrap();
+    let regions = sketch.regions().unwrap();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].outer.edges.len(), 4);
 }

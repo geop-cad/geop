@@ -36,8 +36,8 @@ pub struct VisualHit<'a, S: Scalar> {
 /// How near the pointer is to `visual`, in reaches, and where along the
 /// ray — `None` if not near enough to count. `rank` orders kinds of shapes:
 /// what is drawn small and on top wins over what is drawn large, and a
-/// curve that is part of the result over construction geometry it lies
-/// on — a line drawn along a sketch's axis is that line. A placed part is
+/// curve that is part of the result over construction or reference geometry
+/// it lies on — a line drawn along a sketch's axis is that line. A placed part is
 /// hit as `view` draws it; without a view, not at all.
 fn distance<S: Scalar>(
     pointer: &Pointer<S>,
@@ -79,7 +79,7 @@ fn distance<S: Scalar>(
             })
             .min_by(|a, b| nearer(a.0, b.0))
             .map(|(p, t)| {
-                let rank = if visual.style == Style::Construction {
+                let rank = if matches!(visual.style, Style::Construction | Style::Reference) {
                     3
                 } else {
                     2

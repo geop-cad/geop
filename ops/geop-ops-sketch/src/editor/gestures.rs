@@ -426,7 +426,7 @@ impl<S: Scalar> Editing<'_, S> {
     }
 
     /// Makes the selected curves construction geometry — or, if they all
-    /// are, profile geometry again. With no curve selected, switches
+    /// are, profile geometry again; reference geometry stays as it is. With no curve selected, switches
     /// whether what is drawn next is construction geometry.
     pub(super) fn toggle_construction(&mut self) {
         let (picks, _) = selected(self.sketch(), self.selection);
@@ -436,11 +436,8 @@ impl<S: Scalar> Editing<'_, S> {
                 Pick::Curve(c) => Some(c),
                 _ => None,
             })
-            .filter(|&c| {
-                self.args
-                    .reference_of(Pick::Curve(c))
-                    .is_none_or(|i| self.args.references[i].source != Source::Frame)
-            })
+            // Reference geometry is construction geometry, always.
+            .filter(|&c| self.args.reference_of(Pick::Curve(c)).is_none())
             .collect();
         if curves.is_empty() {
             self.s.construction = !self.s.construction;

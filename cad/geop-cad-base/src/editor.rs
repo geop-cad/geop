@@ -98,6 +98,8 @@ pub enum Command<S: Scalar> {
         #[serde(default)]
         folder: Option<String>,
     },
+    /// Go back one edit — while a step is edited, one edit of the step —
+    /// or forward again.
     Undo,
     Redo,
     /// The program's parameters are now these (see
@@ -218,6 +220,9 @@ pub struct StepState<S: Scalar> {
     /// builds can be committed.
     pub error: Option<String>,
     pub preview: bool,
+    /// Whether one of its edits can be undone, or redone.
+    pub can_undo: bool,
+    pub can_redo: bool,
 }
 
 /// A program file, as a front end keeps it.
@@ -282,7 +287,17 @@ struct Open<S: Scalar> {
     /// What picks test against, as drawn: the part before it, or what it
     /// builds (see [`geop_ops::Operation::PICKS_BUILT`]).
     view: PartView<S>,
+    /// The step as it was before each edit made to it since it was opened,
+    /// with the program's state: what undo goes back to while it is edited.
+    undo: Vec<Edited>,
+    redo: Vec<Edited>,
+    /// The step as it was when the drag going on started: a drag is one
+    /// edit, however many events it takes.
+    dragging: Option<Edited>,
 }
+
+/// A step being edited, as one edit left it, with the program's state.
+type Edited = (PartOperation, geop_ops::part::State);
 
 /// Which part is drawn, and without what: when it is the same as last
 /// time, the scene is not sent again.
@@ -589,6 +604,9 @@ impl<S: Scalar> Editor<S> {
                     id,
                     new: true,
                     editor,
+                    undo: Vec::new(),
+                    redo: Vec::new(),
+                    dragging: None,
                 });
                 Changed::Run
             }
@@ -608,6 +626,9 @@ impl<S: Scalar> Editor<S> {
                     id,
                     new: false,
                     editor,
+                    undo: Vec::new(),
+                    redo: Vec::new(),
+                    dragging: None,
                 });
                 Changed::Run
             }
@@ -624,6 +645,15 @@ impl<S: Scalar> Editor<S> {
                 let before = (open.editor.step().clone(), open.editor.state().clone());
                 open.editor.handle(context, &open.view, &event);
                 let after = (open.editor.step(), open.editor.state());
+                // What undo goes back to: the step before this edit — before
+                // the whole drag, for one.
+                let start = open.dragging.take().unwrap_or_else(|| before.clone());
+                if matches!(event, StepEditEvent::Drag { done: false, .. }) {
+                    open.dragging = Some(start);
+                } else if (&start.0, &start.1) != after {
+                    open.undo.push(start);
+                    open.redo.clear();
+                }
                 // A drag changes neither, but what it pulls moves the parts.
                 let dragging = !open.editor.drags(context).is_empty();
                 if (&before.0, &before.1) == after && !dragging {
@@ -791,8 +821,21 @@ impl<S: Scalar> Editor<S> {
                 self.drag_tool = on.then(DragTool::default);
                 Changed::Run
             }
+            Command::Undo | Command::Redo if self.open.is_some() => {
+                // While a step is edited, its own edits.
+                let open = self.open.as_mut().expect("checked");
+                let (from, to) = match command {
+                    Command::Undo => (&mut open.undo, &mut open.redo),
+                    _ => (&mut open.redo, &mut open.undo),
+                };
+                let Some((step, state)) = from.pop() else {
+                    return Ok(Changed::Nothing);
+                };
+                to.push((open.editor.step().clone(), open.editor.state().clone()));
+                open.editor.restore(step, state);
+                Changed::Step
+            }
             Command::Undo | Command::Redo => {
-                idle(self)?;
                 let (from, to) = match command {
                     Command::Undo => (&mut self.undo, &mut self.redo),
                     _ => (&mut self.redo, &mut self.undo),
@@ -1002,6 +1045,8 @@ impl<S: Scalar> Editor<S> {
             missing,
             presentation,
             preview: self.preview,
+            can_undo: !open.undo.is_empty(),
+            can_redo: !open.redo.is_empty(),
         })
     }
 
@@ -1168,8 +1213,14 @@ impl<S: Scalar> Editor<S> {
             path: self.path.clone(),
             steps,
             marker: self.marker.unwrap_or(self.program.steps.len()),
-            can_undo: !self.undo.is_empty(),
-            can_redo: !self.redo.is_empty(),
+            can_undo: match &self.open {
+                Some(open) => !open.undo.is_empty(),
+                None => !self.undo.is_empty(),
+            },
+            can_redo: match &self.open {
+                Some(open) => !open.redo.is_empty(),
+                None => !self.redo.is_empty(),
+            },
             drag_tool: self.drag_tool.is_some(),
             parameters: self.program.parameters.resolve(&self.program.state),
             operations: PartOperation::infos(),

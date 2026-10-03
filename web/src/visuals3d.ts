@@ -17,6 +17,7 @@ const COLORS: Record<Style, number> = {
   hover: 0xffe0a0,
   failed: 0xff5d5d,
   construction: 0x8a8a8a,
+  reference: 0xb48cf0,
   draft: 0xffa040,
   region: 0x6cb4ff,
   guide: 0x777777,
@@ -25,7 +26,7 @@ const COLORS: Record<Style, number> = {
 };
 
 /** Drawn dashed: what is not part of the result. */
-const DASHED: Style[] = ["construction", "draft", "guide"];
+const DASHED: Style[] = ["construction", "draft", "guide", "reference"];
 
 /** How big a point is on screen, in pixels. */
 const POINT_PX = 7;
@@ -64,7 +65,8 @@ function build(visual: Visual): THREE.Object3D {
       if (!DASHED.includes(visual.style)) return new THREE.Line(geometry, overlay(new THREE.LineBasicMaterial({ color })));
       const line = new THREE.Line(geometry, overlay(new THREE.LineDashedMaterial({ color })));
       line.computeLineDistances();
-      line.userData.dashed = true;
+      // Reference geometry dotted, the rest dashed.
+      line.userData.dashed = visual.style === "reference" ? "dotted" : "dashed";
       return line;
     }
     case "triangles": {
@@ -149,8 +151,9 @@ export class VisualLayer {
       }
       if (child.userData.dashed) {
         const material = (child as THREE.Line).material as THREE.LineDashedMaterial;
-        material.dashSize = 6 * px;
-        material.gapSize = 4 * px;
+        const dotted = child.userData.dashed === "dotted";
+        material.dashSize = (dotted ? 2 : 6) * px;
+        material.gapSize = (dotted ? 3 : 4) * px;
       }
     }
   }

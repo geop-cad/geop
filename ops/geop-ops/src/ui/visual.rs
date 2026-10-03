@@ -85,8 +85,11 @@ pub enum Style {
     Hover,
     /// Part of what cannot be satisfied.
     Failed,
-    /// Reference geometry that takes part in nothing but constraints.
+    /// Geometry that takes part in nothing but constraints.
     Construction,
+    /// Geometry given from outside rather than drawn — a sketch's own axes,
+    /// what it projects of the part: constrained against, never moved.
+    Reference,
     /// What a tool would draw next.
     Draft,
     /// A filled area: a closed region of a sketch.

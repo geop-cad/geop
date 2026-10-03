@@ -101,6 +101,8 @@ pub(super) fn visuals<S: Scalar>(
     for (&id, curve) in &sketch.curves {
         let style = if failed_curves.contains(&id) {
             Style::Failed
+        } else if curve.fixed {
+            Style::Reference
         } else if curve.construction {
             Style::Construction
         } else if report.is_none_or(|r| r.free_curves.get(&id).copied().unwrap_or(true)) {

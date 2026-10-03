@@ -241,19 +241,19 @@ fn is_bridge_visible<S: Scalar>(
 /// new slit through the old one.
 fn opens_towards<S: Scalar>(poly: &[Vector2<S>], i: usize, h: Vector2<S>) -> bool {
     let n = poly.len();
-    let m = to_f64_2(poly[i]);
-    let rel = |p: Vector2<S>| {
-        let (x, y) = to_f64_2(p);
-        (x - m.0, y - m.1)
-    };
-    let (out, back, d) = (rel(poly[(i + 1) % n]), rel(poly[(i + n - 1) % n]), rel(h));
-    let cross = |a: (f64, f64), b: (f64, f64)| a.0 * b.1 - a.1 * b.0;
-    if cross(out, back) >= 0.0 {
-        // Convex: between the two edges.
-        cross(out, d) > 0.0 && cross(d, back) > 0.0
+    let m = poly[i];
+    let (out, back, d) = (
+        poly[(i + 1) % n].sub(&m),
+        poly[(i + n - 1) % n].sub(&m),
+        h.sub(&m),
+    );
+    let inside = |a: Vector2<S>, b: Vector2<S>| cross2(a, b).definitely_greater(S::ZERO);
+    if cross2(out, back).definitely_less(S::ZERO) {
+        // Reflex: anywhere but between the edges on the outside.
+        inside(out, d) || inside(d, back)
     } else {
-        // Reflex: anywhere but between them on the outside.
-        cross(out, d) > 0.0 || cross(d, back) > 0.0
+        // Convex: strictly between the two edges.
+        inside(out, d) && inside(d, back)
     }
 }
 
