@@ -147,7 +147,8 @@ impl<S: Scalar> BooleanNaming<S> {
     }
 
     /// Records that `vertex` was created where `edge` (at parameter `t`)
-    /// pierces `face`.
+    /// pierces `face`, or where an intersection branch with `face` leaves
+    /// it.
     pub fn piercing(
         &mut self,
         vertex: VertexId,

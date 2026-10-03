@@ -8,7 +8,8 @@ use geop_ops::{Namer, Part};
 use crate::naming::BooleanNaming;
 use crate::remesh::{
     remesh_edges_x_edges::remesh_edges_x_edges, remesh_edges_x_faces::remesh_edges_x_faces,
-    remesh_vertices::remesh_vertices, remesh_vertices_x_edges::remesh_vertices_x_edges,
+    remesh_tangent_branches::remesh_tangent_branches, remesh_vertices::remesh_vertices,
+    remesh_vertices_x_edges::remesh_vertices_x_edges,
 };
 
 /// Every tunable [`remesh`] and its phases need. Bundled rather than passed
@@ -65,7 +66,8 @@ impl<S: Scalar> Default for RemeshParams<S> {
 /// solids meet only along entities they genuinely share.
 ///
 /// Runs in strictly increasing order of dimension — vertices, then edges
-/// against vertices, then edges against edges, then edges against faces —
+/// against vertices, then edges against edges, then edges against faces
+/// (but for the branch points of tangent edges, which are vertices) —
 /// so each phase can assume everything lower-dimensional has already
 /// settled (e.g. `remesh_vertices_x_edges` treats a point-coincidence with
 /// a *different* vertex id as a bug, since `remesh_vertices` should
@@ -89,6 +91,26 @@ pub fn remesh<S: Scalar>(
     let mut naming = BooleanNaming::new(part, namer, &[solid_a, solid_b]).with_context(&ctx)?;
 
     remesh_vertices(part, solid_a, solid_b).with_context(&ctx)?;
+
+    // The one place an edge x face question creates a vertex ahead of the
+    // edge phases: where an intersection branch leaves an edge along which
+    // the two solids' faces touch tangentially (see
+    // `remesh_tangent_branches`). Such an edge is usually one of a pair —
+    // the shared profile, as each solid built it — so the new vertex lies on
+    // the other solid's copy too, and `remesh_vertices_x_edges` below splits
+    // that one like any other vertex on an edge.
+    for (edge_solid, face_solid) in [(solid_a, solid_b), (solid_b, solid_a)] {
+        remesh_tangent_branches(
+            part,
+            &mut naming,
+            edge_solid,
+            face_solid,
+            params.max_edge_intersections,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+        )
+        .with_context(&ctx)?;
+    }
 
     // `remesh_vertices_x_edges` only splits `solid_a`'s edges at `solid_b`'s
     // vertices — it has no idea a `solid_a` vertex might just as well be

@@ -13,7 +13,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// diagonal terms of the first). This is the *exact* normal curvature in
     /// direction `a` only when `Su ⊥ Sv`; the general formula also needs the
     /// mixed partial `Suv` and the off-diagonal metric term `F = Su·Sv` to
-    /// handle an arbitrary direction. Every surface this crate actually
+    /// handle an arbitrary direction (see [`Self::mean_curvature`]). Every surface this crate actually
     /// constructs has orthogonal parametric directions by construction —
     /// flat bilinear box/cap faces (`Su`, `Sv` are the patch's two edge
     /// directions) and `revolve`'s ruled patches (axial `u` is always
@@ -24,7 +24,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// two bends, so a caller sizing steps off of it stays conservative.
     pub fn curvature_radius(&self, u: S, v: S) -> GeopResult<Option<S>> {
         let (su, sv) = self.derivatives(u, v)?;
-        let (suu, svv) = self.second_derivatives(u, v)?;
+        let [suu, _, svv] = self.second_derivatives(u, v)?;
 
         let normal = match su.prod_cross(&sv).normalize() {
             Ok(n) => n,
@@ -56,6 +56,29 @@ impl<S: Scalar> NurbSurface<S, 4> {
         } else {
             Ok(Some(S::ONE.div(kappa)?.abs()))
         }
+    }
+
+    /// The mean curvature at `(u, v)`, signed against the normal
+    /// `normalize(Su × Sv)`: half the trace of the second fundamental form
+    /// relative to the first,
+    /// `H = (L G − 2 M F + N E) / (2 (E G − F²))`, with `E, F, G` the
+    /// first fundamental form and `L, M, N` the second (`Suu·n`, `Suv·n`,
+    /// `Svv·n`). Unlike [`Self::curvature_radius`] it is exact for any
+    /// parametrization, orthogonal or not.
+    ///
+    /// An error where `Su × Sv` vanishes (a pole): the surface may well have
+    /// a curvature there, but not one these partials can express.
+    pub fn mean_curvature(&self, u: S, v: S) -> GeopResult<S> {
+        let (su, sv) = self.derivatives(u, v)?;
+        let [suu, suv, svv] = self.second_derivatives(u, v)?;
+        let cross = su.prod_cross(&sv);
+        let n = cross.normalize()?;
+        let (e, f, g) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
+        let (l, m, nn) = (suu.prod_dot(&n), suv.prod_dot(&n), svv.prod_dot(&n));
+        l.mul(g)
+            .sub(S::TWO.mul(m).mul(f))
+            .add(nn.mul(e))
+            .div(S::TWO.mul(cross.norm_sq()))
     }
 }
 
@@ -96,5 +119,62 @@ mod tests {
     #[test]
     fn flat_patch_has_no_curvature_radius() {
         for_all_scalars!(check_flat_patch_has_no_curvature_radius);
+    }
+
+    /// The saddle `S(u, v) = (u, v, uv)`: its only second partial is the
+    /// mixed one, so it alone gives the mean curvature
+    /// `H = -uv / (1 + u² + v²)^(3/2)`.
+    fn check_saddle_mean_curvature<S: Scalar>() {
+        let f = S::from_f64;
+        let s = NurbSurface::try_new(
+            1,
+            1,
+            vec![
+                pt(0., 0., 0., 1.),
+                pt(0., 1., 0., 1.),
+                pt(1., 0., 0., 1.),
+                pt(1., 1., 1., 1.),
+            ],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let (u, v): (f64, f64) = (0.5, 0.25);
+        let expected = -u * v / (1.0 + u * u + v * v).powf(1.5);
+        let h = s.mean_curvature(f(u), f(v)).unwrap();
+        assert!(h.could_be_equal(f(expected)), "{h:?} vs {expected}");
+    }
+    #[test]
+    fn saddle_mean_curvature() {
+        for_all_scalars!(check_saddle_mean_curvature);
+    }
+
+    /// A rational quarter cylinder of radius 2 has `|H| = 1 / 4` everywhere,
+    /// where the weights make its parametrization uneven too.
+    fn check_cylinder_mean_curvature<S: Scalar>() {
+        let f = S::from_f64;
+        let (r, w) = (2.0, std::f64::consts::FRAC_1_SQRT_2);
+        let mut cps = Vec::new();
+        for (x, y, wi) in [(1., 0., 1.), (1., 1., w), (0., 1., 1.)] {
+            for z in [0., 1.] {
+                cps.push(pt(x * r * wi, y * r * wi, z * wi, wi));
+            }
+        }
+        let s = NurbSurface::try_new(
+            2,
+            1,
+            cps,
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap();
+        for (u, v) in [(0.1, 0.2), (0.5, 0.5), (0.8, 0.9)] {
+            let h = s.mean_curvature(f(u), f(v)).unwrap();
+            assert!(h.abs().could_be_equal(f(0.25)), "{h:?} at ({u}, {v})");
+        }
+    }
+    #[test]
+    fn cylinder_mean_curvature() {
+        for_all_scalars!(check_cylinder_mean_curvature);
     }
 }

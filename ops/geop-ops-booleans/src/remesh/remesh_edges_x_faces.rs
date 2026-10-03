@@ -883,6 +883,15 @@ fn predictor_corrector_step<S: Scalar>(
     // the damped Newton below, free to be any point along the step, so
     // collapsing it costs no accuracy — and it fixes the plane the corrector
     // solves against. Nothing downstream of this line sharpens.
+    //
+    // The plane's normal `dir` is as free as its point: any plane crossing
+    // the curve pins the corrector's free direction equally well. Left wide,
+    // it is the one wide row of an otherwise sharp Jacobian — and where the
+    // two surfaces meet at a shallow angle, `dir` (a normalized cross product
+    // of nearly parallel normals, taken at the previous step's honest
+    // `(u, v)`) is wide by percents, enough to put zero inside a pivot of the
+    // nearly singular system and fail the solve.
+    let dir = dir.sharpen();
     let target = point.add(&dir.prod_scalar(step_size)).sharpen();
     let (u_a_lo, u_a_hi) = surf_a.domain_u();
     let (v_a_lo, v_a_hi) = surf_a.domain_v();
@@ -970,6 +979,15 @@ fn predictor_corrector_step<S: Scalar>(
         // through `J^T J` rather than solving `J d = -f` directly is what
         // lets the damping act at all, and keeps the step finite where `J`
         // loses rank instead of erroring out of an otherwise fine trace.
+        //
+        // The matrix is sharpened: it only steers the step, and any matrix
+        // near the true Jacobian leads Newton to the same fixed point — the
+        // residual `f` alone decides where that is, so the step's honest
+        // width is the residual's, carried through a sharp preconditioner (as
+        // in Krawczyk's `Y = mid(J)^-1`). Left as intervals, the elimination
+        // amplifies the surfaces' own width by the system's condition, which
+        // `J^T J` squares: where the surfaces meet at a shallow angle, that
+        // put zero inside the last pivot of a solvable system.
         let mut ata = [[S::ZERO; 4]; 4];
         let mut atf = [S::ZERO; 4];
         for r in 0..4 {
@@ -978,7 +996,7 @@ fn predictor_corrector_step<S: Scalar>(
                 for k in 0..4 {
                     sum = sum.add(j[k][r].mul(j[k][c]));
                 }
-                ata[r][c] = if r == c { sum.add(lambda) } else { sum };
+                ata[r][c] = if r == c { sum.add(lambda) } else { sum }.sharpen();
             }
             let mut sum = S::ZERO;
             for k in 0..4 {
@@ -1427,6 +1445,12 @@ fn trace_one_side<S: Scalar>(
     // fitted curve's endpoint and the edge's `end_vertex` agree.
     let hit_point = model.get_vertex(hit_vertex).with_context(&ctx)?.point;
     *points.last_mut().expect("points is never empty") = hit_point;
+    let ctx = |e: GeopError| {
+        ctx(e).with_context(format!(
+            "traced {} step(s) to vertex {hit_vertex} at {hit_point:?}",
+            points.len()
+        ))
+    };
 
     // Is this curve already in the model? Every intersection branch has two
     // ends and both are piercing points, so both land in `starts` and each
@@ -1484,19 +1508,25 @@ fn trace_one_side<S: Scalar>(
                              to: Vector3<S>,
                              frac: S|
              -> GeopResult<(Vector3<S>, (S, S, S, S))> {
+                let leg_ctx = |e: GeopError| {
+                    e.with_context(format!(
+                        "on_branch(from={from:?}, to={to:?}, frac={frac:?})"
+                    ))
+                };
                 let chord = to.sub(&from);
                 let step = chord.norm().mul(frac);
                 let (p, na, va, nb, vb) = predictor_corrector_step(
                     &surf_a,
                     &surf_b,
                     from,
-                    chord.normalize()?,
+                    chord.normalize().with_context(&leg_ctx)?,
                     u_a,
                     v_a,
                     u_b,
                     v_b,
                     step,
-                )?;
+                )
+                .with_context(&leg_ctx)?;
                 Ok((p, (na, va, nb, vb)))
             };
             // First every leg is split, on the branch, into `pieces`: the

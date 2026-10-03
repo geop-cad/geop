@@ -12,29 +12,33 @@ use crate::{
 };
 
 impl<S: Scalar> NurbSurface<S, 4> {
-    /// The pure partial derivatives up to order `n` at `(u, v)`:
-    /// `([S, S_u, S_uu, …], [S, S_v, S_vv, …])`. A pure partial only
-    /// differentiates along its own direction, so each is the curve case
-    /// ([`homogeneous_derivatives`], then [`rational_derivatives`]) run
-    /// across the local rows (columns), each first evaluated at `v` (`u`).
-    fn pure_derivatives(
+    /// The homogeneous partial derivatives at `(u, v)`: the pure ones up to
+    /// order `n`, `([A, A_u, A_uu, …], [A, A_v, A_vv, …])`, and the mixed
+    /// `A_uv`. A pure partial only differentiates along its own direction, so
+    /// each is the curve case ([`homogeneous_derivatives`]) run across the
+    /// local rows (columns), each first evaluated at `v` (`u`); the mixed one
+    /// differentiates the rows once along `v`, then once across them along
+    /// `u`.
+    #[allow(clippy::type_complexity)]
+    fn homogeneous_partials(
         &self,
         u: S,
         v: S,
         n: usize,
-    ) -> GeopResult<(Vec<Vector3<S>>, Vec<Vector3<S>>)> {
+    ) -> GeopResult<(Vec<Vector<S, 4>>, Vec<Vector<S, 4>>, Vector<S, 4>)> {
         let (p, q) = (self.degree_u, self.degree_v);
         let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
         let nv = self.num_v;
         let span_u = find_span(p, ku, self.num_u - 1, u)?;
         let span_v = find_span(q, kv, nv - 1, v)?;
         let cp = &self.control_points;
-        let rows: Vec<Vector<S, 4>> = (span_u - p..=span_u)
+        let (rows, rows_v): (Vec<Vector<S, 4>>, Vec<Vector<S, 4>>) = (span_u - p..=span_u)
             .map(|i| {
                 let local: Vec<_> = (span_v - q..=span_v).map(|j| cp[i * nv + j]).collect();
-                homogeneous_derivatives(q, kv, &local, span_v, v, 0)[0]
+                let d = homogeneous_derivatives(q, kv, &local, span_v, v, 1);
+                (d[0], d[1])
             })
-            .collect();
+            .unzip();
         let cols: Vec<Vector<S, 4>> = (span_v - q..=span_v)
             .map(|j| {
                 let local: Vec<_> = (span_u - p..=span_u).map(|i| cp[i * nv + j]).collect();
@@ -42,24 +46,36 @@ impl<S: Scalar> NurbSurface<S, 4> {
             })
             .collect();
         Ok((
-            rational_derivatives(&homogeneous_derivatives(p, ku, &rows, span_u, u, n))?,
-            rational_derivatives(&homogeneous_derivatives(q, kv, &cols, span_v, v, n))?,
+            homogeneous_derivatives(p, ku, &rows, span_u, u, n),
+            homogeneous_derivatives(q, kv, &cols, span_v, v, n),
+            homogeneous_derivatives(p, ku, &rows_v, span_u, u, 1)[1],
         ))
     }
 
     /// Partial derivatives `(∂S/∂u, ∂S/∂v)` at `(u, v)`.
     pub fn derivatives(&self, u: S, v: S) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let (du, dv) = self.pure_derivatives(u, v, 1)?;
-        Ok((du[1], dv[1]))
+        let (du, dv, _) = self.homogeneous_partials(u, v, 1)?;
+        Ok((rational_derivatives(&du)?[1], rational_derivatives(&dv)?[1]))
     }
 
-    /// Pure second partial derivatives `(∂²S/∂u², ∂²S/∂v²)` at `(u, v)`.
-    /// The mixed partial `∂²S/∂u∂v` is deliberately not computed (see
-    /// [`curvature_radius`](super::curvature::curvature_radius) for why it's
-    /// not needed for this crate's surfaces).
-    pub(crate) fn second_derivatives(&self, u: S, v: S) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let (du, dv) = self.pure_derivatives(u, v, 2)?;
-        Ok((du[2], dv[2]))
+    /// Second partial derivatives `[∂²S/∂u², ∂²S/∂u∂v, ∂²S/∂v²]` at
+    /// `(u, v)`. The pure ones by the rational quotient rule along their own
+    /// direction ([`rational_derivatives`]); the mixed one by differentiating
+    /// `A = w S` once along each: `A_uv = w_uv S + w_u S_v + w_v S_u + w
+    /// S_uv`.
+    pub(crate) fn second_derivatives(&self, u: S, v: S) -> GeopResult<[Vector3<S>; 3]> {
+        let (du, dv, a_uv) = self.homogeneous_partials(u, v, 2)?;
+        let (cu, cv) = (rational_derivatives(&du)?, rational_derivatives(&dv)?);
+        let (w, w_u, w_v, w_uv) = (du[0][3], du[1][3], dv[1][3], a_uv[3]);
+        let mut s_uv = Vector3::zero();
+        for c in 0..3 {
+            s_uv[c] = a_uv[c]
+                .sub(w_uv.mul(cu[0][c]))
+                .sub(w_u.mul(cv[1][c]))
+                .sub(w_v.mul(cu[1][c]))
+                .div(w)?;
+        }
+        Ok([cu[2], s_uv, cv[2]])
     }
 
     /// The boundary row at the start (`first`) or end of the `u` domain

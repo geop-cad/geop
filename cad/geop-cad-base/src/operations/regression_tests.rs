@@ -243,3 +243,86 @@ fn outline_revolved_around_its_edge_joined_to_its_box() {
     );
     assert_builds_valid(&program);
 }
+
+/// A closed spline revolved a full turn around a vertical line beside it —
+/// a lumpy torus — and the same sketch then extruded by 1 and joined to it:
+/// the extruded spline cylinder cuts through the torus, its side meeting
+/// the torus' surface along curves that run near its seam.
+///
+/// Reported (2026-10-01) as the join failing in `predictor_corrector_step`
+/// with a singular Jacobian while tracing the extrusion's side across the
+/// torus. Both surfaces contain the profile and the sketch's normal, so they
+/// touch tangentially all along it, and the curve where the torus' outer
+/// side swings round into the wall leaves the profile at its lowest point —
+/// a branch point no vertex marked, so the trace had nowhere to end:
+///
+/// - Approaching it, the surfaces meet at an ever shallower angle. The
+///   marching direction, a normalized cross product of nearly parallel
+///   normals, came out wide by percents, and interval elimination on the
+///   nearly singular `J^T J` widened the surfaces' own width until a pivot
+///   held zero. Both the direction and the matrix only steer the corrector,
+///   so both are now sharpened (see `predictor_corrector_step`).
+/// - Past that, the march ran into the profile at no vertex, took a step
+///   whose enclosure spanned the model, and ended at an unrelated vertex
+///   0.45 away that the wide box made look near. Branch points like this
+///   one — where the two surfaces' mean curvatures agree along an edge they
+///   touch along — are now split into the edge before anything else
+///   (`remesh_tangent_branches`).
+///
+/// The sketch is as drawn, unsolved, and built in the order that gives its
+/// points and curves the ids they were reported with.
+#[test]
+fn spline_revolved_then_extruded_and_joined() {
+    let mut program = Program::new();
+    let mut sketch = Sketch::new();
+    let outline: Vec<_> = [
+        (-3.1375704298183145, 2.5293125606373428),
+        (-5.344138256576594, 1.9223976345215419),
+        (-5.219142443284211, 0.13987914384067612),
+        (-2.525717167424303, -0.491323660236492),
+        (-1.3584048099029444, 1.0913093781025136),
+    ]
+    .into_iter()
+    .map(|(x, y)| sketch.add_point(x, y))
+    .collect();
+    let mut control_points = outline.clone();
+    control_points.push(outline[0]);
+    sketch.add_spline(control_points);
+    let top = sketch.add_point(0.4655769138883318, 2.6284122396718033);
+    let bottom = sketch.add_point(0.4655769138883318, -0.7084336105288418);
+    let axis = sketch.add_line(top, bottom);
+    sketch.constrain(Constraint::Vertical { line: axis });
+    program.push(
+        "sketch1",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch,
+        },
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: "sketch1".into(),
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "sketch1".into(),
+                curve: axis,
+            }),
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "extrude1",
+        ExtrudeArgs {
+            sketch: "sketch1".into(),
+            distance: 1.0,
+            symmetric: false,
+            combine: Combine::Union {
+                target: "revolve(revolve1)".into(),
+            },
+        },
+    );
+    assert_builds_valid(&program);
+}
