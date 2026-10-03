@@ -14,6 +14,8 @@ html,
 body,
 #root {
   margin: 0;
+  /* VS Code's webviews give body a default horizontal padding. */
+  padding: 0;
   height: 100%;
   width: 100%;
   overflow: hidden;

@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 
-use geop_cad_base::{Command, Editor};
+use geop_cad_base::Editor;
 use geop_core_math::scalars::scal_in_f64::ScalInF64;
 use wasm_bindgen::prelude::*;
 
@@ -29,10 +29,7 @@ pub fn init_panic_hook() {
 }
 
 fn handle_json(command: &str) -> Result<String, String> {
-    let command: Command<S> =
-        serde_json::from_str(command).map_err(|e| format!("reading command: {e}"))?;
-    let update = EDITOR.with(|editor| editor.borrow_mut().handle(command));
-    serde_json::to_string(&update).map_err(|e| format!("writing update: {e}"))
+    EDITOR.with(|editor| editor.borrow_mut().handle_json(command))
 }
 
 /// Apply a command (JSON `geop_cad_base::Command`) and return what to show

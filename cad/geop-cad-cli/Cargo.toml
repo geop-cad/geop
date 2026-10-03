@@ -3,7 +3,7 @@ name = "geop-cad-cli"
 version.workspace = true
 edition.workspace = true
 
-# `geop compile part.program.json` — named for the project, not the crate.
+# `geop compile part.geop` — named for the project, not the crate.
 [[bin]]
 name = "geop"
 path = "src/main.rs"
@@ -14,3 +14,4 @@ geop-ops.workspace = true
 geop-cad-base.workspace = true
 geop-ops-rasterize.workspace = true
 clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true

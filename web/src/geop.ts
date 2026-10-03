@@ -1,7 +1,7 @@
-// Thin, typed wrapper around the generated `wasm-bindgen` bindings — the
-// rest of the app imports from here instead of `./wasm/pkg/geop.js`
-// directly, so the wasm-loading/init dance and JSON (de)serialization stay
-// in one place.
+// Thin, typed wrapper around the kernel — the rest of the app imports from
+// here instead of `./backend` directly, so JSON (de)serialization stays in
+// one place, and where the kernel runs (wasm in the browser, a native
+// process in VS Code) is invisible to it.
 //
 // The whole editor lives in the kernel (see `geop_cad_base::editor`): the
 // app sends every command — a step started, a click in the viewport as a
@@ -9,7 +9,7 @@
 // that comes back. Which operations exist, what their dialogs hold, what a
 // click picks or snaps to, what runs and what is drawn: all of it is
 // decided there, none of it here.
-import init, { handle, init_panic_hook } from "./wasm/pkg/geop.js";
+import { call, loadBackend } from "./backend";
 
 export type Vec3 = [number, number, number];
 
@@ -61,17 +61,8 @@ export interface Frame {
   w: Vec3;
 }
 
-let ready: Promise<void> | null = null;
-
-/** Instantiate the wasm module. Safe to call repeatedly; only runs once. */
-export function loadGeop(): Promise<void> {
-  if (!ready) {
-    ready = init().then(() => {
-      init_panic_hook();
-    });
-  }
-  return ready;
-}
+/** Start the kernel (see `backend.ts`). Safe to call repeatedly; only runs once. */
+export const loadGeop = loadBackend;
 
 // ── the part, as drawn ───────────────────────────────────────────────────────
 //
@@ -348,6 +339,6 @@ export interface Update {
 }
 
 /** Apply `command` in the kernel, and get back what to show now. */
-export function send(command: Command): Update {
-  return JSON.parse(handle(JSON.stringify(command))) as Update;
+export async function send(command: Command): Promise<Update> {
+  return JSON.parse(await call(JSON.stringify(command))) as Update;
 }

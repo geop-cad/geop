@@ -5,6 +5,8 @@ import { Privacy } from "./Privacy";
 
 interface Props {
   busy: boolean;
+  /** Whether the program is a file somebody else owns (VS Code): saving, loading and reporting are theirs. */
+  hosted: boolean;
   hasSteps: boolean;
   onSave: () => void;
   onLoadFile: (file: File) => void;
@@ -32,6 +34,7 @@ interface Props {
 /** The app's top bar: file actions, undo/redo, the operation buttons (desktop only), and status. */
 export function Toolbar({
   busy,
+  hosted,
   hasSteps,
   onSave,
   onLoadFile,
@@ -55,22 +58,26 @@ export function Toolbar({
     <header className="toolbar">
       <h1>Geop</h1>
       <div className="tools">
-        <button disabled={busy || !hasSteps} onClick={onSave}>
-          Save
-        </button>
-        <label className={`file-button${busy ? " disabled" : ""}`}>
-          Load
-          <input
-            type="file"
-            accept=".json,application/json"
-            disabled={busy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) onLoadFile(file);
-            }}
-          />
-        </label>
+        {!hosted && (
+          <>
+            <button disabled={busy || !hasSteps} onClick={onSave}>
+              Save
+            </button>
+            <label className={`file-button${busy ? " disabled" : ""}`}>
+              Load
+              <input
+                type="file"
+                accept=".geop,.json,application/json"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) onLoadFile(file);
+                }}
+              />
+            </label>
+          </>
+        )}
         <select
           value=""
           disabled={busy}
@@ -94,14 +101,18 @@ export function Toolbar({
       </div>
       <div className="tools desktop-only">{operationButtons}</div>
       {badge && <span className="mode-badge">{badge}</span>}
-      <BugReport
-        program={program}
-        committedError={error}
-        panelHost={bugReportHost}
-        onOpen={onBugReportOpen}
-        onClose={onBugReportClose}
-      />
-      <Privacy />
+      {!hosted && (
+        <>
+          <BugReport
+            program={program}
+            committedError={error}
+            panelHost={bugReportHost}
+            onOpen={onBugReportOpen}
+            onClose={onBugReportClose}
+          />
+          <Privacy />
+        </>
+      )}
       {!busy && (
         <span className="stats">
           {stepCount} step{stepCount === 1 ? "" : "s"} · {triangleCount} tris

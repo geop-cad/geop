@@ -48,7 +48,7 @@ cargo test        # run the whole workspace's test suite
 cargo build        # native build, e.g. for the examples under each crate's examples/
 
 cargo install --path cad/geop-cad-cli
-geop compile part.program.json -o out/part.stl  # compile to stl
+geop compile part.geop -o out/part.stl  # compile to stl
 ```
 
 **Web app:**
@@ -62,6 +62,23 @@ cd web
 npm install         # once
 npm run dev          # rebuilds the wasm bindings, then starts the Vite dev server
 ```
+
+**VS Code extension:**
+
+Opens any `.geop` file as the editor, with the kernel running natively
+(`geop serve`) instead of as wasm. Requires Node 20+ and the `web/`
+dependencies (`npm install` in `web/`).
+
+```sh
+cd vscode-extension
+npm install         # once
+npm run build       # page -> media/, kernel -> bin/, TypeScript -> out/
+npm run package     # optional: a .vsix for the current platform
+```
+
+Press F5 (from the repo root or from `vscode-extension/`) to start an Extension Development Host
+after `npm run build`. See
+`vscode-extension/README.md` for how it works.
 
 ### Programs
 
@@ -100,6 +117,7 @@ coordinate system's axes or planes is referred to on its own by a
 "x"}}`, or its xy plane, normal to its z axis, `{"type": "Datum", "name":
 "origin", "component": {"plane": "z"}}`.
 
-"Save" in the web app downloads the program as `part.program.json`, and
-"Load" reads one back. `outputs/parts/` has the examples of
+"Save" in the web app downloads the program as `part.geop`, and
+"Load" reads one back. The VS Code extension in `vscode-extension/` opens any
+`.geop` file as the editor, with the kernel running natively (`geop serve`). `outputs/parts/` has the examples of
 `cad/geop-cad-base/src/examples.rs` as program files.

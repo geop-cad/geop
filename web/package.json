@@ -10,7 +10,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:vscode": "vite build --mode vscode"
   },
   "dependencies": {
     "@types/three": "^0.185.4",

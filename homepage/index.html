@@ -1079,12 +1079,12 @@ footer.site {
   });
 
   // ── agent demo ───────────────────────────────────────────────────────
-  // A scripted transcript of an agent writing a part.program.json step by
+  // A scripted transcript of an agent writing a part.geop step by
   // step and compiling it — "tool calls" print at once (that's how a real
   // agent CLI renders them), the $ prompts type out character by character.
   const AGENT_SCRIPT = [
     { type: "prompt", text: 'claude "Build a 40mm bracket with a 6mm hole through the middle"' },
-    { type: "agent", text: "Writing part.program.json…" },
+    { type: "agent", text: "Writing part.geop…" },
     { type: "tool", text: 'add_step({ op: "add_sketch", plane: "XY", sketch: rectangle(40, 40) })' },
     { type: "result", text: '✓ added step "outline"' },
     { type: "tool", text: 'add_step({ op: "extrude", sketch: "outline", distance: 10 })' },
@@ -1096,7 +1096,7 @@ footer.site {
       text: 'add_step({ op: "extrude", sketch: "hole_sketch", distance: -10, combine: difference("extrude(block)") })',
     },
     { type: "result", text: '✓ added step "hole"' },
-    { type: "shell", text: "geop compile part.program.json -o part.stl" },
+    { type: "shell", text: "geop compile part.geop -o part.stl" },
     { type: "output", text: "4 steps, 1 solid, 496 triangles -> part.stl" },
     { type: "success", text: "✓ Done." },
   ];

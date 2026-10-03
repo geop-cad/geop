@@ -209,6 +209,18 @@ impl<S: Scalar> Editor<S> {
         &self.program
     }
 
+    /// [`Editor::handle`] on the wire: `command` is a [`Command`] as JSON,
+    /// and the answer an [`Update`] as JSON. Shared by every front end that
+    /// is not Rust (the browser's wasm module, the VS Code host process),
+    /// so they all speak the same protocol. `Err` is a message that is not
+    /// itself an update: the command could not be read, or the update not
+    /// written.
+    pub fn handle_json(&mut self, command: &str) -> Result<String, String> {
+        let command: Command<S> =
+            serde_json::from_str(command).map_err(|e| format!("reading command: {e}"))?;
+        serde_json::to_string(&self.handle(command)).map_err(|e| format!("writing update: {e}"))
+    }
+
     /// Applies `command`, and says what to show now.
     pub fn handle(&mut self, command: Command<S>) -> Update<S> {
         // What undo goes back to — not taken for what is sent as often as

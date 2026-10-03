@@ -714,7 +714,7 @@ mod tests {
 
         let json = program.to_json().unwrap();
         let dir = outputs_dir();
-        std::fs::write(dir.join(format!("{name}.program.json")), &json).unwrap();
+        std::fs::write(dir.join(format!("{name}.geop")), &json).unwrap();
         let description = PartDescription::of(&part).unwrap();
         std::fs::write(
             dir.join(format!("{name}.part.json")),

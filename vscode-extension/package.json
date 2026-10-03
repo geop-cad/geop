@@ -1,0 +1,72 @@
+{
+  "name": "geop",
+  "displayName": "Geop CAD",
+  "description": "Open and edit .geop CAD programs in VS Code, on the native geop kernel.",
+  "version": "0.1.0",
+  "publisher": "geop-cad",
+  "license": "SEE LICENSE IN ../LICENSE.md",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "geop",
+        "aliases": [
+          "Geop",
+          "geop"
+        ],
+        "extensions": [
+          ".geop"
+        ],
+        "icon": {
+          "light": "./media/favicon.svg",
+          "dark": "./media/favicon.svg"
+        }
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "geop.editor",
+        "displayName": "Geop CAD Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.geop"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "Geop",
+      "properties": {
+        "geop.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `geop` executable that runs the kernel (`geop serve`). Empty uses the one bundled in the extension's `bin/` folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:web": "npm --prefix ../web run build:vscode",
+    "build:server": "cargo build --release -p geop-cad-cli && node scripts/copy-server.mjs",
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "build": "npm run build:web && npm run build:server && npm run compile",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "~6.0.2"
+  }
+}

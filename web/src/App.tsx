@@ -10,8 +10,10 @@ import {
   type ProgramState,
   type SceneState,
   type StepState,
+  type Update,
   type Value,
 } from "./geop";
+import { host } from "./backend";
 import { DEFAULT_POSE, headOnPose, type CameraPose, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
 import { SceneViewer } from "./SceneViewer";
@@ -61,9 +63,9 @@ function App() {
   const beforePlaneRef = useRef<CameraPose | null>(null);
 
   /** Send `command` to the kernel, and show what comes back. */
-  function dispatch(command: Command) {
+  async function dispatch(command: Command): Promise<Update | null> {
     try {
-      const update = send(command);
+      const update = await send(command);
       if (update.program) {
         setProgram(update.program);
         trackFailures(update.program.steps);
@@ -110,12 +112,12 @@ function App() {
 
   // ── editing a step ─────────────────────────────────────────────────────
 
-  function open(command: Command) {
-    if (dispatch(command)?.step) setMobileTab("detail");
+  async function open(command: Command) {
+    if ((await dispatch(command))?.step) setMobileTab("detail");
   }
 
-  function close(command: Command) {
-    const update = dispatch(command);
+  async function close(command: Command) {
+    const update = await dispatch(command);
     if (update && !update.step) setMobileTab((tab) => (tab === "detail" ? "buttons" : tab));
   }
 
@@ -139,8 +141,8 @@ function App() {
   }, [editing]);
 
   function newStep(info: OperationInfo) {
-    if (step?.kind === info.kind && step.id == null) close({ command: "cancel" });
-    else open({ command: "new", kind: info.kind });
+    if (step?.kind === info.kind && step.id == null) void close({ command: "cancel" });
+    else void open({ command: "new", kind: info.kind });
   }
 
   // ── the program ────────────────────────────────────────────────────────
@@ -148,7 +150,7 @@ function App() {
   const steps = program?.steps ?? [];
 
   function loadProgram(p: Program) {
-    dispatch({ command: "load", program: p });
+    return dispatch({ command: "load", program: p });
   }
 
   function saveProgram() {
@@ -157,7 +159,7 @@ function App() {
     const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = "part.program.json";
+    a.download = "part.geop";
     a.click();
     URL.revokeObjectURL(url);
     trackFile("saved");
@@ -173,8 +175,8 @@ function App() {
       .catch((e) => setError(String(e)));
   }
 
-  function loadExample(name: string) {
-    if (dispatch({ command: "load_example", name })?.error == null) trackExample(name);
+  async function loadExample(name: string) {
+    if ((await dispatch({ command: "load_example", name }))?.error == null) trackExample(name);
   }
 
   // A shared link — app.geop-cad.dev/?example=<name> — loads that example
@@ -182,9 +184,35 @@ function App() {
   useEffect(() => {
     if (!wasmReady) return;
     const name = new URLSearchParams(window.location.search).get("example");
-    if (name && program?.examples.includes(name)) loadExample(name);
+    if (name && program?.examples.includes(name)) void loadExample(name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wasmReady]);
+
+  // Hosted in VS Code, the program is the document's text: it is loaded
+  // from it, and every change to the program is written back. Until the
+  // document has been loaded, the starting program must not be written
+  // over it — and one that cannot be read is never written over either.
+  const documentLoaded = useRef(false);
+  useEffect(() => {
+    if (!wasmReady || !host) return;
+    host.onDocument((text) => {
+      let loaded: Program;
+      try {
+        loaded = text.trim() === "" ? { steps: [] } : (JSON.parse(text) as Program);
+      } catch (e) {
+        setError(`Not a geop program: ${e}`);
+        return;
+      }
+      void loadProgram(loaded).then((update) => {
+        if (update && !update.error) documentLoaded.current = true;
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wasmReady]);
+  const programValue = program?.program;
+  useEffect(() => {
+    if (host && documentLoaded.current && programValue) host.programChanged(programValue);
+  }, [programValue]);
 
   const infos = program?.operations ?? [];
   const stepCount = steps.length;
@@ -220,7 +248,7 @@ function App() {
         steps={timelineSteps}
         seeker={program?.marker ?? stepCount}
         enabled={wasmReady && step == null}
-        onEdit={(i) => open({ command: "open", id: steps[i].id })}
+        onEdit={(i) => void open({ command: "open", id: steps[i].id })}
         onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
         onMove={(i, to) => dispatch({ command: "move", id: steps[i].id, index: to })}
         onSeek={(slot) => dispatch({ command: "seek", marker: slot >= stepCount ? null : slot })}
@@ -234,8 +262,8 @@ function App() {
       onDialog={(key: string, value: Value) => event({ type: "dialog", key, value })}
       setPreview={(preview) => dispatch({ command: "preview", preview })}
       error={error}
-      onCommit={() => close({ command: "commit" })}
-      onCancel={() => close({ command: "cancel" })}
+      onCommit={() => void close({ command: "commit" })}
+      onCancel={() => void close({ command: "cancel" })}
     />
   );
 
@@ -243,11 +271,12 @@ function App() {
     <div className="app">
       <Toolbar
         busy={!wasmReady}
+        hosted={host != null}
         hasSteps={stepCount > 0}
         onSave={saveProgram}
         onLoadFile={loadFile}
         exampleNames={program?.examples ?? []}
-        onLoadExample={loadExample}
+        onLoadExample={(name) => void loadExample(name)}
         canUndo={(program?.can_undo ?? false) && step == null}
         onUndo={() => dispatch({ command: "undo" })}
         canRedo={(program?.can_redo ?? false) && step == null}

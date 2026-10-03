@@ -1,0 +1,104 @@
+{
+  "steps": [
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": -0.6528558953853001,
+              "y": 0.6869238633429817
+            },
+            "1": {
+              "x": 0.6985334221143527,
+              "y": -0.7468226239289235
+            },
+            "2": {
+              "x": 0.6985334221143527,
+              "y": 0.6869238633429817
+            },
+            "3": {
+              "x": -0.6528558953853001,
+              "y": -0.7468226239289235
+            },
+            "12": {
+              "x": -0.018646908270198114,
+              "y": -0.141743237156577
+            }
+          },
+          "curves": {
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": false
+            },
+            "6": {
+              "type": "Line",
+              "start": 2,
+              "end": 1,
+              "construction": false
+            },
+            "8": {
+              "type": "Line",
+              "start": 1,
+              "end": 3,
+              "construction": false
+            },
+            "10": {
+              "type": "Line",
+              "start": 3,
+              "end": 0,
+              "construction": false
+            },
+            "13": {
+              "type": "Circle",
+              "center": 12,
+              "radius": 0.36030008503471156,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "5": {
+              "type": "Horizontal",
+              "line": 4
+            },
+            "7": {
+              "type": "Vertical",
+              "line": 6
+            },
+            "9": {
+              "type": "Horizontal",
+              "line": 8
+            },
+            "11": {
+              "type": "Vertical",
+              "line": 10
+            }
+          },
+          "next_id": 14
+        }
+      }
+    },
+    {
+      "id": "extrude1",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch1",
+        "distance": 1,
+        "symmetric": false,
+        "combine": {
+          "mode": "new_body"
+        }
+      }
+    }
+  ]
+}

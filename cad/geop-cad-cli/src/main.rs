@@ -1,20 +1,24 @@
 //! `geop`: the kernel on the command line.
 //!
-//! `geop compile part.program.json` builds a program — the JSON the web
+//! `geop compile part.geop` builds a program — the JSON the web
 //! editor saves (see `geop_cad_base::Program`) — and writes the part it
 //! makes as an STL mesh. The mesh is the one the editor draws (see
 //! `geop_ops_rasterize::stl`), so a compiled file looks exactly like the
 //! part on screen.
+//!
+//! `geop serve` is the other way in: the same editor the web app runs, as a
+//! process a front end spawns and talks to over stdin/stdout (see
+//! [`serve`]).
 
 use std::{
     fs::File,
-    io::BufWriter,
+    io::{BufRead, BufWriter, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::Program;
+use geop_cad_base::{Editor, Program};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::scal_in_f64::ScalInF64,
@@ -47,14 +51,18 @@ enum Command {
     Compile(CompileArgs),
     /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
     Examples(ExamplesArgs),
+    /// Run the editor (see `geop_cad_base::editor`) as a host process for a
+    /// front end: one JSON command per line on stdin, one JSON update per
+    /// line on stdout. This is how the VS Code extension drives the kernel.
+    Serve,
 }
 
 #[derive(clap::Args)]
 struct CompileArgs {
-    /// The program to build, e.g. `part.program.json`.
+    /// The program to build, e.g. `part.geop`.
     program: PathBuf,
     /// Where to write the mesh. Defaults to the program's path with
-    /// `.program.json` (or `.json`) replaced by `.stl`.
+    /// `.geop` replaced by `.stl`.
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// Only this solid, by name (e.g. `extrude(hole)`); repeat for several.
@@ -72,7 +80,7 @@ struct CompileArgs {
 
 #[derive(clap::Args)]
 struct ExamplesArgs {
-    /// Where to write `<name>.program.json` and `<name>.stl` for each example.
+    /// Where to write `<name>.geop` and `<name>.stl` for each example.
     #[arg(short, long, default_value = "examples")]
     out_dir: PathBuf,
     /// Only this example, by name (e.g. `handle_with_hole`); repeat for
@@ -96,16 +104,10 @@ struct Compiled {
     triangles: usize,
 }
 
-/// `program`'s path with its extension replaced by `.stl`: `part.program.json`
+/// `program`'s path with its extension replaced by `.stl`: `part.geop`
 /// becomes `part.stl`.
 fn default_output(program: &Path) -> PathBuf {
-    let name = program
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("part");
-    let stem = name.strip_suffix(".json").unwrap_or(name);
-    let stem = stem.strip_suffix(".program").unwrap_or(stem);
-    program.with_file_name(format!("{stem}.stl"))
+    program.with_extension("stl")
 }
 
 fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
@@ -177,7 +179,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     })
 }
 
-/// Write every built-in example as `<out_dir>/<name>.program.json` and
+/// Write every built-in example as `<out_dir>/<name>.geop` and
 /// `<out_dir>/<name>.stl`, via [`compile`] — so an example's mesh is
 /// generated exactly the way any other program's would be.
 fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
@@ -203,7 +205,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     selected
         .into_iter()
         .map(|(name, program)| {
-            let json_path = args.out_dir.join(format!("{name}.program.json"));
+            let json_path = args.out_dir.join(format!("{name}.geop"));
             std::fs::write(&json_path, program.to_json()?)
                 .map_err(|e| GeopError::new(format!("writing {}: {e}", json_path.display())))?;
             compile(&CompileArgs {
@@ -218,9 +220,46 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
         .collect()
 }
 
+/// Run one [`Editor`] until stdin closes: every line is a command, and the
+/// answer is one line — the update as JSON, or `{"fatal": "..."}` if the
+/// command could not be read at all. A panic inside the kernel is reported
+/// the same way (the editor is then in an unknown state, so the process
+/// ends and the front end restarts it) rather than leaving the front end
+/// waiting for an answer that never comes.
+fn serve() -> GeopResult<()> {
+    let io_err = |e: std::io::Error| GeopError::new(format!("serving: {e}"));
+    let mut editor = Editor::<S>::new();
+    let stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    for line in stdin.lines() {
+        let line = line.map_err(io_err)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let answer =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| editor.handle_json(&line)));
+        let (reply, alive) = match answer {
+            Ok(Ok(update)) => (update, true),
+            Ok(Err(message)) => (serde_json::json!({ "fatal": message }).to_string(), true),
+            Err(_) => (
+                serde_json::json!({ "fatal": "the kernel panicked" }).to_string(),
+                false,
+            ),
+        };
+        writeln!(stdout, "{reply}")
+            .and_then(|()| stdout.flush())
+            .map_err(io_err)?;
+        if !alive {
+            return Err(GeopError::new("the kernel panicked"));
+        }
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::Serve => serve(),
         Command::Compile(args) => compile(&args).map(|c| {
             eprintln!(
                 "{} steps, {} solid{}, {} triangles -> {}",
@@ -277,7 +316,7 @@ mod tests {
     #[test]
     fn default_output_replaces_the_program_extension() {
         assert_eq!(
-            default_output(Path::new("a/part.program.json")),
+            default_output(Path::new("a/part.geop")),
             Path::new("a/part.stl")
         );
         assert_eq!(
@@ -287,11 +326,27 @@ mod tests {
         assert_eq!(default_output(Path::new("part")), Path::new("part.stl"));
     }
 
+    /// A command that cannot be read is answered, not fatal: the front end
+    /// is waiting for exactly one line per line it sent.
+    #[test]
+    fn serve_answers_every_command_with_one_line() {
+        let mut editor = Editor::<S>::new();
+        let shown = editor.handle_json(r#"{"command": "show"}"#).unwrap();
+        let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        assert!(shown["error"].is_null(), "{shown}");
+        assert!(
+            shown["program"]["examples"]
+                .as_array()
+                .is_some_and(|e| !e.is_empty())
+        );
+        assert!(editor.handle_json("not json").is_err());
+    }
+
     #[test]
     fn compiles_every_example() {
         let dir = scratch("examples");
         for (name, program) in examples::all() {
-            let path = dir.join(format!("{name}.program.json"));
+            let path = dir.join(format!("{name}.geop"));
             std::fs::write(&path, program.to_json().unwrap()).unwrap();
             let compiled = compile(&args(path)).unwrap();
             assert_eq!(compiled.output, dir.join(format!("{name}.stl")));
@@ -313,7 +368,7 @@ mod tests {
         .unwrap();
         assert_eq!(compiled.len(), examples::all().len());
         for (name, _) in examples::all() {
-            assert!(dir.join(format!("{name}.program.json")).is_file(), "{name}");
+            assert!(dir.join(format!("{name}.geop")).is_file(), "{name}");
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
     }
@@ -350,7 +405,7 @@ mod tests {
     #[test]
     fn an_unknown_solid_names_the_known_ones() {
         let dir = scratch("unknown-solid");
-        let path = dir.join("box.program.json");
+        let path = dir.join("box.geop");
         std::fs::write(&path, examples::box_with_drill_hole().to_json().unwrap()).unwrap();
         let err = compile(&CompileArgs {
             solids: vec!["nothing".into()],

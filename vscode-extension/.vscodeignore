@@ -1,0 +1,9 @@
+.vscode/**
+src/**
+scripts/**
+tsconfig.json
+node_modules/**
+!bin/**
+!media/**
+!out/**
+*.map

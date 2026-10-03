@@ -1,0 +1,125 @@
+{
+  "steps": [
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": -0.8101131548576719,
+              "y": 0.6162974705891819
+            },
+            "1": {
+              "x": 0.7106619235707965,
+              "y": -0.8707903979528309
+            },
+            "2": {
+              "x": 0.7106619235707965,
+              "y": 0.6162974705891819
+            },
+            "3": {
+              "x": -0.8101131548576719,
+              "y": -0.8707903979528309
+            },
+            "12": {
+              "x": -0.44545864013912895,
+              "y": -0.31986369456539965
+            },
+            "13": {
+              "x": 0.12638593976040408,
+              "y": -0.26601371603880897
+            },
+            "15": {
+              "x": -0.11395453584954462,
+              "y": -0.47727132410466555
+            }
+          },
+          "curves": {
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": false
+            },
+            "6": {
+              "type": "Line",
+              "start": 2,
+              "end": 1,
+              "construction": false
+            },
+            "8": {
+              "type": "Line",
+              "start": 1,
+              "end": 3,
+              "construction": false
+            },
+            "10": {
+              "type": "Line",
+              "start": 3,
+              "end": 0,
+              "construction": false
+            },
+            "14": {
+              "type": "Arc",
+              "start": 12,
+              "end": 13,
+              "sweep": -3.525811470373464,
+              "construction": false
+            },
+            "16": {
+              "type": "Line",
+              "start": 12,
+              "end": 15,
+              "construction": false
+            },
+            "17": {
+              "type": "Line",
+              "start": 15,
+              "end": 13,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "5": {
+              "type": "Horizontal",
+              "line": 4
+            },
+            "7": {
+              "type": "Vertical",
+              "line": 6
+            },
+            "9": {
+              "type": "Horizontal",
+              "line": 8
+            },
+            "11": {
+              "type": "Vertical",
+              "line": 10
+            }
+          },
+          "next_id": 18
+        }
+      }
+    },
+    {
+      "id": "extrude1",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch1",
+        "distance": 1,
+        "symmetric": false,
+        "combine": {
+          "mode": "new_body"
+        }
+      }
+    }
+  ]
+}
