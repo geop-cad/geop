@@ -1,3 +1,4 @@
+import { ColorInput } from "./controls";
 import type { Parameter, ParameterRow, Parameters, ParamValue } from "./geop";
 
 interface Props {
@@ -5,8 +6,8 @@ interface Props {
   /** What they resolve to, and why those that do not fail. */
   resolved: { values: Record<string, ParamValue>; errors: Record<string, string> };
   enabled: boolean;
-  /** The parameters are now these. */
-  onChange: (parameters: Parameters) => void;
+  /** The parameters are now these; settled once the part is built with them. */
+  onChange: (parameters: Parameters) => Promise<unknown> | void;
 }
 
 /**
@@ -214,11 +215,10 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange }: Pro
     <fieldset className="parameters" disabled={!enabled}>
       <div className="parameter parameter-color">
         <span className="parameter-name">color</span>
-        <input
-          type="color"
+        <ColorInput
           value={parameters.color ?? "#4472c4"}
           title="The part's colour"
-          onChange={(e) => onChange({ ...parameters, color: e.target.value })}
+          onChange={(color) => onChange({ ...parameters, color })}
         />
         {parameters.color && (
           <button className="small" title="Back to the default colour" onClick={() => onChange({ ...parameters, color: null })}>

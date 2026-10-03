@@ -58,11 +58,11 @@ pub struct Part<S: Scalar> {
     pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
     pub(crate) mates: BTreeMap<String, Mate>,
     /// The parameter values the part is built with (see [`Part::pose_parameter`]).
-    inputs: State,
+    pub(crate) inputs: State,
     /// The parameters its steps declared, with the values they read.
     declared: State,
     /// What its parameters are defined as (see [`Part::parameters`]).
-    parameters: crate::parameters::Parameters,
+    pub(crate) parameters: crate::parameters::Parameters,
     /// The next sketch, datum or instance id: ids count up in the order
     /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,

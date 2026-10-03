@@ -210,7 +210,8 @@ pub struct StepResult {
 ///
 /// What a step builds can depend on more than the step: on the program's
 /// inputs it reads (see [`Program::inputs`]) — when those change, it runs
-/// again from the first step that read one that did — and on the files its
+/// again from the first step that read one that did, and nothing runs again
+/// for a change nothing read, like the part's colour — and on the files its
 /// library reads. When those change, [`ProgramRunner::reset`] forgets
 /// everything built.
 pub struct ProgramRunner<S: Scalar, O> {
@@ -255,23 +256,18 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             .take_while(|(a, b)| a == b)
             .count();
         let inputs = program.inputs();
-        if self.parts[0].parameters() != &program.parameters {
-            // A program's parameters are what every step is started with.
-            common = 0;
-        }
-        if self.parts[0].parameters() != &program.parameters || self.parts[0].inputs() != &inputs {
-            // What an editor edits the first step against, too.
-            self.parts[0] = program.start();
-        }
         if self.inputs != inputs {
             // From the first step that read a parameter whose value is
             // different now — what it declared is what it read.
             let changed = |name: &String| self.inputs.get(name) != inputs.get(name);
+            // A step that failed may have failed for want of a value, and
+            // what it would have read is not known: it runs again too.
             if let Some(first) = (0..common).find(|&i| {
                 let (before, after) = (self.parts[i].state(), self.parts[i + 1].state());
-                after
-                    .keys()
-                    .any(|name| !before.contains_key(name) && changed(name))
+                self.results[i].error.is_some()
+                    || after
+                        .keys()
+                        .any(|name| !before.contains_key(name) && changed(name))
             }) {
                 common = first;
             }
@@ -280,6 +276,13 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         self.steps.truncate(common);
         self.parts.truncate(common + 1);
         self.results.truncate(common);
+        // What is kept read nothing that changed: it is the same part, with
+        // the values and the parameters the program has now — its colour,
+        // what a program placing it offers, what the next step reads.
+        for part in &mut self.parts {
+            part.inputs = self.inputs.clone();
+            part.parameters = program.parameters.clone();
+        }
 
         let target = stop.unwrap_or(program.steps.len()).min(program.steps.len());
         let failed = |results: &[StepResult]| results.iter().any(|r| r.error.is_some());

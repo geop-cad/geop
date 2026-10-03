@@ -902,3 +902,56 @@ fn drawing_on_an_edge_on_projection() {
     assert_eq!(regions.len(), 1);
     assert_eq!(regions[0].outer.edges.len(), 4);
 }
+
+/// A parameter no step reads — the part's colour — changes the part
+/// without building anything again: its colour is new, and every step's
+/// part is the one already built.
+#[test]
+fn parameters_no_step_reads_rebuild_nothing() {
+    let mut program = examples::parametric_plate();
+    let mut runner = crate::ProgramRunner::<S>::new();
+    runner.run(&program, None, &NoFiles);
+    let built = runner.part().clone();
+    program.parameters.color = Some("#123456".into());
+    let started = std::time::Instant::now();
+    runner.run(&program, None, &NoFiles);
+    let took = started.elapsed();
+    assert_eq!(runner.part().color(), Some("#123456"));
+    assert_eq!(runner.part().parameters(), &program.parameters);
+    // Rebuilding the plate — a boolean among its steps — takes far longer
+    // than looking at what changed.
+    assert!(
+        took < std::time::Duration::from_millis(20),
+        "a colour change took {took:?}"
+    );
+    assert_eq!(
+        geop_ops::PartDescription::of(runner.part()).unwrap(),
+        geop_ops::PartDescription::of(&built).unwrap()
+    );
+}
+
+/// The same in the editor: picking a colour answers at once — the part is
+/// drawn again in it, but nothing is built again.
+#[test]
+fn colours_are_picked_without_rebuilding() {
+    use crate::{Command, Editor};
+    let mut editor = Editor::<S>::new();
+    let program = examples::parametric_plate();
+    editor.handle(Command::Load {
+        program: program.clone(),
+        path: None,
+    });
+    let mut parameters = program.parameters.clone();
+    parameters.color = Some("#123456".into());
+    let started = std::time::Instant::now();
+    let update = editor.handle(Command::Parameters { parameters });
+    let took = started.elapsed();
+    assert_eq!(
+        update.scene.expect("drawn in the new colour").part.color.as_deref(),
+        Some("#123456")
+    );
+    assert!(
+        took < std::time::Duration::from_millis(30),
+        "picking a colour took {took:?}"
+    );
+}

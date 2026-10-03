@@ -259,7 +259,10 @@ placed screw is made M5 by the program placing it, without touching the
 screw's file. `Program::inputs` resolves the definitions with the state's
 overrides into the values a build reads; `Part::evaluate` evaluates a
 formula against them and declares what it read, so the `ProgramRunner`
-reruns from the first step that read a parameter whose value changed. A
+reruns from the first step that read a parameter whose value changed — or
+that failed, since what it would have read is not known — and nothing for
+a change no step read, like the part's colour: the parts it keeps just take
+the new values. A
 parameter that does not resolve is left out — what reads it fails, saying
 so — and the editor shows why.
 

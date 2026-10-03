@@ -216,7 +216,7 @@ function App() {
 
   /** What the user did to the step being edited. */
   function event(event: EditEvent) {
-    dispatch({ command: "event", event });
+    return dispatch({ command: "event", event });
   }
 
   // Keys go to the step being edited — tools, Escape, Delete — unless

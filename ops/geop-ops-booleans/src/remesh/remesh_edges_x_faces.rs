@@ -477,10 +477,10 @@ fn faces_are_coplanar<S: Scalar>(
     Ok(offset.could_be_equal(S::ZERO))
 }
 
-/// `true` if `edge_id`'s two neighboring faces — *within the solid `edge_id`
-/// itself belongs to* — are coplanar with each other, i.e. `edge_id` is a
-/// purely internal seam between two mutually-flush patches of that one
-/// solid, not a genuine outer boundary edge.
+/// One of `edge_id`'s two neighboring faces — *within the solid `edge_id`
+/// itself belongs to* — if those two are coplanar with each other, i.e.
+/// `edge_id` is a purely internal seam between two mutually-flush patches
+/// of that one solid, not a genuine outer boundary edge.
 ///
 /// The motivating case: [`geop_ops_extrude_revolve::revolve::revolve_at_oriented`]
 /// builds any flat cap (e.g. a cylinder's) as a fan of pie-wedge faces
@@ -497,28 +497,31 @@ fn faces_are_coplanar<S: Scalar>(
 /// one cap's hole not actually cut — see
 /// `boolean::tests::cube_minus_z_cylinder_with_coplanar_cap_is_fast_and_correct`).
 ///
-/// Skipping a seam edge never discards a needed coincidence: whatever
-/// region it borders is still reachable through its neighbors' own
-/// non-seam edges (a wedge's rim arc, in the motivating case), since a
-/// seam edge — by definition, both its neighbors already agreeing on one
-/// plane — never carries any information about that plane the neighbors
-/// themselves don't already carry along their own outer edges.
-fn is_internal_seam_edge<S: Scalar>(
+/// Skipping such a seam is right only for a face *flush with* the seam's
+/// own plane: there the seam carries nothing that plane's outer edges do
+/// not, and the region it borders is reached through them (a wedge's rim
+/// arc, in the motivating case). For a face that *crosses* that plane the
+/// seam carries everything: it is exactly where the two planes meet — the
+/// intersection curve — and nothing else supplies it. It cannot be traced
+/// either, since every step along it lands on the seam itself. A revolved
+/// flat ring cut by a plate's face along its seam is the case that showed
+/// it: `ring_revolved_onto_plate`.
+fn seam_plane<S: Scalar>(
     model: &Model<S>,
     edge_id: EdgeId,
     max_nodes: usize,
     min_subdivision_size: S,
-) -> GeopResult<bool> {
+) -> GeopResult<Option<FaceId>> {
     let coedges = model.coedges_of_edge(edge_id);
     let [c1, c2] = coedges[..] else {
-        return Ok(false);
+        return Ok(None);
     };
     let f1 = model.get_coedge(c1)?.face;
     let f2 = model.get_coedge(c2)?.face;
     if f1 == f2 {
-        return Ok(false);
+        return Ok(None);
     }
-    faces_are_coplanar(model, f1, f2, max_nodes, min_subdivision_size)
+    Ok(faces_are_coplanar(model, f1, f2, max_nodes, min_subdivision_size)?.then_some(f1))
 }
 
 /// The first `(edge, face)` pair found where `edge`'s whole curve is
@@ -540,13 +543,18 @@ fn find_coincident_pair<S: Scalar>(
     };
 
     for edge_id in model.iter_solid_edges(edge_solid).with_context(&ctx)? {
-        if is_internal_seam_edge(model, edge_id, max_nodes, min_subdivision_size)
-            .with_context(&ctx)?
-        {
-            continue;
-        }
+        let seam =
+            seam_plane(model, edge_id, max_nodes, min_subdivision_size).with_context(&ctx)?;
         for face_id in model.solid_faces(face_solid).with_context(&ctx)? {
             if edge_is_boundary_of_face(model, edge_id, face_id) {
+                continue;
+            }
+            // A seam within a plane is that plane's own business only for a
+            // face flush with it (see `seam_plane`).
+            if let Some(plane) = seam
+                && faces_are_coplanar(model, plane, face_id, max_nodes, min_subdivision_size)
+                    .with_context(&ctx)?
+            {
                 continue;
             }
             let edge = model.get_edge(edge_id).with_context(&ctx)?;

@@ -1,12 +1,12 @@
-import { Dropdown, SearchSelect, SliderNumber } from "./controls";
+import { ColorInput, Dropdown, SearchSelect, SliderNumber } from "./controls";
 import { Icon } from "./icons";
 import { entityLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
 
 interface Props {
   /** The step being edited, as the kernel shows it. */
   step: StepState;
-  /** A field was used. */
-  onDialog: (key: string, value: Value) => void;
+  /** A field was used; settled once the step is updated. */
+  onDialog: (key: string, value: Value) => Promise<unknown> | void;
   setPreview: (v: boolean) => void;
   /** Why the last command was refused, if it was. */
   error: string | null;
@@ -233,7 +233,7 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
         return (
           <label className="row">
             {c.label}
-            <input type="color" value={c.value} onChange={(e) => send({ type: "text", value: e.target.value })} />
+            <ColorInput value={c.value} onChange={(color) => send({ type: "text", value: color })} />
           </label>
         );
       case "list":

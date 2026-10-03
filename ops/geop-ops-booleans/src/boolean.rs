@@ -23,7 +23,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{
-    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
+    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId, VertexId,
+    boundary::BoundaryType,
     contains::{
         face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
         shell::{PointClassification as ShellPoint, shell_contains},
@@ -322,8 +323,28 @@ pub fn classify_face<S: Scalar>(
     )?;
     if let Some(&(classification, point)) = decided.first() {
         if let Some((other, other_point)) = decided.iter().find(|(c, _)| *c != classification) {
+            // The face's boundary, corner by corner: which curves were
+            // imprinted into it, and so — between the two points — which
+            // one was not.
+            let corners = |boundary: BoundaryType| -> GeopResult<Vec<[f64; 3]>> {
+                let at = |v: VertexId| -> GeopResult<[f64; 3]> {
+                    let p = model.get_vertex(v)?.point;
+                    Ok([0, 1, 2].map(|k| p[k].to_f64()))
+                };
+                match boundary {
+                    BoundaryType::Vertex(v) => Ok(vec![at(v)?]),
+                    BoundaryType::Loop(anchor) => model
+                        .iterate_loop_coedges(anchor)
+                        .map(|c| at(model.coedge_start_vertex_id(c)?))
+                        .collect(),
+                }
+            };
+            let loops = face
+                .boundaries()
+                .map(corners)
+                .collect::<GeopResult<Vec<_>>>()?;
             return Err(GeopError::new(format!(
-                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted"
+                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}"
             )));
         }
         return Ok(classification);
@@ -1618,7 +1639,7 @@ mod tests {
     /// it tried imprinting all of them — the slowdown, and (via
     /// interleaved imprints across the two caps corrupting
     /// `Model::splice_edge_into_face`'s face-splitting bookkeeping) the
-    /// wrong result. Fixed by `is_internal_seam_edge`/`faces_are_coplanar`
+    /// wrong result. Fixed by `seam_plane`/`faces_are_coplanar`
     /// there: an edge whose two neighboring faces (within its own solid)
     /// are already coplanar with each other is never the only carrier of a
     /// genuine coincidence, so it's skipped — cutting straight to the rim

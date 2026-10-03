@@ -330,3 +330,97 @@ fn spline_revolved_then_extruded_and_joined() {
     );
     assert_builds_valid(&program);
 }
+
+/// A plate with a hole, and on a plane across it a stepped profile drawn
+/// from the plate's top edge, revolved about that sketch's own `x` axis and
+/// joined to the plate — as reported, coordinates and all. The revolve's
+/// flat ring at `y = 6.59` is built of two halves whose seam lies in the
+/// plate's bottom plane, exactly where the ring crosses the plate's bottom
+/// face: the intersection curve is that seam.
+#[test]
+fn ring_revolved_onto_plate() {
+    let mut program = Program::new();
+
+    let mut plate = Sketch::new();
+    let corners: Vec<_> = [
+        (7.500000000000002, 7.499999999999998),
+        (-7.500000000000002, 7.499999999999998),
+        (-7.500000000000002, -7.499999999999998),
+        (7.500000000000002, -7.5),
+    ]
+    .into_iter()
+    .map(|(x, y)| plate.add_point(n(x), n(y)))
+    .collect();
+    for i in 0..4 {
+        plate.add_line(corners[i], corners[(i + 1) % 4]);
+    }
+    let center = plate.add_point(n(0.0), n(0.0));
+    plate.add_circle(center, n(1.4999999999999998));
+    program.push(
+        "sketch1",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: plate,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "extrude1",
+        ExtrudeArgs {
+            sketch: "sketch1".into(),
+            distance: 1.0,
+            symmetric: false,
+            combine: Combine::NewBody,
+        },
+    );
+
+    let mut ring = Sketch::new();
+    let profile: Vec<_> = [
+        (7.500000000000001, 1.0000000000000004),
+        (7.500000000000001, 7.680535586464354),
+        (11.729022707616181, 7.680535586464354),
+        (11.729022707616181, 14.13762302641227),
+        (10.279264816059785, 14.137623026412271),
+        (10.279264816059785, 8.858670838665377),
+        (6.586912686002086, 8.858670838665377),
+        (6.586912686002086, 1.0000000000000004),
+    ]
+    .into_iter()
+    .map(|(x, y)| ring.add_point(n(x), n(y)))
+    .collect();
+    for i in 0..profile.len() {
+        ring.add_line(profile[i], profile[(i + 1) % profile.len()]);
+    }
+    let origin = ring.add_point(n(0.0), n(0.0));
+    let along = ring.add_point(n(1.0), n(0.0));
+    let axis = ring.add_line(origin, along);
+    ring.set_construction(axis, true);
+    program.push(
+        "sketch2",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::X),
+            )),
+            sketch: ring,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: "sketch2".into(),
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "sketch2".into(),
+                curve: axis,
+            }),
+            combine: Combine::Union {
+                target: "extrude(extrude1)".into(),
+            },
+        },
+    );
+    assert_builds_valid(&program);
+}
