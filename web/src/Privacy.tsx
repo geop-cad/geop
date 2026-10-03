@@ -3,18 +3,11 @@ import { analyticsStatus, setAnalyticsOptOut } from "./analytics";
 
 export const PRIVACY_URL = "https://geop-cad.dev/privacy.html";
 
-/** A button that opens what the app collects, and a switch to turn usage statistics off. */
-export function Privacy() {
-  const [open, setOpen] = useState(false);
+/** What the app collects, while `open`, and a switch to turn usage statistics off. */
+export function Privacy({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [status, setStatus] = useState(analyticsStatus);
 
-  if (!open) {
-    return (
-      <button className="small" onClick={() => setOpen(true)}>
-        Privacy
-      </button>
-    );
-  }
+  if (!open) return null;
 
   const toggle = (on: boolean) => {
     setAnalyticsOptOut(!on);
@@ -25,7 +18,7 @@ export function Privacy() {
     <div className="popup-backdrop">
       <div className="popup">
         <div className="button-row">
-          <button className="small" onClick={() => setOpen(false)}>
+          <button className="small" onClick={onClose}>
             Close
           </button>
         </div>

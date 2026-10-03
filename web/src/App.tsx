@@ -30,6 +30,7 @@ import {
 import { ParametersPanel } from "./ParametersPanel";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
+import { Icon } from "./icons";
 import { Timeline, type TimelineStep } from "./Timeline";
 import { Toolbar } from "./Toolbar";
 import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
@@ -388,26 +389,28 @@ function App() {
 
   const dragTool = program?.drag_tool ?? false;
   const operationButtonsRow = (
-    <div className="tools operation-tools">
-      <button
-        title="Drag placed parts as far as their mates let them"
-        className={dragTool ? "active" : ""}
-        disabled={!wasmReady || step != null}
-        onClick={() => dispatch({ command: "drag_tool", on: !dragTool })}
-      >
-        Drag
-      </button>
+    <div className="operation-tools" role="toolbar" aria-label="Operations">
       {infos.map((info) => (
         <button
           key={info.kind}
           title={info.doc}
-          className={step?.kind === info.kind && step.id == null ? "active" : ""}
+          className={["op-button", step?.kind === info.kind && step.id == null ? "active" : ""].join(" ")}
           disabled={!wasmReady || (step != null && step.kind !== info.kind)}
           onClick={() => newStep(info)}
         >
-          {info.label}
+          <Icon name={info.kind} />
+          <span>{info.label}</span>
         </button>
       ))}
+      <button
+        title="Drag placed parts as far as their mates let them"
+        className={["op-button", dragTool ? "active" : ""].join(" ")}
+        disabled={!wasmReady || step != null}
+        onClick={() => dispatch({ command: "drag_tool", on: !dragTool })}
+      >
+        <Icon name="drag" />
+        <span>Drag</span>
+      </button>
     </div>
   );
 
@@ -490,6 +493,7 @@ function App() {
         program={program?.program ?? { steps: [] }}
         stepCount={stepCount}
         triangleCount={triangleCount}
+        bugReportOpen={bugReportOpen}
         bugReportHost={isMobile ? bugReportHost : null}
         onBugReportOpen={() => {
           setBugReportOpen(true);

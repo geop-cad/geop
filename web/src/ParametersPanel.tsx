@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { ColorInput } from "./controls";
 import type { Parameter, ParameterRow, Parameters, ParamValue } from "./geop";
+import { Icon } from "./icons";
 
 interface Props {
   parameters: Parameters;
@@ -52,10 +54,17 @@ function Field({
 }
 
 /** A number typed in place; empty for none. */
-function OptionalNumber({ value, onChange, placeholder }: { value?: number | null; onChange: (v: number | null) => void; placeholder: string }) {
+function OptionalNumber({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value?: number | null;
+  onChange: (v: number | null) => void;
+  placeholder: string;
+}) {
   return (
     <Field
-      className="parameter-bound"
       value={value == null ? "" : String(value)}
       placeholder={placeholder}
       onChange={(text) => {
@@ -80,199 +89,297 @@ function shown(value: ParamValue | undefined): string {
   return "";
 }
 
-/**
- * The program's parameters: the part's colour, numbers given as formulas
- * of the other parameters, and tables of variants — a family of
- * parts, one row each — whose selected row's columns read as
- * `name.column`. Sketch dimensions read them by name; a program placing
- * the part gives them other values.
- */
-export function ParametersPanel({ parameters, resolved, enabled, onChange }: Props) {
-  const values = parameters.values ?? [];
-  const set = (index: number, parameter: Parameter) =>
-    onChange({ ...parameters, values: values.map((p, i) => (i === index ? parameter : p)) });
-  const remove = (index: number) => onChange({ ...parameters, values: values.filter((_, i) => i !== index) });
-  const add = (parameter: Parameter) => onChange({ ...parameters, values: [...values, parameter] });
+type Table = Extract<Parameter, { type: "table" }>;
 
-  const table = (index: number, p: Extract<Parameter, { type: "table" }>) => {
-    const setRows = (rows: ParameterRow[]) => set(index, { ...p, rows });
-    return (
-      <div className="parameter-table-wrap">
-        <table className="parameter-table">
-          <thead>
-            <tr>
-              <th />
-              <th>row</th>
-              {p.columns.map((c, k) => (
-                <th key={k}>
-                  <span className="parameter-column">
-                    <Field
-                      value={c}
-                      onChange={(name) => set(index, { ...p, columns: p.columns.map((x, j) => (j === k ? name : x)) })}
-                    />
-                    <button
-                      className="item-remove"
-                      title={`Remove the column ${c}`}
-                      aria-label={`Remove the column ${c}`}
-                      onClick={() =>
-                        set(index, {
-                          ...p,
-                          columns: p.columns.filter((_, j) => j !== k),
-                          rows: p.rows.map((r) => ({ ...r, values: r.values.filter((_, j) => j !== k) })),
-                        })
-                      }
-                    >
-                      ✕
-                    </button>
-                  </span>
-                </th>
-              ))}
-              <th>
-                <button
-                  className="small"
-                  title="Add a column"
-                  onClick={() =>
-                    set(index, {
-                      ...p,
-                      columns: [...p.columns, freshName(p.columns, "value")],
-                      rows: p.rows.map((r) => ({ ...r, values: [...r.values, 0] })),
-                    })
-                  }
-                >
-                  +
-                </button>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.rows.map((row, r) => (
-              <tr key={r} className={row.name === p.selected ? "selected" : ""}>
-                <td>
-                  <input
-                    type="radio"
-                    title="Build this row"
-                    checked={row.name === p.selected}
-                    onChange={() => set(index, { ...p, selected: row.name })}
-                  />
-                </td>
-                <td>
+/** A table's columns and rows, edited as a grid: which row is built, each row's name and values, columns added and taken out. */
+function TableEditor({ table, onChange }: { table: Table; onChange: (t: Table) => void }) {
+  const { columns, rows, selected } = table;
+  const setRows = (next: ParameterRow[]) => onChange({ ...table, rows: next });
+  return (
+    <div className="table-editor">
+      <table>
+        <thead>
+          <tr>
+            <th title="The row built">Built</th>
+            <th>Row</th>
+            {columns.map((c, k) => (
+              <th key={k}>
+                <span className="table-column">
                   <Field
-                    value={row.name}
-                    onChange={(name) =>
-                      set(index, {
-                        ...p,
-                        selected: p.selected === row.name ? name : p.selected,
-                        rows: p.rows.map((x, j) => (j === r ? { ...x, name } : x)),
+                    value={c}
+                    onChange={(name) => onChange({ ...table, columns: columns.map((x, j) => (j === k ? name : x)) })}
+                  />
+                  <button
+                    className="icon-only"
+                    title={`Remove the column ${c}`}
+                    aria-label={`Remove the column ${c}`}
+                    onClick={() =>
+                      onChange({
+                        ...table,
+                        columns: columns.filter((_, j) => j !== k),
+                        rows: rows.map((r) => ({ ...r, values: r.values.filter((_, j) => j !== k) })),
                       })
                     }
-                  />
-                </td>
-                {row.values.map((v, k) => (
-                  <td key={k}>
-                    <Field
-                      value={String(v)}
-                      onChange={(text) => {
-                        const n = Number(text);
-                        if (!Number.isNaN(n))
-                          setRows(p.rows.map((x, j) => (j === r ? { ...x, values: x.values.map((y, m) => (m === k ? n : y)) } : x)));
-                      }}
-                    />
-                  </td>
-                ))}
-                <td>
-                  <button
-                    className="item-remove"
-                    title="Remove the row"
-                    disabled={p.rows.length <= 1}
-                    onClick={() => {
-                      const rows = p.rows.filter((_, j) => j !== r);
-                      set(index, { ...p, rows, selected: row.name === p.selected ? rows[0].name : p.selected });
-                    }}
                   >
                     ✕
                   </button>
-                </td>
-              </tr>
+                </span>
+              </th>
             ))}
-          </tbody>
-        </table>
-        <button
-          className="small"
-          onClick={() =>
-            setRows([
-              ...p.rows,
-              { name: freshName(p.rows.map((r) => r.name), "row"), values: p.columns.map(() => 0) },
-            ])
-          }
-        >
-          + row
-        </button>
-      </div>
-    );
-  };
+            <th>
+              <button
+                className="small"
+                title="Add a column"
+                onClick={() =>
+                  onChange({
+                    ...table,
+                    columns: [...columns, freshName(columns, "value")],
+                    rows: rows.map((r) => ({ ...r, values: [...r.values, 0] })),
+                  })
+                }
+              >
+                + column
+              </button>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, r) => (
+            <tr key={r} className={row.name === selected ? "selected" : ""}>
+              <td className="table-built">
+                <input
+                  type="radio"
+                  title="Build this row"
+                  checked={row.name === selected}
+                  onChange={() => onChange({ ...table, selected: row.name })}
+                />
+              </td>
+              <td>
+                <Field
+                  value={row.name}
+                  onChange={(name) =>
+                    onChange({
+                      ...table,
+                      selected: selected === row.name ? name : selected,
+                      rows: rows.map((x, j) => (j === r ? { ...x, name } : x)),
+                    })
+                  }
+                />
+              </td>
+              {row.values.map((v, k) => (
+                <td key={k}>
+                  <Field
+                    value={String(v)}
+                    onChange={(text) => {
+                      const n = Number(text);
+                      if (!Number.isNaN(n))
+                        setRows(
+                          rows.map((x, j) => (j === r ? { ...x, values: x.values.map((y, m) => (m === k ? n : y)) } : x)),
+                        );
+                    }}
+                  />
+                </td>
+              ))}
+              <td>
+                <button
+                  className="icon-only"
+                  title="Remove the row"
+                  aria-label={`Remove the row ${row.name}`}
+                  disabled={rows.length <= 1}
+                  onClick={() => {
+                    const left = rows.filter((_, j) => j !== r);
+                    onChange({ ...table, rows: left, selected: row.name === selected ? left[0].name : selected });
+                  }}
+                >
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button
+        className="small"
+        onClick={() => setRows([...rows, { name: freshName(rows.map((r) => r.name), "row"), values: columns.map(() => 0) }])}
+      >
+        + row
+      </button>
+    </div>
+  );
+}
 
+/** One parameter's details, in a popup: its name, and its formula and slider range or its table. */
+function ParameterDialog({
+  parameter,
+  value,
+  error,
+  onChange,
+  onRemove,
+  onClose,
+}: {
+  parameter: Parameter;
+  value: ParamValue | undefined;
+  error: string | undefined;
+  onChange: (p: Parameter) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
   return (
-    <fieldset className="parameters" disabled={!enabled}>
-      <div className="parameter parameter-color">
+    <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-label={`Parameter ${parameter.name}`}>
+        <div className="modal-head">
+          <Icon name={parameter.type === "table" ? "table" : "number"} />
+          <h2>{parameter.type === "table" ? "Table" : "Number"}</h2>
+          <button className="icon-only" onClick={onClose} title="Close" aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <label className="modal-field">
+          <span>Name</span>
+          <Field value={parameter.name} onChange={(name) => onChange({ ...parameter, name })} />
+        </label>
+        {parameter.type === "number" ? (
+          <>
+            <label className="modal-field">
+              <span>Value</span>
+              <Field
+                className="formula"
+                value={parameter.expression}
+                placeholder="a number or formula"
+                title="A number, or a formula of the other parameters: width / 2, sqrt(a^2 + b^2), screw.diameter"
+                onChange={(expression) => onChange({ ...parameter, expression })}
+              />
+              <span className="parameter-value">{shown(value)}</span>
+            </label>
+            <div className="modal-field" title="What a slider offers when the part is placed">
+              <span>Slider</span>
+              <OptionalNumber value={parameter.min} placeholder="min" onChange={(min) => onChange({ ...parameter, min })} />
+              <span className="hint">to</span>
+              <OptionalNumber value={parameter.max} placeholder="max" onChange={(max) => onChange({ ...parameter, max })} />
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="hint">
+              A family of variants, one per row: the row built is the parameter's value, and{" "}
+              <code>
+                {parameter.name}.{parameter.columns[0] ?? "column"}
+              </code>{" "}
+              its value in a column.
+            </p>
+            <TableEditor table={parameter} onChange={onChange} />
+          </>
+        )}
+        {error && <p className="op-error-text">{error}</p>}
+        <div className="modal-actions">
+          <button className="danger" onClick={onRemove}>
+            Remove parameter
+          </button>
+          <button className="primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The program's parameters: the part's colour, numbers given as formulas
+ * of the other parameters, and tables of variants — a family of parts, one
+ * row each — whose built row's columns read as `name.column`. Sketch
+ * dimensions read them by name; a program placing the part gives them other
+ * values. One compact row each; the details open in a popup.
+ */
+export function ParametersPanel({ parameters, resolved, enabled, onChange }: Props) {
+  const values = parameters.values ?? [];
+  const [editing, setEditing] = useState<number | null>(null);
+  const set = (index: number, parameter: Parameter) =>
+    onChange({ ...parameters, values: values.map((p, i) => (i === index ? parameter : p)) });
+  const add = (parameter: Parameter) => {
+    onChange({ ...parameters, values: [...values, parameter] });
+    setEditing(values.length);
+  };
+  const open = editing != null ? values[editing] : undefined;
+  return (
+    <div className="parameters">
+      <div className="parameter-row">
+        <span className="parameter-kind">
+          <ColorInput
+            value={parameters.color ?? "#4472c4"}
+            title="The part's colour"
+            onChange={(color) => onChange({ ...parameters, color })}
+          />
+        </span>
         <span className="parameter-name">color</span>
-        <ColorInput
-          value={parameters.color ?? "#4472c4"}
-          title="The part's colour"
-          onChange={(color) => onChange({ ...parameters, color })}
-        />
+        <span className="parameter-value">{parameters.color ?? "default"}</span>
         {parameters.color && (
-          <button className="small" title="Back to the default colour" onClick={() => onChange({ ...parameters, color: null })}>
-            default
+          <button
+            className="icon-only"
+            title="Back to the default colour"
+            aria-label="Back to the default colour"
+            disabled={!enabled}
+            onClick={() => onChange({ ...parameters, color: null })}
+          >
+            ✕
           </button>
         )}
       </div>
       {values.map((p, index) => {
         const error = resolved.errors[p.name];
         return (
-          <div key={index} className={["parameter", error ? "failed" : ""].join(" ")}>
-            <div className="parameter-head">
-              <Field className="parameter-name" value={p.name} onChange={(name) => set(index, { ...p, name })} title="Its name, as formulas read it" />
-              {p.type === "number" ? (
-                <>
-                  <span className="parameter-eq">=</span>
-                  <Field
-                    className="parameter-expression"
-                    value={p.expression}
-                    placeholder="a number or formula"
-                    title="A number, or a formula of the other parameters: width / 2, sqrt(a^2 + b^2), screw.diameter"
-                    onChange={(expression) => set(index, { ...p, expression })}
-                  />
-                  <span className="parameter-value" title="What it is now">
-                    {shown(resolved.values[p.name])}
-                  </span>
-                </>
-              ) : (
-                <span className="parameter-value" title="The row built">
-                  {shown(resolved.values[p.name])}
-                </span>
-              )}
-              <button className="item-remove" title="Remove the parameter" onClick={() => remove(index)}>
-                ✕
-              </button>
-            </div>
-            {p.type === "number" && (
-              <div className="parameter-bounds" title="What a slider offers when the part is placed">
-                <OptionalNumber value={p.min} placeholder="min" onChange={(min) => set(index, { ...p, min })} />
-                <span>…</span>
-                <OptionalNumber value={p.max} placeholder="max" onChange={(max) => set(index, { ...p, max })} />
-              </div>
+          <div key={index} className={["parameter-row", error ? "failed" : ""].join(" ")} title={error}>
+            <span className="parameter-kind">
+              <Icon name={p.type === "table" ? "table" : "number"} />
+            </span>
+            <span className="parameter-name">{p.name}</span>
+            {p.type === "number" ? (
+              <Field
+                className="parameter-formula"
+                value={p.expression}
+                placeholder="formula"
+                title="A number, or a formula of the other parameters"
+                onChange={(expression) => set(index, { ...p, expression })}
+              />
+            ) : (
+              <select
+                className="parameter-formula"
+                value={p.selected}
+                title="The row built"
+                disabled={!enabled}
+                onChange={(e) => set(index, { ...p, selected: e.target.value })}
+              >
+                {p.rows.map((r) => (
+                  <option key={r.name} value={r.name}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
             )}
-            {p.type === "table" && table(index, p)}
-            {error && <p className="op-error-text">{error}</p>}
+            {p.type === "number" && <span className="parameter-value">{error ? "!" : shown(resolved.values[p.name])}</span>}
+            <button
+              className="icon-only"
+              title="Edit"
+              aria-label={`Edit ${p.name}`}
+              disabled={!enabled}
+              onClick={() => setEditing(index)}
+            >
+              <Icon name="edit" />
+            </button>
           </div>
         );
       })}
-      <div className="button-row">
-        <button className="small" onClick={() => add({ name: freshName(values.map((v) => v.name), "length"), type: "number", expression: "10" })}>
-          + number
+      <div className="parameter-add">
+        <button
+          className="small"
+          disabled={!enabled}
+          onClick={() => add({ name: freshName(values.map((v) => v.name), "length"), type: "number", expression: "10" })}
+        >
+          + Number
         </button>
         <button
           className="small"
+          disabled={!enabled}
           title="A family of variants — screw sizes, say — of which one row is built"
           onClick={() =>
             add({
@@ -287,9 +394,22 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange }: Pro
             })
           }
         >
-          + table
+          + Table
         </button>
       </div>
-    </fieldset>
+      {open && editing != null && (
+        <ParameterDialog
+          parameter={open}
+          value={resolved.values[open.name]}
+          error={resolved.errors[open.name]}
+          onChange={(p) => set(editing, p)}
+          onRemove={() => {
+            onChange({ ...parameters, values: values.filter((_, i) => i !== editing) });
+            setEditing(null);
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </div>
   );
 }

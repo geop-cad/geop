@@ -4,32 +4,26 @@ import type { Program } from "./geop";
 import { PRIVACY_URL } from "./Privacy";
 
 interface Props {
+  /** Whether the form is shown. */
+  open: boolean;
   program: Program;
   committedError: string | null;
   /** Where to put the form instead of floating it over the viewport — the mobile layout's "Bug" tab pane. */
   panelHost?: HTMLElement | null;
-  onOpen?: () => void;
-  onClose?: () => void;
+  onClose: () => void;
 }
 
 type Status = "idle" | "sending" | "sent" | { error: string };
 
-/** A button that opens a small form and posts it, with the current program attached, to /api/bug-report. */
-export function BugReport({ program, committedError, panelHost, onOpen, onClose }: Props) {
-  const [open, setOpen] = useState(false);
+/** A small form, while `open`, that posts a description, with the current program attached, to /api/bug-report. */
+export function BugReport({ open, program, committedError, panelHost, onClose }: Props) {
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<Status>("idle");
 
-  function openDialog() {
-    setOpen(true);
-    onOpen?.();
-  }
-
   function close() {
-    setOpen(false);
     setDescription("");
     setStatus("idle");
-    onClose?.();
+    onClose();
   }
 
   async function send() {
@@ -56,9 +50,7 @@ export function BugReport({ program, committedError, panelHost, onOpen, onClose 
     }
   }
 
-  if (!open) {
-    return <button onClick={openDialog}>Report bug</button>;
-  }
+  if (!open) return null;
 
   const content = (
     <div className="popup-backdrop">
