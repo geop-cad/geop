@@ -123,6 +123,7 @@ impl Operation for Boolean {
             OPS.iter()
                 .map(|&(_, value, label)| Choice::new(value, label))
                 .collect(),
+            false,
             |args, value| {
                 if let Some(&(op, ..)) = OPS.iter().find(|o| o.1 == value) {
                     args.op = op;
@@ -262,6 +263,7 @@ impl Combine {
                 .iter()
                 .map(|&(value, label)| Choice::new(value, label))
                 .collect(),
+            false,
             move |args, mode| {
                 let this = combine(args);
                 let target = this

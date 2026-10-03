@@ -31,9 +31,12 @@ ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is
                                edited (events, dialogs, visuals, hit tests),
+                               parameters and the formulas reading them,
                                programs, the files they place parts from, and
                                running them (+ `geop-ops-derive`)
-ops/geop-ops-sketch           the sketch operation
+ops/geop-ops-sketch           the sketch operation: drawing and constraint
+                               tools, snapping, reference geometry and
+                               projections of the part
 ops/geop-ops-datums           the datum operation: reference points, axes,
                                planes and coordinate systems
 ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),

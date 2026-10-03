@@ -38,11 +38,6 @@ pub fn dist(a: P2, b: P2) -> f64 {
     d[0].hypot(d[1])
 }
 
-/// A number from the pointer or a dialog, as design data: sharp.
-pub fn design(x: f64) -> Design {
-    Design::from_f64(x)
-}
-
 /// Where the sketch point `p` is drawn.
 pub fn xy(sketch: &Sketch<Design>, p: geop_core_sketch::PointId) -> P2 {
     let q = sketch.points[&p].xy();

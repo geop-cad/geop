@@ -34,6 +34,9 @@ pub struct Action {
     pub enabled: bool,
     /// Shown pressed: the tool in hand, the way chosen.
     pub active: bool,
+    /// The name of the icon it is shown as, with its label as its tooltip;
+    /// none to show the label.
+    pub icon: Option<String>,
 }
 
 impl Action {
@@ -45,7 +48,13 @@ impl Action {
             group: None,
             enabled: true,
             active: false,
+            icon: None,
         }
+    }
+
+    pub fn icon(mut self, icon: impl Into<String>) -> Self {
+        self.icon = Some(icon.into());
+        self
     }
 
     pub fn title(mut self, title: impl Into<String>) -> Self {
@@ -102,6 +111,9 @@ pub struct ListItem {
     pub removable: bool,
     /// A number to show and edit in place.
     pub value: Option<f64>,
+    /// Text to show and edit in place — a value as a formula — sent back
+    /// as [`super::Value::Text`].
+    pub text: Option<String>,
 }
 
 impl ListItem {
@@ -114,6 +126,7 @@ impl ListItem {
             selected: false,
             removable: false,
             value: None,
+            text: None,
         }
     }
 }
@@ -128,6 +141,8 @@ pub enum Unit {
     Angle,
     /// A fraction of something: `0` its start, `1` its end.
     Fraction,
+    /// How many of something: a whole number.
+    Count,
 }
 
 impl Unit {
@@ -137,6 +152,7 @@ impl Unit {
             Unit::Length => 0.1,
             Unit::Angle => 1.0,
             Unit::Fraction => 0.01,
+            Unit::Count => 1.0,
         }
     }
 }
@@ -215,11 +231,19 @@ pub struct Reference {
     pub scope: Option<EntityRef>,
     pub value: Vec<Picked>,
     pub multiple: bool,
+    /// Whether the step needs it to hold something before it can be built;
+    /// one that is not is only ever picked for when asked to.
+    pub required: bool,
     /// Whether a click in the viewport picks for it now.
     pub armed: bool,
 }
 
 impl Reference {
+    /// Whether it is waiting for what the step needs: required, and empty.
+    pub fn waiting(&self) -> bool {
+        self.required && self.value.is_empty()
+    }
+
     /// The entities it holds.
     pub fn entities(&self) -> impl Iterator<Item = &EntityRef> {
         self.value.iter().map(|p| &p.entity)
@@ -247,11 +271,17 @@ pub enum Control<S: Scalar> {
         value: bool,
     },
     Number(Number<S>),
-    /// One of `options`, by value.
+    /// One of `options`, by value — found by typing, if `searchable`.
     Select {
         label: String,
         value: String,
         options: Vec<Choice>,
+        searchable: bool,
+    },
+    /// A colour, `#rrggbb`, sent back as [`super::Value::Text`].
+    Color {
+        label: String,
+        value: String,
     },
     Reference(Reference),
     List {
@@ -330,7 +360,7 @@ impl<S: Scalar> Dialog<S> {
         self.0
             .iter()
             .filter_map(|f| match &f.control {
-                Control::Reference(r) if r.value.is_empty() => Some(r.label.as_str()),
+                Control::Reference(r) if r.waiting() => Some(r.label.as_str()),
                 _ => None,
             })
             .collect()
@@ -347,10 +377,12 @@ impl<S: Scalar> Dialog<S> {
                         (label, if *value { "yes" } else { "no" }.to_string())
                     }
                     Control::Number(n) => (&n.label, format!("{:.2}", n.value)),
+                    Control::Color { label, value } => (label, value.clone()),
                     Control::Select {
                         label,
                         value,
                         options,
+                        ..
                     } => (
                         label,
                         options
@@ -430,6 +462,7 @@ mod tests {
                         "tone": "normal",
                     }],
                     "multiple": false,
+                    "required": true,
                     "armed": false,
                 },
             ])

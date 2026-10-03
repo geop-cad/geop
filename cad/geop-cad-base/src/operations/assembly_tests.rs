@@ -81,6 +81,7 @@ fn files_must_not_place_each_other_in_a_cycle() {
                 fixed: true,
                 flexible: false,
                 mates: BTreeMap::new(),
+                ..Default::default()
             },
         );
         program
@@ -240,6 +241,7 @@ fn a_placed_part_is_dragged() {
             from: down(3.5, 1.0),
             to: down(4.5, 1.5),
             done: true,
+            shift: false,
         },
     });
     assert!(update.error.is_none(), "{:?}", update.error);
@@ -272,6 +274,7 @@ fn a_fixed_part_follows_a_drag_of_several_events() {
                 from: down(3.5, 1.0),
                 to: down(to.0, to.1),
                 done,
+                shift: false,
             },
         });
         assert!(update.error.is_none(), "{:?}", update.error);
@@ -454,7 +457,7 @@ fn an_example_of_several_files_adds_its_files() {
     assert!(!program.can_undo);
     assert_eq!(
         program.workspace_examples,
-        ["pin_in_plate", "chain", "four_bar"]
+        ["pin_in_plate", "chain", "parametric_plates", "four_bar"]
     );
     let part = update.scene.unwrap().part;
     let instances: Vec<&str> = part.instances.iter().map(|i| i.name.as_str()).collect();
@@ -479,6 +482,7 @@ fn a_file_left_is_placed_as_it_was_edited() {
             fixed: true,
             flexible: false,
             mates: BTreeMap::new(),
+            ..Default::default()
         },
     );
     let update = editor.handle(Command::Load {
@@ -566,6 +570,7 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
                     ],
                 },
             )]),
+            ..Default::default()
         },
     );
     (files, top)
@@ -650,6 +655,7 @@ fn the_drag_tool_drags_any_placed_part() {
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
             pointer: down(3.5, 1.0),
+            shift: false,
         },
     });
     let tool = update.tool.unwrap();
@@ -664,6 +670,7 @@ fn the_drag_tool_drags_any_placed_part() {
                 from: down(3.5, 1.0),
                 to: down(3.5 + 0.5 * f64::from(i), 1.0),
                 done,
+                shift: false,
             },
         });
     }
@@ -684,6 +691,7 @@ fn the_drag_tool_drags_any_placed_part() {
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
             pointer: down(0.2, 0.2),
+            shift: false,
         },
     });
     assert!(!update.tool.unwrap().grab);
@@ -693,6 +701,7 @@ fn the_drag_tool_drags_any_placed_part() {
             from: down(0.2, 0.2),
             to: down(1.2, 0.2),
             done: true,
+            shift: false,
         },
     });
     assert_eq!(editor.program(), &before);
@@ -705,7 +714,7 @@ fn poses(program: &Program) -> Vec<(String, Pose<Design>)> {
         .iter()
         .filter_map(|(name, value)| match value {
             ParamValue::Pose(pose) => Some((name.clone(), *pose)),
-            ParamValue::Number(_) => None,
+            _ => None,
         })
         .collect()
 }
@@ -763,6 +772,7 @@ fn drive_chain(
                 from: eye(start[0], start[1]),
                 to: eye(to[0], to[1]),
                 done: i + 1 == path.len(),
+                shift: false,
             },
         });
         times.push((started.elapsed(), i, editor.dragged().cloned()));

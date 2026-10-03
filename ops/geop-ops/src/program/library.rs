@@ -246,12 +246,13 @@ impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
             Some(component) => component,
             None => self.build(&path)?,
         };
-        // Overriding a parameter with the value it has changes nothing.
-        let own = component.part.state();
+        // Overriding a parameter with the value it was built with changes
+        // nothing.
+        let own = component.part.inputs();
         let changed: State = overrides
             .iter()
             .filter(|(name, value)| own.get(*name) != Some(value))
-            .map(|(name, value)| (name.clone(), *value))
+            .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         if !changed.is_empty() {
             component = self.rebuild(&path, overrides)?;

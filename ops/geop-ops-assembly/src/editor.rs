@@ -14,7 +14,8 @@ use geop_ops::{
     Context, Design, EntityRef,
     assembly::{Drag, Mate, MateKind},
     operation::Role,
-    part::{ParamValue, pose_parameter},
+    parameters::{COLOR, ParameterKind, validate_color},
+    part::{ParamValue, State, pose_parameter},
     ui::{
         Action, CanvasEvent, Choice, Control, Edit, Form, ListItem, Number, Shape, Style, Tone,
         Unit, Value, Visual,
@@ -119,6 +120,89 @@ fn fresh_mate_id(mates: &BTreeMap<String, Mate>) -> String {
         .expect("some number is free")
 }
 
+/// The key of the field of the placed part's parameter `name`.
+fn parameter_key(name: &str) -> String {
+    format!("parameter:{name}")
+}
+
+/// The placed part's own parameters, each as what it is given here: its
+/// colour picked, a number on a slider, a table's row chosen from a list
+/// to search.
+fn parameters<S: Scalar>(
+    f: &mut Form<'_, S, AddPartArgs, PartSession>,
+    context: Context<'_, S>,
+    args: &AddPartArgs,
+) {
+    if args.file.is_empty() {
+        return;
+    }
+    // As placed here: what a number not given reads follows what is.
+    let Ok(component) = context
+        .library
+        .component(&args.file, &args.parameters)
+        .or_else(|_| context.library.component(&args.file, &State::new()))
+    else {
+        return;
+    };
+    let defined = component.part.parameters();
+    if defined.is_empty() {
+        return;
+    }
+    let built = component.part.inputs();
+    let given = |name: &str| args.parameters.get(name).or(built.get(name));
+    f.heading("parameters_heading", "Parameters");
+    let set = |name: String| {
+        move |args: &mut AddPartArgs, value: ParamValue| {
+            args.parameters.insert(name.clone(), value);
+        }
+    };
+    if defined.color.is_some() || args.parameters.contains_key(COLOR) {
+        let color = match given(COLOR) {
+            Some(ParamValue::Text(c)) => c.clone(),
+            _ => "#a0a8b8".into(),
+        };
+        let set = set(COLOR.into());
+        f.color(&parameter_key(COLOR), COLOR, color, move |args, c| {
+            if validate_color(c).is_ok() {
+                set(args, ParamValue::Text(c.to_string()));
+            }
+        });
+    }
+    for p in &defined.values {
+        let key = parameter_key(&p.name);
+        let set = set(p.name.clone());
+        match &p.kind {
+            ParameterKind::Number { min, max, .. } => {
+                let value = match given(&p.name) {
+                    Some(ParamValue::Number(v)) => v.to_f64(),
+                    _ => continue,
+                };
+                // A slider over what the parameter offers — or, with no
+                // range of its own, from nothing to twice its value.
+                let lo = min.unwrap_or(0.0_f64.min(2.0 * value));
+                let hi = max.unwrap_or(0.0_f64.max(2.0 * value)).max(lo + 1e-9);
+                let number = Number::new(&p.name, value, Unit::Length).range(lo, hi);
+                f.number(&key, number, move |args, v| {
+                    set(args, ParamValue::Number(Design::from_f64(v)))
+                });
+            }
+            ParameterKind::Table { rows, selected, .. } => {
+                let value = match given(&p.name) {
+                    Some(ParamValue::Text(row)) => row.clone(),
+                    _ => selected.clone(),
+                };
+                let options = rows
+                    .iter()
+                    .map(|r| Choice::new(r.name.clone(), r.name.clone()))
+                    .collect();
+                f.select(&key, &p.name, value, options, true, move |args, row| {
+                    set(args, ParamValue::Text(row.to_string()))
+                });
+            }
+        }
+    }
+}
+
 /// The file to place, whether it stays put, where it goes, its mates — the
 /// one selected with its entities to pick — and the part as placed, to
 /// drag.
@@ -151,9 +235,14 @@ pub(crate) fn form<'a, S: Scalar>(
                 .map(|file| Choice::new(file.clone(), file.clone())),
         )
         .collect();
-    f.select("file", "file", args.file.clone(), options, |args, file| {
-        args.file = file.to_string()
-    });
+    f.select(
+        "file",
+        "file",
+        args.file.clone(),
+        options,
+        true,
+        |args, file| args.file = file.to_string(),
+    );
     f.checkbox("fixed", "fixed in place", args.fixed, |args, fixed| {
         args.fixed = fixed;
     });
@@ -163,6 +252,8 @@ pub(crate) fn form<'a, S: Scalar>(
         args.flexible,
         |args, flexible| args.flexible = flexible,
     );
+
+    parameters(&mut f, context, args);
 
     // Shown as a position and angles — what people read — though a pose is
     // a quaternion: setting one angle rebuilds it from the three shown.
@@ -380,6 +471,7 @@ pub(crate) fn event<S: Scalar>(
             from,
             to,
             done,
+            ..
         } if key == PART => {
             let pose = pose_of(context);
             // Where the pointer is: a free choice, made by whoever moved it.

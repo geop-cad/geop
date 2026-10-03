@@ -94,6 +94,20 @@ pub enum Style {
     /// A help line: a spline's control polygon.
     Guide,
     Handle,
+    /// Where what is drawn or dragged would snap to.
+    Snap,
+}
+
+/// A value asked for in place, at `at` in the viewport: a field of the
+/// dialog's, by `key`, typed into as text — what is typed sent back as
+/// [`super::Value::Text`] — starting from `value`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(bound = "S: Scalar")]
+pub struct Prompt<S: Scalar> {
+    pub key: String,
+    pub label: String,
+    pub value: String,
+    pub at: Vector3<S>,
 }
 
 /// Something an operation draws in the viewport, under a key the hit tests
@@ -159,4 +173,6 @@ pub struct Presentation<S: Scalar> {
     /// Whether a press where the pointer last hovered starts a drag (sent
     /// as [`super::StepEditEvent::Drag`]) rather than moving the camera.
     pub grab: bool,
+    /// A value asked for in place.
+    pub prompt: Option<Prompt<S>>,
 }

@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 
 use geop_core_math::scalars::Scalar;
 
-use super::{PartView, Pointer, Shape, Visual};
+use super::{PartView, Pointer, Shape, Style, Visual};
 
 /// A handle's radius, in reaches; its arrows reach three times as far along
 /// its direction.
@@ -35,8 +35,10 @@ pub struct VisualHit<'a, S: Scalar> {
 
 /// How near the pointer is to `visual`, in reaches, and where along the
 /// ray — `None` if not near enough to count. `rank` orders kinds of shapes:
-/// what is drawn small and on top wins over what is drawn large. A placed
-/// part is hit as `view` draws it; without a view, not at all.
+/// what is drawn small and on top wins over what is drawn large, and a
+/// curve that is part of the result over construction geometry it lies
+/// on — a line drawn along a sketch's axis is that line. A placed part is
+/// hit as `view` draws it; without a view, not at all.
 fn distance<S: Scalar>(
     pointer: &Pointer<S>,
     visual: &Visual<S>,
@@ -76,13 +78,20 @@ fn distance<S: Scalar>(
                 within(dist, t, 1.0)
             })
             .min_by(|a, b| nearer(a.0, b.0))
-            .map(|(p, t)| (2, p, t)),
+            .map(|(p, t)| {
+                let rank = if visual.style == Style::Construction {
+                    3
+                } else {
+                    2
+                };
+                (rank, p, t)
+            }),
         Shape::Triangles { triangles } => triangles
             .iter()
             .filter_map(|[a, b, c]| ray.intersect_triangle(a, b, c))
             .min_by(|&a, &b| nearer(a, b))
-            .map(|t| (3, S::ZERO, t)),
-        Shape::Instance { name } => view?.pick_instance(name, pointer).map(|t| (3, S::ZERO, t)),
+            .map(|t| (4, S::ZERO, t)),
+        Shape::Instance { name } => view?.pick_instance(name, pointer).map(|t| (4, S::ZERO, t)),
     }
 }
 
@@ -109,7 +118,7 @@ mod tests {
     use geop_core_math::{primitives::Ray, scalars::ScalInF64, vector::Vector3};
 
     use super::*;
-    use crate::ui::{Reach, Style};
+    use crate::ui::Reach;
 
     type S = ScalInF64;
 

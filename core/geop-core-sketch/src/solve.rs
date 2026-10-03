@@ -49,45 +49,79 @@ struct Layout {
     point_var: BTreeMap<PointId, usize>,
     /// The arc's half sweep or the circle's radius, for every arc and circle.
     curve_var: BTreeMap<CurveId, usize>,
-    n: usize,
+    /// Per variable: whether the solver may change it — not for a class of
+    /// points one of which is fixed, nor for a fixed curve's own parameter.
+    free: Vec<bool>,
 }
 
 impl Layout {
     fn new<S: Scalar>(sketch: &Sketch<S>) -> Self {
         let class = sketch.point_classes();
-        let mut n = 0;
+        let mut free = Vec::new();
         let mut class_var = BTreeMap::new();
         for rep in class.values() {
             class_var.entry(*rep).or_insert_with(|| {
-                n += 2;
-                n - 2
+                free.extend([true, true]);
+                free.len() - 2
             });
         }
-        let point_var = class.iter().map(|(&p, rep)| (p, class_var[rep])).collect();
+        let point_var: BTreeMap<PointId, usize> =
+            class.iter().map(|(&p, rep)| (p, class_var[rep])).collect();
+        for (id, p) in &sketch.points {
+            if p.fixed {
+                free[point_var[id]] = false;
+                free[point_var[id] + 1] = false;
+            }
+        }
         let curve_var = sketch
             .curves
             .iter()
             .filter(|(_, c)| matches!(c.kind, CurveKind::Arc { .. } | CurveKind::Circle { .. }))
-            .map(|(&id, _)| {
-                n += 1;
-                (id, n - 1)
+            .map(|(&id, c)| {
+                free.push(!c.fixed);
+                (id, free.len() - 1)
             })
             .collect();
         Layout {
             point_var,
             curve_var,
-            n,
+            free,
         }
+    }
+
+    fn n(&self) -> usize {
+        self.free.len()
+    }
+
+    /// Per variable, its index among the free ones: how the solver's own
+    /// vectors are laid out.
+    fn offsets(&self) -> Vec<Option<usize>> {
+        let mut n = 0;
+        self.free
+            .iter()
+            .map(|&free| {
+                free.then(|| {
+                    n += 1;
+                    n - 1
+                })
+            })
+            .collect()
     }
 
     /// The current variable values, read from the sketch. Where things are
     /// is the sketch's state — a free choice — so the variables are sharp,
-    /// and so is what [`Layout::write`] writes back.
+    /// and so is what [`Layout::write`] writes back. A class of points with
+    /// a fixed one is where that one is.
     fn read<S: Scalar>(&self, sketch: &Sketch<S>) -> GeopResult<Vec<S>> {
-        let mut x = vec![S::ZERO; self.n];
+        let mut x = vec![S::ZERO; self.n()];
         // Iterate in reverse so a class takes its representative's (lowest
-        // id) position.
-        for (id, p) in sketch.points.iter().rev() {
+        // id) position — or, after, its fixed point's.
+        let points = sketch.points.iter().rev();
+        for (id, p) in points
+            .clone()
+            .filter(|(_, p)| !p.fixed)
+            .chain(points.filter(|(_, p)| p.fixed))
+        {
             x[self.point_var[id]] = p.x;
             x[self.point_var[id] + 1] = p.y;
         }
@@ -103,13 +137,14 @@ impl Layout {
         Ok(x)
     }
 
-    /// Write variable values back into the sketch.
+    /// Write variable values back into the sketch — all but what is fixed,
+    /// which stays as given.
     fn write<S: Scalar>(&self, sketch: &mut Sketch<S>, x: &[S]) {
-        for (id, p) in sketch.points.iter_mut() {
+        for (id, p) in sketch.points.iter_mut().filter(|(_, p)| !p.fixed) {
             p.x = x[self.point_var[id]];
             p.y = x[self.point_var[id] + 1];
         }
-        for (id, c) in sketch.curves.iter_mut() {
+        for (id, c) in sketch.curves.iter_mut().filter(|(_, c)| !c.fixed) {
             match &mut c.kind {
                 CurveKind::Arc { sweep, .. } => {
                     *sweep = S::TWO.mul(x[self.curve_var[id]]).sharpen()
@@ -195,7 +230,7 @@ impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
                     a.tangent_start()?
                 }
             }
-            CurveKind::Spline { control_points } => {
+            CurveKind::Spline { control_points, .. } => {
                 let n = control_points.len();
                 let (p, q) = if at_end {
                     (control_points[n - 2], control_points[n - 1])
@@ -229,6 +264,13 @@ struct Prepared<'a, S: Scalar> {
     constraint: &'a Constraint<S>,
     vars: Vec<usize>,
     tangent: Option<TangentMode>,
+}
+
+/// Whether `a` and `b` are both fixed points: then a coincidence between
+/// them is no merging of variables — neither can move — but a fact about
+/// where they were given, which holds or does not.
+fn both_fixed<S: Scalar>(sketch: &Sketch<S>, a: PointId, b: PointId) -> bool {
+    sketch.points[&a].fixed && sketch.points[&b].fixed
 }
 
 /// Everything needed to evaluate the objective, fixed for one solve.
@@ -277,7 +319,10 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 vars.extend([layout.point_var[p], layout.point_var[p] + 1])
             };
             match c {
-                // Coincidence is built into the layout.
+                // Coincidence of two fixed points is a fact about where
+                // they are, checked as given.
+                Coincident { a, b } if both_fixed(sketch, *a, *b) => {}
+                // Any other coincidence is built into the layout.
                 Coincident { .. } => continue,
                 Fix { point, .. } => pt(point, &mut vars),
                 Distance { a, b, .. } | DistanceX { a, b, .. } | DistanceY { a, b, .. } => {
@@ -286,6 +331,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 }
                 PointOnCurve { point, curve }
                 | Midpoint { point, curve }
+                | Center { point, curve }
                 | PointLineDistance {
                     point, line: curve, ..
                 } => {
@@ -300,7 +346,8 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 Horizontal { line: curve }
                 | Vertical { line: curve }
                 | Length { curve, .. }
-                | Radius { curve, .. } => layout.curve_vars(sketch, *curve, &mut vars),
+                | Radius { curve, .. }
+                | Diameter { curve, .. } => layout.curve_vars(sketch, *curve, &mut vars),
                 Parallel { a, b }
                 | Perpendicular { a, b }
                 | Collinear { a, b }
@@ -383,7 +430,10 @@ impl<'a, S: Scalar> Problem<'a, S> {
         let scale = c(self.scale);
         let half = c(S::ONE.div(S::TWO)?);
         match *p.constraint {
-            Coincident { .. } => {}
+            Coincident { a, b } => {
+                let (pa, pb) = (&self.sketch.points[&a], &self.sketch.points[&b]);
+                out.extend([c(pb.x.sub(pa.x)), c(pb.y.sub(pa.y))]);
+            }
             Fix { point, x, y } => {
                 let q = geo.point(point);
                 out.extend([q.x.sub(c(x)), q.y.sub(c(y))]);
@@ -417,6 +467,10 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     }
                 };
                 out.extend([q.x.sub(m.x), q.y.sub(m.y)]);
+            }
+            Center { point, curve } => {
+                let (q, center) = (geo.point(point), geo.round(curve)?.0);
+                out.extend([q.x.sub(center.x), q.y.sub(center.y)]);
             }
             Symmetric { a, b, line } => {
                 let (pa, pb) = (geo.point(a), geo.point(b));
@@ -511,6 +565,11 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     .sub(a.chord_length()?),
                 None => geo.round(curve)?.1.sub(c(value)),
             }),
+            Diameter { curve, value } => out.push(match geo.arc(curve) {
+                // As for the radius: `D |sin θ| - L`.
+                Some(a) => c(value).mul(a.half.sin().abs()).sub(a.chord_length()?),
+                None => geo.round(curve)?.1.sub(c(value.div(S::TWO)?)),
+            }),
         }
         Ok(())
     }
@@ -526,7 +585,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
             .collect()
     }
 
-    /// The system of `residuals`, every variable free, at `x`.
+    /// The system of `residuals` at `x`, what is fixed held.
     fn system<'r>(
         &self,
         residuals: &'r [SketchResidual<'_, 'a, S>],
@@ -534,7 +593,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
     ) -> System<'r, S, MAX_LOCAL_VARS> {
         System {
             params: x.iter().map(|&v| Param::Scalar(v)).collect(),
-            free: vec![true; x.len()],
+            free: self.layout.free.clone(),
             residuals: residuals
                 .iter()
                 .map(|r| r as &dyn Residual<S, MAX_LOCAL_VARS>)
@@ -628,9 +687,15 @@ impl<S: Scalar> Sketch<S> {
         if !problem.report(&system, 0, Vec::new())?.converged {
             return Ok(Enclosure::as_drawn(self));
         }
-        let x = system.enclose().map_err(ctx)?;
-        let to_t = |v: S| -> T { v.cast() };
+        let enclosed = system.enclose().map_err(ctx)?;
         let layout = &problem.layout;
+        // What is fixed is as given; the rest as enclosed.
+        let x: Vec<S> = values(&system)
+            .into_iter()
+            .zip(layout.offsets())
+            .map(|(given, offset)| offset.map_or(given, |o| enclosed[o]))
+            .collect();
+        let to_t = |v: S| -> T { v.cast() };
         Ok(Enclosure {
             points: layout
                 .point_var
@@ -706,7 +771,13 @@ impl<S: Scalar> Problem<'_, S> {
             .iter()
             .map(|&i| self.constraints[i].id)
             .collect::<Vec<_>>();
-        let (free_vars, dof) = system.free_variables();
+        let (free_offsets, dof) = system.free_variables();
+        let free_vars: Vec<bool> = self
+            .layout
+            .offsets()
+            .iter()
+            .map(|o| o.is_some_and(|o| free_offsets[o]))
+            .collect();
         let free_points = self
             .layout
             .point_var

@@ -152,6 +152,7 @@ fn only_what_changed_is_sent() {
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
             pointer: pointer([5.0, 5.0, 5.0], [0.0, 0.0, -1.0]),
+            shift: false,
         },
     });
     assert!(update.program.is_none() && update.scene.is_none());
@@ -172,7 +173,10 @@ fn handles_are_dragged() {
     // at (1, 1, 0.5); dragged up past its sketch plane, it builds up.
     let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
     let update = editor.handle(Command::Event {
-        event: StepEditEvent::Hover { pointer: side(0.5) },
+        event: StepEditEvent::Hover {
+            pointer: side(0.5),
+            shift: false,
+        },
     });
     assert!(update.step.unwrap().presentation.grab);
     editor.handle(Command::Event {
@@ -180,6 +184,7 @@ fn handles_are_dragged() {
             from: side(0.5),
             to: side(1.253),
             done: true,
+            shift: false,
         },
     });
     let update = editor.handle(Command::Commit);
@@ -214,7 +219,10 @@ fn new_steps_handles_are_dragged_in_steps() {
         }
     };
     let update = editor.handle(Command::Event {
-        event: StepEditEvent::Hover { pointer: side(2.0) },
+        event: StepEditEvent::Hover {
+            pointer: side(2.0),
+            shift: false,
+        },
     });
     assert!(
         update.step.unwrap().presentation.grab,
@@ -226,6 +234,7 @@ fn new_steps_handles_are_dragged_in_steps() {
                 from: side(2.0),
                 to: side(z),
                 done,
+                shift: false,
             },
         });
     }

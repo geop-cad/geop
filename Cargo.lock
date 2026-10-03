@@ -349,8 +349,10 @@ dependencies = [
 name = "geop-ops-sketch"
 version = "0.1.0"
 dependencies = [
+ "geop-core-geometry",
  "geop-core-math",
  "geop-core-sketch",
+ "geop-core-topology",
  "geop-ops",
  "serde",
  "serde_json",

@@ -28,6 +28,15 @@ solved for (see [geop-ops](./geop-ops.md)). The step places the part there
 and adds its mates; it solves nothing. So a later step's mates that move it
 move it for every step.
 
+## Parameters
+
+`parameters` gives the placed part's own parameters (see
+[geop-ops](./geop-ops.md#parameters)) other values, by name: a number, a
+table's row, the colour. The part is built with them — a file is built once
+per set of values it is placed with — and its dialog offers each as what it
+is: the colour to pick, a number on a slider over its range, a table's row
+from a list to search, each showing the value the part is built with here.
+
 ## Rigid and flexible
 
 Placed rigid, a part moves as one body, its own parts where its file puts

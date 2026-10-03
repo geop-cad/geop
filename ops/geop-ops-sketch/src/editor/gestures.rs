@@ -2,185 +2,263 @@
 //! editor lets be dragged, dialog fields and keys — each answered with a new
 //! sketch.
 
+use geop_ops::{
+    EntityRef,
+    parameters::{evaluate, is_formula, number},
+};
+
+use super::drawing::{Built, Hints, angle_between, construct, curve_ending_at, wrap};
 use super::*;
+use crate::references::{Reference, Source};
 
 impl<S: Scalar> Editing<'_, S> {
-    /// The point to use where `pointer` is, at `p` in the plane: the point
-    /// drawn there, or a new one — fixed if placed on the origin,
-    /// constrained onto a curve it is placed on.
-    fn place_point(&self, sketch: &mut Sketch, pointer: &Pointer<S>, p: P2) -> PointId {
-        let visuals = visuals(sketch, self.s, &self.frame);
-        let hit = hit_key(&visuals, pointer, &[&is_point, &is_origin, &is_curve]);
-        if let Some(existing) = hit.as_deref().and_then(point_key) {
-            return existing;
-        }
-        if hit.as_deref() == Some("origin") {
-            let id = sketch.add_point(design(0.0), design(0.0));
-            sketch.constrain(Constraint::Fix {
-                point: id,
-                x: Design::ZERO,
-                y: Design::ZERO,
-            });
-            return id;
-        }
-        let id = sketch.add_point(design(p[0]), design(p[1]));
-        if let Some(curve) = hit.as_deref().and_then(curve_key)
-            && !matches!(sketch.curves[&curve].kind, CurveKind::Spline { .. })
-        {
-            sketch.constrain(Constraint::PointOnCurve { point: id, curve });
-        }
-        id
-    }
-
-    /// Ends the curve being drawn: a spline with at least two points is
-    /// added, anything else dropped.
-    fn finish_draft(&mut self) {
-        if let Some(Draft::Spline { points }) = self.s.draft.take()
-            && points.len() >= 2
-        {
-            let mut next = self.sketch().clone();
-            next.add_spline(points);
-            self.commit(next);
+    /// What a construction needs beyond its points, the pointer reaching
+    /// `pointer`, `t` along its ray.
+    fn hints(&self, pointer: &Pointer<S>, t: S) -> Hints {
+        Hints {
+            sides: self.s.sides,
+            tangent_to: self.s.draft.previous,
+            sweep: self.s.draft.sweep,
+            min_size: pointer.reach_at(1.0, t).to_f64(),
         }
     }
 
-    /// A click at `p` in the plane, `t` along the pointer's ray — one that
-    /// selected nothing.
-    fn click(&mut self, pointer: &Pointer<S>, p: P2, t: S) {
-        let mut next = self.sketch().clone();
-        match (self.s.tool, self.s.draft.clone()) {
-            (Tool::Select, _) => self.origin_at(pointer),
-            (Tool::Point, _) => {
-                self.place_point(&mut next, pointer, p);
-                self.commit(next);
-            }
-            (Tool::Line, Some(Draft::Line { start })) => {
-                let end = self.place_point(&mut next, pointer, p);
-                if end == start {
-                    return;
-                }
-                let (a, b) = (pt(&next, start), pt(&next, end));
-                let line = next.add_line(start, end);
-                let d = sub(b, a);
-                if d[1].abs() <= AUTO_HV_SLOPE * d[0].abs() {
-                    next.constrain(Constraint::Horizontal { line });
-                } else if d[0].abs() <= AUTO_HV_SLOPE * d[1].abs() {
-                    next.constrain(Constraint::Vertical { line });
-                }
-                self.commit(next);
-                // Lines chain: the next one starts where this one ended.
-                self.s.draft = Some(Draft::Line { start: end });
-            }
-            (Tool::Line, _) => {
-                let start = self.place_point(&mut next, pointer, p);
-                self.commit(next);
-                self.s.draft = Some(Draft::Line { start });
-            }
-            (Tool::Rectangle, Some(Draft::Rectangle { corner })) => {
-                let first = pt(&next, corner);
-                let tolerance = pointer.reach_at(1.0, t).to_f64();
-                if (p[0] - first[0]).abs() <= tolerance || (p[1] - first[1]).abs() <= tolerance {
-                    return;
-                }
-                // Two opposite corners, and the two they imply. The sides
-                // are horizontal and vertical by constraint, so it stays a
-                // rectangle whatever is dragged later.
-                let opposite = self.place_point(&mut next, pointer, p);
-                let second = next.add_point(design(p[0]), design(first[1]));
-                let fourth = next.add_point(design(first[0]), design(p[1]));
-                let corners = [corner, second, opposite, fourth];
-                for i in 0..4 {
-                    let line = next.add_line(corners[i], corners[(i + 1) % 4]);
-                    next.constrain(if i % 2 == 0 {
-                        Constraint::Horizontal { line }
-                    } else {
-                        Constraint::Vertical { line }
-                    });
-                }
-                self.commit(next);
-                self.s.draft = None;
-            }
-            (Tool::Rectangle, _) => {
-                let corner = self.place_point(&mut next, pointer, p);
-                self.commit(next);
-                self.s.draft = Some(Draft::Rectangle { corner });
-            }
-            (Tool::Arc, Some(Draft::Arc { start, end: None })) => {
-                let end = self.place_point(&mut next, pointer, p);
-                if end == start {
-                    return;
-                }
-                self.commit(next);
-                self.s.draft = Some(Draft::Arc {
-                    start,
-                    end: Some(end),
-                });
-            }
+    /// The point placed where `pointer` is, at `p` in the plane: snapped,
+    /// unless `shift` is held.
+    fn placed(&self, pointer: &Pointer<S>, p: P2, shift: bool) -> Placed {
+        let (at, snap) = self.snap(pointer, p, shift, &[], true);
+        Placed { at, snap }
+    }
+
+    /// The pointer moved, `shift` held or not: while drawing, where it
+    /// snaps to — and, for a chain of lines, whether it came back onto the
+    /// chain's end, which switches between a line and a tangent arc.
+    fn hover(&mut self, pointer: &Pointer<S>, shift: bool) {
+        let Some((p, _)) = self.in_plane(pointer) else {
+            self.s.cursor = None;
+            self.s.snap = None;
+            return;
+        };
+        let Tool::Draw(tool) = self.s.tool else {
+            self.s.cursor = Some(p);
+            self.s.snap = None;
+            return;
+        };
+        let placed = self.placed(pointer, p, shift);
+        self.s.cursor = Some(placed.at);
+        self.s.snap = placed.snap;
+        let draft = &self.s.draft;
+        match (tool, draft.placed.as_slice()) {
             (
-                Tool::Arc,
-                Some(Draft::Arc {
-                    start,
-                    end: Some(end),
-                }),
-            ) => {
-                let sweep = sweep_through(pt(&next, start), pt(&next, end), p);
-                if sweep.is_finite() {
-                    next.add_arc(start, end, design(sweep));
-                    self.commit(next);
+                DrawTool::Line,
+                &[
+                    Placed {
+                        snap: Some(Snap::Point(end)),
+                        ..
+                    },
+                ],
+            ) if draft.previous.is_some() => {
+                let at = to_world(&self.frame, pt(self.sketch(), end));
+                let near = hit_visuals(
+                    &[Visual::new("end", Shape::Point { at }, Style::Free)],
+                    pointer,
+                    None,
+                    |_| true,
+                )
+                .is_some();
+                let draft = &mut self.s.draft;
+                if near && !draft.at_end {
+                    draft.arc = !draft.arc;
                 }
-                self.s.draft = None;
+                draft.at_end = near;
             }
-            (Tool::Arc, _) => {
-                let start = self.place_point(&mut next, pointer, p);
-                self.commit(next);
-                self.s.draft = Some(Draft::Arc { start, end: None });
-            }
-            (Tool::Circle, Some(Draft::Circle { center })) => {
-                let radius = dist(pt(&next, center), p);
-                if radius > 0.0 {
-                    next.add_circle(center, design(radius));
-                    self.commit(next);
-                }
-                self.s.draft = None;
-            }
-            (Tool::Circle, _) => {
-                let center = self.place_point(&mut next, pointer, p);
-                self.commit(next);
-                self.s.draft = Some(Draft::Circle { center });
-            }
-            (Tool::Spline, draft) => {
-                let mut points = match draft {
-                    Some(Draft::Spline { points }) => points,
-                    _ => Vec::new(),
+            (DrawTool::CenterArc, [m, s]) => {
+                let raw = angle_between(sub(s.at, m.at), sub(placed.at, m.at));
+                let previous = draft.sweep;
+                self.s.draft.sweep = if previous == 0.0 {
+                    raw
+                } else {
+                    previous + wrap(raw - previous)
                 };
-                let at = self.place_point(&mut next, pointer, p);
-                if points.last() != Some(&at) {
-                    points.push(at);
-                }
-                self.commit(next);
-                self.s.draft = Some(Draft::Spline { points });
             }
+            _ => {}
         }
     }
 
-    /// A click with the select tool on the origin: a point fixed there,
-    /// selected, to constrain others to.
-    fn origin_at(&mut self, pointer: &Pointer<S>) {
-        let visuals = visuals(self.sketch(), self.s, &self.frame);
-        if hit_key(&visuals, pointer, &[&is_origin]).is_none() {
+    /// A primary click, not a double one, at `p` in the plane, `t` along
+    /// the pointer's ray, with a drawing tool in hand.
+    fn place(&mut self, tool: DrawTool, pointer: &Pointer<S>, p: P2, t: S, shift: bool) {
+        let placed = self.placed(pointer, p, shift);
+        self.s.cursor = Some(placed.at);
+        // A tangent arc starts at the end of a curve.
+        if tool == DrawTool::TangentArc
+            && self.s.draft.placed.is_empty()
+            && !matches!(placed.snap, Some(Snap::Point(q)) if curve_ending_at(self.sketch(), q).is_some())
+        {
             return;
         }
+        self.s.draft.placed.push(placed);
+        if tool.needs().is_some_and(|n| self.s.draft.placed.len() >= n) {
+            let hints = self.hints(pointer, t);
+            if self.build(tool, &hints).is_none() {
+                // Nothing to build there: the click is not taken.
+                self.s.draft.placed.pop();
+            }
+        }
+    }
+
+    /// Builds what `tool` draws from the points placed, and adds it to the
+    /// sketch: as construction geometry, if that is what is drawn. A chain
+    /// of lines goes on from where it ended; anything else starts afresh.
+    fn build(&mut self, tool: DrawTool, hints: &Hints) -> Option<()> {
         let mut next = self.sketch().clone();
-        let id = self.place_point(&mut next, pointer, [0.0, 0.0]);
+        let first_new = next.next_id;
+        let Built { end, last, prompt } = construct(
+            tool,
+            self.s.draft.arc,
+            &mut next,
+            &self.s.draft.placed,
+            hints,
+        )?;
+        if self.s.construction {
+            let new: Vec<CurveId> = next
+                .curves
+                .range(CurveId(first_new)..)
+                .map(|(&c, _)| c)
+                .collect();
+            for c in new {
+                next.set_construction(c, true);
+            }
+        }
         self.commit(next);
-        self.selection.push(id.to_string());
+        self.s.prompt = prompt;
+        self.s.draft = match (tool, end) {
+            (DrawTool::Line, Some(end)) => Draft {
+                placed: vec![Placed {
+                    at: pt(self.sketch(), end),
+                    snap: Some(Snap::Point(end)),
+                }],
+                previous: last,
+                arc: false,
+                at_end: true,
+                sweep: 0.0,
+            },
+            _ => Draft::default(),
+        };
+        Some(())
+    }
+
+    /// Ends what is being drawn: a spline with at least two points is
+    /// added, anything else — a chain of lines, points placed for a shape
+    /// not finished — dropped.
+    fn finish_draft(&mut self) {
+        if self.s.tool == Tool::Draw(DrawTool::Spline) && self.s.draft.placed.len() >= 2 {
+            let hints = Hints {
+                sides: self.s.sides,
+                tangent_to: None,
+                sweep: 0.0,
+                min_size: 0.0,
+            };
+            let _ = self.build(DrawTool::Spline, &hints);
+        }
+        self.s.draft = Draft::default();
+    }
+
+    /// A click with a constraint tool in hand: on a point or a curve, it is
+    /// selected for the constraint — or taken out again — and once the
+    /// selection is all the constraint needs, and can become nothing else,
+    /// it is added. On nothing, a selection that is all it needs is taken
+    /// as it is: a line's length rather than the distance between it and
+    /// something else. A dimension is only ever added that way: the click
+    /// that takes it is where its value goes.
+    fn pick_for(&mut self, tool: ConstraintTool, pointer: &Pointer<S>) {
+        let visuals = visuals(self.args, self.s, self.selection, &self.frame);
+        let hit = hit_key(&visuals, pointer, &[&is_point, &is_curve]);
+        let Some(key) = hit else {
+            let (picks, _) = selected(self.sketch(), self.selection);
+            if tool.fit(self.sketch(), &picks).complete {
+                let at = self.in_plane(pointer).map(|(p, _)| p);
+                self.apply_constraint(tool, at);
+            }
+            return;
+        };
+        match self.selection.iter().position(|k| *k == key) {
+            Some(i) => {
+                self.selection.remove(i);
+            }
+            None => self.selection.push(key),
+        }
+        let (picks, _) = selected(self.sketch(), self.selection);
+        let fit = tool.fit(self.sketch(), &picks);
+        if fit.complete && !fit.extendable && !tool.is_dimension() {
+            self.apply_constraint(tool, None);
+        } else if !fit.usable() {
+            // What was clicked cannot be part of it: it starts the
+            // selection afresh.
+            let last = self.selection.pop();
+            self.selection.clear();
+            self.selection.extend(last);
+            let (picks, _) = selected(self.sketch(), self.selection);
+            if !tool.fit(self.sketch(), &picks).usable() {
+                self.selection.clear();
+            }
+        }
+    }
+
+    /// Adds what `tool` makes of the selection, and clears it — a
+    /// dimension's value then shown at `at`, if given, and asked for in
+    /// place.
+    fn apply_constraint(&mut self, tool: ConstraintTool, at: Option<P2>) {
+        let (picks, _) = selected(self.sketch(), self.selection);
+        let Some(constraints) = tool.build(self.sketch(), &picks) else {
+            return;
+        };
+        let mut next = self.sketch().clone();
+        let ids: Vec<ConstraintId> = constraints.into_iter().map(|c| next.constrain(c)).collect();
+        self.commit(next);
+        self.selection.clear();
+        if tool.is_dimension() {
+            let first = ids.first().copied();
+            if let (Some(id), Some(at)) = (first, at)
+                && let Some((_, anchor)) =
+                    constraints::glyph(self.sketch(), &self.sketch().constraints[&id], false)
+            {
+                self.args.labels.insert(id, sub(at, anchor));
+            }
+            self.s.prompt = first;
+        }
+    }
+
+    /// A constraint tool's button pressed: with a selection that is all it
+    /// needs, the constraint is added — a dimension once a click has said
+    /// where its value goes; otherwise the tool is taken up — or, in hand
+    /// already, put down.
+    pub(super) fn press_constraint(&mut self, tool: ConstraintTool) {
+        let (picks, _) = selected(self.sketch(), self.selection);
+        if self.s.tool == Tool::Constrain(tool) {
+            self.s.tool = Tool::Select;
+        } else if !picks.is_empty()
+            && tool.fit(self.sketch(), &picks).complete
+            && !tool.is_dimension()
+        {
+            self.apply_constraint(tool, None);
+            self.s.tool = Tool::Select;
+        } else {
+            self.finish_draft();
+            self.s.tool = Tool::Constrain(tool);
+        }
     }
 
     /// The visual `key` dragged from `from` to `to` in the plane: what it
     /// stands for follows the pointer, as far as the constraints let it — a
     /// point, a line's or a spline's points, a circle's radius, an arc's
-    /// sweep.
-    fn drag(&mut self, key: &str, from: P2, to: P2, done: bool) {
+    /// sweep. A single point dragged snaps onto points and middles — unless
+    /// `shift` is held — and is constrained there when let go.
+    fn drag(&mut self, key: &str, from: P2, to: P2, pointer: &Pointer<S>, done: bool, shift: bool) {
+        if let Some(id) = glyph_key(key) {
+            self.drag_label(id, from, to, done);
+            return;
+        }
         if self.s.drag.is_none() {
             let sketch = self.sketch();
             let points = |points: Vec<PointId>| Drag::Points {
@@ -189,12 +267,20 @@ impl<S: Scalar> Editing<'_, S> {
                 grab: from,
             };
             self.s.drag = match (point_key(key), curve_key(key)) {
-                (Some(point), _) if sketch.points.contains_key(&point) => Some(points(vec![point])),
-                (_, Some(curve)) => sketch.curves.get(&curve).map(|c| match &c.kind {
-                    CurveKind::Circle { .. } => Drag::Circle { curve },
-                    CurveKind::Arc { .. } => Drag::Arc { curve },
-                    CurveKind::Line { .. } | CurveKind::Spline { .. } => points(c.points()),
-                }),
+                (Some(point), _) if sketch.points.get(&point).is_some_and(|p| !p.fixed) => {
+                    Some(points(vec![point]))
+                }
+                (_, Some(curve)) => {
+                    sketch
+                        .curves
+                        .get(&curve)
+                        .filter(|c| !c.fixed)
+                        .map(|c| match &c.kind {
+                            CurveKind::Circle { .. } => Drag::Circle { curve },
+                            CurveKind::Arc { .. } => Drag::Arc { curve },
+                            CurveKind::Line { .. } | CurveKind::Spline { .. } => points(c.points()),
+                        })
+                }
                 _ => None,
             };
         }
@@ -204,46 +290,55 @@ impl<S: Scalar> Editing<'_, S> {
         if done {
             self.s.drag = None;
         }
-        let p = to;
         let mut next = self.sketch().clone();
         let mut drags = Vec::new();
+        self.s.snap = None;
         match drag {
+            // A dimension's value moves nothing to solve (see `drag_label`).
+            Drag::Label { .. } => return,
             Drag::Points {
                 points,
                 origins,
                 grab,
             } => {
-                let delta = sub(p, grab);
+                let delta = sub(to, grab);
                 drags = points
                     .iter()
                     .zip(&origins)
                     .map(|(&q, &o)| (q, add(o, delta)))
                     .collect();
+                if let [(point, target)] = drags[..] {
+                    let (at, snap) = self.snap(pointer, target, shift, &[point], false);
+                    drags = vec![(point, at)];
+                    match snap {
+                        Some(snap) if done => snap.constrain(&mut next, point),
+                        snap => self.s.snap = snap,
+                    }
+                }
             }
             Drag::Circle { curve } => {
-                let center = match next.curves[&curve].kind {
-                    CurveKind::Circle { center, .. } => center,
-                    _ => return,
+                let CurveKind::Circle { center, .. } = next.curves[&curve].kind else {
+                    return;
                 };
-                let r = dist(pt(&next, center), p);
+                let r = dist(pt(&next, center), to);
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Circle { radius, .. } = &mut c.kind
                 {
-                    *radius = design(r);
+                    *radius = Design::from_f64(r);
                 }
             }
             Drag::Arc { curve } => {
                 let CurveKind::Arc { start, end, .. } = next.curves[&curve].kind else {
                     return;
                 };
-                let through = sweep_through(pt(&next, start), pt(&next, end), p);
+                let through = crate::geometry::sweep_through(pt(&next, start), pt(&next, end), to);
                 if !through.is_finite() {
                     return;
                 }
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Arc { sweep, .. } = &mut c.kind
                 {
-                    *sweep = design(through);
+                    *sweep = Design::from_f64(through);
                 }
             }
         }
@@ -251,14 +346,71 @@ impl<S: Scalar> Editing<'_, S> {
         self.args.sketch = next;
     }
 
-    /// Removes what is selected: points, curves and constraints.
+    /// The value of the dimension `id` dragged from `from` to `to`: it goes
+    /// as far as the pointer went, from where it was shown when grabbed.
+    fn drag_label(&mut self, id: ConstraintId, from: P2, to: P2, done: bool) {
+        let Some((_, anchor)) = self
+            .sketch()
+            .constraints
+            .get(&id)
+            .and_then(|c| constraints::glyph(self.sketch(), c, false))
+        else {
+            return;
+        };
+        let grabbed = match &self.s.drag {
+            Some(Drag::Label { offset, grab, .. }) => (*offset, *grab),
+            _ => {
+                // Not placed yet: grabbed where the pointer is on it.
+                let offset = self
+                    .args
+                    .labels
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(sub(from, anchor));
+                self.s.drag = Some(Drag::Label {
+                    id,
+                    offset,
+                    grab: from,
+                });
+                (offset, from)
+            }
+        };
+        self.args
+            .labels
+            .insert(id, add(grabbed.0, sub(to, grabbed.1)));
+        if done {
+            self.s.drag = None;
+        }
+    }
+
+    /// Removes what is selected: points, curves and constraints. What a
+    /// projection gave goes with all the projection gave — it would only
+    /// come back with the next update — and the sketch's own origin and
+    /// axes stay.
     pub(super) fn delete_selection(&mut self) {
-        let (selection, constraints) = selected(self.sketch(), self.selection);
-        if selection.is_empty() && constraints.is_empty() {
+        let (picks, constraints) = selected(self.sketch(), self.selection);
+        if picks.is_empty() && constraints.is_empty() {
             return;
         }
         let mut next = self.sketch().clone();
-        next.remove(&selection.points, &selection.curves, &constraints);
+        let mut gone_references = Vec::new();
+        let (mut points, mut curves) = (Vec::new(), Vec::new());
+        for &pick in &picks {
+            match self.args.reference_of(pick) {
+                Some(i) if self.args.references[i].source == Source::Frame => {}
+                Some(i) => gone_references.push(i),
+                None => match pick {
+                    Pick::Point(p) => points.push(p),
+                    Pick::Curve(c) => curves.push(c),
+                },
+            }
+        }
+        gone_references.sort_unstable();
+        gone_references.dedup();
+        for &i in gone_references.iter().rev() {
+            self.args.references.remove(i).remove_from(&mut next);
+        }
+        next.remove(&points, &curves, &constraints);
         self.selection.clear();
         self.commit(next);
     }
@@ -266,105 +418,215 @@ impl<S: Scalar> Editing<'_, S> {
     /// Puts down what is being drawn, and takes up `tool`.
     pub(super) fn take(&mut self, tool: Tool) {
         self.finish_draft();
-        self.s.tool = tool;
-    }
-
-    /// Adds the constraint labelled `label` among those that fit the
-    /// selection, and clears the selection.
-    pub(super) fn constrain(&mut self, label: &str) {
-        let (selection, _) = selected(self.sketch(), self.selection);
-        let options = constraints::options(self.sketch(), &selection);
-        if let Some(option) = options.into_iter().find(|o| o.label == label) {
-            let mut next = self.sketch().clone();
-            next.constrain(option.constraint);
-            self.commit(next);
-            self.selection.clear();
-        }
+        self.s.tool = if self.s.tool == tool {
+            Tool::Select
+        } else {
+            tool
+        };
     }
 
     /// Makes the selected curves construction geometry — or, if they all
-    /// are, profile geometry again.
+    /// are, profile geometry again. With no curve selected, switches
+    /// whether what is drawn next is construction geometry.
     pub(super) fn toggle_construction(&mut self) {
-        let (selection, _) = selected(self.sketch(), self.selection);
+        let (picks, _) = selected(self.sketch(), self.selection);
+        let curves: Vec<CurveId> = picks
+            .iter()
+            .filter_map(|&p| match p {
+                Pick::Curve(c) => Some(c),
+                _ => None,
+            })
+            .filter(|&c| {
+                self.args
+                    .reference_of(Pick::Curve(c))
+                    .is_none_or(|i| self.args.references[i].source != Source::Frame)
+            })
+            .collect();
+        if curves.is_empty() {
+            self.s.construction = !self.s.construction;
+            return;
+        }
         let mut next = self.sketch().clone();
-        let all = selection
-            .curves
+        let all = curves
             .iter()
             .all(|c| next.curves.get(c).is_some_and(|c| c.construction));
-        for &c in &selection.curves {
+        for &c in &curves {
             next.set_construction(c, !all);
         }
         self.commit(next);
     }
 
+    /// The dimension `id` given `text`: a plain number — an angle in
+    /// degrees — or a formula of the part's parameters, which it then
+    /// follows. A formula that does not evaluate is refused, saying why.
+    pub(super) fn set_value(&mut self, id: ConstraintId, text: &str) {
+        let text = text.trim();
+        let Some(c) = self.sketch().constraints.get(&id) else {
+            return;
+        };
+        if text.is_empty() || constraints::value(c).is_none() {
+            self.s.prompt = None;
+            return;
+        }
+        let inputs = self.before.inputs();
+        let value = match evaluate(text, |name| number(inputs, name)) {
+            Ok(v) => v,
+            Err(e) => {
+                self.s.error = Some(e.root_message().to_string());
+                return;
+            }
+        };
+        if is_formula(text) {
+            self.args.formulas.insert(id, text.to_string());
+        } else {
+            self.args.formulas.remove(&id);
+        }
+        let mut next = self.sketch().clone();
+        let c = next.constraints.get_mut(&id).expect("checked above");
+        let value = if matches!(c, Constraint::Angle { .. }) {
+            value.to_radians()
+        } else {
+            value
+        };
+        constraints::set_value(c, value);
+        self.commit(next);
+        self.s.prompt = None;
+        self.s.error = None;
+    }
+
     /// The constraint `id`'s entry in the list used: pressed, it is
     /// selected; removed; given a new value.
     pub(super) fn constraint(&mut self, id: ConstraintId, value: &Value) {
-        let mut next = self.sketch().clone();
         match value {
             Value::Press => *self.selection = vec![id.to_string()],
             Value::Remove => {
+                let mut next = self.sketch().clone();
                 next.remove(&[], &[], &[id]);
                 self.selection.retain(|k| glyph_key(k) != Some(id));
                 self.commit(next);
             }
-            Value::Number(v) => {
-                if let Some(c) = next.constraints.get_mut(&id) {
-                    let v = if matches!(c, Constraint::Angle { .. }) {
-                        v.to_radians()
-                    } else {
-                        *v
-                    };
-                    constraints::set_value(c, v);
-                    self.commit(next);
-                }
-            }
+            Value::Text(text) => self.set_value(id, text),
+            Value::Number(v) => self.set_value(id, &v.to_string()),
             _ => {}
         }
+    }
+
+    /// What the sketch projects is now `entities`: projections of those it
+    /// no longer holds are removed, and those new to it projected — those
+    /// that are neither a vertex, nor an edge, nor a face skipped.
+    pub(super) fn project(&mut self, entities: Vec<EntityRef>) {
+        let projectable = |e: &EntityRef| {
+            let inner = e.split_instance().map_or(e.clone(), |(_, inner)| inner);
+            matches!(
+                inner,
+                EntityRef::Vertex { .. } | EntityRef::Edge { .. } | EntityRef::Face { .. }
+            )
+        };
+        let mut next = self.sketch().clone();
+        let mut kept = Vec::new();
+        for reference in std::mem::take(&mut self.args.references) {
+            match &reference.source {
+                Source::Projection { entity } if !entities.contains(entity) => {
+                    reference.remove_from(&mut next);
+                }
+                _ => kept.push(reference),
+            }
+        }
+        self.s.error = None;
+        for entity in entities.into_iter().filter(projectable) {
+            let source = Source::Projection { entity };
+            if kept.iter().any(|r| r.source == source) {
+                continue;
+            }
+            let mut reference = Reference::new(source);
+            match reference.update(&mut next, self.before, &self.frame) {
+                Ok(()) => kept.push(reference),
+                Err(e) => {
+                    reference.remove_from(&mut next);
+                    self.s.error = Some(e.root_message().to_string());
+                }
+            }
+        }
+        self.args.references = kept;
+        self.commit(next);
     }
 
     fn key(&mut self, key: &str) {
         match key {
             "Escape" => {
-                if self.s.draft.is_some() {
+                if self.s.prompt.take().is_some() {
+                    self.s.error = None;
+                } else if !self.s.draft.placed.is_empty() {
                     self.finish_draft();
                 } else {
                     self.s.tool = Tool::Select;
                 }
             }
-            "Enter" => self.finish_draft(),
+            "Enter" => match self.s.tool {
+                Tool::Constrain(tool) => {
+                    let (picks, _) = selected(self.sketch(), self.selection);
+                    if tool.fit(self.sketch(), &picks).complete {
+                        self.apply_constraint(tool, None);
+                    }
+                }
+                _ => self.finish_draft(),
+            },
             "Delete" | "Backspace" => self.delete_selection(),
+            "x" | "X" => self.toggle_construction(),
             other => {
-                if let Some(tool) = Tool::by_shortcut(other) {
-                    self.take(tool);
+                let other = other.to_lowercase();
+                let shortcut = |s: Option<&str>| s == Some(other.as_str());
+                if let Some(info) = DrawTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
+                    self.take(Tool::Draw(info.tool));
+                } else if let Some(info) = ConstraintTool::ALL.iter().find(|i| shortcut(i.shortcut))
+                {
+                    self.press_constraint(info.tool);
                 }
             }
+        }
+    }
+
+    /// A double click with nothing in hand: on a dimension, its value is
+    /// asked for in place.
+    fn double_click(&mut self, pointer: &Pointer<S>) {
+        let visuals = visuals(self.args, self.s, self.selection, &self.frame);
+        if let Some(id) = hit_key(&visuals, pointer, &[&is_glyph])
+            .as_deref()
+            .and_then(glyph_key)
+            && self
+                .sketch()
+                .constraints
+                .get(&id)
+                .is_some_and(|c| constraints::value(c).is_some())
+        {
+            self.s.prompt = Some(id);
+            self.s.error = None;
         }
     }
 
     pub(super) fn event(&mut self, event: &CanvasEvent<S>) {
         match event {
             CanvasEvent::Key { key } => self.key(key),
-            CanvasEvent::Hover { pointer } => {
-                self.s.cursor = self.in_plane(pointer).map(|(p, _)| p)
+            CanvasEvent::Hover { pointer, shift } => self.hover(pointer, *shift),
+            CanvasEvent::Leave => {
+                self.s.cursor = None;
+                self.s.snap = None;
             }
-            CanvasEvent::Leave => self.s.cursor = None,
             CanvasEvent::Click {
                 pointer,
                 button,
                 double,
-                ..
-            } => match button {
-                Button::Secondary => self.finish_draft(),
-                Button::Primary => {
-                    if let Some((p, t)) = self.in_plane(pointer) {
-                        self.s.cursor = Some(p);
-                        if !*double {
-                            self.click(pointer, p, t);
-                        }
-                    }
+                shift,
+            } => match (button, self.s.tool) {
+                (Button::Secondary, _) => self.finish_draft(),
+                (Button::Primary, Tool::Select) if *double => self.double_click(pointer),
+                (Button::Primary, Tool::Select) => {}
+                (Button::Primary, Tool::Constrain(tool)) => self.pick_for(tool, pointer),
+                (Button::Primary, Tool::Draw(tool)) => {
                     if *double {
                         self.finish_draft();
+                    } else if let Some((p, t)) = self.in_plane(pointer) {
+                        self.place(tool, pointer, p, t, *shift);
                     }
                 }
             },
@@ -372,10 +634,12 @@ impl<S: Scalar> Editing<'_, S> {
                 key,
                 from,
                 to,
+                pointer,
                 done,
+                shift,
             } => {
                 let (from, to) = (self.to_sketch(from), self.to_sketch(to));
-                self.drag(key, from, to, *done);
+                self.drag(key, from, to, pointer, *done, *shift);
             }
         }
     }

@@ -224,6 +224,9 @@ pub struct PartView<S: Scalar> {
     /// Every part placed in it, and in those, however deep.
     pub instances: Vec<ViewInstance<S>>,
     pub extent: Extent<S>,
+    /// The part's colour, `#rrggbb` (see [`crate::parameters::COLOR`]);
+    /// none for the viewer's own.
+    pub color: Option<String>,
 }
 
 /// One part of what a pick tests: the part drawn itself, or a placed part,
@@ -327,9 +330,13 @@ impl<S: Scalar> PartView<S> {
                     name: sketch.clone(),
                     plane: placed.plane.clone(),
                     regions,
+                    // What it was only given to draw against — its own
+                    // axes, its origin, what it projected as construction
+                    // geometry — is not drawn once it is done.
                     curves: s
                         .curves
                         .iter()
+                        .filter(|(_, c)| !(c.fixed && c.construction))
                         .map(|(&id, c)| {
                             Ok(ViewCurve {
                                 id,
@@ -347,6 +354,7 @@ impl<S: Scalar> PartView<S> {
                         .collect::<GeopResult<_>>()?,
                     points: positions
                         .iter()
+                        .filter(|(id, _)| !s.points[id].fixed)
                         .map(|(&id, p)| ViewSketchPoint {
                             id,
                             at: p.map(|c| c.cast()),
@@ -406,6 +414,7 @@ impl<S: Scalar> PartView<S> {
                 center: Vector3::zero(),
                 size: S::ONE,
             },
+            color: part.color().map(str::to_string),
         };
         for (id, instance) in part.instances() {
             let instance_name = name(id.into());

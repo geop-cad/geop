@@ -43,6 +43,7 @@ fn sketch(plane: EntityRef, sketch: Sketch) -> AddSketchArgs {
     AddSketchArgs {
         plane: Some(plane),
         sketch,
+        ..Default::default()
     }
 }
 

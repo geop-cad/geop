@@ -61,6 +61,8 @@ pub struct Part<S: Scalar> {
     inputs: State,
     /// The parameters its steps declared, with the values they read.
     declared: State,
+    /// What its parameters are defined as (see [`Part::parameters`]).
+    parameters: crate::parameters::Parameters,
     /// The next sketch, datum or instance id: ids count up in the order
     /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,
@@ -83,6 +85,7 @@ impl<S: Scalar> Part<S> {
             mates: BTreeMap::new(),
             inputs: State::new(),
             declared: State::new(),
+            parameters: crate::parameters::Parameters::default(),
             next_id: 1,
         };
         let origin = Datum {

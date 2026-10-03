@@ -1,4 +1,5 @@
-import { Dropdown, SliderNumber } from "./controls";
+import { Dropdown, SearchSelect, SliderNumber } from "./controls";
+import { Icon } from "./icons";
 import { entityLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
 
 interface Props {
@@ -47,6 +48,29 @@ function NumberInput({ value, step, onChange }: { value: number; step: number; o
   );
 }
 
+/**
+ * Text typed in place — a value, or a formula of the part's parameters:
+ * Enter applies it, leaving the field without Enter puts it back. Keyed by
+ * the text, so a change from elsewhere shows.
+ */
+function TextInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <input
+      key={value}
+      type="text"
+      className="formula-input"
+      defaultValue={value}
+      title="A number, or a formula of the parameters · Enter applies"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") e.currentTarget.blur();
+        if (e.key === "Enter" && e.currentTarget.value.trim() !== "") onChange(e.currentTarget.value);
+      }}
+      onBlur={(e) => (e.currentTarget.value = value)}
+    />
+  );
+}
+
 /** Actions grouped as their `group`s say, in the order the groups first appear. */
 function groups(actions: Action[]): [string | null, Action[]][] {
   const out: [string | null, Action[]][] = [];
@@ -59,7 +83,7 @@ function groups(actions: Action[]): [string | null, Action[]][] {
 }
 
 /** How a number of `unit` reads after its value. */
-const UNITS: Record<Unit, string> = { length: "", angle: "°", fraction: "" };
+const UNITS: Record<Unit, string> = { length: "", angle: "°", fraction: "", count: "" };
 
 /** What a reference field's button says: what it holds, or that it waits for a pick. */
 function referenced(c: Extract<Control, { type: "reference" }>): string {
@@ -118,17 +142,40 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
           </div>
         );
       case "actions": {
-        const button = (a: Action) => (
-          <button
-            key={a.value}
-            className={a.active ? "active" : ""}
-            disabled={!a.enabled}
-            title={a.title ?? undefined}
-            onClick={() => send({ type: "choice", value: a.value })}
-          >
-            {a.label}
-          </button>
-        );
+        const button = (a: Action) =>
+          a.icon != null ? (
+            <button
+              key={a.value}
+              className={["icon-button", a.active ? "active" : ""].join(" ")}
+              disabled={!a.enabled}
+              title={a.title ?? a.label}
+              aria-label={a.label}
+              onClick={() => send({ type: "choice", value: a.value })}
+            >
+              <Icon name={a.icon} />
+            </button>
+          ) : (
+            <button
+              key={a.value}
+              className={a.active ? "active" : ""}
+              disabled={!a.enabled}
+              title={a.title ?? undefined}
+              onClick={() => send({ type: "choice", value: a.value })}
+            >
+              {a.label}
+            </button>
+          );
+        if (c.actions.every((a) => a.icon != null))
+          return (
+            <div className="icon-toolbar">
+              {groups(c.actions).map(([group, actions]) => (
+                <div key={group ?? ""} className="icon-group" role="group" aria-label={group ?? undefined}>
+                  {group && <span className="icon-group-label">{group}</span>}
+                  <div className="icon-group-buttons">{actions.map(button)}</div>
+                </div>
+              ))}
+            </div>
+          );
         if (c.actions.every((a) => a.group == null)) return <div className="button-grid">{c.actions.map(button)}</div>;
         return (
           <div className="constructions">
@@ -167,13 +214,27 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
         );
       }
       case "select":
-        return (
+        return c.searchable ? (
+          <SearchSelect
+            label={c.label}
+            value={c.value}
+            options={c.options}
+            onChange={(value) => send({ type: "choice", value })}
+          />
+        ) : (
           <Dropdown
             label={c.label}
             value={c.value}
             options={c.options}
             onChange={(value) => send({ type: "choice", value })}
           />
+        );
+      case "color":
+        return (
+          <label className="row">
+            {c.label}
+            <input type="color" value={c.value} onChange={(e) => send({ type: "text", value: e.target.value })} />
+          </label>
         );
       case "list":
         return (
@@ -193,7 +254,10 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
                     {item.detail}
                   </span>
                 )}
-                {item.value != null && (
+                {item.text != null && (
+                  <TextInput value={item.text} onChange={(value) => onDialog(item.key, { type: "text", value })} />
+                )}
+                {item.text == null && item.value != null && (
                   <NumberInput
                     value={item.value}
                     step={0.1}
@@ -236,11 +300,10 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
           </button>
         </div>
 
-        <h2>
+        <h2 title={step.doc}>
           {step.label}
           {step.id && <span className="op-id"> · {step.id}</span>}
         </h2>
-        <p className="hint">{step.doc}</p>
         {step.presentation.dialog.map(({ key, ...c }) => (
           <div key={key} className="field">
             {control(key, c as Control)}

@@ -12,7 +12,8 @@
 use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar};
 
 use super::{
-    Action, Choice, Control, Dialog, ListItem, Number, Picked, Reference, Tone, Value, Visual,
+    Action, Choice, Control, Dialog, ListItem, Number, Picked, Prompt, Reference, Tone, Value,
+    Visual,
 };
 use crate::{
     assembly::Drag,
@@ -49,6 +50,8 @@ pub struct Form<'a, S: Scalar, A = (), T = ()> {
     /// The placed parts the step is dragging, by the parameters their poses
     /// are: the editor solves the program with them pulled.
     pub drags: Vec<Drag<S>>,
+    /// A value asked for in place, in the viewport.
+    pub prompt: Option<Prompt<S>>,
     setters: Vec<(String, Setter<'a, A, T>)>,
 }
 
@@ -60,6 +63,7 @@ impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
             focus: None,
             tool: false,
             drags: Vec::new(),
+            prompt: None,
             setters: Vec::new(),
         }
     }
@@ -87,6 +91,7 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
             focus: self.focus,
             tool: self.tool,
             drags: self.drags,
+            prompt: self.prompt,
             setters: Vec::new(),
         }
     }
@@ -183,23 +188,56 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
         })
     }
 
-    /// One of `options`, by value.
+    /// One of `options`, by value — found by typing, if `searchable`.
     pub fn select(
         &mut self,
         key: &str,
         label: impl Into<String>,
         value: impl Into<String>,
         options: Vec<Choice>,
+        searchable: bool,
         set: impl Fn(&mut A, &str) + 'a,
     ) -> &mut Self {
         let control = Control::Select {
             label: label.into(),
             value: value.into(),
             options,
+            searchable,
         };
         self.field(key, control, move |edit, value| {
             if let Value::Choice(choice) = value {
                 set(edit.args, &choice);
+            }
+        })
+    }
+
+    /// Makes the reference field `key` optional: the step builds without
+    /// it, and it is only picked for when pressed (see
+    /// [`Reference::required`]).
+    pub fn optional(&mut self, key: &str) -> &mut Self {
+        for (k, reference) in self.dialog.references_mut() {
+            if k == key {
+                reference.required = false;
+            }
+        }
+        self
+    }
+
+    /// A colour, `#rrggbb`.
+    pub fn color(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        set: impl Fn(&mut A, &str) + 'a,
+    ) -> &mut Self {
+        let control = Control::Color {
+            label: label.into(),
+            value: value.into(),
+        };
+        self.field(key, control, move |edit, value| {
+            if let Value::Text(color) = value {
+                set(edit.args, &color);
             }
         })
     }
@@ -230,6 +268,7 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
                 })
                 .collect(),
             multiple,
+            required: true,
             armed: false,
         });
         self.field(key, control, move |edit, value| {

@@ -597,14 +597,31 @@ fn edge_pieces<D: Scalar, S: Scalar>(
                 .map(|j| conic(q[j], corners[j], q[(j + 1) % 4], w))
                 .collect()
         }
-        CurveKind::Spline { control_points } => {
+        CurveKind::Spline {
+            control_points,
+            shape,
+        } => {
             let n = control_points.len();
-            let degree = spline_degree(n);
-            Ok(vec![NurbCurve::try_new(
-                degree,
-                control_points.iter().map(|p| hom(at(p), S::ONE)).collect(),
-                spline_knots(n, degree)?,
-            )?])
+            let Some(shape) = shape else {
+                let degree = spline_degree(n);
+                return Ok(vec![NurbCurve::try_new(
+                    degree,
+                    control_points.iter().map(|p| hom(at(p), S::ONE)).collect(),
+                    spline_knots(n, degree)?,
+                )?]);
+            };
+            // Taken from elsewhere, on knots of its own: brought onto
+            // `[0, 1]`, like every other piece.
+            let curve = NurbCurve::try_new(
+                shape.degree,
+                control_points
+                    .iter()
+                    .zip(&shape.weights)
+                    .map(|(p, w)| hom(at(p), w.cast()))
+                    .collect(),
+                shape.knots.iter().map(|k| k.cast()).collect(),
+            )?;
+            Ok(vec![rescale_to_unit(curve)?])
         }
     }
 }

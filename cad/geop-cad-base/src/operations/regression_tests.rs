@@ -146,6 +146,7 @@ fn cylinder_joined_over_a_hole() {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: plate,
+            ..Default::default()
         },
     );
     program.push(
@@ -179,6 +180,7 @@ fn cylinder_joined_over_a_hole() {
         AddSketchArgs {
             plane: Some(EntityRef::datum("reference1")),
             sketch: boss,
+            ..Default::default()
         },
     );
     program.push(
@@ -301,6 +303,7 @@ fn spline_revolved_then_extruded_and_joined() {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch,
+            ..Default::default()
         },
     );
     program.push(

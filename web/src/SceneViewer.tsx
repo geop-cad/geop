@@ -13,6 +13,7 @@ import {
   type PartView,
   type Pointer,
   type PointerEvent_,
+  type Prompt,
   type Reach,
   type Role,
   type Vec3,
@@ -76,8 +77,15 @@ function inPlane(plane: Frame, [x, y]: [number, number]): Vec3 {
   return [0, 1, 2].map((k) => plane.origin[k] + x * plane.u[k] + y * plane.v[k]) as Vec3;
 }
 
-/** `part` as a [[Scene]]. */
+/** A colour `#rrggbb` as a number three.js takes; `fallback` for none, or one it cannot read. */
+function colorHex(color: string | null | undefined, fallback: number): number {
+  const hex = color?.match(/^#([0-9a-fA-F]{6})$/)?.[1];
+  return hex ? parseInt(hex, 16) : fallback;
+}
+
+/** `part` as a [[Scene]], its faces in its own colour if it has one. */
 function flatten(part: PartView): Scene {
+  const faceColor = colorHex(part.color, FACE_COLOR);
   const scene: Scene = {
     points: [],
     point_names: [],
@@ -107,7 +115,7 @@ function flatten(part: PartView): Scene {
   part.faces.forEach((f, index) => {
     scene.faces.push({ name: f.name, solid: f.solid });
     f.triangles.forEach(([a, b, c], i) => {
-      scene.triangles.push([a, b, c, FACE_COLOR]);
+      scene.triangles.push([a, b, c, faceColor]);
       scene.normals.push(f.normals[i]);
       scene.triangle_faces.push(index);
     });
@@ -143,6 +151,11 @@ interface Props {
    * Facing it is the caller's, through [[Props.focus]].
    */
   plane?: Frame | null;
+  /** A value asked for in place: an input drawn where its point is. */
+  prompt?: Prompt | null;
+  /** The value typed into the [[Props.prompt]]: Enter gives it, Escape gives up. */
+  onPrompt?: (key: string, text: string) => void;
+  onPromptCancel?: () => void;
   /** Whether a press where the pointer hovers starts a drag, sent to [[Props.onPointer]], rather than moving the camera. */
   grab?: boolean;
   /**
@@ -438,6 +451,9 @@ export function SceneViewer({
   plane,
   grab,
   onPointer,
+  prompt,
+  onPrompt,
+  onPromptCancel,
   projection,
   focus,
   onFocusReached,
@@ -470,6 +486,9 @@ export function SceneViewer({
   grabRef.current = grab ?? false;
   const onPointerRef = useRef(onPointer);
   onPointerRef.current = onPointer;
+  const promptAtRef = useRef<Vec3 | null>(null);
+  promptAtRef.current = prompt?.at ?? null;
+  const promptElRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const groupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
@@ -632,6 +651,19 @@ export function SceneViewer({
     let lastClick: { x: number; y: number; time: number } | null = null;
     // The latest pointer position, handled once per frame.
     let pendingHover: { x: number; y: number } | "leave" | null = null;
+    // Shift turns snapping off: held or let go over a still pointer, the
+    // hover is sent again.
+    let shift = false;
+    let lastHover: { x: number; y: number } | null = null;
+    const onShift = (e: KeyboardEvent) => {
+      if (e.shiftKey === shift) return;
+      shift = e.shiftKey;
+      if (lastHover && !press) pendingHover = lastHover;
+    };
+    window.addEventListener("keydown", onShift);
+    window.addEventListener("keyup", onShift);
+    /** Whether `e` is on the input of a prompt, not the view. */
+    const inPrompt = (e: PointerEvent) => (e.target as HTMLElement | null)?.closest?.(".viewport-prompt") != null;
     let pendingDrag: { x: number; y: number } | null = null;
     /** Whether a hover or drag is sent and not yet answered. */
     let following = false;
@@ -658,7 +690,7 @@ export function SceneViewer({
       }
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (moveRef.current || replaying) return;
+      if (moveRef.current || replaying || inPrompt(e)) return;
       // A second finger is the camera's: a pinch, or a two-finger pan.
       if (e.pointerType === "touch" && (asking != null || press != null)) {
         if (press?.grabbed) e.stopPropagation();
@@ -668,7 +700,7 @@ export function SceneViewer({
         e.stopPropagation();
         asking = e.pointerId;
         const landed = new PointerEvent("pointerdown", e);
-        void send({ type: "hover", pointer: pointerAt(e.clientX, e.clientY) }).then((grabbed) => {
+        void send({ type: "hover", pointer: pointerAt(e.clientX, e.clientY), shift: e.shiftKey }).then((grabbed) => {
           // Lifted, or the view moved, while asking: the press is gone.
           if (asking !== e.pointerId) return;
           asking = null;
@@ -686,15 +718,17 @@ export function SceneViewer({
       if (grabbed) e.stopPropagation();
     };
     const onPointerMove = (e: PointerEvent) => {
+      shift = e.shiftKey;
       if (press) {
         if (e.pointerId !== press.id) return;
         if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_PX) press.moved = true;
         if (press.grabbed && press.moved) pendingDrag = { x: e.clientX, y: e.clientY };
         return;
       }
-      if (e.buttons === 0) pendingHover = { x: e.clientX, y: e.clientY };
+      if (e.buttons === 0) pendingHover = lastHover = { x: e.clientX, y: e.clientY };
     };
     const onPointerUp = (e: PointerEvent) => {
+      if (inPrompt(e)) return;
       if (asking === e.pointerId) {
         // Lifted before the kernel answered: a tap.
         asking = null;
@@ -707,7 +741,7 @@ export function SceneViewer({
         controls.enabled = !moveRef.current;
         pendingDrag = null;
         if (done.moved) {
-          send({ type: "drag", from: done.from, to: pointerAt(e.clientX, e.clientY), done: true });
+          send({ type: "drag", from: done.from, to: pointerAt(e.clientX, e.clientY), done: true, shift: e.shiftKey });
           pendingHover = { x: e.clientX, y: e.clientY };
           return;
         }
@@ -740,6 +774,7 @@ export function SceneViewer({
     };
     const onPointerLeave = () => {
       pendingHover = "leave";
+      lastHover = null;
     };
     const onContextMenu = (e: Event) => e.preventDefault();
     // In the capture phase: a grab must be taken before the controls see
@@ -791,11 +826,11 @@ export function SceneViewer({
         pendingDrag = null;
         const event: PointerEvent_ | null =
           drag && press
-            ? { type: "drag", from: press.from, to: pointerAt(drag.x, drag.y), done: false }
+            ? { type: "drag", from: press.from, to: pointerAt(drag.x, drag.y), done: false, shift }
             : hover === "leave"
               ? { type: "leave" }
               : hover
-                ? { type: "hover", pointer: pointerAt(hover.x, hover.y) }
+                ? { type: "hover", pointer: pointerAt(hover.x, hover.y), shift }
                 : null;
         if (event) {
           following = true;
@@ -814,6 +849,16 @@ export function SceneViewer({
       grid.sync(planeRef.current);
       grid.update(camera, height, controls.target);
 
+      // The prompt's input, where its point is on screen.
+      const promptAt = promptAtRef.current;
+      const promptEl = promptElRef.current;
+      if (promptAt && promptEl) {
+        const ndc = vec(promptAt).project(camera);
+        const x = ((ndc.x + 1) / 2) * container.clientWidth;
+        const y = ((1 - ndc.y) / 2) * height;
+        promptEl.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+      }
+
       renderer.render(threeScene, camera);
       labelRenderer.render(threeScene, camera);
       frame = requestAnimationFrame(animate);
@@ -828,6 +873,8 @@ export function SceneViewer({
       container.removeEventListener("pointercancel", onPointerCancel);
       container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("keydown", onShift);
+      window.removeEventListener("keyup", onShift);
       controls.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
@@ -941,6 +988,23 @@ export function SceneViewer({
     <div
       ref={containerRef}
       style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, touchAction: "none" }}
-    />
+    >
+      {prompt && (
+        <div ref={promptElRef} className="viewport-prompt">
+          <input
+            key={`${prompt.key}:${prompt.label}`}
+            autoFocus
+            defaultValue={prompt.value}
+            title={`${prompt.label} — a number, or a formula of the parameters · Enter applies, Esc cancels`}
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") onPrompt?.(prompt.key, e.currentTarget.value);
+              if (e.key === "Escape") onPromptCancel?.();
+            }}
+          />
+        </div>
+      )}
+    </div>
   );
 }

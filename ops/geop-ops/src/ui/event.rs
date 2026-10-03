@@ -81,6 +81,8 @@ pub enum Value {
     Remove,
     Bool(bool),
     Number(f64),
+    /// Text typed: a value given as a formula, a colour.
+    Text(String),
     /// An action, or a select's option, by its value.
     Choice(String),
     /// The entity at this index was taken out of a reference field.
@@ -98,8 +100,13 @@ pub enum Value {
 pub enum StepEditEvent<S: Scalar> {
     /// The dialog field `key` was used.
     Dialog { key: String, value: Value },
-    /// The pointer moved over the viewport with no button held.
-    Hover { pointer: Pointer<S> },
+    /// The pointer moved over the viewport with no button held — `shift`
+    /// held or not, which turns snapping off.
+    Hover {
+        pointer: Pointer<S>,
+        #[serde(default)]
+        shift: bool,
+    },
     /// The pointer left the viewport.
     Leave,
     /// A click in the viewport: a press and release without moving.
@@ -122,6 +129,8 @@ pub enum StepEditEvent<S: Scalar> {
         to: Pointer<S>,
         #[serde(default)]
         done: bool,
+        #[serde(default)]
+        shift: bool,
     },
     /// A key, as the browser names it: `l`, `Escape`, `Enter`, `Delete`.
     Key { key: String },
@@ -140,7 +149,7 @@ impl<S: Scalar> StepEditEvent<S> {
     /// it is now.
     pub fn pointer(&self) -> Option<&Pointer<S>> {
         match self {
-            StepEditEvent::Hover { pointer } | StepEditEvent::Click { pointer, .. } => {
+            StepEditEvent::Hover { pointer, .. } | StepEditEvent::Click { pointer, .. } => {
                 Some(pointer)
             }
             StepEditEvent::Drag { to, .. } => Some(to),
@@ -154,8 +163,9 @@ impl<S: Scalar> StepEditEvent<S> {
 /// [`super::StepEditor`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum CanvasEvent<S: Scalar> {
-    /// The pointer moved over the viewport with no button held.
-    Hover { pointer: Pointer<S> },
+    /// The pointer moved over the viewport with no button held, `shift`
+    /// held or not.
+    Hover { pointer: Pointer<S>, shift: bool },
     /// The pointer left the viewport.
     Leave,
     /// A click that selected nothing: a secondary one, a double one, one
@@ -167,12 +177,15 @@ pub enum CanvasEvent<S: Scalar> {
         shift: bool,
     },
     /// The draggable visual `key` dragged in the plane worked in, from
-    /// where it was grabbed to where the pointer is now. `done` on release.
+    /// where it was grabbed to where the pointer is now — `pointer`, with
+    /// `shift` held or not. `done` on release.
     Move {
         key: String,
         from: Vector3<S>,
         to: Vector3<S>,
+        pointer: Pointer<S>,
         done: bool,
+        shift: bool,
     },
     /// A key, as the browser names it.
     Key { key: String },

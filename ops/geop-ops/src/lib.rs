@@ -11,6 +11,9 @@
 //!   [`ORIGIN`], the parts placed in it — each a part of its own, at a pose
 //!   — and a stable name for every entity in it (see
 //!   [Topological naming](#topological-naming)).
+//! - [`parameters`]: the named values a program's design is given by —
+//!   numbers, tables of variants, the part's colour — and the formulas that
+//!   read them.
 //! - [`assembly`]: the mates holding the parts placed in a part together,
 //!   and solving them.
 //! - [`operation`]: what an operation is. Built, a step maps a part and
@@ -98,6 +101,7 @@ pub type Design = geop_core_math::scalars::ScalInF64;
 
 pub mod assembly;
 pub mod operation;
+pub mod parameters;
 pub mod part;
 pub mod program;
 pub mod ui;

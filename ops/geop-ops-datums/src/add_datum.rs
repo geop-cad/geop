@@ -804,6 +804,7 @@ mod tests {
             from: side(3.3),
             to: side(3.8),
             done: true,
+            shift: false,
         };
         let (dragged, _) = edited(&part, args, false, &[drag]);
         assert_eq!(

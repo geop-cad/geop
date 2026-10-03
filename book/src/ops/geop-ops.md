@@ -235,6 +235,33 @@ unit struct `Name`, the doc comment describes the operation, and
 `#[operation(label = "...")]` gives its short name. Sessions differ by
 operation, so the set carries a step's session boxed.
 
+## Parameters
+
+The `parameters` module. A program's `Parameters` are the named values its
+design is given by, defined once in the program and read by name wherever a
+value is typed — a sketch dimension of `width / 2`:
+
+- **Numbers**, each a formula of those defined before it — `4`,
+  `width / 2`, `sqrt(a^2 + b^2)` — with `+ - * / ^`, parentheses, `pi`
+  and `sqrt abs sin cos tan asin acos atan round floor ceil min max`,
+  angles in degrees. A `min` and `max` say what a slider offers when the
+  part is placed.
+- **Tables**: a family of variants — screw sizes, say — one row each, of
+  which one is selected. `screw` is the selected row's name, and
+  `screw.clearance` its value in the column `clearance`.
+- **The part's colour**, `#rrggbb`, read as `color`.
+
+What a parameter is defined as is the program's own; what it is *built
+with* may be overridden by a program placing the part, by the same name,
+through the state (see [geop-ops-assembly](./geop-ops-assembly.md)). So a
+placed screw is made M5 by the program placing it, without touching the
+screw's file. `Program::inputs` resolves the definitions with the state's
+overrides into the values a build reads; `Part::evaluate` evaluates a
+formula against them and declares what it read, so the `ProgramRunner`
+reruns from the first step that read a parameter whose value changed. A
+parameter that does not resolve is left out — what reads it fails, saying
+so — and the editor shows why.
+
 ## Programs
 
 The `program` module. `Program` and `ProgramRunner` are generic over the

@@ -38,4 +38,4 @@ pub use event::{Button, CanvasEvent, Pointer, Reach, StepEditEvent, Value};
 pub use form::{Edit, Form};
 pub use step::{DRAG_SNAP, StepEditor};
 pub use view::{Extent, PartHit, PartView};
-pub use visual::{Presentation, Shape, Style, Visual};
+pub use visual::{Presentation, Prompt, Shape, Style, Visual};

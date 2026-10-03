@@ -113,6 +113,8 @@ export interface PartView {
   /** The parts placed in it, drawn by reference. */
   instances: ViewInstance[];
   extent: Extent;
+  /** The part's colour, `#rrggbb`; none for the viewer's own. */
+  color: string | null;
 }
 
 // ── programs ─────────────────────────────────────────────────────────────────
@@ -138,13 +140,38 @@ export interface Pose {
   rotation: [number, number, number, number];
 }
 
+/** A row of a table parameter: a variant, by name, with a value per column. */
+export interface ParameterRow {
+  name: string;
+  values: number[];
+}
+
+/** What a parameter is — see `geop_ops::parameters::ParameterKind`. */
+export type ParameterKind =
+  /** A number, given as a formula of the parameters before it; `min`/`max` what a slider offers. */
+  | { type: "number"; expression: string; min?: number | null; max?: number | null }
+  /** A family of variants: `name` is the selected row, `name.column` its value there. */
+  | { type: "table"; columns: string[]; rows: ParameterRow[]; selected: string };
+
+export type Parameter = { name: string } & ParameterKind;
+
+/** A program's parameters: the part's colour, and its named values, in order. */
+export interface Parameters {
+  color?: string | null;
+  values?: Parameter[];
+}
+
+/** What a parameter resolves to: a number, a pose, or text (a table's row, a colour). */
+export type ParamValue = number | Pose | string;
+
 /**
- * A program: its steps — its structure — and its state — the parameters it is built with,
+ * A program: its parameters, its steps — its structure — and its state — the values it is built with,
  * by name: where every placed part is (`bolt.pose`), solved by the kernel.
  */
 export interface Program {
+  parameters?: Parameters;
   steps: Step[];
-  state?: Record<string, number | Pose>;
+  state?: Record<string, ParamValue>;
 }
 
 // ── editing ──────────────────────────────────────────────────────────────────
@@ -170,6 +197,8 @@ export type Value =
   | { type: "remove" }
   | { type: "bool"; value: boolean }
   | { type: "number"; value: number }
+  /** Text typed: a value as a formula, a colour. */
+  | { type: "text"; value: string }
   | { type: "choice"; value: string }
   /** The entity at this index taken out of a reference field. */
   | { type: "remove_at"; value: number }
@@ -178,10 +207,11 @@ export type Value =
 
 /** One thing the user did in the viewport. */
 export type PointerEvent_ =
-  | { type: "hover"; pointer: Pointer }
+  /** `shift` held turns snapping off. */
+  | { type: "hover"; pointer: Pointer; shift: boolean }
   | { type: "leave" }
   | { type: "click"; pointer: Pointer; button: "primary" | "secondary"; double: boolean; shift: boolean }
-  | { type: "drag"; from: Pointer; to: Pointer; done: boolean };
+  | { type: "drag"; from: Pointer; to: Pointer; done: boolean; shift: boolean };
 
 /** One thing the user did while editing a step. */
 export type EditEvent = { type: "dialog"; key: string; value: Value } | { type: "key"; key: string } | PointerEvent_;
@@ -199,6 +229,8 @@ export interface Action {
   enabled: boolean;
   /** Shown pressed: the tool in hand, the way chosen. */
   active: boolean;
+  /** The icon it is shown as (see `icons.tsx`), its label its tooltip; none to show the label. */
+  icon: string | null;
 }
 
 export interface Choice {
@@ -214,13 +246,15 @@ export interface ListItem {
   selected: boolean;
   removable: boolean;
   value: number | null;
+  /** Text to edit in place — a value as a formula — sent back as `text`. */
+  text: string | null;
 }
 
 /** What an entity can be used as, and what a pick looks for — see `geop_ops::operation::Role`. */
 export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "solid" | "sketch";
 
 /** What a number measures. */
-export type Unit = "length" | "angle" | "fraction";
+export type Unit = "length" | "angle" | "fraction" | "count";
 
 /** An entity a reference field holds, and what the kernel found it to be. */
 export interface Picked {
@@ -238,7 +272,10 @@ export type Control =
   | { type: "checkbox"; label: string; value: boolean }
   /** A slider over `range`, if given. */
   | { type: "number"; label: string; value: number; unit: Unit; range: [number, number] | null; step: number }
-  | { type: "select"; label: string; value: string; options: Choice[] }
+  /** Found by typing, if `searchable`. */
+  | { type: "select"; label: string; value: string; options: Choice[]; searchable: boolean }
+  /** A colour, `#rrggbb`, sent back as `text`. */
+  | { type: "color"; label: string; value: string }
   /**
    * Entities picked in the viewport that can fill one of `roles`: pressing
    * it arms it; an entity is taken out by `remove_at`, all by `clear`.
@@ -250,6 +287,8 @@ export type Control =
       scope: EntityRef | null;
       value: Picked[];
       multiple: boolean;
+      /** Whether the step needs it before it builds; one that is not is picked for only when pressed. */
+      required: boolean;
       armed: boolean;
     }
   | { type: "list"; items: ListItem[]; empty: string };
@@ -277,7 +316,9 @@ export type Style =
   | "draft"
   | "region"
   | "guide"
-  | "handle";
+  | "handle"
+  /** Where what is drawn or dragged would snap to. */
+  | "snap";
 
 export type Visual = { key: string; style: Style } & Shape;
 
@@ -293,6 +334,16 @@ export interface Presentation {
   focus: Frame | null;
   /** Whether a press where the pointer last hovered starts a drag. */
   grab: boolean;
+  /** A value asked for in place, at `at`: what is typed goes to the field `key` as `text`. */
+  prompt: Prompt | null;
+}
+
+/** A value asked for in place in the viewport — see `geop_ops::ui::Prompt`. */
+export interface Prompt {
+  key: string;
+  label: string;
+  value: string;
+  at: Vec3;
 }
 
 /** Something the user did — see `geop_cad_base::Command`. */
@@ -316,6 +367,8 @@ export type Command =
   | { command: "load_workspace_example"; name: string; folder?: string }
   | { command: "undo" }
   | { command: "redo" }
+  /** The program's parameters are now these. */
+  | { command: "parameters"; parameters: Parameters }
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
   | { command: "drag_tool"; on: boolean };
 
@@ -343,6 +396,8 @@ export interface ProgramState {
   can_redo: boolean;
   /** Whether the drag tool is in hand. */
   drag_tool: boolean;
+  /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
+  parameters: { values: Record<string, ParamValue>; errors: Record<string, string> };
   operations: OperationInfo[];
   examples: string[];
   /** Examples of several files, for [[Command]] `load_workspace_example`. */

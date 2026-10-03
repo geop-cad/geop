@@ -170,7 +170,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                     .0
                     .into_iter()
                     .find(|f| matches!(f.control, Control::Reference(_)))
-                    .filter(|f| matches!(&f.control, Control::Reference(r) if r.value.is_empty()))
+                    .filter(|f| matches!(&f.control, Control::Reference(r) if r.waiting()))
                     .map(|f| f.key)
             })
             .flatten();
@@ -281,7 +281,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             self.hover = None;
         }
         if let Some((key, _)) =
-            fields().find(|(key, r)| r.value.is_empty() && !before.iter().any(|b| b == key))
+            fields().find(|(key, r)| r.waiting() && !before.iter().any(|b| b == key))
         {
             self.armed = Some(key.to_string());
             self.hover = None;
@@ -303,7 +303,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             return;
         }
         match event {
-            StepEditEvent::Hover { pointer } | StepEditEvent::Click { pointer, .. } => {
+            StepEditEvent::Hover { pointer, .. } | StepEditEvent::Click { pointer, .. } => {
                 self.pointer = Some(*pointer)
             }
             StepEditEvent::Leave => self.pointer = None,
@@ -318,9 +318,13 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         }
         match event {
             StepEditEvent::Dialog { .. } => unreachable!("handled above"),
-            StepEditEvent::Hover { pointer } => {
-                self.pass(context, CanvasEvent::Hover { pointer: *pointer })
-            }
+            StepEditEvent::Hover { pointer, shift } => self.pass(
+                context,
+                CanvasEvent::Hover {
+                    pointer: *pointer,
+                    shift: *shift,
+                },
+            ),
             StepEditEvent::Leave => self.pass(context, CanvasEvent::Leave),
             StepEditEvent::Click {
                 pointer,
@@ -350,9 +354,12 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                     }
                 }
             }
-            StepEditEvent::Drag { from, to, done } => {
-                self.drag(context, view, &form, from, to, *done)
-            }
+            StepEditEvent::Drag {
+                from,
+                to,
+                done,
+                shift,
+            } => self.drag(context, view, &form, from, to, *done, *shift),
             StepEditEvent::Key { key } => {
                 if key == "Escape" {
                     self.selection.clear();
@@ -399,7 +406,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     ) {
         let pick = |pointer| view.pick(pointer, &reference.roles, reference.scope.as_ref());
         match event {
-            StepEditEvent::Hover { pointer } => self.hover = pick(pointer).map(|h| h.entity),
+            StepEditEvent::Hover { pointer, .. } => self.hover = pick(pointer).map(|h| h.entity),
             StepEditEvent::Leave => self.hover = None,
             StepEditEvent::Click {
                 pointer,
@@ -437,6 +444,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     /// Nothing for a drag that did not start on either, and for a pointer
     /// that cannot be followed (looking straight along a handle's track, or
     /// along the plane).
+    #[allow(clippy::too_many_arguments)]
     fn drag(
         &mut self,
         context: Context<'_, S>,
@@ -445,6 +453,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         from: &Pointer<S>,
         to: &Pointer<S>,
         done: bool,
+        shift: bool,
     ) {
         let handles = handles(&form.dialog);
         if self.grab.is_none() {
@@ -513,14 +522,16 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                         .intersect_plane(origin, normal)
                         .map(|(_, at)| at)
                 };
-                if let (Some(from), Some(to)) = (in_plane(from), in_plane(to)) {
+                if let (Some(from), Some(at)) = (in_plane(from), in_plane(to)) {
                     self.pass(
                         context,
                         CanvasEvent::Move {
                             key,
                             from,
-                            to,
+                            to: at,
+                            pointer: *to,
                             done,
+                            shift,
                         },
                     );
                 }
@@ -590,6 +601,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 form.focus
             },
             grab: self.grab.is_some() || hovered.is_some_and(|(_, grab)| grab),
+            prompt: form.prompt,
         }
     }
 }

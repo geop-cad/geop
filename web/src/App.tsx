@@ -27,6 +27,7 @@ import {
   saveWorkspace,
   type Workspace,
 } from "./files";
+import { ParametersPanel } from "./ParametersPanel";
 import { SceneViewer } from "./SceneViewer";
 import { Timeline, type TimelineStep } from "./Timeline";
 import { Toolbar } from "./Toolbar";
@@ -392,6 +393,13 @@ function App() {
 
   const programPanel = (
     <section className="panel timeline">
+      <h2>Parameters</h2>
+      <ParametersPanel
+        parameters={program?.program.parameters ?? {}}
+        resolved={program?.parameters ?? { values: {}, errors: {} }}
+        enabled={wasmReady}
+        onChange={(parameters) => dispatch({ command: "parameters", parameters })}
+      />
       <h2>Program</h2>
       <Timeline
         steps={timelineSteps}
@@ -489,6 +497,9 @@ function App() {
                 hidden={scene.hidden}
                 plane={plane}
                 grab={presentation?.grab ?? false}
+                prompt={presentation?.prompt ?? null}
+                onPrompt={(key, text) => event({ type: "dialog", key, value: { type: "text", value: text } })}
+                onPromptCancel={() => event({ type: "key", key: "Escape" })}
                 onPointer={async (e) => {
                   const update = await dispatch({ command: "event", event: e });
                   return (update?.step?.presentation ?? update?.tool)?.grab ?? false;

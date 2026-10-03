@@ -1,8 +1,8 @@
 //! A [`Part`]'s state: the values a program is built with — given to
 //! it, not built by it — that its steps read, each declaring what it reads.
 //!
-//! A program's state is its parameters: where its placed parts are, later
-//! dimensions too. It is kept apart from its steps — its *structure* — so
+//! A program's state is its parameters: where its placed parts are, and
+//! the values its [`crate::parameters::Parameters`] resolve to. It is kept apart from its steps — its *structure* — so
 //! that every step sees one value of each, however late
 //! in the program what fixes it is: the mates of a later step that move a
 //! part placed earlier move it for every step (see
@@ -20,13 +20,15 @@ use serde::{Deserialize, Serialize};
 use super::Part;
 use crate::Design;
 
-/// A parameter's value: a number, or a pose. Serialized as itself — `2.5`,
-/// `{"position": [...], "rotation": [...]}`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A parameter's value: a number, a pose, or text — a table's row, a
+/// colour. Serialized as itself — `2.5`, `{"position": [...], "rotation":
+/// [...]}`, `"M5"`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ParamValue {
     Number(#[serde(with = "as_f64")] Design),
     Pose(Pose<Design>),
+    Text(String),
 }
 
 /// Parameter values, by name.
@@ -56,9 +58,9 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
         let value = match self.inputs.get(name) {
             None => default,
             Some(ParamValue::Pose(pose)) => *pose,
-            Some(ParamValue::Number(n)) => {
+            Some(other) => {
                 return Err(GeopError::new(format!(
-                    "the parameter {name:?} is a pose, but the program gives it the number {n:?}"
+                    "the parameter {name:?} is a pose, but the program gives it {other:?}"
                 )));
             }
         };
@@ -72,6 +74,44 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
             )));
         }
         Ok(value)
+    }
+
+    /// The value of the formula `expression` — a plain number, or one
+    /// reading the part's parameters by name (see
+    /// [`crate::parameters::evaluate`]) — every parameter it reads declared
+    /// read, so that a change to one rebuilds what read it.
+    pub fn evaluate(&mut self, expression: &str) -> GeopResult<f64> {
+        let mut read = Vec::new();
+        let value = crate::parameters::evaluate(expression, |name| {
+            let v = crate::parameters::number(&self.inputs, name)?;
+            read.push(name.to_string());
+            Some(v)
+        });
+        for name in read {
+            let value = self.inputs[&name].clone();
+            self.declared.entry(name).or_insert(value);
+        }
+        value
+    }
+
+    /// The parameters the part is defined with: what a program placing it
+    /// can give other values.
+    pub fn parameters(&self) -> &crate::parameters::Parameters {
+        &self.parameters
+    }
+
+    /// The part, defined with `parameters`.
+    pub fn with_parameters(mut self, parameters: crate::parameters::Parameters) -> Self {
+        self.parameters = parameters;
+        self
+    }
+
+    /// The part's colour, `#rrggbb`, if it is given one.
+    pub fn color(&self) -> Option<&str> {
+        match self.inputs.get(crate::parameters::COLOR) {
+            Some(ParamValue::Text(c)) => Some(c),
+            _ => None,
+        }
     }
 
     /// Every parameter the part's steps declared, with the value it was

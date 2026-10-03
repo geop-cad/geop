@@ -9,6 +9,11 @@
 //! the solver treats the same way (the two points become one set of
 //! variables), so connectivity is always structural — never inferred from
 //! two positions happening to be close.
+//!
+//! A point or curve can be *fixed*: given from outside the sketch rather
+//! than solved for — the sketch's own origin and axes, or an edge of the
+//! part projected into its plane. The solver never moves it, and every
+//! constraint on it is measured against it as it is.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -81,6 +86,10 @@ define_ids!(
     ConstraintId => "k",
 );
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Point<S: Scalar> {
@@ -88,6 +97,10 @@ pub struct Point<S: Scalar> {
     pub x: S,
     #[serde(with = "as_f64")]
     pub y: S,
+    /// Given rather than solved for: the solver never moves it (see the
+    /// module docs).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fixed: bool,
 }
 
 impl<S: Scalar> Point<S> {
@@ -118,12 +131,29 @@ pub enum CurveKind<S: Scalar> {
         #[serde(with = "as_f64")]
         radius: S,
     },
-    /// A clamped, uniform, non-rational B-spline of degree
-    /// `min(3, control_points.len() - 1)` through its first and last control
-    /// points.
+    /// A clamped B-spline through its first and last control points: as
+    /// drawn, uniform and non-rational of degree
+    /// `min(3, control_points.len() - 1)`; taken from elsewhere — an edge of
+    /// the part projected into the plane — any NURBS (see [`SplineShape`]).
     Spline {
         control_points: Vec<PointId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shape: Option<SplineShape<S>>,
     },
+}
+
+/// The shape of a [`CurveKind::Spline`] beyond its control points, for one
+/// that is not the uniform non-rational spline a drawn one is: its degree,
+/// its clamped knot vector (`control_points + degree + 1` knots) and one
+/// weight per control point.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound = "S: Scalar")]
+pub struct SplineShape<S: Scalar> {
+    pub degree: usize,
+    #[serde(with = "as_f64::vec")]
+    pub knots: Vec<S>,
+    #[serde(with = "as_f64::vec")]
+    pub weights: Vec<S>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -135,6 +165,10 @@ pub struct Curve<S: Scalar> {
     /// (e.g. a revolve axis or a symmetry line).
     #[serde(default)]
     pub construction: bool,
+    /// Given rather than solved for, like its points, which are all fixed:
+    /// an arc's sweep or a circle's radius too (see the module docs).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fixed: bool,
 }
 
 impl<S: Scalar> Curve<S> {
@@ -145,7 +179,7 @@ impl<S: Scalar> Curve<S> {
                 vec![*start, *end]
             }
             CurveKind::Circle { center, .. } => vec![*center],
-            CurveKind::Spline { control_points } => control_points.clone(),
+            CurveKind::Spline { control_points, .. } => control_points.clone(),
         }
     }
 
@@ -156,7 +190,7 @@ impl<S: Scalar> Curve<S> {
                 Some((*start, *end))
             }
             CurveKind::Circle { .. } => None,
-            CurveKind::Spline { control_points } => {
+            CurveKind::Spline { control_points, .. } => {
                 Some((control_points[0], *control_points.last()?))
             }
         }
@@ -215,6 +249,11 @@ pub enum Constraint<S: Scalar> {
         a: CurveId,
         b: CurveId,
     },
+    /// `point` is the center of a circle or arc.
+    Center {
+        point: PointId,
+        curve: CurveId,
+    },
     /// `point` is the midpoint of a line or arc.
     Midpoint {
         point: PointId,
@@ -272,6 +311,12 @@ pub enum Constraint<S: Scalar> {
         #[serde(with = "as_f64")]
         value: S,
     },
+    /// Diameter of a circle or arc.
+    Diameter {
+        curve: CurveId,
+        #[serde(with = "as_f64")]
+        value: S,
+    },
     /// The counter-clockwise angle from line `a`'s direction to line `b`'s.
     Angle {
         a: CurveId,
@@ -293,6 +338,7 @@ impl<S: Scalar> Constraint<S> {
             | Symmetric { a, b, .. } => vec![a, b],
             PointOnCurve { point, .. }
             | Midpoint { point, .. }
+            | Center { point, .. }
             | Fix { point, .. }
             | PointLineDistance { point, .. } => vec![point],
             _ => Vec::new(),
@@ -305,8 +351,10 @@ impl<S: Scalar> Constraint<S> {
         match *self {
             PointOnCurve { curve, .. }
             | Midpoint { curve, .. }
+            | Center { curve, .. }
             | Length { curve, .. }
-            | Radius { curve, .. } => vec![curve],
+            | Radius { curve, .. }
+            | Diameter { curve, .. } => vec![curve],
             Horizontal { line }
             | Vertical { line }
             | PointLineDistance { line, .. }
@@ -452,17 +500,27 @@ impl<S: Scalar> Sketch<S> {
 
     pub fn add_point(&mut self, x: S, y: S) -> PointId {
         let id = PointId(self.fresh_id());
-        self.points.insert(id, Point { x, y });
+        self.points.insert(id, Point { x, y, fixed: false });
         id
     }
 
-    fn add_curve(&mut self, kind: CurveKind<S>) -> CurveId {
+    /// A point given from outside the sketch, at `(x, y)` (see the module
+    /// docs).
+    pub fn add_fixed_point(&mut self, x: S, y: S) -> PointId {
+        let id = PointId(self.fresh_id());
+        self.points.insert(id, Point { x, y, fixed: true });
+        id
+    }
+
+    /// Adds a curve of `kind`, profile geometry, solved for.
+    pub fn add_curve(&mut self, kind: CurveKind<S>) -> CurveId {
         let id = CurveId(self.fresh_id());
         self.curves.insert(
             id,
             Curve {
                 kind,
                 construction: false,
+                fixed: false,
             },
         );
         id
@@ -483,7 +541,10 @@ impl<S: Scalar> Sketch<S> {
     }
 
     pub fn add_spline(&mut self, control_points: Vec<PointId>) -> CurveId {
-        self.add_curve(CurveKind::Spline { control_points })
+        self.add_curve(CurveKind::Spline {
+            control_points,
+            shape: None,
+        })
     }
 
     pub fn set_construction(&mut self, curve: CurveId, construction: bool) {
@@ -563,8 +624,14 @@ impl<S: Scalar> Sketch<S> {
         }
         for (&i, curve) in &self.curves {
             for p in curve.points() {
-                self.point(p)
+                let point = self
+                    .point(p)
                     .map_err(|e| e.with_context(format!("curve {i}")))?;
+                if curve.fixed && !point.fixed {
+                    return Err(GeopError::new(format!(
+                        "curve {i} is fixed, but its point {p} is not"
+                    )));
+                }
             }
             match &curve.kind {
                 CurveKind::Line { start, end } | CurveKind::Arc { start, end, .. }
@@ -581,10 +648,26 @@ impl<S: Scalar> Sketch<S> {
                         "arc {i} has sweep {sweep:?}, which is not definitely within (-2π, 2π)"
                     )));
                 }
-                CurveKind::Spline { control_points } if control_points.len() < 2 => {
+                CurveKind::Spline { control_points, .. } if control_points.len() < 2 => {
                     return Err(GeopError::new(format!(
                         "spline {i} needs at least 2 control points"
                     )));
+                }
+                CurveKind::Spline {
+                    control_points,
+                    shape: Some(shape),
+                } => {
+                    let n = control_points.len();
+                    if shape.degree == 0
+                        || shape.degree >= n
+                        || shape.knots.len() != n + shape.degree + 1
+                        || shape.weights.len() != n
+                        || !shape.weights.iter().all(|w| w.definitely_greater(S::ZERO))
+                    {
+                        return Err(GeopError::new(format!(
+                            "spline {i} of {n} control points has an inconsistent shape: {shape:?}"
+                        )));
+                    }
                 }
                 _ => {}
             }
@@ -650,6 +733,7 @@ impl<S: Scalar> Sketch<S> {
                 "two lines or two circles/arcs",
             ),
             Concentric { a, b } => need(is_round(*a)? && is_round(*b)?, "two circles/arcs"),
+            Center { curve, .. } => need(is_round(*curve)?, "a point and a circle or arc"),
             Midpoint { curve, .. } => need(
                 matches!(
                     kind(*curve)?,
@@ -666,7 +750,9 @@ impl<S: Scalar> Sketch<S> {
                 ),
                 "a line or arc",
             ),
-            Radius { curve, .. } => need(is_round(*curve)?, "a circle or arc"),
+            Radius { curve, .. } | Diameter { curve, .. } => {
+                need(is_round(*curve)?, "a circle or arc")
+            }
         }
     }
 

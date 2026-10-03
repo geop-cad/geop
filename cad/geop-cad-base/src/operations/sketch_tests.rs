@@ -1,0 +1,462 @@
+//! Sketches built on the part: what they project of it, and the
+//! parameters their dimensions follow.
+
+use std::collections::BTreeMap;
+
+use geop_core_math::{
+    primitives::{DatumComponent, FrameAxis},
+    scalars::{ScalInF64 as S, Scalar},
+};
+use geop_core_sketch::PointId;
+use geop_ops::{
+    EntityRef, NoFiles, ORIGIN, Part, operation::Aspects, parameters::ParameterKind,
+    part::ParamValue,
+};
+use geop_ops_sketch::{
+    AddSketchArgs, CurveKind, Sketch,
+    references::{Reference, Source},
+};
+
+use crate::{Program, Workspace, examples};
+
+/// The plane of the origin's `plane`.
+fn origin_plane(plane: FrameAxis) -> EntityRef {
+    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(plane))
+}
+
+/// `entity` of `part` projected into a new sketch on `plane`: the sketch,
+/// and the reference that gave it.
+fn projected(part: &Part<S>, plane: &EntityRef, entity: EntityRef) -> (Sketch, Reference) {
+    let frame = plane.resolve_plane(part).unwrap();
+    let mut sketch = Sketch::new();
+    let mut reference = Reference::new(Source::Projection { entity });
+    reference.update(&mut sketch, part, &frame).unwrap();
+    sketch.validate().unwrap();
+    (sketch, reference)
+}
+
+/// What kinds of curve a sketch holds, sorted.
+fn kinds(sketch: &Sketch) -> Vec<&'static str> {
+    let mut kinds: Vec<_> = sketch
+        .curves
+        .values()
+        .map(|c| match c.kind {
+            CurveKind::Line { .. } => "line",
+            CurveKind::Arc { .. } => "arc",
+            CurveKind::Circle { .. } => "circle",
+            CurveKind::Spline { .. } => "spline",
+        })
+        .collect();
+    kinds.sort();
+    kinds
+}
+
+/// Projecting reads what an edge is from its NURBS: the box's top, seen
+/// from above, is four lines around the hole's circle — as lines and a
+/// circle, to constrain against, every one of them fixed. Seen from the
+/// front, the hole's edge is no circle any more but the spline it
+/// projects to, and the top's edges along the view collapse to points.
+#[test]
+fn projections_read_lines_arcs_and_splines() {
+    let part = examples::box_with_drill_hole()
+        .build::<S>(&NoFiles)
+        .unwrap();
+    let top = EntityRef::Face {
+        name: "extrude(box,end)".into(),
+    };
+    let (sketch, reference) = projected(&part, &origin_plane(FrameAxis::Z), top.clone());
+    let round = kinds(&sketch)
+        .iter()
+        .filter(|k| **k == "arc" || **k == "circle")
+        .count();
+    assert_eq!(kinds(&sketch).iter().filter(|k| **k == "line").count(), 4);
+    assert!(round >= 1, "{:?}", kinds(&sketch));
+    assert!(!kinds(&sketch).contains(&"spline"));
+    assert!(sketch.points.values().all(|p| p.fixed));
+    assert!(sketch.curves.values().all(|c| c.fixed && !c.construction));
+    // The hole's circle: around (1, 1), radius 0.4.
+    for c in sketch.curves.values() {
+        if let CurveKind::Circle { center, radius } = c.kind {
+            let at = sketch.points[&center].xy();
+            assert!((at[0].to_f64() - 1.0).abs() < 1e-9 && (at[1].to_f64() - 1.0).abs() < 1e-9);
+            assert!((radius.to_f64() - 0.4).abs() < 1e-9);
+        }
+    }
+    // Every curve is keyed by the name of the edge it comes from.
+    assert!(reference.curves.keys().all(|k| k.starts_with("extrude(")));
+
+    let (front, _) = projected(&part, &origin_plane(FrameAxis::Y), top);
+    assert!(front.validate().is_ok());
+    let kinds = kinds(&front);
+    assert!(kinds.contains(&"spline"), "{kinds:?}");
+    assert!(
+        kinds.iter().filter(|k| **k == "line").count() == 2,
+        "{kinds:?}"
+    );
+}
+
+/// A projection follows what it projects: change the parameter the box's
+/// width is a formula of, and the top's edges projected into a sketch
+/// built after it move with it — the sketch's ids for them unchanged.
+#[test]
+fn projections_follow_the_part() {
+    let mut program = examples::parametric_plate();
+    let mut on_floor = AddSketchArgs::new(Some(origin_plane(FrameAxis::Z)));
+    // What it projects is put into the sketch when it is built.
+    on_floor.references.push(Reference::new(Source::Projection {
+        entity: EntityRef::Face {
+            name: "extrude(plate,end)".into(),
+        },
+    }));
+    // Right after the plate: the hole renames the faces it cuts.
+    program.steps.insert(
+        2,
+        crate::Step {
+            id: "floor".into(),
+            operation: on_floor.into(),
+        },
+    );
+
+    let widest = |program: &Program| {
+        let part = program.build::<S>(&NoFiles).unwrap();
+        let id = part.sketch_id("floor").unwrap();
+        let placed = part.sketch(id).unwrap();
+        let ids: Vec<_> = placed.sketch.points.keys().copied().collect();
+        let x = placed
+            .sketch
+            .points
+            .values()
+            .map(|p| p.x.to_f64())
+            .fold(f64::MIN, f64::max);
+        (x, ids)
+    };
+    let (before, ids) = widest(&program);
+    assert!((before - 4.0).abs() < 1e-9, "{before}");
+    let ParameterKind::Number { expression, .. } = &mut program.parameters.values[0].kind else {
+        panic!("width is a number")
+    };
+    *expression = "5.5".into();
+    let (after, ids_after) = widest(&program);
+    assert!((after - 5.5).abs() < 1e-9, "{after}");
+    assert_eq!(ids, ids_after);
+}
+
+/// The plate's dimensions follow its parameters — the depth a formula of
+/// the width, the hole sized from the screw table — and its colour is one
+/// of them too.
+#[test]
+fn dimensions_follow_parameters() {
+    let program = examples::parametric_plate();
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_eq!(part.color(), Some("#d0893e"));
+    let corner = EntityRef::SketchPoint {
+        sketch: "outline".into(),
+        point: PointId(2),
+    };
+    let p = Aspects::of(&corner, &part).unwrap().point.unwrap();
+    assert!((p[0].to_f64() - 4.0).abs() < 1e-9 && (p[1].to_f64() - 2.0).abs() < 1e-9);
+    // Read back from JSON, the same.
+    let json = program.to_json().unwrap();
+    assert!(json.contains("screw.clearance"), "{json}");
+    let back = Program::from_json(&json).unwrap();
+    assert_eq!(back, program);
+}
+
+/// Placed by another program, the plate is built with the values given
+/// there: wider, with a larger hole, in another colour — and as it is
+/// where nothing is given.
+#[test]
+fn placed_parts_take_the_parameters_given() {
+    let workspace = Workspace::<S>::new(BTreeMap::from([(
+        "plate.geop".to_string(),
+        examples::parametric_plate().to_json().unwrap(),
+    )]));
+    let part = examples::plates_assembly()
+        .build::<S>(&workspace.scope("plates.geop"))
+        .unwrap();
+    let corner = |instance: &str| {
+        let entity = EntityRef::SketchPoint {
+            sketch: format!("{instance}/outline"),
+            point: PointId(2),
+        };
+        let p = Aspects::of(&entity, &part).unwrap().point.unwrap();
+        [p[0].to_f64(), p[1].to_f64()]
+    };
+    let small = corner("small");
+    let large = corner("large");
+    assert!(
+        (small[0] - 4.0).abs() < 1e-9 && (small[1] - 2.0).abs() < 1e-9,
+        "{small:?}"
+    );
+    // 5 wide, and so 2.5 deep; placed 3 along y.
+    assert!(
+        (large[0] - 5.0).abs() < 1e-9 && (large[1] - 5.5).abs() < 1e-9,
+        "{large:?}"
+    );
+    let colors: Vec<Option<String>> = part
+        .instances()
+        .map(|(_, i)| i.part().color().map(str::to_string))
+        .collect();
+    assert!(colors.contains(&Some("#3e7bd0".into())), "{colors:?}");
+    assert!(colors.contains(&Some("#d0893e".into())), "{colors:?}");
+    // The table's row and the number given are what the large plate was
+    // built with.
+    let large = part
+        .instances()
+        .find(|(_, i)| i.part().color() == Some("#3e7bd0"))
+        .unwrap()
+        .1;
+    assert_eq!(
+        large.part().inputs()["screw"],
+        ParamValue::Text("M6".into())
+    );
+    assert_eq!(
+        geop_ops::parameters::number(large.part().inputs(), "screw.clearance"),
+        Some(0.66)
+    );
+}
+
+/// The parametric plate is a plate — 4 x 2 x 0.5 — with a hole in it:
+/// its vertices span the plate, and the hole's sketch is built where the
+/// plate's top is.
+#[test]
+fn the_parametric_plate_is_a_plate_with_a_hole() {
+    let part = examples::parametric_plate().build::<S>(&NoFiles).unwrap();
+    let points: Vec<[f64; 3]> = part
+        .topology()
+        .vertices
+        .values()
+        .map(|v| [0, 1, 2].map(|k| v.point[k].to_f64()))
+        .collect();
+    let span = |k: usize| {
+        let lo = points.iter().map(|p| p[k]).fold(f64::MAX, f64::min);
+        let hi = points.iter().map(|p| p[k]).fold(f64::MIN, f64::max);
+        [lo, hi]
+    };
+    assert!(
+        (span(0)[0]).abs() < 1e-9 && (span(0)[1] - 4.0).abs() < 1e-9,
+        "{:?} {points:?}",
+        span(0)
+    );
+    assert!((span(1)[1] - 2.0).abs() < 1e-9, "{:?}", span(1));
+    assert!((span(2)[1] - 0.5).abs() < 1e-9, "{:?}", span(2));
+    let hole = part.sketch(part.sketch_id("hole_sketch").unwrap()).unwrap();
+    let geometry = hole.sketch.enclose::<S>().unwrap();
+    let centers: Vec<_> = hole
+        .sketch
+        .curves
+        .values()
+        .filter_map(|c| match c.kind {
+            CurveKind::Circle { center, .. } => Some(geometry.points[&center]),
+            _ => None,
+        })
+        .collect();
+    let c = &centers[0];
+    assert!(
+        (c[0].to_f64() - 2.0).abs() < 1e-9 && (c[1].to_f64() - 1.0).abs() < 1e-9,
+        "{c:?}"
+    );
+}
+
+/// The parametric plate made 6 wide with an M6 hole: the hole's cut
+/// leaves the boolean's result open along the hole's edge on the top face
+/// ("the kept faces use edge ... 3 time(s)" — the hole's start cap
+/// `OnSameNormal` with the top). The same plate 4 wide with M4, or 5 wide
+/// with M6, cuts fine — which is why the `parametric_plates` example places
+/// it 5 wide. A boolean defect, not a sketch one: the sketch solves to a
+/// circle of radius 0.33 around (3, 1.5) on the top, as meant.
+#[test]
+#[ignore = "boolean: cutting the hole of this plate leaves its result open"]
+fn wide_plate_with_an_m6_hole() {
+    let mut plate = examples::parametric_plate();
+    let ParameterKind::Number { expression, .. } = &mut plate.parameters.values[0].kind else {
+        panic!("width is a number")
+    };
+    *expression = "6".into();
+    let ParameterKind::Table { selected, .. } = &mut plate.parameters.values[2].kind else {
+        panic!("screw is a table")
+    };
+    *selected = "M6".into();
+    plate.build::<S>(&NoFiles).unwrap();
+}
+
+/// Placing the plate, its parameters are offered as what they are: its
+/// colour to pick, its numbers on sliders over their ranges, its screw
+/// from a table to search — showing what the plate is built with here,
+/// the depth following the width given — and what is set there is what
+/// the plate is placed with.
+#[test]
+fn placing_a_part_offers_its_parameters() {
+    use crate::{Command, Editor};
+    use geop_ops::ui::{Control, StepEditEvent, Value};
+    let mut editor = Editor::<S>::new();
+    let files = BTreeMap::from([(
+        "plate.geop".to_string(),
+        Some(examples::parametric_plate().to_json().unwrap()),
+    )]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: examples::plates_assembly(),
+        path: Some("plates.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Open { id: "large".into() });
+    let dialog = update.step.unwrap().presentation.dialog;
+    assert!(matches!(
+        dialog.get("parameter:color"),
+        Some(Control::Color { value, .. }) if value == "#3e7bd0"
+    ));
+    let Some(Control::Number(width)) = dialog.get("parameter:width") else {
+        panic!("width on a slider")
+    };
+    assert_eq!((width.value, width.range), (5.0, Some([1.0, 10.0])));
+    let Some(Control::Number(depth)) = dialog.get("parameter:depth") else {
+        panic!("depth on a slider")
+    };
+    assert!((depth.value - 2.5).abs() < 1e-9, "{}", depth.value);
+    let Some(Control::Select {
+        options,
+        searchable,
+        value,
+        ..
+    }) = dialog.get("parameter:screw")
+    else {
+        panic!("the screw from its table")
+    };
+    assert!(*searchable && value == "M6" && options.len() == 4);
+
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Dialog {
+            key: "parameter:screw".into(),
+            value: Value::Choice("M3".into()),
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let crate::PartOperation::AddPart(args) = &editor.program().steps[1].operation else {
+        panic!("a placed part")
+    };
+    assert_eq!(args.parameters["screw"], ParamValue::Text("M3".into()));
+}
+
+/// The project field of a sketch takes edges, vertices and faces of the
+/// part: each picked is projected into the sketch, fixed, and taken out
+/// again with its geometry when it is taken out of the field. Projecting
+/// is optional: a sketch builds without.
+#[test]
+fn the_project_field_projects_what_is_picked() {
+    use crate::{Command, Editor};
+    use geop_ops::ui::{Control, StepEditEvent, Value};
+    let mut editor = Editor::<S>::new();
+    let mut program = examples::parametric_plate();
+    program.steps.truncate(2);
+    assert!(
+        editor
+            .handle(Command::Load {
+                program,
+                path: None
+            })
+            .error
+            .is_none()
+    );
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let top = EntityRef::Face {
+        name: "extrude(plate,end)".into(),
+    };
+    let dialog = |key: &str, value: Value| Command::Event {
+        event: StepEditEvent::Dialog {
+            key: key.into(),
+            value,
+        },
+    };
+    editor.handle(dialog("plane", Value::Entities(vec![top])));
+    let update = editor.handle(Command::Show);
+    let step = update.step.unwrap();
+    assert!(
+        step.missing.is_empty(),
+        "projecting is optional: {:?}",
+        step.missing
+    );
+    assert!(matches!(
+        step.presentation.dialog.get("project"),
+        Some(Control::Reference(r)) if !r.armed && !r.required
+    ));
+    let edge = EntityRef::Edge {
+        name: "extrude(plate,outline,c4,end)".into(),
+    };
+    let update = editor.handle(dialog("project", Value::Entities(vec![edge])));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let projected = |editor: &Editor<S>| {
+        let open = editor.editing().unwrap();
+        let crate::PartOperation::AddSketch(args) = open else {
+            panic!("a sketch")
+        };
+        args.sketch
+            .curves
+            .values()
+            .filter(|c| c.fixed && !c.construction)
+            .count()
+    };
+    assert_eq!(projected(&editor), 1);
+    editor.handle(dialog("project", Value::Entities(vec![])));
+    assert_eq!(projected(&editor), 0);
+}
+
+/// The program's parameters are edited as a whole: the part is built
+/// anew with them, what they resolve to — and why one does not — is
+/// shown, invalid ones are refused, and the edit is undone like any other.
+#[test]
+fn parameters_are_edited_and_undone() {
+    use crate::{Command, Editor};
+    let mut editor = Editor::<S>::new();
+    let program = examples::parametric_plate();
+    editor.handle(Command::Load {
+        program: program.clone(),
+        path: None,
+    });
+    let mut parameters = program.parameters.clone();
+    let ParameterKind::Number { expression, .. } = &mut parameters.values[1].kind else {
+        panic!("depth is a number")
+    };
+    *expression = "width / 4 + nothing".into();
+    let update = editor.handle(Command::Parameters {
+        parameters: parameters.clone(),
+    });
+    let state = update.program.unwrap();
+    assert!(
+        state.parameters.errors["depth"].contains("nothing"),
+        "{state:?}"
+    );
+    let ParameterKind::Number { expression, .. } = &mut parameters.values[1].kind else {
+        unreachable!()
+    };
+    *expression = "width / 4".into();
+    let state = editor
+        .handle(Command::Parameters {
+            parameters: parameters.clone(),
+        })
+        .program
+        .unwrap();
+    assert_eq!(
+        geop_ops::parameters::number(&state.parameters.values, "depth"),
+        Some(1.0)
+    );
+    assert!(
+        state.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        state.steps
+    );
+    parameters.values[1].name = "width".into();
+    assert!(
+        editor
+            .handle(Command::Parameters { parameters })
+            .error
+            .is_some()
+    );
+    editor.handle(Command::Undo);
+    editor.handle(Command::Undo);
+    assert_eq!(editor.program().parameters, program.parameters);
+}

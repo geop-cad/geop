@@ -19,10 +19,20 @@ point and stay connected by construction:
 - `Line { start, end }`
 - `Arc { start, end, sweep }` — counter-clockwise by `sweep` radians
 - `Circle { center, radius }`
-- `Spline { control_points }` — a clamped, uniform B-spline of degree up to 3
+- `Spline { control_points, shape }` — a clamped, uniform B-spline of
+  degree up to 3 as drawn; with a `SplineShape` (degree, knots, weights),
+  any clamped NURBS — what an edge of the part projects to
 
 A curve marked `construction` takes part in constraints but not in profiles,
 e.g. a revolve axis or a symmetry line.
+
+A point or a curve marked `fixed` is given rather than solved for: the
+sketch's own origin and axes, or an edge of the part projected into its
+plane. Its variables are held, never moved by a solve, and every constraint
+on it is measured against it as it is; a fixed curve's points are all fixed,
+and its own sweep or radius held too. Two fixed points made coincident are
+not merged — neither can move — but checked: the coincidence holds or it is
+reported failed.
 
 ```rust,ignore
 let mut s = Sketch::new();
@@ -45,9 +55,10 @@ The constraints are the usual CAD set:
 
 - **Geometric:** `Coincident`, `PointOnCurve`, `Horizontal`, `Vertical`,
   `Parallel`, `Perpendicular`, `Collinear`, `Tangent`, `Equal`,
-  `Concentric`, `Midpoint`, `Symmetric`.
+  `Concentric`, `Center` (a point is a circle's or arc's center),
+  `Midpoint`, `Symmetric`.
 - **Dimensional:** `Fix`, `Distance`, `DistanceX`, `DistanceY`,
-  `PointLineDistance`, `Length`, `Radius`, `Angle`.
+  `PointLineDistance`, `Length`, `Radius`, `Diameter`, `Angle`.
 
 ## Solving
 

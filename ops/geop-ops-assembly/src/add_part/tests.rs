@@ -70,6 +70,7 @@ fn args(fixed: bool, mates: &[(&str, MateKind, [EntityRef; 2])]) -> AddPartArgs 
                 (id.to_string(), mate)
             })
             .collect(),
+        ..Default::default()
     }
 }
 
@@ -151,11 +152,25 @@ fn with_a(library: &Shelf) -> Part<S> {
     )
 }
 
+/// A pointer looking straight down at `at`.
+fn down_at(at: Vector3<S>) -> geop_ops::ui::Pointer<S> {
+    geop_ops::ui::Pointer {
+        ray: geop_core_math::primitives::Ray::try_new(
+            at.add(&v(0.0, 0.0, 10.0)),
+            v(0.0, 0.0, -1.0),
+        )
+        .unwrap(),
+        reach: geop_ops::ui::Reach::Tube {
+            radius: S::from_f64(0.01),
+        },
+    }
+}
+
 /// Where `moved` puts the part placed as `instance`.
 fn moved_to(moved: &State, instance: &str) -> Pose<Design> {
     match moved[&pose_parameter(instance)] {
         ParamValue::Pose(pose) => pose,
-        ParamValue::Number(n) => panic!("a pose, not {n:?}"),
+        ref other => panic!("a pose, not {other:?}"),
     }
 }
 
@@ -347,7 +362,9 @@ fn a_drag_pulls_the_point_grabbed() {
                 key: PART.into(),
                 from: v(1.0, 0.0, 0.0),
                 to: v(to[0], to[1], to[2]),
+                pointer: down_at(v(to[0], to[1], to[2])),
                 done,
+                shift: false,
             },
         );
     };
@@ -411,7 +428,9 @@ fn a_fixed_part_goes_where_it_is_dragged() {
             key: PART.into(),
             from: v(0.5, 0.5, 1.0),
             to: v(2.5, 0.0, 1.0),
+            pointer: down_at(v(2.5, 0.0, 1.0)),
             done: true,
+            shift: false,
         },
     );
     assert_close(

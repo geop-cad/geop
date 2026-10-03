@@ -15,13 +15,17 @@ use geop_core_sketch::{CurveId, PointId};
 use geop_ops::{
     Design, EntityRef, ORIGIN,
     assembly::{Mate, MateKind},
+    parameters::{Parameter, ParameterKind, Parameters, Row},
     part::{ParamValue, State, pose_parameter},
 };
 use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
-use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Constraint, Sketch,
+    references::{Reference, Source},
+};
 
 use crate::Program;
 
@@ -130,6 +134,7 @@ pub fn box_with_drill_hole() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(outline),
+            ..Default::default()
         },
     );
     program.push(
@@ -151,6 +156,7 @@ pub fn box_with_drill_hole() -> Program {
                 name: "extrude(box,end)".into(),
             }),
             sketch: solved(hole),
+            ..Default::default()
         },
     );
     program.push(
@@ -187,6 +193,7 @@ pub fn bracket() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(outline),
+            ..Default::default()
         },
     );
     program.push(
@@ -208,6 +215,7 @@ pub fn bracket() -> Program {
                 name: "extrude(block,end)".into(),
             }),
             sketch: solved(hole),
+            ..Default::default()
         },
     );
     program.push(
@@ -289,6 +297,7 @@ pub fn cross_drilled_shaft() -> Program {
                 DatumComponent::Plane(FrameAxis::X),
             )),
             sketch: solved(section),
+            ..Default::default()
         },
     );
     program.push(
@@ -315,6 +324,7 @@ pub fn cross_drilled_shaft() -> Program {
                 DatumComponent::Plane(FrameAxis::Y),
             )),
             sketch: solved(bore),
+            ..Default::default()
         },
     );
     program.push(
@@ -347,6 +357,7 @@ pub fn two_plates() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(plates),
+            ..Default::default()
         },
     );
     program.push(
@@ -378,6 +389,7 @@ pub fn boss_on_reference_plane() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(outline),
+            ..Default::default()
         },
     );
     program.push(
@@ -405,6 +417,7 @@ pub fn boss_on_reference_plane() -> Program {
         AddSketchArgs {
             plane: Some(EntityRef::datum("lifted")),
             sketch: solved(boss),
+            ..Default::default()
         },
     );
     program.push(
@@ -478,6 +491,7 @@ pub fn handle_with_hole() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(outline),
+            ..Default::default()
         },
     );
     program.push(
@@ -501,6 +515,7 @@ pub fn handle_with_hole() -> Program {
                 DatumComponent::Plane(FrameAxis::Y),
             )),
             sketch: solved(hole),
+            ..Default::default()
         },
     );
     program.push(
@@ -579,6 +594,7 @@ pub fn luggage_tag() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(outline),
+            ..Default::default()
         },
     );
     program.push(
@@ -629,6 +645,7 @@ pub fn revolved_cone_on_box() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: outline,
+            ..Default::default()
         },
     );
     program.push(
@@ -656,6 +673,7 @@ pub fn revolved_cone_on_box() -> Program {
                 name: format!("extrude(extrude1,sketch1,{right})"),
             }),
             sketch: triangle,
+            ..Default::default()
         },
     );
     program.push(
@@ -688,6 +706,7 @@ pub fn pin() -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: solved(sketch),
+            ..Default::default()
         },
     );
     program.push(
@@ -715,6 +734,7 @@ pub fn pin_in_plate_assembly() -> Program {
             fixed: true,
             flexible: false,
             mates: BTreeMap::new(),
+            ..Default::default()
         },
     );
     let face = |name: &str| EntityRef::Face { name: name.into() };
@@ -746,6 +766,7 @@ pub fn pin_in_plate_assembly() -> Program {
                     ),
                 ),
             ]),
+            ..Default::default()
         },
     );
     let pose = |position| ParamValue::Pose(pose(position, [0.0; 3]));
@@ -782,6 +803,7 @@ pub fn bar(length: f64) -> Program {
                 DatumComponent::Plane(FrameAxis::Z),
             )),
             sketch: link_sketch(length).0,
+            ..Default::default()
         },
     );
     program.push(
@@ -845,6 +867,7 @@ fn placed(file: &str, fixed: bool, mates: Vec<Mate>) -> AddPartArgs {
             .enumerate()
             .map(|(i, mate)| (format!("m{}", i + 1), mate))
             .collect(),
+        ..Default::default()
     }
 }
 
@@ -927,6 +950,184 @@ pub fn four_bar_assembly() -> Program {
     program
 }
 
+/// A number parameter of an example: `expression`, offered on a slider
+/// from `min` to `max`.
+fn number_parameter(name: &str, expression: &str, min: f64, max: f64) -> Parameter {
+    Parameter {
+        name: name.into(),
+        kind: ParameterKind::Number {
+            expression: expression.into(),
+            min: Some(min),
+            max: Some(max),
+        },
+    }
+}
+
+/// A plate designed by its parameters: `width` and `depth` — half the
+/// width, unless placed otherwise — and a blind hole in its middle sized for the
+/// screw chosen from a table of sizes, and its colour. The hole's sketch,
+/// on the plate's top, projects the top, and puts the hole in the middle
+/// of it. The plate is meant to be placed with other values, and
+/// everything follows.
+pub fn parametric_plate() -> Program {
+    let mut program = Program::new();
+    program.parameters = Parameters {
+        color: Some("#d0893e".into()),
+        values: vec![
+            number_parameter("width", "4", 1.0, 10.0),
+            number_parameter("depth", "width / 2", 0.5, 10.0),
+            Parameter {
+                name: "screw".into(),
+                kind: ParameterKind::Table {
+                    columns: vec!["clearance".into(), "head".into()],
+                    rows: [
+                        ("M3", 0.34, 0.6),
+                        ("M4", 0.45, 0.8),
+                        ("M5", 0.55, 1.0),
+                        ("M6", 0.66, 1.2),
+                    ]
+                    .map(|(name, clearance, head)| Row {
+                        name: name.into(),
+                        values: vec![clearance, head],
+                    })
+                    .to_vec(),
+                    selected: "M4".into(),
+                },
+            },
+        ],
+    };
+
+    let mut outline = Sketch::new();
+    let lines = rectangle(&mut outline, [0.0, 0.0], 4.0, 2.0);
+    let length = |line: CurveId| {
+        outline
+            .constraints
+            .iter()
+            .find(|(_, c)| matches!(c, Constraint::Length { curve, .. } if *curve == line))
+            .map(|(&id, _)| id)
+            .expect("the rectangle's lengths")
+    };
+    let formulas = BTreeMap::from([
+        (length(lines[0]), "width".to_string()),
+        (length(lines[1]), "depth".to_string()),
+    ]);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            formulas,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            distance: 0.5,
+            symmetric: false,
+            combine: Combine::NewBody,
+        },
+    );
+
+    // The hole's center is the middle of the top's diagonal, between two
+    // of its corners as projected: wherever the parameters put them.
+    let mut hole = Sketch::new();
+    let top = EntityRef::Face {
+        name: "extrude(plate,end)".into(),
+    };
+    let mut projection = Reference::new(Source::Projection {
+        entity: top.clone(),
+    });
+    let built = program
+        .build::<Design>(&geop_ops::NoFiles)
+        .expect("the plate builds");
+    let plane = top.resolve_plane(&built).expect("the top is planar");
+    projection
+        .update(&mut hole, &built, &plane)
+        .expect("the top projects");
+    // Only to measure against: no profile of its own.
+    for curve in projection.curves.values() {
+        hole.set_construction(*curve, true);
+    }
+    let corner = |p: &str| projection.points[&format!("extrude(plate,outline,{p},end)")];
+    let diagonal = hole.add_line(corner("p0"), corner("p2"));
+    hole.set_construction(diagonal, true);
+    let center = hole.add_point(n(2.0), n(1.0));
+    let circle = hole.add_circle(center, n(0.2));
+    hole.constrain(Constraint::Midpoint {
+        point: center,
+        curve: diagonal,
+    });
+    let diameter = hole.constrain(Constraint::Diameter {
+        curve: circle,
+        value: n(0.45),
+    });
+    program.push(
+        "hole_sketch",
+        AddSketchArgs {
+            plane: Some(top),
+            sketch: solved(hole),
+            references: vec![projection],
+            formulas: BTreeMap::from([(diameter, "screw.clearance".to_string())]),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "hole",
+        ExtrudeArgs {
+            sketch: "hole_sketch".into(),
+            distance: -0.3,
+            symmetric: false,
+            combine: Combine::Difference {
+                target: "extrude(plate)".into(),
+            },
+        },
+    );
+    program
+}
+
+/// Two of [`parametric_plate`], placed with other values: one as it is,
+/// one 5 wide with an M6 hole, in blue.
+pub fn plates_assembly() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "small",
+        AddPartArgs {
+            file: "plate.geop".into(),
+            fixed: true,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "large",
+        AddPartArgs {
+            file: "plate.geop".into(),
+            fixed: true,
+            parameters: State::from([
+                ("width".to_string(), ParamValue::Number(n(5.0))),
+                ("screw".to_string(), ParamValue::Text("M6".into())),
+                ("color".to_string(), ParamValue::Text("#3e7bd0".into())),
+            ]),
+            ..Default::default()
+        },
+    );
+    program.state = State::from([
+        (
+            pose_parameter("small"),
+            ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+        ),
+        (
+            pose_parameter("large"),
+            ParamValue::Pose(pose([0.0, 3.0, 0.0], [0.0; 3])),
+        ),
+    ]);
+    program
+}
+
 /// Every example made of several files, by name: each file's path and
 /// program, the one to open first first.
 pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
@@ -942,6 +1143,13 @@ pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
         (
             "chain",
             vec![("chain.geop", chain_assembly()), ("link.geop", link())],
+        ),
+        (
+            "parametric_plates",
+            vec![
+                ("plates.geop", plates_assembly()),
+                ("plate.geop", parametric_plate()),
+            ],
         ),
         (
             "four_bar",
@@ -969,6 +1177,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("revolved_cone_on_box", revolved_cone_on_box()),
         ("pin", pin()),
         ("link", link()),
+        ("parametric_plate", parametric_plate()),
     ]
 }
 

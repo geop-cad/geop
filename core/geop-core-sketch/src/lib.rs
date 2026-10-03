@@ -15,7 +15,7 @@ pub mod solve;
 pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region};
 pub use sketch::{
     Constraint, ConstraintId, Curve, CurveId, CurveKind, Enclosure, Point, PointId, Positions,
-    Sketch,
+    Sketch, SplineShape,
 };
 pub use solve::SolveReport;
 
@@ -685,5 +685,168 @@ mod tests {
         let report = s.solve().unwrap();
         assert!(!report.converged);
         assert_eq!(s.enclose::<ScalInF64>().unwrap(), Enclosure::as_drawn(&s));
+    }
+
+    /// A fixed point is given, not solved for: a line hanging off it with
+    /// a length swings its free end, the fixed one stays, and a point made
+    /// coincident with it lands on it — whatever order the ids are in.
+    #[test]
+    fn fixed_points_stay_where_given() {
+        let mut s = Sketch::new();
+        let free = s.add_point(n(0.2), n(0.1));
+        let end = s.add_point(n(2.0), n(0.3));
+        let anchor = s.add_fixed_point(n(1.0), n(1.0));
+        s.add_line(anchor, end);
+        s.constrain(Constraint::Coincident { a: free, b: anchor });
+        let line = s.add_line(free, end);
+        s.constrain(Constraint::Length {
+            curve: line,
+            value: n(1.0),
+        });
+        let report = s.solve().unwrap();
+        assert!(report.converged, "{report:?}");
+        assert_eq!(xy(&s, anchor), [1.0, 1.0]);
+        assert_eq!(xy(&s, free), [1.0, 1.0]);
+        let e = xy(&s, end);
+        assert!(close((e[0] - 1.0).hypot(e[1] - 1.0), 1.0), "{e:?}");
+        // Only the free end's angle is left.
+        assert_eq!(report.dof, 1, "{report:?}");
+        assert!(!report.free_points[&anchor] && report.free_points[&end]);
+        let enclosed = s.enclose::<ScalInF64>().unwrap();
+        assert!(enclosed.points[&anchor][0].is_sharp());
+    }
+
+    /// Two fixed points made coincident either are where the other is, or
+    /// the coincidence fails — neither is moved to make it hold.
+    #[test]
+    fn coincident_fixed_points_are_checked_not_merged() {
+        let mut s = Sketch::new();
+        let a = s.add_fixed_point(n(0.0), n(0.0));
+        let b = s.add_fixed_point(n(1.0), n(0.0));
+        let k = s.constrain(Constraint::Coincident { a, b });
+        let report = s.solve().unwrap();
+        assert_eq!(report.failed_constraints, vec![k]);
+        assert_eq!(xy(&s, b), [1.0, 0.0]);
+    }
+
+    /// A fixed curve keeps its own radius: a circle fixed at radius 2
+    /// cannot be given another.
+    #[test]
+    fn fixed_curves_keep_their_parameter() {
+        let mut s = Sketch::new();
+        let c = s.add_fixed_point(n(0.0), n(0.0));
+        let circle = s.add_circle(c, n(2.0));
+        s.curves.get_mut(&circle).unwrap().fixed = true;
+        s.validate().unwrap();
+        let k = s.constrain(Constraint::Diameter {
+            curve: circle,
+            value: n(3.0),
+        });
+        let report = s.solve().unwrap();
+        assert_eq!(report.failed_constraints, vec![k]);
+        let CurveKind::Circle { radius, .. } = s.curves[&circle].kind else {
+            unreachable!()
+        };
+        assert_eq!(radius.to_f64(), 2.0);
+        // A fixed curve on a free point is no fixed curve.
+        let free = s.add_point(n(5.0), n(0.0));
+        let other = s.add_circle(free, n(1.0));
+        s.curves.get_mut(&other).unwrap().fixed = true;
+        assert!(s.validate().is_err());
+    }
+
+    /// A diameter sizes a circle and an arc alike.
+    #[test]
+    fn diameter_sizes_circles_and_arcs() {
+        let mut s = Sketch::new();
+        let c = s.add_point(n(0.0), n(0.0));
+        let circle = s.add_circle(c, n(0.7));
+        s.constrain(Constraint::Diameter {
+            curve: circle,
+            value: n(3.0),
+        });
+        let a = s.add_point(n(5.0), n(0.0));
+        let b = s.add_point(n(7.0), n(0.0));
+        let arc = s.add_arc(a, b, n(1.0));
+        s.constrain(Constraint::Fix {
+            point: a,
+            x: n(5.0),
+            y: n(0.0),
+        });
+        s.constrain(Constraint::Fix {
+            point: b,
+            x: n(7.0),
+            y: n(0.0),
+        });
+        s.constrain(Constraint::Diameter {
+            curve: arc,
+            value: n(4.0),
+        });
+        let report = s.solve().unwrap();
+        assert!(report.converged, "{report:?}");
+        let CurveKind::Circle { radius, .. } = s.curves[&circle].kind else {
+            unreachable!()
+        };
+        assert!(close(radius.to_f64(), 1.5));
+        let CurveKind::Arc { sweep, .. } = s.curves[&arc].kind else {
+            unreachable!()
+        };
+        // A chord of 2 on a circle of diameter 4 subtends 60°.
+        assert!(close(sweep.to_f64(), PI / 3.0), "{sweep:?}");
+    }
+
+    /// A spline with a shape of its own is that NURBS: a rational quadratic
+    /// with the middle weight `cos 45°` is a quarter circle.
+    #[test]
+    fn rational_splines_are_exact() {
+        let mut s = Sketch::new();
+        let p = [
+            s.add_point(n(1.0), n(0.0)),
+            s.add_point(n(1.0), n(1.0)),
+            s.add_point(n(0.0), n(1.0)),
+        ];
+        let spline = s.add_curve(CurveKind::Spline {
+            control_points: p.to_vec(),
+            shape: Some(SplineShape {
+                degree: 2,
+                knots: [0.0, 0.0, 0.0, 2.0, 2.0, 2.0].map(n).to_vec(),
+                weights: [1.0, 0.5f64.sqrt(), 1.0].map(n).to_vec(),
+            }),
+        });
+        s.validate().unwrap();
+        for q in profile::curve_polyline(&s, spline).unwrap() {
+            let r = q[0].to_f64().hypot(q[1].to_f64());
+            assert!(close(r, 1.0), "{q:?}");
+        }
+    }
+
+    /// A point made an arc's center stays at the center as the arc's ends
+    /// are moved: the center of a center-point arc.
+    #[test]
+    fn center_follows_the_arc() {
+        let mut s = Sketch::new();
+        let c = s.add_point(n(0.3), n(0.2));
+        let a = s.add_point(n(1.0), n(0.0));
+        let b = s.add_point(n(0.0), n(1.0));
+        let arc = s.add_arc(a, b, n(FRAC_PI_2));
+        s.constrain(Constraint::Center {
+            point: c,
+            curve: arc,
+        });
+        for (p, at) in [(a, [2.0, 0.0]), (b, [0.0, 2.0])] {
+            s.constrain(Constraint::Fix {
+                point: p,
+                x: n(at[0]),
+                y: n(at[1]),
+            });
+        }
+        s.constrain(Constraint::Radius {
+            curve: arc,
+            value: n(2.0),
+        });
+        let report = s.solve().unwrap();
+        assert!(report.converged, "{report:?}");
+        let q = xy(&s, c);
+        assert!(close(q[0], 0.0) && close(q[1], 0.0), "{q:?}");
     }
 }

@@ -18,10 +18,23 @@ impl<S: Scalar> Part<S> {
         kind: &str,
         extract: impl Fn(RefId) -> Option<T>,
     ) -> GeopResult<T> {
-        let id = self
-            .names
-            .id_of(name)
-            .ok_or_else(|| GeopError::new(format!("no entity is named {name:?}")))?;
+        let id = self.names.id_of(name).ok_or_else(|| {
+            // The names of the same kind that the same step made: usually
+            // what was meant, if a later step renamed or split it.
+            let step = name.split_once(',').map_or(name, |(head, _)| head);
+            let step = step.split_once('(').map_or(step, |(_, id)| id);
+            let mut similar: Vec<&str> = self
+                .names
+                .iter()
+                .map(|(_, n)| n)
+                .filter(|n| n.contains(step))
+                .collect();
+            similar.sort_unstable();
+            similar.truncate(12);
+            GeopError::new(format!(
+                "no entity is named {name:?} (names of {step:?}: {similar:?})"
+            ))
+        })?;
         extract(id).ok_or_else(|| GeopError::new(format!("{name:?} names {id}, not a {kind}")))
     }
 

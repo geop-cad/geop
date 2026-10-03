@@ -21,6 +21,7 @@ const COLORS: Record<Style, number> = {
   region: 0x6cb4ff,
   guide: 0x777777,
   handle: 0xffa040,
+  snap: 0x58e07a,
 };
 
 /** Drawn dashed: what is not part of the result. */
@@ -46,6 +47,14 @@ function build(visual: Visual): THREE.Object3D {
   const color = COLORS[visual.style];
   switch (visual.shape) {
     case "point": {
+      if (visual.style === "snap") {
+        // A ring around where it snaps to: crisp, and over everything.
+        const element = document.createElement("div");
+        element.className = "snap-marker";
+        const marker = new CSS2DObject(element);
+        marker.position.set(...visual.at);
+        return marker;
+      }
       const geometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(visual.at, 3));
       const size = visual.style === "selected" || visual.style === "hover" ? POINT_PX + 3 : POINT_PX;
       return new THREE.Points(geometry, overlay(new THREE.PointsMaterial({ color, size, sizeAttenuation: false })));

@@ -24,6 +24,8 @@ use geop_ops::{
     Context, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
     assembly::Drag,
     operation::Role,
+    parameters::{Parameters, Resolved},
+    part::{ParamValue, State},
     ui::{Dialog, PartView, Presentation, Shape, StepEditEvent, StepEditor, Style, Visual},
 };
 use serde::{Deserialize, Serialize};
@@ -98,6 +100,12 @@ pub enum Command<S: Scalar> {
     },
     Undo,
     Redo,
+    /// The program's parameters are now these (see
+    /// [`geop_ops::parameters`]): what every step reading one is built
+    /// with again. Allowed while a step is edited, which then sees them.
+    Parameters {
+        parameters: Parameters,
+    },
     /// Take the drag tool in hand, or put it down: with no step being
     /// edited, dragging any placed part moves it as far as the program's
     /// mates let it.
@@ -136,6 +144,9 @@ pub struct ProgramState {
     pub can_redo: bool,
     /// Whether the drag tool is in hand.
     pub drag_tool: bool,
+    /// What the program's parameters resolve to, and why those that do
+    /// not resolve fail.
+    pub parameters: Resolved,
     /// Every operation a step can be.
     pub operations: Vec<OperationInfo>,
     /// The names of the example programs [`Command::LoadExample`] loads.
@@ -330,6 +341,11 @@ impl<S: Scalar> Editor<S> {
         &self.program
     }
 
+    /// The step being edited, with its arguments as they now are.
+    pub fn editing(&self) -> Option<&PartOperation> {
+        self.open.as_ref().map(|open| open.editor.step())
+    }
+
     /// [`Editor::handle`] on the wire: `command` is a [`Command`] as JSON,
     /// and the answer an [`Update`] as JSON. Shared by every front end that
     /// is not Rust (the browser's wasm module, the VS Code host process),
@@ -424,6 +440,7 @@ impl<S: Scalar> Editor<S> {
             pickable: Vec::new(),
             focus: None,
             grab: lit.is_some(),
+            prompt: None,
         })
     }
 
@@ -444,7 +461,7 @@ impl<S: Scalar> Editor<S> {
             ))
         };
         let changed = match event {
-            StepEditEvent::Hover { pointer } => {
+            StepEditEvent::Hover { pointer, .. } => {
                 tool.hover = part_at(self, pointer).map(|(name, ..)| name);
                 Changed::Nothing
             }
@@ -452,7 +469,7 @@ impl<S: Scalar> Editor<S> {
                 tool.hover = None;
                 Changed::Nothing
             }
-            StepEditEvent::Drag { from, to, done } => {
+            StepEditEvent::Drag { from, to, done, .. } => {
                 if tool.grab.is_none()
                     && let Some((name, parameter, pose, t)) = part_at(self, from)
                 {
@@ -606,6 +623,11 @@ impl<S: Scalar> Editor<S> {
             Command::Preview { preview } => {
                 self.preview = preview;
                 Changed::Nothing
+            }
+            Command::Parameters { parameters } => {
+                parameters.validate()?;
+                self.program.parameters = parameters;
+                Changed::Program
             }
             Command::Remove { id } => {
                 idle(self)?;
@@ -815,12 +837,18 @@ impl<S: Scalar> Editor<S> {
         let mut state = program.state.clone();
         state.extend(solved.into_iter().flatten());
         if complete {
-            // Every parameter a step declares, and no other: the file says
-            // where every placed part is.
-            let declared = part.state();
+            // Every pose a step declares, and no other: the file says where
+            // every placed part is. The numbers its steps read are its
+            // parameters', defined apart from its state.
+            let declared: State = part
+                .state()
+                .iter()
+                .filter(|(_, value)| matches!(value, ParamValue::Pose(_)))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
             state.retain(|name, _| declared.contains_key(name));
             for (name, value) in declared {
-                state.entry(name.clone()).or_insert(*value);
+                state.entry(name).or_insert(value);
             }
         }
         if state == program.state {
@@ -1047,6 +1075,7 @@ impl<S: Scalar> Editor<S> {
             can_undo: !self.undo.is_empty(),
             can_redo: !self.redo.is_empty(),
             drag_tool: self.drag_tool.is_some(),
+            parameters: self.program.parameters.resolve(&self.program.state),
             operations: PartOperation::infos(),
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),

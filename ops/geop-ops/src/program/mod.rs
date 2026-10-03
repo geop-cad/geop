@@ -20,7 +20,9 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Part, operation::Operations, part::State, validate_operation_id};
+use crate::{
+    Part, operation::Operations, parameters::Parameters, part::State, validate_operation_id,
+};
 
 /// One step of a [`Program`]: an operation with its arguments, and the id
 /// everything it creates is named after. Serializes as
@@ -38,12 +40,16 @@ pub struct Step<O> {
 /// assign (see `geop_ops`), so a program means the same thing every
 /// time it is run — including after a round trip through JSON.
 ///
-/// Its steps are its structure; its `state` — the values
-/// its steps read by name, where its placed parts are (see
-/// [`crate::part::State`]): what solving it changes, as a sketch's
-/// points are what solving a sketch changes.
+/// Its steps are its structure; its `parameters` the values its design is
+/// given by (see [`crate::parameters`]); its `state` — the values its
+/// steps read by name: where its placed parts are, and parameters a
+/// program placing it gives other values (see [`crate::part::State`]) —
+/// what solving it changes, as a sketch's points are what solving a sketch
+/// changes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Program<O> {
+    #[serde(default, skip_serializing_if = "Parameters::is_empty")]
+    pub parameters: Parameters,
     pub steps: Vec<Step<O>>,
     #[serde(default, skip_serializing_if = "State::is_empty")]
     pub state: State,
@@ -52,9 +58,30 @@ pub struct Program<O> {
 impl<O> Default for Program<O> {
     fn default() -> Self {
         Self {
+            parameters: Parameters::default(),
             steps: Vec::new(),
             state: State::new(),
         }
+    }
+}
+
+impl<O> Program<O> {
+    /// The values the program is built with: its state, and its parameters
+    /// resolved with the state's overrides of them (see
+    /// [`Parameters::resolve`]). A parameter that does not resolve is left
+    /// out, so what reads it fails, saying so.
+    pub fn inputs(&self) -> State {
+        let mut inputs = self.state.clone();
+        inputs.extend(self.parameters.resolve(&self.state).values);
+        inputs
+    }
+
+    /// The part a build starts from: empty, with the program's parameters
+    /// and the values it is built with.
+    fn start<S: Scalar>(&self) -> Part<S> {
+        Part::new()
+            .with_state(self.inputs())
+            .with_parameters(self.parameters.clone())
     }
 }
 
@@ -93,6 +120,7 @@ impl<O: Operations> Program<O> {
     /// Checks that every step id is a valid operation id and unique: every
     /// name a step creates is built from its id.
     pub fn validate(&self) -> GeopResult<()> {
+        self.parameters.validate()?;
         let mut ids = HashSet::new();
         for step in &self.steps {
             validate_operation_id(&step.id)?;
@@ -120,7 +148,7 @@ impl<O: Operations> Program<O> {
     /// The parts it places are found in `library`.
     pub fn build<S: Scalar>(&self, library: &dyn Library<S>) -> GeopResult<Part<S>> {
         self.validate()?;
-        let mut part = Part::new().with_state(self.state.clone());
+        let mut part = self.start();
         for (index, step) in self.steps.iter().enumerate() {
             part = run_step(part, index, step, library)?;
         }
@@ -181,14 +209,15 @@ pub struct StepResult {
 /// fail too, for want of what it should have built.
 ///
 /// What a step builds can depend on more than the step: on the program's
-/// parameters it reads — when those change, it runs again from the first
-/// step that read one that did — and on the files its library reads. When
-/// those change, [`ProgramRunner::reset`] forgets everything built.
+/// inputs it reads (see [`Program::inputs`]) — when those change, it runs
+/// again from the first step that read one that did — and on the files its
+/// library reads. When those change, [`ProgramRunner::reset`] forgets
+/// everything built.
 pub struct ProgramRunner<S: Scalar, O> {
     /// The steps the cache was built from.
     steps: Vec<Step<O>>,
-    /// The state the cache was built with.
-    state: State,
+    /// The inputs the cache was built with.
+    inputs: State,
     /// `parts[i]`: the part after `steps[..i]`. A failed step leaves the
     /// part as it was, so this stays one longer than `steps`.
     parts: Vec<Part<S>>,
@@ -201,7 +230,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
     pub fn new() -> Self {
         Self {
             steps: Vec::new(),
-            state: State::new(),
+            inputs: State::new(),
             parts: vec![Part::new()],
             results: Vec::new(),
             ran: 0,
@@ -225,10 +254,16 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             .zip(&program.steps)
             .take_while(|(a, b)| a == b)
             .count();
-        if self.state != program.state {
+        let inputs = program.inputs();
+        if self.parts[0].parameters() != &program.parameters {
+            // A program's parameters are what every step is started with.
+            common = 0;
+            self.parts[0] = program.start();
+        }
+        if self.inputs != inputs {
             // From the first step that read a parameter whose value is
             // different now — what it declared is what it read.
-            let changed = |name: &String| self.state.get(name) != program.state.get(name);
+            let changed = |name: &String| self.inputs.get(name) != inputs.get(name);
             if let Some(first) = (0..common).find(|&i| {
                 let (before, after) = (self.parts[i].state(), self.parts[i + 1].state());
                 after
@@ -237,7 +272,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             }) {
                 common = first;
             }
-            self.state = program.state.clone();
+            self.inputs = inputs;
         }
         self.steps.truncate(common);
         self.parts.truncate(common + 1);
@@ -249,7 +284,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             let index = self.steps.len();
             let step = &program.steps[index];
             let before = self.parts.last().expect("parts is never empty");
-            let before = before.clone().with_state(self.state.clone());
+            let before = before.clone().with_state(self.inputs.clone());
             let (part, error) = match run_step(before.clone(), index, step, library) {
                 Ok(part) => (part, None),
                 Err(e) => (before.clone(), Some(e.to_string())),

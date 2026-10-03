@@ -42,7 +42,7 @@ use crate::editor::{self, PartSession};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddPart;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddPartArgs {
     /// The program file whose part is placed, relative to this program's
     /// own file; empty until one is chosen.
@@ -62,6 +62,12 @@ pub struct AddPartArgs {
     /// Each is named `add_part(step,id)` in the part.
     #[serde(default)]
     pub mates: BTreeMap<String, Mate>,
+    /// The values the part's own parameters (see
+    /// [`geop_ops::parameters::Parameters`]) are given here instead of its
+    /// own, by name: a number, a table's row, the colour — the part as this
+    /// program places it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: State,
 }
 
 impl Operation for AddPart {
@@ -78,6 +84,7 @@ impl Operation for AddPart {
             fixed: before.instances().next().is_none(),
             flexible: false,
             mates: BTreeMap::new(),
+            parameters: State::new(),
         }
     }
 
@@ -92,26 +99,19 @@ impl Operation for AddPart {
         if args.file.is_empty() {
             return Err(GeopError::new("choose a file to place")).with_context(ctx);
         }
-        // Placed flexibly, its parameters are this program's.
-        let mut overrides = State::new();
+        // Its parameters as this step gives them; placed flexibly, where
+        // its parts are is this program's too.
+        let mut overrides = args.parameters.clone();
         if args.flexible {
             let own = library
                 .component(&args.file, &State::new())
                 .with_context(ctx)?;
             for (name, value) in own.part.state() {
-                let outer = format!("{operation_id}{INSTANCE_SEPARATOR}{name}");
-                let value = match *value {
-                    ParamValue::Pose(pose) => {
-                        ParamValue::Pose(part.pose_parameter(&outer, pose).with_context(ctx)?)
-                    }
-                    ParamValue::Number(_) => {
-                        return Err(GeopError::new(format!(
-                            "the number parameter {name:?} cannot be placed flexibly yet"
-                        )))
-                        .with_context(ctx);
-                    }
-                };
-                overrides.insert(name.clone(), value);
+                if let ParamValue::Pose(pose) = *value {
+                    let outer = format!("{operation_id}{INSTANCE_SEPARATOR}{name}");
+                    let pose = part.pose_parameter(&outer, pose).with_context(ctx)?;
+                    overrides.insert(name.clone(), ParamValue::Pose(pose));
+                }
             }
         }
         let component = library

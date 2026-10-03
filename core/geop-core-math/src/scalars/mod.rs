@@ -216,6 +216,31 @@ pub mod as_f64 {
     ) -> Result<S, D::Error> {
         f64::deserialize(deserializer).map(S::from_f64)
     }
+
+    /// `#[serde(with = "geop_core_math::scalars::as_f64::vec")]`: a list of
+    /// scalars, each as [`super::as_f64`] has it.
+    pub mod vec {
+        use super::super::Scalar;
+        use serde::{Deserialize, Deserializer, Serializer, ser::SerializeSeq};
+
+        pub fn serialize<S: Scalar, Ser: Serializer>(
+            xs: &[S],
+            serializer: Ser,
+        ) -> Result<Ser::Ok, Ser::Error> {
+            let mut seq = serializer.serialize_seq(Some(xs.len()))?;
+            for x in xs {
+                seq.serialize_element(&x.to_f64())?;
+            }
+            seq.end()
+        }
+
+        pub fn deserialize<'de, S: Scalar, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Vec<S>, D::Error> {
+            Vec::<f64>::deserialize(deserializer)
+                .map(|xs| xs.into_iter().map(S::from_f64).collect())
+        }
+    }
 }
 
 // ── Test helper trait ─────────────────────────────────────────────────────────

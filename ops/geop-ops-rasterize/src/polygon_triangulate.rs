@@ -194,35 +194,78 @@ fn point_in_polygon<S: Scalar>(p: Vector2<S>, poly: &[Vector2<S>]) -> bool {
 }
 
 /// True if the bridge segment `h -> m` (a candidate connection from a hole
-/// vertex to an outer-polygon vertex) doesn't cross `poly`'s edge_loop and its
-/// midpoint stays inside `poly`.
-fn is_bridge_visible<S: Scalar>(poly: &[Vector2<S>], h: Vector2<S>, m: Vector2<S>) -> bool {
+/// vertex to a vertex of `poly`, the polygon the holes merged so far are
+/// part of) crosses no edge — of `poly`, nor of the holes still to merge,
+/// the one `h` is on among them — and its midpoint lies inside `poly` and
+/// outside those holes.
+///
+/// The holes still to merge are obstacles too: a bridge from a hole's
+/// rightmost point to a vertex left of it runs straight across the hole,
+/// and the slit it leaves makes the ear clipping fill the hole and overlap
+/// its own triangles.
+fn is_bridge_visible<S: Scalar>(
+    poly: &[Vector2<S>],
+    holes: &[&[Vector2<S>]],
+    h: Vector2<S>,
+    m: Vector2<S>,
+) -> bool {
     if points_equal(h, m) {
         return false;
     }
-    let n = poly.len();
-    for i in 0..n {
-        let a = poly[i];
-        let b = poly[(i + 1) % n];
-        if points_equal(a, h) || points_equal(b, h) || points_equal(a, m) || points_equal(b, m) {
-            continue;
-        }
-        if segments_properly_intersect(h, m, a, b) {
-            return false;
-        }
+    let crosses = |ring: &[Vector2<S>]| {
+        let n = ring.len();
+        (0..n).any(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            let touches = [a, b]
+                .iter()
+                .any(|&p| points_equal(p, h) || points_equal(p, m));
+            !touches && segments_properly_intersect(h, m, a, b)
+        })
+    };
+    if crosses(poly) || holes.iter().any(|ring| crosses(ring)) {
+        return false;
     }
     let two = S::TWO;
     let mid = Vector2::from_array([
         h[0].add(m[0]).div(two).unwrap_or(h[0]),
         h[1].add(m[1]).div(two).unwrap_or(h[1]),
     ]);
-    point_in_polygon(mid, poly)
+    point_in_polygon(mid, poly) && !holes.iter().any(|ring| point_in_polygon(mid, ring))
+}
+
+/// Whether the direction from `poly[i]` to `h` points into `poly` — a CCW
+/// polygon — at its vertex `i`: lies within the interior angle between the
+/// edge leaving it and the edge arriving at it. A vertex a slit runs to
+/// appears twice, once on either side of the slit, and only the copy whose
+/// angle holds the bridge can take it: bridging to the other one runs the
+/// new slit through the old one.
+fn opens_towards<S: Scalar>(poly: &[Vector2<S>], i: usize, h: Vector2<S>) -> bool {
+    let n = poly.len();
+    let m = to_f64_2(poly[i]);
+    let rel = |p: Vector2<S>| {
+        let (x, y) = to_f64_2(p);
+        (x - m.0, y - m.1)
+    };
+    let (out, back, d) = (rel(poly[(i + 1) % n]), rel(poly[(i + n - 1) % n]), rel(h));
+    let cross = |a: (f64, f64), b: (f64, f64)| a.0 * b.1 - a.1 * b.0;
+    if cross(out, back) >= 0.0 {
+        // Convex: between the two edges.
+        cross(out, d) > 0.0 && cross(d, back) > 0.0
+    } else {
+        // Reflex: anywhere but between them on the outside.
+        cross(out, d) > 0.0 || cross(d, back) > 0.0
+    }
 }
 
 /// Merge `hole` (already oriented CW) into `merged` (already oriented CCW) by
-/// finding a visible bridge and splicing the hole's vertices in, producing a
-/// single simple polygon with a zero-width slit.
-fn merge_hole_into<S: Scalar>(merged: &mut Vec<Vector2<S>>, hole: &[Vector2<S>]) {
+/// finding a visible bridge — one crossing neither `merged`, nor `hole`, nor
+/// the holes `pending` to merge after it — and splicing the hole's vertices
+/// in, producing a single simple polygon with a zero-width slit.
+fn merge_hole_into<S: Scalar>(
+    merged: &mut Vec<Vector2<S>>,
+    hole: &[Vector2<S>],
+    pending: &[&[Vector2<S>]],
+) {
     // Bridge start: the hole vertex with max x (tie-break max y). This choice
     // only affects which bridge is found, not correctness.
     let hi = (1..hole.len()).fold(0usize, |best, i| {
@@ -235,6 +278,9 @@ fn merge_hole_into<S: Scalar>(merged: &mut Vec<Vector2<S>>, hole: &[Vector2<S>])
         }
     });
     let h = hole[hi];
+    let obstacles: Vec<&[Vector2<S>]> = std::iter::once(hole)
+        .chain(pending.iter().copied())
+        .collect();
 
     let mut candidates: Vec<usize> = (0..merged.len()).collect();
     candidates.sort_by(|&a, &b| {
@@ -245,7 +291,9 @@ fn merge_hole_into<S: Scalar>(merged: &mut Vec<Vector2<S>>, hole: &[Vector2<S>])
 
     let mi = candidates
         .into_iter()
-        .find(|&i| is_bridge_visible(merged, h, merged[i]))
+        .find(|&i| {
+            opens_towards(merged, i, h) && is_bridge_visible(merged, &obstacles, h, merged[i])
+        })
         .unwrap_or(0);
     let m = merged[mi];
 
@@ -278,15 +326,20 @@ pub(crate) fn merge_outer_and_holes<S: Scalar>(
         merged.reverse();
     }
 
-    for hole in holes {
-        if hole.len() < 3 {
-            continue;
-        }
-        let mut h = hole.clone();
-        if !signed_area2(&h).definitely_less(S::ZERO) {
-            h.reverse();
-        }
-        merge_hole_into(&mut merged, &h);
+    let holes: Vec<Vec<Vector2<S>>> = holes
+        .iter()
+        .filter(|hole| hole.len() >= 3)
+        .map(|hole| {
+            let mut h = hole.clone();
+            if !signed_area2(&h).definitely_less(S::ZERO) {
+                h.reverse();
+            }
+            h
+        })
+        .collect();
+    for (i, hole) in holes.iter().enumerate() {
+        let pending: Vec<&[Vector2<S>]> = holes[i + 1..].iter().map(Vec::as_slice).collect();
+        merge_hole_into(&mut merged, hole, &pending);
     }
     merged
 }
@@ -340,6 +393,58 @@ mod tests {
     #[test]
     fn square_with_hole() {
         for_all_scalars!(check_square_with_hole);
+    }
+
+    /// `n` points round the circle of `radius` about `(x, y)`, clockwise or
+    /// not.
+    fn circle<S: Scalar>(x: f64, y: f64, radius: f64, n: usize) -> Vec<Vector2<S>> {
+        (0..n)
+            .map(|k| {
+                let a = std::f64::consts::TAU * k as f64 / n as f64;
+                Vector2::from_array([
+                    S::from_f64(x + radius * a.cos()),
+                    S::from_f64(y + radius * a.sin()),
+                ])
+            })
+            .collect()
+    }
+
+    /// The area `tris` cover, counting overlaps twice.
+    fn covered<S: Scalar>(tris: &[(Vector2<S>, Vector2<S>, Vector2<S>)]) -> f64 {
+        tris.iter()
+            .map(|(a, b, c)| cross2(b.sub(a), c.sub(a)).abs().to_f64() / 2.0)
+            .sum()
+    }
+
+    /// A rectangle with two round holes, as a sketch's region is: the
+    /// triangles cover it exactly once.
+    fn check_rectangle_with_two_round_holes<S: Scalar>() {
+        let c = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
+        let outer = vec![c(-2.9, -1.4), c(2.9, -1.4), c(2.9, 1.4), c(-2.9, 1.4)];
+        let holes = [
+            circle::<S>(-1.75, 0.0, 0.63, 64),
+            circle::<S>(1.75, 0.0, 0.5, 64),
+        ];
+        let area = |h: &[Vec<Vector2<S>>]| {
+            polygon_signed_area(&outer).to_f64().abs()
+                - h.iter()
+                    .map(|h| polygon_signed_area(h).to_f64().abs())
+                    .sum::<f64>()
+        };
+        for holes in [&holes[..1], &holes[1..], &holes[..]] {
+            let tris = triangulate_with_holes(&outer, holes).unwrap();
+            let expected = area(holes);
+            assert!(
+                (covered(&tris) - expected).abs() < 1e-6,
+                "{} vs {expected} with {} holes",
+                covered(&tris),
+                holes.len()
+            );
+        }
+    }
+    #[test]
+    fn rectangle_with_two_round_holes() {
+        for_all_scalars!(check_rectangle_with_two_round_holes);
     }
 
     fn check_polygon_signed_area<S: Scalar>() {
