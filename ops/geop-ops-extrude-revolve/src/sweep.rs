@@ -1,7 +1,9 @@
-//! Sweeping planar profiles along a [`Path`] — straight, for an extrude, or
-//! around an axis, for a revolve — into a solid or a sheet, described whole
-//! as a [`BodySpec`] and built in one go (see
-//! [`geop_core_topology::build`]).
+//! Sweeping planar profiles along a [`Path`] — straight, for an extrude,
+//! around an axis, for a revolve, along a chain of curves, for a sweep (see
+//! [`crate::path_sweep`]) — into a solid or a sheet, described whole as a
+//! [`BodySpec`] and built in one go (see [`geop_core_topology::build`]).
+//! [`skin`] builds the same grid through a different section at every
+//! station, as a loft does (see [`crate::loft`]).
 //!
 //! A sweep is a grid: every profile joint sits at every station of the path
 //! (a vertex), every profile curve lies at every station (an edge), every
@@ -19,10 +21,11 @@
 //!
 //! **Parametrization.** A wall is the tensor product of its span (`u`, from
 //! one station to the next: degree 1 for a line, a rational quadratic for an
-//! arc) and its curve (`v`, the curve's own degree and knots). So its normal
-//! `∂u × ∂v` points out of the material exactly when the profile runs
-//! counter-clockwise in its stations' `(e1, e2)` and the path runs along
-//! `-(e1 × e2)` — or clockwise, along `e1 × e2` — see [`Path::along_normal`].
+//! arc, a B-spline for any other curve) and its curve (`v`, the curve's own
+//! degree and knots). So its normal `∂u × ∂v` points out of the material
+//! exactly when the profile runs counter-clockwise in its stations' `(e1,
+//! e2)` and the path runs along `-(e1 × e2)` — or clockwise, along `e1 ×
+//! e2` — see [`Path::along_normal`].
 //! Orienting the profile accordingly is the caller's part; [`sweep`] builds
 //! the caps to match.
 
@@ -79,6 +82,15 @@ pub enum Span<S: Scalar> {
     /// Along circular arcs: a rational quadratic whose middle control row is
     /// the profile at `middle`, weighted `weight`.
     Arc { middle: Frame<S>, weight: S },
+    /// Along a B-spline of `degree` on the clamped `knots` over `[0, 1]`,
+    /// whose inner control rows are the profile at each of `middle`: a
+    /// curved path that is neither, approximated by sections of the profile
+    /// skinned together (see [`crate::path_sweep`]).
+    Spline {
+        degree: usize,
+        middle: Vec<Frame<S>>,
+        knots: Vec<S>,
+    },
 }
 
 /// What a profile is swept along: its stations, and the spans between
@@ -118,39 +130,67 @@ impl<S: Scalar> Path<S> {
         match &self.spans[j] {
             Span::Line => vec![(a, None), (b, None)],
             Span::Arc { middle, weight } => vec![(a, None), (middle, Some(*weight)), (b, None)],
+            Span::Spline { middle, .. } => std::iter::once((a, None))
+                .chain(middle.iter().map(|m| (m, None)))
+                .chain(std::iter::once((b, None)))
+                .collect(),
+        }
+    }
+
+    fn degree(&self, j: usize) -> usize {
+        match &self.spans[j] {
+            Span::Spline { degree, .. } => *degree,
+            _ => self.rows(j).len() - 1,
         }
     }
 
     fn knots(&self, j: usize) -> Vec<S> {
+        if let Span::Spline { knots, .. } = &self.spans[j] {
+            return knots.clone();
+        }
         let degree = self.rows(j).len() - 1;
         let mut knots = vec![S::ZERO; degree + 1];
         knots.extend(vec![S::ONE; degree + 1]);
         knots
     }
 
-    /// The path of the profile point `p` along span `j`.
-    fn lateral(&self, j: usize, p: &Vector2<S>) -> GeopResult<NurbCurve3D<S>> {
-        let homogeneous = Vector3::from_array([p[0], p[1], S::ONE]);
+    /// The path along span `j` of a profile point: `a` in the span's first
+    /// station's section — which its inner rows carry on — and `b` in its
+    /// last one's (see [`skin`]).
+    fn lateral(&self, j: usize, a: &Vector2<S>, b: &Vector2<S>) -> GeopResult<NurbCurve3D<S>> {
         let rows = self.rows(j);
+        let last = rows.len() - 1;
         let control_points = rows
             .iter()
-            .map(|(frame, weight)| {
+            .enumerate()
+            .map(|(r, (frame, weight))| {
+                let p = if r == last { b } else { a };
+                let homogeneous = Vector3::from_array([p[0], p[1], S::ONE]);
                 weighted(
                     embed_point(&homogeneous, &frame.origin, &frame.e1, &frame.e2),
                     *weight,
                 )
             })
             .collect();
-        NurbCurve::try_new(rows.len() - 1, control_points, self.knots(j))
+        NurbCurve::try_new(self.degree(j), control_points, self.knots(j))
     }
 
-    /// The wall `curve` sweeps through span `j`: `u` along the span, `v`
-    /// along the curve.
-    fn wall(&self, j: usize, curve: &NurbCurve2D<S>) -> GeopResult<NurbSurface3D<S>> {
+    /// The wall a profile curve sweeps through span `j`, `a` in the span's
+    /// first station's section and `b` in its last one's — compatible
+    /// curves: `u` along the span, `v` along the curve.
+    fn wall(
+        &self,
+        j: usize,
+        a: &NurbCurve2D<S>,
+        b: &NurbCurve2D<S>,
+    ) -> GeopResult<NurbSurface3D<S>> {
         let rows = self.rows(j);
+        let last = rows.len() - 1;
         let control_points = rows
             .iter()
-            .flat_map(|(frame, weight)| {
+            .enumerate()
+            .flat_map(|(r, (frame, weight))| {
+                let curve = if r == last { b } else { a };
                 curve.control_points.iter().map(move |cp| {
                     weighted(
                         embed_point(cp, &frame.origin, &frame.e1, &frame.e2),
@@ -160,11 +200,11 @@ impl<S: Scalar> Path<S> {
             })
             .collect();
         NurbSurface::try_new(
-            rows.len() - 1,
-            curve.degree,
+            self.degree(j),
+            a.degree,
             control_points,
             self.knots(j),
-            curve.knot_vector.clone(),
+            a.knot_vector.clone(),
         )
     }
 
@@ -412,24 +452,37 @@ pub fn sweep<S: Scalar>(
     loops: &[SweepLoop<S>],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
+    let sections = vec![loops.to_vec(); path.stations.len()];
+    skin(part, namer, path, &sections, solid)
+}
+
+/// Like [`sweep`], but with a section of its own at every station of
+/// `path`: `sections[s]` is what lies at station `s`, in its frame — as a
+/// loft passes through profiles of different shapes. Each section has the
+/// same loops, each loop the same number of curves and the same flags, and
+/// the `i`-th curves of all of them are compatible: of one degree, on one
+/// knot vector (see `NurbCurve::compatible`). A wall then runs from one
+/// section's curve to the next one's; a span's inner rows carry its first
+/// station's section on.
+///
+/// Everything is named after the first section's curves and joints, as
+/// [`sweep`] names it.
+pub fn skin<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    path: &Path<S>,
+    sections: &[Vec<SweepLoop<S>>],
+    solid: Option<&str>,
+) -> GeopResult<BuiltBody> {
     let ctx = with_context!(
-        "sweep({}, {} loop(s), solid={solid:?})",
+        "skin({}, {} section(s) of {} loop(s), solid={solid:?})",
         namer.root(),
-        loops.len()
+        sections.len(),
+        sections.first().map_or(0, Vec::len)
     );
     path.check().with_context(ctx)?;
-    if loops.is_empty() {
-        return Err(GeopError::new("sweep: nothing to sweep")).with_context(ctx);
-    }
-    for lp in loops {
-        lp.check().with_context(ctx)?;
-        if solid.is_some() && !lp.profile.is_closed() {
-            return Err(GeopError::new(
-                "sweep: a solid is swept from closed loops only",
-            ))
-            .with_context(ctx);
-        }
-    }
+    check_sections(path, sections, solid.is_some()).with_context(ctx)?;
+    let loops = &sections[0];
     let caps = solid.is_some() && !path.closed;
     let stations = path.stations.len();
     let spans = path.spans.len();
@@ -455,41 +508,42 @@ pub fn sweep<S: Scalar>(
     let mut vertex: Vec<Vec<Vec<usize>>> = Vec::new();
     let mut station_edge: Vec<Vec<Vec<Option<usize>>>> = Vec::new();
     let mut lateral: Vec<Vec<Vec<usize>>> = Vec::new();
-    for lp in loops {
+    for (l, lp) in loops.iter().enumerate() {
         let profile = &lp.profile;
+        let section = |s: usize| &sections[s][l];
         let mut joints = Vec::new();
         for i in 0..lp.joints() {
-            let p = lp.joint(i)?;
             let name = &profile.joint_names[i];
             if lp.poles[i] {
-                spec.vertices.push(path.stations[0].point(&p));
+                spec.vertices
+                    .push(path.stations[0].point(&section(0).joint(i)?));
                 names.vertices.push(namer.name(&[name]));
                 joints.push(vec![spec.vertices.len() - 1; stations]);
             } else {
                 joints.push(
                     (0..stations)
                         .map(|s| {
-                            spec.vertices.push(path.stations[s].point(&p));
+                            spec.vertices
+                                .push(path.stations[s].point(&section(s).joint(i)?));
                             names
                                 .vertices
                                 .push(namer.name(&[name, &path.station_names[s]]));
-                            spec.vertices.len() - 1
+                            Ok(spec.vertices.len() - 1)
                         })
-                        .collect(),
+                        .collect::<GeopResult<_>>()?,
                 );
             }
         }
 
         let mut curves = Vec::new();
-        for (i, curve) in profile.curves.iter().enumerate() {
-            let name = &profile.curve_names[i];
+        for (i, name) in profile.curve_names.iter().enumerate() {
             let (start, end) = (&joints[i], &joints[lp.next(i)]);
             if lp.on_axis[i] {
                 // One edge for every station — or none, without caps to
                 // bound: no wall uses it.
                 let edge = caps.then(|| -> GeopResult<usize> {
                     spec.edges.push(EdgeSpec {
-                        curve: path.stations[0].curve(curve)?,
+                        curve: path.stations[0].curve(&section(0).profile.curves[i])?,
                         start: start[0],
                         end: end[0],
                     });
@@ -503,7 +557,7 @@ pub fn sweep<S: Scalar>(
                     (0..stations)
                         .map(|s| {
                             spec.edges.push(EdgeSpec {
-                                curve: path.stations[s].curve(curve)?,
+                                curve: path.stations[s].curve(&section(s).profile.curves[i])?,
                                 start: start[s],
                                 end: end[s],
                             });
@@ -523,14 +577,18 @@ pub fn sweep<S: Scalar>(
                 paths.push(Vec::new());
                 continue;
             }
-            let p = lp.joint(i)?;
             paths.push(
                 (0..spans)
                     .map(|j| {
+                        let next = path.station(j + 1);
                         spec.edges.push(EdgeSpec {
-                            curve: path.lateral(j, &p)?,
+                            curve: path.lateral(
+                                j,
+                                &section(j).joint(i)?,
+                                &section(next).joint(i)?,
+                            )?,
                             start: joints[i][j],
-                            end: joints[i][path.station(j + 1)],
+                            end: joints[i][next],
                         });
                         names.edges.push(qualified(
                             &profile.joint_names[i],
@@ -549,7 +607,7 @@ pub fn sweep<S: Scalar>(
     let [first_back, start_side, last_forward, end_side] = wall_pcurves::<S>()?;
     for (l, lp) in loops.iter().enumerate() {
         let profile = &lp.profile;
-        for (i, curve) in profile.curves.iter().enumerate() {
+        for (i, name) in profile.curve_names.iter().enumerate() {
             if lp.on_axis[i] {
                 continue;
             }
@@ -570,20 +628,24 @@ pub fn sweep<S: Scalar>(
                     ),
                     pcurve: pcurve.clone(),
                 };
+                let last = path.station(j + 1);
                 spec.faces.push(FaceSpec {
-                    surface: path.wall(j, curve)?,
+                    surface: path.wall(
+                        j,
+                        &sections[j][l].profile.curves[i],
+                        &sections[last][l].profile.curves[i],
+                    )?,
                     outer: vec![
                         at(j, Sense::Reversed, &first_back),
                         side(i, Sense::Forward, &start_side),
-                        at(path.station(j + 1), Sense::Forward, &last_forward),
+                        at(last, Sense::Forward, &last_forward),
                         side(next, Sense::Reversed, &end_side),
                     ],
                     holes: Vec::new(),
                 });
-                names.faces.push(qualified(
-                    &profile.curve_names[i],
-                    path.span_names[j].as_deref(),
-                ));
+                names
+                    .faces
+                    .push(qualified(name, path.span_names[j].as_deref()));
             }
         }
     }
@@ -593,9 +655,10 @@ pub fn sweep<S: Scalar>(
         // backwards — the walls run them the other way — and each is
         // parametrized so that runs the outer loop counter-clockwise.
         for (s, forward, name) in [(0, true, "start"), (stations - 1, false, "end")] {
-            let cap = Cap::new(&path.stations[s], loops, path.along_normal == forward)?;
+            let section = &sections[s];
+            let cap = Cap::new(&path.stations[s], section, path.along_normal == forward)?;
             let mut boundaries = Vec::new();
-            for (l, lp) in loops.iter().enumerate() {
+            for (l, lp) in section.iter().enumerate() {
                 let mut coedges = lp
                     .profile
                     .curves
@@ -633,6 +696,77 @@ pub fn sweep<S: Scalar>(
 
     spec.shells = connected_faces(&spec);
     part.build_body(spec, names).with_context(ctx)
+}
+
+/// Checks that `sections` fit `path` and each other, as [`skin`] needs:
+/// one per station, each a valid set of loops — closed ones, for a solid —
+/// all with the same loops, curves and flags, the `i`-th curves of all of
+/// them on one degree and one knot vector.
+fn check_sections<S: Scalar>(
+    path: &Path<S>,
+    sections: &[Vec<SweepLoop<S>>],
+    solid: bool,
+) -> GeopResult<()> {
+    if sections.len() != path.stations.len() {
+        return Err(GeopError::new(format!(
+            "skin: {} sections for {} stations",
+            sections.len(),
+            path.stations.len()
+        )));
+    }
+    let first = &sections[0];
+    if first.is_empty() {
+        return Err(GeopError::new("sweep: nothing to sweep"));
+    }
+    let same = |a: &S, b: &S| a.is_subset_of(*b) && b.is_subset_of(*a);
+    for (s, section) in sections.iter().enumerate() {
+        if section.len() != first.len() {
+            return Err(GeopError::new(format!(
+                "skin: section {s} has {} loops, the first {}",
+                section.len(),
+                first.len()
+            )));
+        }
+        for (l, (lp, lp0)) in section.iter().zip(first).enumerate() {
+            lp.check()?;
+            if solid && !lp.profile.is_closed() {
+                return Err(GeopError::new(
+                    "sweep: a solid is swept from closed loops only",
+                ));
+            }
+            if lp.profile.curves.len() != lp0.profile.curves.len()
+                || lp.profile.is_closed() != lp0.profile.is_closed()
+                || lp.poles != lp0.poles
+                || lp.on_axis != lp0.on_axis
+            {
+                return Err(GeopError::new(format!(
+                    "skin: loop {l} of section {s} does not match the first section's"
+                )));
+            }
+            for (i, (c, c0)) in lp
+                .profile
+                .curves
+                .iter()
+                .zip(&lp0.profile.curves)
+                .enumerate()
+            {
+                if c.degree != c0.degree
+                    || c.knot_vector.len() != c0.knot_vector.len()
+                    || !c
+                        .knot_vector
+                        .iter()
+                        .zip(&c0.knot_vector)
+                        .all(|(a, b)| same(a, b))
+                {
+                    return Err(GeopError::new(format!(
+                        "skin: curve {i} of loop {l} of section {s} (degree {}, knots {:?}) is not compatible with the first section's (degree {}, knots {:?})",
+                        c.degree, c.knot_vector, c0.degree, c0.knot_vector
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The faces of `spec` grouped into connected sets — faces sharing an edge

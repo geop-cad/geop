@@ -43,8 +43,8 @@ ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),
                                the boolean operation
 ops/geop-ops-edit             edits of existing bodies: delete a body,
                                extract a face, project a sketch onto a face
-ops/geop-ops-extrude-revolve  extrude/revolve, the extrude and revolve
-                               operations, and basic shapes for tests
+ops/geop-ops-extrude-revolve  extrude/revolve, sweeps along paths, lofts;
+                               their operations, and basic shapes for tests
 ops/geop-ops-fillet           fillets and chamfers on straight and circular
                                edges, cut or filled in with a boolean
 ops/geop-ops-shell            shelling: a solid hollowed to walls of one

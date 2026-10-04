@@ -1,17 +1,23 @@
-//! Extrude and revolve as operations of a program (see
-//! [`geop_ops::operation`]): a sketch's one area swept into a solid, kept as
-//! a new body or combined with one the part has — or its curves swept into
-//! a sheet, faces standing on their own.
+//! Extrude, revolve, sweep and loft as operations of a program (see
+//! [`geop_ops::operation`]): a sketch's one area swept into a solid — along
+//! its plane's normal, around an axis, along another sketch's curves, or
+//! through other sketches' profiles — kept as a new body or combined with
+//! one the part has; or its curves swept into a sheet, faces standing on
+//! their own.
 //!
 //! Both say how far they go the same way, by an [`Extents`]: one side, both
 //! sides alike, or each side its own way — a length (an angle), up to the
 //! next face of the solid they are combined with, or through all of it.
 
 mod extrude;
+mod loft;
 mod revolve;
+mod sweep;
 
 pub use extrude::{Extrude, ExtrudeArgs, shape_loops};
+pub use loft::{Loft, LoftArgs};
 pub use revolve::{Revolve, RevolveArgs};
+pub use sweep::{Sweep, SweepArgs};
 
 use std::collections::HashSet;
 
@@ -36,17 +42,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::sweep::SweepLoop;
 
-/// The sketch field of a form: a sketch to pick, `set` given its name (none
-/// when the field is cleared) — or, before there is any sketch, a hint to
-/// draw one.
+/// The sketch field `key` of a form, labelled the same: a sketch to pick,
+/// `set` given its name (none when the field is cleared) — or, before there
+/// is any sketch, a hint to draw one.
 fn sketch_field<'a, S: Scalar, A: 'a>(
     form: &mut Form<'a, S, A>,
     before: &Part<S>,
+    key: &str,
     sketch: &str,
     set: impl Fn(&mut A, String) + 'a,
 ) {
     if before.sketches().next().is_none() {
-        form.text("sketch", "No sketch yet — add one first.", Tone::Hint);
+        form.text(key, "No sketch yet — add one first.", Tone::Hint);
         return;
     }
     let value = if sketch.is_empty() {
@@ -57,8 +64,8 @@ fn sketch_field<'a, S: Scalar, A: 'a>(
         }]
     };
     form.reference(
-        "sketch",
-        "sketch",
+        key,
+        key,
         value,
         &[Role::Sketch],
         None,

@@ -210,17 +210,23 @@ impl Operation for Revolve {
     ) -> Form<'a, S, RevolveArgs> {
         let before = context.before;
         let mut f = Form::<S, RevolveArgs>::new();
-        sketch_field(&mut f, before, &args.sketch, move |args, sketch| {
-            let old = std::mem::replace(&mut args.sketch, sketch);
-            let of_old = match &args.axis {
-                None => true,
-                Some(EntityRef::SketchCurve { sketch, .. }) => *sketch == old,
-                Some(_) => false,
-            };
-            if of_old {
-                args.axis = default_axis(before, &args.sketch);
-            }
-        });
+        sketch_field(
+            &mut f,
+            before,
+            "sketch",
+            &args.sketch,
+            move |args, sketch| {
+                let old = std::mem::replace(&mut args.sketch, sketch);
+                let of_old = match &args.axis {
+                    None => true,
+                    Some(EntityRef::SketchCurve { sketch, .. }) => *sketch == old,
+                    Some(_) => false,
+                };
+                if of_old {
+                    args.axis = default_axis(before, &args.sketch);
+                }
+            },
+        );
         f.reference(
             "axis",
             "axis",

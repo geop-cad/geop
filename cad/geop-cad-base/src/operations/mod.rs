@@ -15,7 +15,9 @@ use geop_ops_datums::{AddDatum, AddDatumArgs};
 use geop_ops_edit::{
     DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
 };
-use geop_ops_extrude_revolve::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
+use geop_ops_extrude_revolve::{
+    Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
+};
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
@@ -42,6 +44,8 @@ mod shell_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]
+mod sweep_loft_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod view_tests;
@@ -61,6 +65,12 @@ pub enum PartOperation {
     /// Sweep a sketch's area around one of its lines into a solid, or its
     /// curves into faces.
     Revolve(RevolveArgs),
+    /// Sweep a sketch's area along the curves of another sketch into a
+    /// solid, or its curves into faces.
+    Sweep(SweepArgs),
+    /// Build a solid through the areas of several sketches, or faces
+    /// through their curves.
+    Loft(LoftArgs),
     /// Unite, intersect or subtract two solids.
     Boolean(BooleanArgs),
     /// Cut a solid into pieces with a face standing on its own.

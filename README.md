@@ -83,8 +83,8 @@ after `npm run build`. See
 ### Programs
 
 A part is described by a *program*: an ordered list of steps, each an
-operation (`add_sketch`, `extrude`, `revolve`, `boolean`, `add_datum`,
-`add_part`) with its arguments.
+operation (`add_sketch`, `extrude`, `revolve`, `sweep`, `loft`, `boolean`,
+`add_datum`, `add_part`) with its arguments.
 Steps refer to what earlier steps made only by stable names — `extrude(box)`
 is the solid the step `box` extruded, `extrude(box,end)` its end cap — never
 by a kernel id, so a program is self-contained and rebuilds the same part,
