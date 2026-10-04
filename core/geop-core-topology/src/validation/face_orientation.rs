@@ -1,7 +1,9 @@
-use geop_core_math::{geop_error::GeopError, polygon::polygon_signed_area, scalars::Scalar};
+use geop_core_math::{
+    geop_error::GeopError, polygon::polygon_signed_area, scalars::Scalar, vector::Vector3,
+};
 
 use crate::{
-    Model,
+    FaceId, Model, ShellId, SolidId,
     boundary::BoundaryType,
     contains::{
         face::face_interior_point,
@@ -152,108 +154,143 @@ pub fn check_normals_point_outward<S: Scalar>(
             continue;
         };
         for &face_id in &shell.faces {
-            let Some(face) = model.faces.get(&face_id) else {
-                continue;
-            };
-            let Ok((u, v)) = face_interior_point(
-                model,
-                face_id,
-                params.max_nodes,
-                params.min_subdivision_size,
-                SEED,
-            ) else {
-                // Reported by `check_faces_have_interior`; nothing to add.
-                continue;
-            };
-            let (Ok(point), Ok(normal)) = (face.surface.evaluate(u, v), face.surface.normal(u, v))
-            else {
-                continue;
-            };
-
-            // Probe both sides, halving all the way down and keeping the
-            // *last* decisive answer rather than the first.
-            //
-            // Which side of a face is solid is a local fact — the limit as the
-            // probe distance goes to zero — and a long probe answers a
-            // different question. On a non-convex solid it reaches right past
-            // the local material into some other part: probing outward from
-            // the figure-8's neck wall by half the model's extent lands inside
-            // the *opposite lobe*, which reads as an inverted normal on a face
-            // that is perfectly correct. Every halving that still resolves is
-            // more local than the one before, so the smallest one that
-            // resolves is the answer.
-            let mut step = shell_extent(model, shell_id);
-            let mut verdict = None;
-            for _ in 0..MAX_HALVINGS {
-                let outward = point.add(&normal.prod_scalar(step));
-                let inward = point.sub(&normal.prod_scalar(step));
-                if let (Ok(out_class), Ok(in_class)) = (
-                    solid_contains(
-                        model,
-                        solid_id,
-                        outward,
-                        params.max_nodes,
-                        params.min_subdivision_size,
-                        SEED,
-                    ),
-                    solid_contains(
-                        model,
-                        solid_id,
-                        inward,
-                        params.max_nodes,
-                        params.min_subdivision_size,
-                        SEED,
-                    ),
-                ) {
-                    let resolved = match (out_class, in_class) {
-                        (PointClassification::Outside, PointClassification::Inside) => Some(true),
-                        (PointClassification::Inside, PointClassification::Outside) => Some(false),
-                        // Both probes on the same side, or on a boundary:
-                        // this distance resolves nothing. Halve and retry.
-                        _ => None,
-                    };
-                    // Report only if *every* probe that resolved says the
-                    // normal points inward. Any single probe finding solid on
-                    // the far side is proof the face is oriented correctly,
-                    // and no probe distance is trustworthy on its own: a long
-                    // one reaches past the local material into another part of
-                    // a non-convex solid (the figure-8's neck sees the
-                    // opposite lobe), while one near `min_subdivision_size`
-                    // cannot tell "just off the face" from "on it". Requiring
-                    // unanimity means a false positive needs *every* scale to
-                    // agree wrongly, and keeps the check one-sided: it never
-                    // fails a face it has any evidence for.
-                    match resolved {
-                        Some(true) => {
-                            verdict = Some(true);
-                            break;
-                        }
-                        Some(false) => verdict = Some(verdict != Some(true) && false),
-                        None => {}
-                    }
-                }
-                // Stop once the probe would be closer to the surface than the
-                // containment search can resolve. Below `min_subdivision_size`
-                // the query cannot tell "just off the face" from "on it", so a
-                // verdict there is noise — and since the last decisive verdict
-                // wins, letting the loop run past this floor would hand the
-                // answer to exactly the least reliable probe.
-                let next = match step.div(S::TWO) {
-                    Ok(s) => s,
-                    Err(_) => break,
-                };
-                if !next.definitely_greater(params.min_subdivision_size) {
-                    break;
-                }
-                step = next;
-            }
-            if verdict == Some(false) {
+            if let Some(Outward::No { point, normal }) =
+                normal_points_outward(params, model, solid_id, shell_id, face_id)
+            {
                 errors.push(GeopError::new(format!(
                     "face {face_id}'s normal points into solid {solid_id} (from its shell {shell_id}) rather than out of it: at its interior point {point:?} the normal is {normal:?}, and the closest probe that resolved put the solid on the normal's side"
                 )));
             }
         }
     }
+}
+
+/// Whether a face's normal points out of its solid, as
+/// [`normal_points_outward`] found it.
+#[derive(Clone, Debug)]
+pub enum Outward<S: Scalar> {
+    Yes,
+    /// It points in: at `point`, inside the face, the normal is `normal`.
+    No {
+        point: Vector3<S>,
+        normal: Vector3<S>,
+    },
+}
+
+/// Whether the normal of face `face_id` of shell `shell_id` points out of
+/// the solid `solid_id` — `None` where that cannot be told: a face without
+/// an interior point, or too thin for any probe to resolve.
+///
+/// Tested by probing just off the surface at an interior point: a step
+/// *against* the normal must land inside the solid, and a step *along* it
+/// outside. The probe distance is a free choice — any distance small enough
+/// to stay within the material works — so it starts from the shell's own
+/// extent and halves until the two probes disagree decisively, exactly as
+/// [`face_interior_point`] halves its way inward.
+pub fn normal_points_outward<S: Scalar>(
+    params: &ValidationParameters<S>,
+    model: &Model<S>,
+    solid_id: SolidId,
+    shell_id: ShellId,
+    face_id: FaceId,
+) -> Option<Outward<S>> {
+    let face = model.faces.get(&face_id)?;
+    // A face without an interior point is reported by
+    // `check_faces_have_interior`; there is nothing to probe from.
+    let (u, v) = face_interior_point(
+        model,
+        face_id,
+        params.max_nodes,
+        params.min_subdivision_size,
+        SEED,
+    )
+    .ok()?;
+    let (Ok(point), Ok(normal)) = (face.surface.evaluate(u, v), face.surface.normal(u, v)) else {
+        return None;
+    };
+
+    // Probe both sides, halving all the way down and keeping the *last*
+    // decisive answer rather than the first.
+    //
+    // Which side of a face is solid is a local fact — the limit as the
+    // probe distance goes to zero — and a long probe answers a different
+    // question. On a non-convex solid it reaches right past the local
+    // material into some other part: probing outward from the figure-8's
+    // neck wall by half the model's extent lands inside the *opposite
+    // lobe*, which reads as an inverted normal on a face that is perfectly
+    // correct. Every halving that still resolves is more local than the
+    // one before, so the smallest one that resolves is the answer.
+    let mut step = shell_extent(model, shell_id);
+    let mut verdict = None;
+    for _ in 0..MAX_HALVINGS {
+        let outward = point.add(&normal.prod_scalar(step));
+        let inward = point.sub(&normal.prod_scalar(step));
+        if let (Ok(out_class), Ok(in_class)) = (
+            solid_contains(
+                model,
+                solid_id,
+                outward,
+                params.max_nodes,
+                params.min_subdivision_size,
+                SEED,
+            ),
+            solid_contains(
+                model,
+                solid_id,
+                inward,
+                params.max_nodes,
+                params.min_subdivision_size,
+                SEED,
+            ),
+        ) {
+            let resolved = match (out_class, in_class) {
+                (PointClassification::Outside, PointClassification::Inside) => Some(true),
+                (PointClassification::Inside, PointClassification::Outside) => Some(false),
+                // Both probes on the same side, or on a boundary: this
+                // distance resolves nothing. Halve and retry.
+                _ => None,
+            };
+            // Inward only if *every* probe that resolved says so. Any
+            // single probe finding solid on the far side is proof the face
+            // is oriented correctly, and no probe distance is trustworthy
+            // on its own: a long one reaches past the local material into
+            // another part of a non-convex solid (the figure-8's neck sees
+            // the opposite lobe), while one near `min_subdivision_size`
+            // cannot tell "just off the face" from "on it". Requiring
+            // unanimity means a false positive needs *every* scale to agree
+            // wrongly, and keeps the answer one-sided: it never calls a
+            // face inward it has any evidence for.
+            match resolved {
+                Some(true) => {
+                    verdict = Some(true);
+                    break;
+                }
+                Some(false) => verdict = Some(verdict != Some(true) && false),
+                None => {}
+            }
+        }
+        // Stop once the probe would be closer to the surface than the
+        // containment search can resolve. Below `min_subdivision_size` the
+        // query cannot tell "just off the face" from "on it", so a verdict
+        // there is noise — and since the last decisive verdict wins,
+        // letting the loop run past this floor would hand the answer to
+        // exactly the least reliable probe.
+        let next = match step.div(S::TWO) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
+        if !next.definitely_greater(params.min_subdivision_size) {
+            break;
+        }
+        step = next;
+    }
+    verdict.map(|out| {
+        if out {
+            Outward::Yes
+        } else {
+            Outward::No { point, normal }
+        }
+    })
 }
 
 /// A length comparable to the shell's own size, as a starting probe

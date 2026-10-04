@@ -77,7 +77,7 @@ fn clip<S: Scalar>(patch: &NurbSurface<S, 4>, point: &Vector3<S>) -> GeopResult<
 /// domain (`u_fixed`) or `v` domain, as a curve along the other parameter —
 /// the first/last control row, which *is* the surface there when the knot
 /// vector is clamped at that end. `None` if it isn't.
-pub(crate) fn boundary_curve<S: Scalar>(
+pub fn boundary_curve<S: Scalar>(
     patch: &NurbSurface<S, 4>,
     u_fixed: bool,
     first: bool,

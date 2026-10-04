@@ -58,6 +58,9 @@ ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                and clips as lines and arcs, bend radius
                                checked, the bundle swept, cut lengths; the
                                route operation
+ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
+                               surfaces, offset, thicken, knit, trim and
+                               extend of faces standing on their own
 cad/geop-cad-base             the operations the editor offers, the editor engine,
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)

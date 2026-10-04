@@ -1,5 +1,6 @@
 mod compatible;
 mod evaluate;
+mod extend;
 mod helix;
 pub use helix::{Handedness, HelixRow, cos_sin, helix_rows};
 mod interpolate;

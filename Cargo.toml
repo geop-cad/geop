@@ -20,6 +20,7 @@ members = [
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
+    "ops/geop-ops-surface",
     "ops/geop-ops-pattern",
     "ops/geop-ops-harness",
     "ops/geop-ops-hole",
@@ -50,6 +51,7 @@ serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: without it, parsing a float may land one ULP off the
 # value that was written, and a program read back from JSON would no longer
 # build the very same part.
+geop-ops-surface = { path = "ops/geop-ops-surface" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"
