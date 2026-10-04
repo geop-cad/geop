@@ -209,7 +209,9 @@ impl<S: Scalar> NurbSurface3D<S> {
         let index = |row: usize, k: usize| if along_u { k * nv + row } else { row * nv + k };
         let raised = (0..rows)
             .map(|row| {
-                let points = (0..len).map(|k| self.control_points[index(row, k)]).collect();
+                let points = (0..len)
+                    .map(|k| self.control_points[index(row, k)])
+                    .collect();
                 NurbCurve::try_new(degree, points, knots.clone())?.elevate_degree()
             })
             .collect::<GeopResult<Vec<_>>>()?;
@@ -264,7 +266,9 @@ impl<S: Scalar> NurbSurface3D<S> {
         let index = |row: usize, k: usize| if along_u { k * nv + row } else { row * nv + k };
         let longer = (0..rows)
             .map(|row| {
-                let points = (0..len).map(|k| self.control_points[index(row, k)]).collect();
+                let points = (0..len)
+                    .map(|k| self.control_points[index(row, k)])
+                    .collect();
                 NurbCurve::try_new(degree, points, knots.clone())?.extended(at_end, by)
             })
             .collect::<GeopResult<Vec<_>>>()?;
@@ -403,7 +407,11 @@ impl<S: Scalar> NurbSurface3D<S> {
                     match constraints.as_slice() {
                         [(_, plane, _, _)] => plane.project(&p),
                         [(_, a, _, _), (_, b, _, _)] => {
-                            if a.normal.prod_cross(&b.normal).norm_sq().could_be_equal(S::ZERO) {
+                            if a.normal
+                                .prod_cross(&b.normal)
+                                .norm_sq()
+                                .could_be_equal(S::ZERO)
+                            {
                                 // One plane, met along two sides.
                                 a.project(&p)
                             } else {
@@ -638,7 +646,9 @@ mod tests {
         let bends = (0..=8).any(|k| {
             let u = S::from_ratio(k, 8).unwrap();
             let n = coons.normal(u, S::ZERO).unwrap();
-            !n.prod_cross(&v(0., 0., 1.)).norm_sq().could_be_equal(S::ZERO)
+            !n.prod_cross(&v(0., 0., 1.))
+                .norm_sq()
+                .could_be_equal(S::ZERO)
         });
         assert!(bends, "the Coons patch alone is not tangent to the plane");
         let surface = coons

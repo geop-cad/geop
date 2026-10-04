@@ -293,7 +293,8 @@ impl Joined {
             let candidates = &between[&key];
             for (i, &a) in candidates.iter().enumerate() {
                 for &b in &candidates[i + 1..] {
-                    if edge_sheet[a] == edge_sheet[b] || !coincide(&spec.edges[a], &spec.edges[b])? {
+                    if edge_sheet[a] == edge_sheet[b] || !coincide(&spec.edges[a], &spec.edges[b])?
+                    {
                         continue;
                     }
                     if let Some(other) = partner[a].or(partner[b]) {

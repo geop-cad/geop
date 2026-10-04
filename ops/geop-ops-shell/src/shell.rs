@@ -49,9 +49,7 @@
 use std::collections::HashMap;
 
 use geop_core_geometry::{
-    contains::surface::surface_could_contain,
-    nurb_curve::NurbCurve3D,
-    nurb_surface::NurbSurface3D,
+    contains::surface::surface_could_contain, nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -213,10 +211,7 @@ pub fn offset_faces<S: Scalar>(
     faces: &[FaceId],
     distance: S,
 ) -> GeopResult<BuiltBody> {
-    let ctx = with_context!(
-        "offset_faces({}, {faces:?}, {distance:?})",
-        namer.root()
-    );
+    let ctx = with_context!("offset_faces({}, {faces:?}, {distance:?})", namer.root());
     if distance.could_be_equal(S::ZERO) {
         return Err(GeopError::new(format!(
             "an offset needs a distance other than zero, not {distance:?}"
@@ -811,7 +806,9 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                         start: at.vertex[v].unwrap(),
                         end: at.inner_vertex[v].unwrap(),
                     });
-                    names.edges.push(namer.name(&[&self.names.vertices[v], "side"]));
+                    names
+                        .edges
+                        .push(namer.name(&[&self.names.vertices[v], "side"]));
                 }
             }
             let outer = oriented(&spec.edges[e].curve, sense);
@@ -849,7 +846,9 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                     .collect::<GeopResult<_>>()?,
                 holes: Vec::new(),
             });
-            names.faces.push(namer.name(&[&self.names.edges[e], "side"]));
+            names
+                .faces
+                .push(namer.name(&[&self.names.edges[e], "side"]));
         }
         out.shells = if self.removed.iter().any(|&r| r) || !walls.is_empty() {
             vec![

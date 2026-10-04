@@ -213,7 +213,10 @@ pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopRes
     ) else {
         return Err(not_whole()).with_context(ctx);
     };
-    let side = edges.iter().position(|&e| e == edge_id).expect("the edge bounds the face");
+    let side = edges
+        .iter()
+        .position(|&e| e == edge_id)
+        .expect("the edge bounds the face");
 
     // How far in the parameter across the edge: the distance over how fast
     // the surface runs across it at its middle — sharpened, a free choice
@@ -230,9 +233,11 @@ pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopRes
     let (du, dv) = surface.derivatives(u.sharpen(), v.sharpen())?;
     let speed = if along_u { du } else { dv }.norm();
     let by = distance.div(speed)?.sharpen();
-    let longer = surface
-        .extended(along_u, at_end, by)
-        .map_err(|e| e.with_context(format!("carrying the surface of face {face_name} on past edge {edge}")))?;
+    let longer = surface.extended(along_u, at_end, by).map_err(|e| {
+        e.with_context(format!(
+            "carrying the surface of face {face_name} on past edge {edge}"
+        ))
+    })?;
 
     // The face anew: the whole longer patch, its sides its border curves,
     // each keeping the name of the edge it continues.
@@ -275,7 +280,14 @@ pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopRes
             outer: (0..4)
                 .map(|k| {
                     Ok(CoedgeSpec {
-                        on: CoedgeOn::Edge(k, if k < 2 { Sense::Forward } else { Sense::Reversed }),
+                        on: CoedgeOn::Edge(
+                            k,
+                            if k < 2 {
+                                Sense::Forward
+                            } else {
+                                Sense::Reversed
+                            },
+                        ),
                         pcurve: line2(corner_uv[k], corner_uv[(k + 1) % 4])?,
                     })
                 })

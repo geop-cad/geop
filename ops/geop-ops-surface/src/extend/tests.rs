@@ -25,7 +25,11 @@ fn extended(part: Part<S>, edge: &str, distance: f64) -> GeopResult<Part<S>> {
 fn extend_a_flat_square() {
     let mut part = Part::<S>::new();
     let c = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
-    coons_sheet(&mut part, "sq", [0, 1, 2, 3].map(|k| line(c[k], c[(k + 1) % 4])));
+    coons_sheet(
+        &mut part,
+        "sq",
+        [0, 1, 2, 3].map(|k| line(c[k], c[(k + 1) % 4])),
+    );
     let mut names_before: Vec<String> = part.names().iter().map(|(_, n)| n.to_string()).collect();
     let part = extended(part, "sq(e2)", 0.5).unwrap();
     assert_valid(&part);

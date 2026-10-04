@@ -22,7 +22,9 @@ fn square_and_wall() -> (Part<S>, String) {
         .find(|&f| {
             let surface = &part.topology().get_face(f).unwrap().surface;
             let plane = surface.as_plane().unwrap().unwrap();
-            plane.signed_distance(&v3(0.5, 0., 0.)).could_be_equal(S::ZERO)
+            plane
+                .signed_distance(&v3(0.5, 0., 0.))
+                .could_be_equal(S::ZERO)
         })
         .unwrap();
     let name = part.name_of(face).unwrap().to_string();

@@ -78,7 +78,10 @@ impl Operation for TrimSurface {
     ) -> Form<'a, S, TrimSurfaceArgs> {
         let mut f = Form::<S, TrimSurfaceArgs>::new();
         let one = |name: &String| -> Vec<String> {
-            (!name.is_empty()).then(|| name.clone()).into_iter().collect()
+            (!name.is_empty())
+                .then(|| name.clone())
+                .into_iter()
+                .collect()
         };
         f.reference(
             "face",
@@ -183,7 +186,11 @@ pub fn trim<S: Scalar>(
 ) -> GeopResult<()> {
     let (_, sheet) = sheet_of(part, face)?;
     let tool_name = name_of(part, tool)?;
-    if part.topology().body_faces(Body::Sheet(sheet))?.contains(&tool) {
+    if part
+        .topology()
+        .body_faces(Body::Sheet(sheet))?
+        .contains(&tool)
+    {
         return Err(GeopError::new(format!(
             "face {tool_name} is a face of the sheet to trim: it cannot cut its own sheet"
         )));
@@ -191,7 +198,13 @@ pub fn trim<S: Scalar>(
     let surface = part.topology().get_face(tool)?.surface.clone();
     let cutter = part.copy_faces(&[tool], None, |name| namer.name(&[name, "tool"]))?;
     let cutter = Body::Sheet(cutter.shells[0]);
-    remesh(part, namer, Body::Sheet(sheet), cutter, RemeshParams::default())?;
+    remesh(
+        part,
+        namer,
+        Body::Sheet(sheet),
+        cutter,
+        RemeshParams::default(),
+    )?;
 
     let model = part.topology();
     let want = keep == TrimKeep::Front;

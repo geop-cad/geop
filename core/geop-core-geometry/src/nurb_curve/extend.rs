@@ -64,7 +64,9 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
             for k in &mut out.knot_vector {
                 *k = k.sub(by);
             }
-            debug_assert!(out.domain().1.could_be_equal(t1) && out.domain().0.could_be_equal(t0.sub(by)));
+            debug_assert!(
+                out.domain().1.could_be_equal(t1) && out.domain().0.could_be_equal(t0.sub(by))
+            );
             return Ok(out);
         }
         let n = self.control_points.len();
@@ -126,7 +128,12 @@ mod tests {
         assert!(t0.could_be_equal(f(0.)) && t1.could_be_equal(f(1.25)));
         for i in 0..=8 {
             let t = S::from_ratio(i, 8).unwrap();
-            assert!(longer.evaluate(t).unwrap().could_be_equal(&curve.evaluate(t).unwrap()));
+            assert!(
+                longer
+                    .evaluate(t)
+                    .unwrap()
+                    .could_be_equal(&curve.evaluate(t).unwrap())
+            );
         }
         // The last piece's polynomial, from the original piece's control
         // points at a parameter past it, by de Casteljau directly.
@@ -135,7 +142,12 @@ mod tests {
         assert!(t0.could_be_equal(f(-0.5)) && t1.could_be_equal(f(1.)));
         for i in 0..=8 {
             let t = S::from_ratio(i, 8).unwrap();
-            assert!(earlier.evaluate(t).unwrap().could_be_equal(&curve.evaluate(t).unwrap()));
+            assert!(
+                earlier
+                    .evaluate(t)
+                    .unwrap()
+                    .could_be_equal(&curve.evaluate(t).unwrap())
+            );
         }
     }
     #[test]

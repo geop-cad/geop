@@ -188,7 +188,7 @@ fn flat_loop_of_four_is_one_flat_face() {
 }
 
 /// Six edges of a cube that run round it, not in any one plane: a patch of
-/// six quadrilaterals around a center.
+/// six quadrilaterals around a flat hexagon.
 #[test]
 fn hexagon_round_a_cube_is_six_quadrilaterals() {
     let part = unit_cube();
@@ -205,15 +205,14 @@ fn hexagon_round_a_cube_is_six_quadrilaterals() {
         .collect();
     let part = span(part, &edges, &[]).unwrap();
     assert_valid(&part);
-    assert_eq!(sheet_faces(&part), 6);
-    let center = part.vertex_id("boundary(b,center)").unwrap();
-    let at = part.topology().get_vertex(center).unwrap().point;
-    // The center is a free choice, sharpened: the average of the edges'
-    // middles, to within rounding.
-    assert!(
-        (0..3).all(|k| (at[k].to_f64() - 0.5).abs() < 1e-12),
-        "{at:?}"
-    );
+    assert_eq!(sheet_faces(&part), 6 + 1);
+    let inner = part.face_id("boundary(b,inner)").unwrap();
+    let surface = &part.topology().get_face(inner).unwrap().surface;
+    assert!(surface.as_plane().unwrap().is_some());
+    // Every edge picked is copied whole.
+    for e in &edges {
+        assert!(part.edge_id(&format!("boundary(b,{e})")).is_ok(), "{e}");
+    }
 }
 
 /// The four edges of a twisted ruled sheet: their Coons patch runs exactly
@@ -303,7 +302,9 @@ fn cover_tangent_to_a_flange() {
     // Without tangency, the patch leaves the flange at an angle.
     let plain = span(part.clone(), &edges, &[]).unwrap();
     let face = plain.face_id("boundary(b)").unwrap();
-    assert!(!along_lip(&plain.topology().get_face(face).unwrap().surface));
+    assert!(!along_lip(
+        &plain.topology().get_face(face).unwrap().surface
+    ));
     // Tangent to a guide edge, whose face is curved: refused.
     let err = refused(span(part, &edges, &["guide(e2)".into()]));
     assert!(format!("{err}").contains("not flat"), "{err}");
@@ -352,4 +353,64 @@ fn circle_is_filled_flat() {
         part.topology().body_of_face(sheet).unwrap(),
         Body::Sheet(_)
     ));
+}
+
+/// A ring of `n` strips standing on their own round a hole: strip `k` runs
+/// from the corner `P_k` of an `n`-gon of radius one to `P_{k+1}`, its
+/// corners rising alternately by `lift`, and out to half as far again. The
+/// strips' inner edges, `strip{k}(e0)`, ring the hole.
+fn ring_of_strips(n: usize, lift: f64) -> Part<S> {
+    let corner = |k: usize, r: f64| {
+        let a = std::f64::consts::TAU * (k % n) as f64 / n as f64;
+        let z = if k % n % 2 == 1 { lift } else { 0.0 };
+        [r * a.cos(), r * a.sin(), z]
+    };
+    let mut part = Part::<S>::new();
+    for k in 0..n {
+        let (p, q) = (corner(k, 1.0), corner(k + 1, 1.0));
+        let (pp, qq) = (corner(k, 1.5), corner(k + 1, 1.5));
+        coons_sheet(
+            &mut part,
+            &format!("strip{k}"),
+            [line(p, q), line(q, qq), line(qq, pp), line(pp, p)],
+        );
+    }
+    part
+}
+
+/// Fills the hole in a ring of `n` strips, and knits the fill to the ring:
+/// one sheet.
+fn fill_and_knit(n: usize, lift: f64) {
+    let part = ring_of_strips(n, lift);
+    let edges: Vec<String> = (0..n).map(|k| format!("strip{k}(e0)")).collect();
+    let part = span(part, &edges, &[]).unwrap();
+    assert_valid(&part);
+    let fill = part.sheet_face_names().last().unwrap().clone();
+    let mut faces: Vec<String> = (0..n).map(|k| format!("strip{k}(f)")).collect();
+    faces.push(fill);
+    let args = crate::KnitArgs {
+        faces,
+        solid: false,
+    };
+    let part = crate::Knit.apply(part, "k", &args, &NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().shells.len(), 1, "{n} sides, lifted {lift}");
+}
+
+/// A five-sided hole that is not flat: filled with five quadrilaterals,
+/// which knit to the ring around it.
+#[test]
+fn five_sided_hole_filled_and_knit() {
+    fill_and_knit(5, 0.3);
+}
+
+/// Holes of three to eight sides, flat and not, filled and knit.
+#[test]
+#[ignore = "slow: fills of holes of 3..8 sides, flat and lifted — run with `cargo test -- --ignored`"]
+fn holes_of_many_sides_filled_and_knit() {
+    for n in 3..=8 {
+        for lift in [0.0, 0.2, 0.6] {
+            fill_and_knit(n, lift);
+        }
+    }
 }

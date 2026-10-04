@@ -15,16 +15,18 @@
 //!   runs exactly along every one of them. Along edges picked as `tangent`
 //!   it is made tangent to the flat face each of those edges bounds,
 //!   continuing it smoothly (see [`NurbSurface3D::tangent_to_planes`]).
-//! - **three, or five and more**: a patch of quadrilaterals, one at every
-//!   corner of the loop, meeting at a center — the average of the edges'
-//!   midpoints — along straight spokes from each edge's midpoint. Each is a
-//!   Coons patch, so the fill runs exactly along the loop; across the
-//!   spokes the quadrilaterals meet at an angle, not smoothly: an honest
+//! - **three, or five and more**: a flat inner polygon — each corner of the
+//!   loop's halfway to their average, on the plane through it square to
+//!   the loop — and a quadrilateral along every edge, between the edge, the
+//!   straight spokes from its ends to the inner polygon and the polygon's
+//!   side. Each is a Coons patch, so the fill runs exactly along the loop,
+//!   every edge whole — the fill knits to the faces around the hole; across
+//!   the spokes the patches meet at an angle, not smoothly: an honest
 //!   patchwork, not a fair surface.
 //!
-//! A Coons patch needs a corner wherever two of its sides meet: a loop that
-//! runs on smoothly through a vertex leaves a patch with no normal there,
-//! and is refused, naming the vertex. So are two edges sharing an end — the
+//! A Coons patch needs a corner wherever two of its sides meet: a loop of
+//! four that runs on smoothly through a vertex leaves a patch with no
+//! normal there, and is refused, naming the vertex. So are two edges sharing an end — the
 //! ruled face would come to a point — and tangency anywhere but along a
 //! loop of four, or to a face that is not flat.
 
@@ -60,14 +62,13 @@ use crate::{edge, name_of, picked_names, refs};
 /// are; with `tangent`, the fill continues the flat faces those of its
 /// edges bound smoothly.
 ///
-/// The face is named `boundary(B)` — by corner `V` of the loop,
-/// `boundary(B,V,patch)`, for a patch of quadrilaterals. The copy of each
-/// edge or vertex `X` picked is `boundary(B,X)`; a straight edge a ruled
-/// face adds between vertices `V` and `W` is `boundary(B,V,W)`; the halves
-/// of an edge `E` a patch of quadrilaterals splits are `boundary(B,E,0)`
-/// and `boundary(B,E,1)`, between them `boundary(B,E,mid)`, the spoke from
-/// there `boundary(B,E,spoke)` and the center they meet at
-/// `boundary(B,center)`.
+/// The face is named `boundary(B)`. The copy of each edge or vertex `X`
+/// picked is `boundary(B,X)`; a straight edge a ruled face adds between
+/// vertices `V` and `W` is `boundary(B,V,W)`. A patch of quadrilaterals
+/// names the one along edge `E` `boundary(B,E,patch)`, the inner polygon
+/// `boundary(B,inner)`, its side alongside `E` `boundary(B,E,inner)`, its
+/// corner off vertex `V` `boundary(B,V,inner)` and the spoke between them
+/// `boundary(B,V,spoke)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BoundarySurface;
 
@@ -296,7 +297,11 @@ fn ruled<S: Scalar>(
 ) -> GeopResult<(BodySpec<S>, BodyNames)> {
     let along = distance(&a.start, &b.start) + distance(&a.end, &b.end);
     let across = distance(&a.start, &b.end) + distance(&a.end, &b.start);
-    let b = if across < along { b.turned() } else { b.clone() };
+    let b = if across < along {
+        b.turned()
+    } else {
+        b.clone()
+    };
     if a.start.could_be_equal(&b.start) || a.end.could_be_equal(&b.end) {
         return Err(GeopError::new(format!(
             "edges {} and {} share an end: the ruled face between them would come to a point there, which is not supported",
@@ -408,10 +413,7 @@ fn chain<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Vec<Side<S>>> {
 /// The plane of the flat face the edge `edge` bounds, and the direction in
 /// it away from that face at the middle of the edge — what a fill tangent
 /// along the edge continues.
-fn tangent_plane<S: Scalar>(
-    part: &Part<S>,
-    edge: EdgeId,
-) -> GeopResult<(Plane<S>, Vector3<S>)> {
+fn tangent_plane<S: Scalar>(part: &Part<S>, edge: EdgeId) -> GeopResult<(Plane<S>, Vector3<S>)> {
     let model = part.topology();
     let name = name_of(part, edge)?;
     let coedges = model.coedges_of_edge(edge);
@@ -474,7 +476,11 @@ fn fill<S: Scalar>(
 
     if let Some(plane) = flat(sides)? {
         for (e, (p, _)) in planes {
-            let same = p.normal.prod_cross(&plane.normal).norm_sq().could_be_equal(S::ZERO)
+            let same = p
+                .normal
+                .prod_cross(&plane.normal)
+                .norm_sq()
+                .could_be_equal(S::ZERO)
                 && p.signed_distance(&plane.point).could_be_equal(S::ZERO);
             if !same {
                 let side = sides.iter().find(|s| s.edge == *e).expect("a side");
@@ -499,20 +505,18 @@ fn fill<S: Scalar>(
         return Ok((spec, names));
     }
 
-    let corner_name = |k: usize| &sides[k].start_name;
     let curves: Vec<Curve3<S>> = sides.iter().map(Side::oriented).collect();
-    for k in 0..n {
-        if !has_corner(&curves[(k + n - 1) % n], &curves[k])? {
-            return Err(GeopError::new(format!(
-                "the loop runs on smoothly through vertex {}, between edges {} and {}: a patch filling it needs a corner there",
-                corner_name(k),
-                sides[(k + n - 1) % n].name,
-                sides[k].name
-            )));
-        }
-    }
-
     if n == 4 {
+        for k in 0..n {
+            if !has_corner(&curves[(k + n - 1) % n], &curves[k])? {
+                return Err(GeopError::new(format!(
+                    "the loop runs on smoothly through vertex {}, between edges {} and {}: a Coons patch filling it needs a corner there",
+                    sides[k].start_name,
+                    sides[(k + n - 1) % n].name,
+                    sides[k].name
+                )));
+            }
+        }
         for (k, s) in sides.iter().enumerate() {
             spec.edges.push(EdgeSpec {
                 curve: s.curve.clone(),
@@ -614,7 +618,9 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
             .next()
             .expect("a complement");
     }
-    let e1 = e1.sub(&plane.normal.prod_scalar(e1.prod_dot(&plane.normal))).normalize()?;
+    let e1 = e1
+        .sub(&plane.normal.prod_scalar(e1.prod_dot(&plane.normal)))
+        .normalize()?;
     let e2 = plane.normal.prod_cross(&e1);
     // In the plane's coordinates, homogeneous.
     let local = |curve: &Curve3<S>| -> Vec<Vector3<S>> {
@@ -704,9 +710,9 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
     })
 }
 
-/// The loop `sides` filled with a quadrilateral at each corner, meeting at
-/// a center (see the module docs), added to `spec`, which has the loop's
-/// corners.
+/// The loop `sides` filled with a quadrilateral along each side around a
+/// flat inner polygon (see the module docs), added to `spec`, which has
+/// the loop's corners.
 fn quads<S: Scalar>(
     namer: &Namer,
     sides: &[Side<S>],
@@ -715,80 +721,115 @@ fn quads<S: Scalar>(
     mut names: BodyNames,
 ) -> GeopResult<(BodySpec<S>, BodyNames)> {
     let n = sides.len();
-    // Each side's halves, as the loop runs, and the point between them.
-    let mut halves = Vec::with_capacity(n);
-    let mut middles = Vec::with_capacity(n);
-    for curve in curves {
-        let (t0, t1) = curve.domain();
-        // Where to halve is a free choice.
-        let (first, second) = curve.split(t0.add(t1).div(S::TWO)?.sharpen())?;
-        let last = first.control_points[first.control_points.len() - 1];
-        middles.push(Vector3::from_array([
-            last[0].div(last[3])?,
-            last[1].div(last[3])?,
-            last[2].div(last[3])?,
-        ]));
-        halves.push((first, second));
-    }
-    // The center, an average: a free choice.
-    let center = middles
+    // The inner polygon: each corner halfway to the corners' average,
+    // moved onto the plane through that average square to the loop's
+    // (Newell) normal — all free choices, sharpened, so long as the
+    // polygon is flat and inside the loop.
+    let center = sides
         .iter()
-        .fold(Vector3::zero(), |sum, m| sum.add(m))
+        .fold(Vector3::zero(), |sum, s| sum.add(&s.start))
         .prod_scalar(S::ONE.div(S::from_i64(n as i64))?)
         .sharpen();
-    // Vertices: the corners `0..n`, the middles `n..2n`, the center `2n`.
-    for (s, m) in sides.iter().zip(&middles) {
-        spec.vertices.push(*m);
-        names.vertices.push(namer.name(&[&s.name, "mid"]));
-    }
-    spec.vertices.push(center);
-    names.vertices.push(namer.name(&["center"]));
-    let middle = |k: usize| n + k;
-    let center_at = 2 * n;
-    // Edges: per side its halves as the loop runs, `3k` and `3k + 1`, and
-    // its spoke, `3k + 2`, from its middle to the center.
-    for (k, s) in sides.iter().enumerate() {
-        let (first, second) = &halves[k];
-        // Named in the edge's own direction.
-        let (a, b) = if s.forward { ("0", "1") } else { ("1", "0") };
-        spec.edges.push(EdgeSpec {
-            curve: first.clone(),
-            start: k,
-            end: middle(k),
-        });
-        names.edges.push(namer.name(&[&s.name, a]));
-        spec.edges.push(EdgeSpec {
-            curve: second.clone(),
-            start: middle(k),
-            end: (k + 1) % n,
-        });
-        names.edges.push(namer.name(&[&s.name, b]));
-        spec.edges.push(EdgeSpec {
-            curve: line3(middles[k], center)?,
-            start: middle(k),
-            end: center_at,
-        });
-        names.edges.push(namer.name(&[&s.name, "spoke"]));
-    }
+    let mut normal = [0.0f64; 3];
     for k in 0..n {
-        let before = (k + n - 1) % n;
-        let spoke = &spec.edges[3 * k + 2].curve;
-        let back = spec.edges[3 * before + 2].curve.reverse();
-        let surface = NurbSurface3D::coons([&halves[k].0, spoke, &back, &halves[before].1])?;
+        let (a, b) = (&sides[k].start, &sides[(k + 1) % n].start);
+        let (a, b) = (
+            a.to_array().map(|x| x.to_f64()),
+            b.to_array().map(|x| x.to_f64()),
+        );
+        normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    let plane = Plane::try_new(center, Vector3::from_array(normal.map(S::from_f64)))?;
+    let inner: Vec<Vector3<S>> = sides
+        .iter()
+        .map(|s| {
+            let halfway = center.add(&s.start.sub(&center).prod_scalar(S::ONE.div(S::TWO)?));
+            Ok(plane.project(&halfway).sharpen())
+        })
+        .collect::<GeopResult<_>>()?;
+    // Vertices: the corners `0..n`, the inner corners `n..2n`.
+    for (s, p) in sides.iter().zip(&inner) {
+        spec.vertices.push(*p);
+        names.vertices.push(namer.name(&[&s.start_name, "inner"]));
+    }
+    let inner_at = |k: usize| n + k % n;
+    // Edges: per side its copy, `3k`, the spoke from its start to the
+    // inner polygon, `3k + 1`, and the inner polygon's side alongside it,
+    // `3k + 2`.
+    let mut inner_sides = Vec::with_capacity(n);
+    for (k, s) in sides.iter().enumerate() {
+        let (a, b) = (k, (k + 1) % n);
+        spec.edges.push(EdgeSpec {
+            curve: s.curve.clone(),
+            start: if s.forward { a } else { b },
+            end: if s.forward { b } else { a },
+        });
+        names.edges.push(namer.name(&[&s.name]));
+        spec.edges.push(EdgeSpec {
+            curve: line3(s.start, inner[k])?,
+            start: k,
+            end: inner_at(k),
+        });
+        names.edges.push(namer.name(&[&s.start_name, "spoke"]));
+        let curve = line3(inner[k], inner[(k + 1) % n])?;
+        spec.edges.push(EdgeSpec {
+            curve: curve.clone(),
+            start: inner_at(k),
+            end: inner_at(k + 1),
+        });
+        names.edges.push(namer.name(&[&s.name, "inner"]));
+        inner_sides.push(Side {
+            edge: s.edge,
+            name: namer.name(&[&s.name, "inner"]),
+            curve,
+            forward: true,
+            start: inner[k],
+            end: inner[(k + 1) % n],
+            start_name: String::new(),
+            end_name: String::new(),
+        });
+    }
+    let mut faces = Vec::with_capacity(n + 1);
+    for k in 0..n {
+        let next = (k + 1) % n;
+        let spoke_out = spec.edges[3 * next + 1].curve.clone();
+        let back = spec.edges[3 * k + 2].curve.reverse();
+        let spoke_in = spec.edges[3 * k + 1].curve.reverse();
+        for (a, b, what) in [
+            (&curves[k], &spoke_out, &sides[next].start_name),
+            (&back, &spoke_in, &sides[k].start_name),
+        ] {
+            if !has_corner(a, b)? {
+                return Err(GeopError::new(format!(
+                    "the spoke at vertex {what} runs along edge {}: the patch along it would have no corner there",
+                    sides[k].name
+                )));
+            }
+        }
+        let surface = NurbSurface3D::coons([&curves[k], &spoke_out, &back, &spoke_in])?;
+        faces.push(spec.faces.len());
         spec.faces.push(patch_face(
             surface,
             [
-                (3 * k, Sense::Forward),
-                (3 * k + 2, Sense::Forward),
-                (3 * before + 2, Sense::Reversed),
-                (3 * before + 1, Sense::Forward),
+                (3 * k, sides[k].sense()),
+                (3 * next + 1, Sense::Forward),
+                (3 * k + 2, Sense::Reversed),
+                (3 * k + 1, Sense::Reversed),
             ],
         )?);
-        names
-            .faces
-            .push(namer.name(&[&sides[k].start_name, "patch"]));
+        names.faces.push(namer.name(&[&sides[k].name, "patch"]));
     }
-    spec.shells.push((0..n).collect());
+    // The inner polygon, flat, its sides run as the loop runs.
+    let mut middle = flat_face(&inner_sides, &plane)?;
+    for (k, c) in middle.outer.iter_mut().enumerate() {
+        c.on = CoedgeOn::Edge(3 * k + 2, Sense::Forward);
+    }
+    faces.push(spec.faces.len());
+    spec.faces.push(middle);
+    names.faces.push(namer.name(&["inner"]));
+    spec.shells.push(faces);
     Ok((spec, names))
 }
 

@@ -80,9 +80,14 @@ fn thicken_a_boundary_surface() {
 #[test]
 fn thicken_a_cylinders_sides_into_a_tube() {
     let mut part = Part::<S>::new();
-    let cylinder =
-        revolved_cylinder(&mut part, "cyl", v3(0., 0., 0.), S::from_f64(1.0), S::from_f64(2.0))
-            .unwrap();
+    let cylinder = revolved_cylinder(
+        &mut part,
+        "cyl",
+        v3(0., 0., 0.),
+        S::from_f64(1.0),
+        S::from_f64(2.0),
+    )
+    .unwrap();
     let sides: Vec<_> = part
         .topology()
         .solid_faces(cylinder)
@@ -96,7 +101,8 @@ fn thicken_a_cylinders_sides_into_a_tube() {
     let built = part
         .copy_faces(&sides, None, |name| format!("copy({name})"))
         .unwrap();
-    part.assemble_solid(&[Body::Solid(cylinder)], &[], "").unwrap();
+    part.assemble_solid(&[Body::Solid(cylinder)], &[], "")
+        .unwrap();
     let face = part.name_of(built.faces[0]).unwrap().to_string();
     let part = thickened(part, &face, ThickenSide::Against).unwrap();
     assert_valid(&part);

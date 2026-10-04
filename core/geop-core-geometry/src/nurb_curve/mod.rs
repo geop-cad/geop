@@ -1,6 +1,6 @@
 mod compatible;
-mod extend;
 mod evaluate;
+mod extend;
 mod interpolate;
 mod refine;
 pub use interpolate::true_point_fractions;

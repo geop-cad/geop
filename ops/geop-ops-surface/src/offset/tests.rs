@@ -17,9 +17,14 @@ fn offset(part: Part<S>, faces: Vec<String>, distance: f64) -> GeopResult<Part<S
 #[test]
 fn offset_a_cylinder_face() {
     let mut part = Part::<S>::new();
-    let cylinder =
-        revolved_cylinder(&mut part, "cyl", v3(0., 0., 0.), S::from_f64(1.0), S::from_f64(2.0))
-            .unwrap();
+    let cylinder = revolved_cylinder(
+        &mut part,
+        "cyl",
+        v3(0., 0., 0.),
+        S::from_f64(1.0),
+        S::from_f64(2.0),
+    )
+    .unwrap();
     let sides: Vec<String> = part
         .topology()
         .solid_faces(cylinder)
@@ -41,7 +46,10 @@ fn offset_a_cylinder_face() {
         let (u0, u1) = surface.domain_u();
         let (v0, v1) = surface.domain_v();
         let p = surface
-            .evaluate(u0.add(u1).div(S::TWO).unwrap(), v0.add(v1).div(S::TWO).unwrap())
+            .evaluate(
+                u0.add(u1).div(S::TWO).unwrap(),
+                v0.add(v1).div(S::TWO).unwrap(),
+            )
             .unwrap();
         let r = p[0].mul(p[0]).add(p[1].mul(p[1])).sqrt().unwrap();
         assert!(r.could_be_equal(S::from_f64(1.2)), "{name}: {r:?}");
@@ -63,7 +71,9 @@ fn offset_three_faces_of_a_cube_inward() {
             // The faces through the corner at the origin.
             let surface = &part.topology().get_face(f).unwrap().surface;
             let plane = surface.as_plane().unwrap().unwrap();
-            plane.signed_distance(&v3(0., 0., 0.)).could_be_equal(S::ZERO)
+            plane
+                .signed_distance(&v3(0., 0., 0.))
+                .could_be_equal(S::ZERO)
         })
         .map(|f| part.name_of(f).unwrap().to_string())
         .collect();
