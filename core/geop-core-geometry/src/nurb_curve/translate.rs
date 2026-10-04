@@ -47,7 +47,10 @@ impl<S: Scalar> NurbCurve<S, 4> {
 /// `1 t` outward would only widen the point. For a translation `A` is the
 /// identity and is not applied either, so the point moves by one addition
 /// per coordinate.
-pub(crate) fn transform_control_point<S: Scalar>(cp: &Vector4<S>, motion: &Motion<S>) -> Vector4<S> {
+pub(crate) fn transform_control_point<S: Scalar>(
+    cp: &Vector4<S>,
+    motion: &Motion<S>,
+) -> Vector4<S> {
     let w = cp[3];
     let p = motion.rotate(&Vector3::from_array([cp[0], cp[1], cp[2]]));
     let mut t = motion.position();

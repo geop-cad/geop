@@ -109,8 +109,7 @@ mod tests {
         let cube = test_cube_solid(&mut model);
         let before = model.clone();
         let axis = v::<S>(1.0, 2.0, 3.0).normalize().unwrap();
-        let pose =
-            Pose::rotation_about(&v(0.5, -1.0, 2.0), &axis, S::from_f64(1.234)).unwrap();
+        let pose = Pose::rotation_about(&v(0.5, -1.0, 2.0), &axis, S::from_f64(1.234)).unwrap();
         model.transform_body(cube, &pose.motion()).unwrap();
         assert_valid(&model);
         for (id, vertex) in &model.vertices {
@@ -134,7 +133,8 @@ mod tests {
         assert_valid(&model);
         for (id, vertex) in &model.vertices {
             let p = before.vertices[id].point;
-            let expected = v::<S>(4.0, 0.0, 0.0).add(&Vector3::from_array([p[0].neg(), p[1], p[2]]));
+            let expected =
+                v::<S>(4.0, 0.0, 0.0).add(&Vector3::from_array([p[0].neg(), p[1], p[2]]));
             assert!(vertex.point.could_be_equal(&expected), "{vertex:?}");
         }
     }

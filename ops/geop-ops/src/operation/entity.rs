@@ -12,6 +12,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::{CurveId, PointId};
+use geop_core_topology::Body;
 use serde::{Deserialize, Serialize};
 
 /// What separates an instance's name from the name of an entity of the part
@@ -257,6 +258,26 @@ impl EntityRef {
                 Ok(part.sketch(id).with_context(ctx)?.plane.clone())
             }
             _ => Err(GeopError::new(format!("{self} is not planar"))),
+        }
+    }
+
+    /// The body it refers to in `part`: a solid by its name, a sheet —
+    /// faces standing on their own, which have no name as a whole — by one
+    /// of its faces. A face of a solid stands for the whole solid. Fails
+    /// for anything else, and for a body of a placed part, which is that
+    /// part's own program's to change.
+    pub fn resolve_body<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Body> {
+        if self.split_instance().is_some() {
+            return Err(GeopError::new(format!(
+                "{self} belongs to a placed part; change it in the part's own program"
+            )));
+        }
+        match self {
+            EntityRef::Solid { name } => Ok(Body::Solid(part.solid_id(name)?)),
+            EntityRef::Face { name } => part.topology().body_of_face(part.face_id(name)?),
+            other => Err(GeopError::new(format!(
+                "{other} is no body: pick a solid or a face standing on its own"
+            ))),
         }
     }
 }

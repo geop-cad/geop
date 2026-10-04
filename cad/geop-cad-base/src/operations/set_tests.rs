@@ -29,7 +29,11 @@ fn every_operation_is_offered() {
             "chamfer",
             "shell",
             "add_datum",
-            "add_part"
+            "add_part",
+            "linear_pattern",
+            "circular_pattern",
+            "mirror",
+            "move_body"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

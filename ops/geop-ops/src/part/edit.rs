@@ -213,12 +213,13 @@ impl<S: Scalar> Part<S> {
         rename: impl Fn(&str) -> String,
     ) -> GeopResult<BuiltBody> {
         let faces = self.topology.body_faces(body)?;
-        let solid = match body {
-            Body::Solid(solid) => Some(rename(self.names.name_of(solid).ok_or_else(|| {
-                GeopError::new(format!("Part::copy_body: {solid} has no name"))
-            })?)),
-            Body::Sheet(_) => None,
-        };
+        let solid =
+            match body {
+                Body::Solid(solid) => Some(rename(self.names.name_of(solid).ok_or_else(|| {
+                    GeopError::new(format!("Part::copy_body: {solid} has no name"))
+                })?)),
+                Body::Sheet(_) => None,
+            };
         let (mut spec, sources) = self.topology.body_spec(&faces, solid.is_some())?;
         // `body_spec` puts every face into one shell; a solid with a void
         // has more, which the copy keeps.
