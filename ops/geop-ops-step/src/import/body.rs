@@ -894,6 +894,14 @@ impl<S: Scalar> Builder<'_, S> {
             let (v_lo, v_hi) = v_range_of(self, &members)?;
             let v0 = bottom_pole.unwrap_or(v_lo);
             let v1 = top_pole.unwrap_or(v_hi);
+            // Rings a whole turn of the tube apart are one circle: the face
+            // goes round the tube as well as the axis — a whole torus.
+            // (Samples a hundredth of a turn short of one still are.)
+            if revolved.v_is_angle() && v1 - v0 >= 0.99 * std::f64::consts::TAU {
+                return Err(GeopError::new(
+                    "it goes all the way round its torus' tube as well as its axis, as a whole torus does: not supported",
+                ));
+            }
             let (v0, v1) = widen_v(&revolved, v0, v1, bottom_pole.is_some(), top_pole.is_some());
             let mut name = base_name.clone();
             name.push(format!("q{s}"));
@@ -1607,6 +1615,9 @@ struct Grid<S: Scalar> {
 
 const GRID: usize = 12;
 
+/// How many of the nearest grid points a projection tries Newton from.
+const SEEDS: usize = 4;
+
 impl<S: Scalar> Grid<S> {
     fn new(surface: &NurbSurface3D<S>) -> GeopResult<Self> {
         let (u0, u1) = surface.domain_u();
@@ -1632,14 +1643,31 @@ impl<S: Scalar> Grid<S> {
 
     /// The foot point of `p` on `surface`: Newton from the nearest grid
     /// point.
+    /// Newton runs from the few nearest grid points, and the foot point
+    /// nearest `p` wins: on a curved patch the nearest grid point can lie
+    /// in the basin of another foot point.
     fn project(&self, surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<(S, S)> {
         let target = to_p3(p);
-        let (u, v, _) = self
-            .points
-            .iter()
-            .min_by(|a, b| distance(a.2, target).total_cmp(&distance(b.2, target)))
-            .expect("a grid has points");
-        surface.project(*p, *u, *v, 30)
+        let mut seeds: Vec<&(S, S, P3)> = self.points.iter().collect();
+        seeds.sort_by(|a, b| distance(a.2, target).total_cmp(&distance(b.2, target)));
+        let mut best: Option<(f64, (S, S))> = None;
+        for (u, v, _) in seeds.into_iter().take(SEEDS) {
+            let Ok(foot) = surface.project(*p, *u, *v, 30) else {
+                continue;
+            };
+            let Ok(at) = surface.evaluate(foot.0, foot.1) else {
+                continue;
+            };
+            let d = distance(to_p3(&at), target);
+            if best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, foot));
+            }
+        }
+        best.map(|(_, foot)| foot).ok_or_else(|| {
+            GeopError::new(format!(
+                "no foot point of {p:?} on the face's surface was found"
+            ))
+        })
     }
 }
 
@@ -1762,7 +1790,20 @@ fn fit_loop<S: Scalar>(
         let on_start = surface.evaluate(a[0], a[1])?;
         let on_end = surface.evaluate(b[0], b[1])?;
         for (v, extra) in [(start, [curve_start, on_start]), (end, [curve_end, on_end])] {
-            for p in extra {
+            for (p, source) in extra
+                .into_iter()
+                .zip(["the end of the edge", "its foot point on the face"])
+            {
+                let off = distance(to_p3(&p), to_p3(&vertices[v].origin));
+                if off > ACCURACY {
+                    return Err(GeopError::new(format!(
+                        "the vertex {} is at {:?}, but {source} {} is {off:e} mm from it — more than the {ACCURACY:e} mm the kernel can carry as one point (the face built over the angles and profile parameters {:?})",
+                        vertices[v].name.join(","),
+                        to_p3(&vertices[v].origin),
+                        edge.name.join(","),
+                        patch.extent,
+                    )));
+                }
                 vertices[v].point = vertices[v].point.union(&p);
             }
         }
@@ -1794,6 +1835,11 @@ fn fit_loop<S: Scalar>(
     }
     Ok(joined)
 }
+
+/// The widest a vertex or a control point may be in the kernel (its
+/// validation's bound): places the file says are one point lying further
+/// apart than this cannot be one geop vertex.
+const ACCURACY: f64 = 1e-4;
 
 /// How often an edge is measured against its faces and widened: the first
 /// time by the file's disagreement, after by rounding.

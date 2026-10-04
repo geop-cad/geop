@@ -53,7 +53,13 @@ fn imported(text: String) -> Part<S> {
 /// place, and valid.
 #[test]
 fn examples_round_trip_through_step() {
-    let chosen = ["box_with_drill_hole", "bracket", "cross_drilled_shaft", "revolved_cone_on_box", "pin"];
+    let chosen = [
+        "box_with_drill_hole",
+        "bracket",
+        "cross_drilled_shaft",
+        "revolved_cone_on_box",
+        "pin",
+    ];
     for (name, program) in examples::all() {
         if !chosen.contains(&name) {
             continue;

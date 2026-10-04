@@ -34,12 +34,12 @@ use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, 
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
+use geop_ops_step::{ImportStep, ImportStepArgs};
 use geop_ops_surface::{
     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
 };
 use serde::{Deserialize, Serialize};
-use geop_ops_step::{ImportStep, ImportStepArgs};
 
 #[cfg(test)]
 mod assembly_scale_tests;
@@ -74,6 +74,8 @@ mod sketch3d_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]
+mod step_tests;
+#[cfg(test)]
 mod stress_tests;
 #[cfg(test)]
 mod surface_tests;
@@ -83,8 +85,6 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
-#[cfg(test)]
-mod step_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

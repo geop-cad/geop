@@ -25,7 +25,12 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// `f64` as [`crate::shape::Arc::point_at`] does: any angle serves
     /// equally well, and each joint lies honestly on the circle it is built
     /// from. Fails unless `to` is more than `from`, by at most a full turn.
-    pub fn revolve(profile: &NurbCurve3D<S>, axis: &Axis<S>, from: f64, to: f64) -> GeopResult<Self> {
+    pub fn revolve(
+        profile: &NurbCurve3D<S>,
+        axis: &Axis<S>,
+        from: f64,
+        to: f64,
+    ) -> GeopResult<Self> {
         let sweep = to - from;
         if !(sweep > 0.0 && sweep <= std::f64::consts::TAU) {
             return Err(GeopError::new(format!(
@@ -71,7 +76,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
             });
             for &angle in &angles[1..] {
                 let next = radius_at(angle);
-                let middle = center.add(&previous.add(&next).prod_scalar(S::ONE.div(one_plus_cos)?));
+                let middle =
+                    center.add(&previous.add(&next).prod_scalar(S::ONE.div(one_plus_cos)?));
                 column.push(homogeneous(middle, w.mul(middle_weight)));
                 column.push(homogeneous(center.add(&next), w));
                 previous = next;
@@ -145,7 +151,10 @@ mod tests {
                 S::TWO.add(S::TWO.mul(sin)),
                 S::from_f64(-1.0),
             ]);
-            assert!(start.could_be_equal(&expected), "{from}: {start:?} vs {expected:?}");
+            assert!(
+                start.could_be_equal(&expected),
+                "{from}: {start:?} vs {expected:?}"
+            );
         }
     }
     #[test]
