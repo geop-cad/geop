@@ -107,8 +107,8 @@ pub mod program;
 pub mod ui;
 
 pub use part::{
-    BodyNames, Component, DatumId, EdgeDescription, FaceDescription, Instance, InstanceId,
-    NameRegistry, Namer, ORIGIN, Part, PartDescription, PlacedSketch, RefId, SketchId,
+    BodyNames, Component, CosmeticThread, DatumId, EdgeDescription, FaceDescription, Instance,
+    InstanceId, NameRegistry, Namer, ORIGIN, Part, PartDescription, PlacedSketch, RefId, SketchId,
     validate_operation_id,
 };
 

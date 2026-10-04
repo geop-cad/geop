@@ -25,14 +25,18 @@ mod names;
 mod resolve;
 mod sketch;
 mod state;
+mod thread;
 
-pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
+pub use describe::{
+    EdgeDescription, FaceDescription, InstanceDescription, PartDescription, ThreadDescription,
+};
 pub use edit::BodyNames;
 pub use ids::{DatumId, InstanceId, RefId, SketchId};
 pub use instance::{Component, Instance};
 pub use names::{NameRegistry, Namer, validate_operation_id};
 pub use sketch::PlacedSketch;
 pub use state::{ParamValue, State, pose_parameter};
+pub use thread::CosmeticThread;
 
 /// A complete, editable CAD part: its boundary-representation topology, the
 /// sketches and datums used to build it — starting with the frame
@@ -58,6 +62,8 @@ pub struct Part<S: Scalar> {
     pub(crate) datums: BTreeMap<DatumId, Datum<S>>,
     pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
     pub(crate) mates: BTreeMap<String, Mate>,
+    /// Its cosmetic threads, by name (see [`CosmeticThread`]).
+    pub(crate) threads: BTreeMap<String, CosmeticThread<S>>,
     /// The parameter values the part is built with (see [`Part::pose_parameter`]).
     pub(crate) inputs: State,
     /// The parameters its steps declared, with the values they read.
@@ -84,6 +90,7 @@ impl<S: Scalar> Part<S> {
             datums: BTreeMap::new(),
             instances: BTreeMap::new(),
             mates: BTreeMap::new(),
+            threads: BTreeMap::new(),
             inputs: State::new(),
             declared: State::new(),
             parameters: crate::parameters::Parameters::default(),
