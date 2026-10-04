@@ -13,3 +13,8 @@ geop-ops-derive.workspace = true
 geop-ops-rasterize.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+# Native builds draw the components of a part's placed parts side by side;
+# the browser's wasm build has no threads, and draws them one by one.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon.workspace = true

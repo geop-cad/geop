@@ -492,6 +492,23 @@ impl<S: Scalar> PartView<S> {
             },
             color: part.color().map(str::to_string),
         };
+        // The views of the components placed, each drawn once: natively,
+        // the distinct ones side by side — each is its own part, and
+        // [`Component::view`] keeps the first drawn.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            let mut distinct: Vec<&Arc<Component<S>>> = Vec::new();
+            for (_, instance) in part.instances() {
+                if !distinct.iter().any(|c| Arc::ptr_eq(c, &instance.component)) {
+                    distinct.push(&instance.component);
+                }
+            }
+            distinct.par_iter().for_each(|component| {
+                // A view that cannot be drawn fails again below, saying why.
+                let _ = component.view();
+            });
+        }
         for (id, instance) in part.instances() {
             let instance_name = name(id.into());
             view.add_instance(

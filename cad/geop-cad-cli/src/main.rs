@@ -12,10 +12,12 @@
 //! [`serve`]).
 
 use std::{
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufWriter, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Arc,
 };
 
 use clap::{Parser, Subcommand};
@@ -25,7 +27,7 @@ use geop_core_math::{
     primitives::{Pose, TriangleFace},
     scalars::scal_in_f64::ScalInF64,
 };
-use geop_ops::{Files, Part, operation::INSTANCE_SEPARATOR};
+use geop_ops::{Component, Files, Part, operation::INSTANCE_SEPARATOR};
 use geop_ops_rasterize::{
     rasterize,
     stl::{StlFormat, StlTriangle, outward, write_stl},
@@ -130,18 +132,44 @@ impl Files for Disk {
     }
 }
 
-/// Every solid of `part` and of the parts placed in it, by name — a placed
-/// part's behind its instance's name — as triangles, moved by `pose` and
-/// meshed `quality` fine.
+/// The solids of a part, each by name with its triangles.
+type Meshed = Vec<(String, Vec<TriangleFace<S>>)>;
+
+/// Every solid of `part` itself — not of the parts placed in it — by name,
+/// as triangles in its own frame, meshed `quality` fine.
+fn own_solids(part: &Part<S>, quality: usize) -> GeopResult<Meshed> {
+    let model = part.topology();
+    let raster = rasterize(model, quality)?;
+    let mut out = Vec::new();
+    for &solid in model.solids.keys() {
+        let mut faces = model.solid_faces(solid)?;
+        faces.sort_by_key(|f| f.0);
+        let triangles = faces
+            .iter()
+            .filter_map(|f| raster.faces.get(f))
+            .flatten()
+            .cloned()
+            .collect();
+        let name = part.name_of(solid).unwrap_or_default();
+        out.push((name.to_string(), triangles));
+    }
+    Ok(out)
+}
+
+/// Every solid of a part — whose own are `own` (see [`own_solids`]) — and
+/// of the parts placed in it, by name — a placed part's behind its
+/// instance's name — as triangles, moved by `pose` and meshed `quality`
+/// fine. A component placed many times is meshed once (`meshed`, by the
+/// component).
 fn solids(
     part: &Part<S>,
+    own: &Meshed,
     pose: &Pose<S>,
     prefix: &str,
     quality: usize,
-    out: &mut Vec<(String, Vec<TriangleFace<S>>)>,
+    meshed: &mut HashMap<*const Component<S>, Arc<Meshed>>,
+    out: &mut Meshed,
 ) -> GeopResult<()> {
-    let model = part.topology();
-    let raster = rasterize(model, quality)?;
     let motion = pose.motion();
     let place = |t: &TriangleFace<S>| TriangleFace {
         a: motion.apply(&t.a),
@@ -150,26 +178,27 @@ fn solids(
         normal: motion.rotate(&t.normal),
         vertex_normals: t.vertex_normals.map(|ns| ns.map(|n| motion.rotate(&n))),
     };
-    for &solid in model.solids.keys() {
-        let mut faces = model.solid_faces(solid)?;
-        faces.sort_by_key(|f| f.0);
-        let triangles = faces
-            .iter()
-            .filter_map(|f| raster.faces.get(f))
-            .flatten()
-            .map(place)
-            .collect();
-        let name = part.name_of(solid).unwrap_or_default();
-        out.push((format!("{prefix}{name}"), triangles));
+    for (name, triangles) in own {
+        out.push((
+            format!("{prefix}{name}"),
+            triangles.iter().map(place).collect(),
+        ));
     }
     for (id, instance) in part.instances() {
         let name = part.name_of(id).unwrap_or_default();
         let prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
+        let key = Arc::as_ptr(&instance.component);
+        if !meshed.contains_key(&key) {
+            meshed.insert(key, Arc::new(own_solids(instance.part(), quality)?));
+        }
+        let inner = meshed[&key].clone();
         solids(
             instance.part(),
+            &inner,
             &pose.compose(&instance.pose),
             &prefix,
             quality,
+            meshed,
             out,
         )?;
     }
@@ -199,11 +228,14 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     // The solids to write, in name order so the file does not depend on
     // how the part stores them.
     let mut all = Vec::new();
+    let quality = usize::from(args.quality);
     solids(
         &part,
+        &own_solids(&part, quality)?,
         &Pose::identity(),
         "",
-        usize::from(args.quality),
+        quality,
+        &mut HashMap::new(),
         &mut all,
     )?;
     all.sort_by(|a, b| a.0.cmp(&b.0));

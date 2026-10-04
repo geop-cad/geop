@@ -274,6 +274,7 @@ dependencies = [
  "geop-core-topology",
  "geop-ops-derive",
  "geop-ops-rasterize",
+ "rayon",
  "serde",
  "serde_json",
 ]
