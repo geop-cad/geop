@@ -21,6 +21,7 @@ use geop_ops_extrude_revolve::{
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
+use geop_ops_plastic::{Draft, DraftArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -51,6 +52,8 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod plastic_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.
@@ -101,6 +104,9 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Tilt planar faces about a neutral plane, so the part comes out of
+    /// its mould.
+    Draft(DraftArgs),
 }
 
 /// A program of the editor's operations.

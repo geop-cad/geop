@@ -2,6 +2,9 @@
 //! faces a mould slides along.
 
 pub mod draft;
+pub mod operation;
+
+pub use operation::{Draft, DraftArgs};
 
 #[cfg(test)]
 mod tests;
