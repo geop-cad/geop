@@ -1120,8 +1120,9 @@ fn number_parameter(name: &str, expression: &str, min: f64, max: f64) -> Paramet
 }
 
 /// A plate designed by its parameters: `width` and `depth` — half the
-/// width, unless placed otherwise — and a blind hole in its middle sized for the
-/// screw chosen from a table of sizes, and its colour. The hole's sketch,
+/// width, unless placed otherwise — extruded `thickness` thick, and a blind
+/// hole in its middle sized for the screw chosen from a table of sizes,
+/// and its colour. The hole's sketch,
 /// on the plate's top, projects the top, and puts the hole in the middle
 /// of it. The plate is meant to be placed with other values, and
 /// everything follows.
@@ -1154,6 +1155,7 @@ pub fn parametric_plate() -> Program {
                     selected: "M4".into(),
                 },
             },
+            number_parameter("thickness", "0.5", 0.1, 2.0),
         ],
     };
 
@@ -1187,7 +1189,7 @@ pub fn parametric_plate() -> Program {
         "plate",
         ExtrudeArgs {
             sketch: "outline".into(),
-            extent: Extents::blind(0.5),
+            extent: Extents::blind("thickness"),
             face: false,
             combine: Combine::NewBody,
         },

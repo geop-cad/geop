@@ -233,6 +233,9 @@ pub struct ProgramRunner<S: Scalar, O> {
     reads: Vec<BTreeSet<String>>,
     /// How many steps the last run covers.
     ran: usize,
+    /// How many steps the last run built, rather than took from the parts
+    /// earlier runs built.
+    built_anew: usize,
 }
 
 /// A library that notes the files of every part it gives out: what a step
@@ -271,6 +274,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             results: Vec::new(),
             reads: Vec::new(),
             ran: 0,
+            built_anew: 0,
         }
     }
 
@@ -341,6 +345,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
 
         let target = stop.unwrap_or(program.steps.len()).min(program.steps.len());
         let failed = |results: &[StepResult]| results.iter().any(|r| r.error.is_some());
+        self.built_anew = 0;
         while self.steps.len() < target && !failed(&self.results) {
             let index = self.steps.len();
             let step = &program.steps[index];
@@ -354,6 +359,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
                 Ok(part) => (part, None),
                 Err(e) => (before.clone(), Some(e.to_string())),
             };
+            self.built_anew += 1;
             self.steps.push(step.clone());
             self.parts.push(part);
             self.reads.push(recording.read.into_inner());
@@ -391,6 +397,13 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
     /// One result per step the last run covered.
     pub fn results(&self) -> &[StepResult] {
         &self.results[..self.ran]
+    }
+
+    /// How many steps the last run built — the rest of those it covered
+    /// it took as earlier runs built them: what an edit, or a change of a
+    /// parameter, cost.
+    pub fn built_anew(&self) -> usize {
+        self.built_anew
     }
 }
 
