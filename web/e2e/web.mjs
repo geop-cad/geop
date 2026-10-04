@@ -12,10 +12,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { Checks, OUT, WEB, expect, launch, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
-
-const only = process.argv.includes("--only") ? process.argv[process.argv.indexOf("--only") + 1] : null;
-const shots = process.argv.includes("--shots");
+import { Checks, fileMenu, WEB, expect, launch, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
@@ -25,15 +22,7 @@ const page = await context.newPage();
 const errors = watchErrors(page);
 const checks = new Checks(page, errors);
 
-/** Run the check `name` unless `--only` leaves it out; with `--shots`, keep a screenshot of how it ended. */
-async function check(name, body) {
-  if (only && !name.includes(only)) return;
-  await checks.check(name, body);
-  if (shots) {
-    fs.mkdirSync(OUT, { recursive: true });
-    await page.screenshot({ path: path.join(OUT, `${name.replace(/[^\w.-]+/g, "_").slice(0, 80)}.png`) });
-  }
-}
+const check = (name, body) => checks.check(name, body);
 
 /** The app as a new visitor sees it: no files kept from before, one empty part. */
 async function fresh() {
@@ -41,13 +30,6 @@ async function fresh() {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await settle(page);
-}
-
-/** Pick `label` from the File menu. */
-async function fileMenu(label) {
-  const trigger = page.locator(".file-menu .dropdown-trigger");
-  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
-  await page.locator(".file-menu .dropdown-item", { hasText: label }).first().click();
 }
 
 /** The labels of the File menu's entries under the heading `heading`. */
@@ -120,7 +102,7 @@ await check("the File menu offers examples", async () => {
 for (const label of [...parts, ...assemblies]) {
   await check(`example ${label}`, async () => {
     await fresh();
-    await fileMenu(label);
+    await fileMenu(page, label);
     const stats = await builtCleanly();
     expect(!stats.startsWith("0 steps"), `nothing was loaded: ${stats}`);
     expect(!/ 0 tris/.test(stats), `nothing is drawn: ${stats}`);
@@ -169,7 +151,7 @@ await check("every operation opens on an empty part", async () => {
 });
 await check("every operation opens on a part", async () => {
   await fresh();
-  await fileMenu(parts.find((p) => p === "Box with drill hole") ?? parts[0]);
+  await fileMenu(page, "Box with drill hole");
   await builtCleanly();
   const result = await everyOperation();
   await builtCleanly();
@@ -257,11 +239,11 @@ for (const [example, entry, name, valid] of exports) {
   await check(`${entry} of ${example}`, async () => {
     if (loaded !== example) {
       await fresh();
-      await fileMenu(example);
+      await fileMenu(page, example);
       await builtCleanly();
       loaded = example;
     }
-    const file = await downloaded(() => fileMenu(entry));
+    const file = await downloaded(() => fileMenu(page, entry));
     expect(name.test(file.name), `downloaded ${file.name}`);
     expect(file.size > 0, `${file.name} is empty`);
     expect(file.text == null || valid(file.text), `${file.name} is not what it should be`);
@@ -272,7 +254,7 @@ for (const [example, entry, name, valid] of exports) {
 
 await check("the bill of materials is saved as CSV", async () => {
   await fresh();
-  await fileMenu("Bolted plate");
+  await fileMenu(page, "Bolted plate");
   await builtCleanly();
   await page.getByTitle("Bill of materials: every part with its quantity, designation and mass").click();
   await settle(page);

@@ -17,10 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startBridge } from "./bridge.mjs";
-import { Checks, OUT, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
-
-const only = process.argv.includes("--only") ? process.argv[process.argv.indexOf("--only") + 1] : null;
-const shots = process.argv.includes("--shots");
+import { Checks, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 run("cargo", ["build", "--release", "-p", "geop-cad-cli"], ROOT);
@@ -36,16 +33,9 @@ const bridge = await startBridge({ media, exe, folder });
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 const page = await context.newPage();
 const errors = watchErrors(page);
-const checks = new Checks(page, errors);
+const checks = new Checks(page, errors, "vscode_");
 
-async function check(name, body) {
-  if (only && !name.includes(only)) return;
-  await checks.check(name, body);
-  if (shots) {
-    fs.mkdirSync(OUT, { recursive: true });
-    await page.screenshot({ path: path.join(OUT, `vscode_${name.replace(/[^\w.-]+/g, "_").slice(0, 80)}.png`) });
-  }
-}
+const check = (name, body) => checks.check(name, body);
 
 /** Open `doc` as VS Code would, and wait until it is built without an error; its stats. */
 async function open(doc) {
@@ -107,8 +97,7 @@ await check("exports reach VS Code to be saved", async () => {
   /** The file the File menu's `entry` sends to be saved. */
   const exported = async (entry) => {
     const before = bridge.saved[doc]?.length ?? 0;
-    await page.locator(".file-menu .dropdown-trigger").click();
-    await page.locator(".file-menu .dropdown-item", { hasText: entry }).click();
+    await fileMenu(page, entry);
     await settle(page);
     const deadline = Date.now() + 30000;
     while ((bridge.saved[doc]?.length ?? 0) <= before) {

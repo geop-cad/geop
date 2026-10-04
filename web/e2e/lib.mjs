@@ -162,41 +162,64 @@ export function shownErrors(page) {
   return page.locator(".error, .op-error-text").allInnerTexts();
 }
 
+/** Pick the entry `label` — exactly that — from the app's File menu. */
+export async function fileMenu(page, label) {
+  const trigger = page.locator(".file-menu .dropdown-trigger");
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+  await page
+    .locator(".file-menu .dropdown-item", { has: page.locator(`.dropdown-item-label:text-is("${label}")`) })
+    .click();
+}
+
+/** Where a check's screenshot goes: `e2e/out/<prefix><name>.png`. */
+function shotPath(prefix, name) {
+  fs.mkdirSync(OUT, { recursive: true });
+  return path.join(OUT, `${prefix}${name.replace(/[^\w.-]+/g, "_").slice(0, 80)}.png`);
+}
+
 /**
  * Named checks, run one after another: each passes unless it throws, or the
  * page reported an error while it ran. A failing check saves a screenshot
  * of the page to `e2e/out/`. `report()` prints the summary and sets the exit
  * code.
+ *
+ * From the command line, `--only <text>` runs only the checks whose name
+ * contains the text, and `--shots` saves a screenshot after every check.
  */
 export class Checks {
-  constructor(page, errors) {
+  constructor(page, errors, prefix = "") {
     this.page = page;
     this.errors = errors;
+    this.prefix = prefix;
     this.results = [];
+    const only = process.argv.indexOf("--only");
+    this.only = only >= 0 ? process.argv[only + 1] : null;
+    this.shots = process.argv.includes("--shots");
   }
 
   async check(name, body) {
+    if (this.only && !name.includes(this.only)) return true;
     const before = this.errors.length;
     const start = Date.now();
     let failure = null;
+    let label = name;
     try {
       const note = await body();
       if (this.errors.length > before) failure = `page errors:\n    ${this.errors.slice(before).join("\n    ")}`;
-      if (!failure && note) name = `${name}: ${note}`;
+      if (!failure && note) label = `${name}: ${note}`;
     } catch (e) {
       failure = e instanceof Error ? e.message : String(e);
       if (this.errors.length > before) failure += `\n    page errors:\n    ${this.errors.slice(before).join("\n    ")}`;
     }
     const seconds = ((Date.now() - start) / 1000).toFixed(1);
+    if (failure || this.shots) await this.page.screenshot({ path: shotPath(this.prefix, name) }).catch(() => {});
     if (failure) {
-      fs.mkdirSync(OUT, { recursive: true });
-      const shot = path.join(OUT, `${name.replace(/[^\w.-]+/g, "_").slice(0, 80)}.png`);
-      await this.page.screenshot({ path: shot }).catch(() => {});
-      console.log(`FAIL ${name} (${seconds} s)\n    ${failure}\n    screenshot: ${path.relative(process.cwd(), shot)}`);
+      const shot = path.relative(process.cwd(), shotPath(this.prefix, name));
+      console.log(`FAIL ${label} (${seconds} s)\n    ${failure}\n    screenshot: ${shot}`);
     } else {
-      console.log(`ok   ${name} (${seconds} s)`);
+      console.log(`ok   ${label} (${seconds} s)`);
     }
-    this.results.push({ name, failure });
+    this.results.push({ name: label, failure });
     return !failure;
   }
 
