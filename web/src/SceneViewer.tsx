@@ -90,9 +90,10 @@ function colorHex(color: string | null | undefined, fallback: number): number {
  */
 function flatten(part: PartView, hidden: string[] = []): Scene {
   const faceColor = colorHex(part.color, FACE_COLOR);
-  const shown = (solid: string | null, sheetFaces: string[] = []) =>
+  // An edge or a vertex bounds its faces: of no solid, it goes when they all do.
+  const shown = (solid: string | null, faces: string[] = []) =>
     (solid == null || !hidden.includes(solid)) &&
-    (sheetFaces.length === 0 || sheetFaces.some((f) => !hidden.includes(f)));
+    (solid != null || faces.length === 0 || faces.some((f) => !hidden.includes(f)));
   const scene: Scene = {
     points: [],
     point_names: [],
@@ -107,7 +108,7 @@ function flatten(part: PartView, hidden: string[] = []): Scene {
     faces: [],
   };
   for (const v of part.vertices) {
-    if (!shown(v.solid, v.sheet_faces)) continue;
+    if (!shown(v.solid, v.faces)) continue;
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
   }
@@ -118,7 +119,7 @@ function flatten(part: PartView, hidden: string[] = []): Scene {
     scene.line_edges.push(edge);
   };
   for (const e of part.edges) {
-    if (!shown(e.solid, e.sheet_faces)) continue;
+    if (!shown(e.solid, e.faces)) continue;
     for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name);
   }
   part.faces.forEach((f) => {

@@ -64,9 +64,9 @@ pub struct ViewVertex<S: Scalar> {
     pub name: String,
     /// The solid it is a corner of.
     pub solid: Option<String>,
-    /// Of no solid, the faces standing on their own it is a corner of: it
-    /// is hidden with all of them.
-    pub sheet_faces: Vec<String>,
+    /// The faces it is a corner of. Of no solid, it is hidden with all of
+    /// them; a face hit does not hide it (see [`PartView::pick`]).
+    pub faces: Vec<String>,
     pub at: Vector3<S>,
 }
 
@@ -85,9 +85,9 @@ pub struct ViewEdge<S: Scalar> {
     pub name: String,
     /// The solid it bounds.
     pub solid: Option<String>,
-    /// Of no solid, the faces standing on their own it bounds: it is hidden
-    /// with all of them.
-    pub sheet_faces: Vec<String>,
+    /// The faces it bounds. Of no solid, it is hidden with all of them; a
+    /// face hit does not hide it (see [`PartView::pick`]).
+    pub faces: Vec<String>,
     pub polyline: Vec<Vector3<S>>,
     /// What it can be picked as: an edge, and a line or a circle if it is
     /// one.
@@ -402,16 +402,15 @@ impl<S: Scalar> PartView<S> {
             })
             .collect::<GeopResult<_>>()?;
 
-        // A vertex is a corner of the solid an edge at it bounds — or of
-        // the faces standing on their own those edges bound.
+        // A vertex is a corner of the solid an edge at it bounds, and of the
+        // faces those edges bound.
         let mut corner_of = std::collections::HashMap::new();
-        let mut sheet_faces_of_edge = std::collections::HashMap::new();
-        let mut sheet_corner_of: std::collections::HashMap<_, Vec<String>> = Default::default();
+        let mut faces_of_edge = std::collections::HashMap::new();
+        let mut faces_at_corner: std::collections::HashMap<_, Vec<String>> = Default::default();
         for (&id, edge) in &model.edges {
             if let Some(solid) = solid_of_edge(model, id) {
                 corner_of.insert(edge.start_vertex, solid);
                 corner_of.insert(edge.end_vertex, solid);
-                continue;
             }
             let mut faces: Vec<String> = model
                 .coedges_of_edge(id)
@@ -422,12 +421,12 @@ impl<S: Scalar> PartView<S> {
             faces.sort();
             faces.dedup();
             for v in [edge.start_vertex, edge.end_vertex] {
-                let at = sheet_corner_of.entry(v).or_default();
+                let at = faces_at_corner.entry(v).or_default();
                 at.extend(faces.iter().cloned());
                 at.sort();
                 at.dedup();
             }
-            sheet_faces_of_edge.insert(id, faces);
+            faces_of_edge.insert(id, faces);
         }
         let mut view = PartView {
             vertices: vertices
@@ -435,7 +434,7 @@ impl<S: Scalar> PartView<S> {
                 .map(|(&id, p)| ViewVertex {
                     name: name(id.into()),
                     solid: corner_of.get(&id).map(|&s| name(s.into())),
-                    sheet_faces: sheet_corner_of.get(&id).cloned().unwrap_or_default(),
+                    faces: faces_at_corner.get(&id).cloned().unwrap_or_default(),
                     at: *p,
                 })
                 .collect(),
@@ -445,7 +444,7 @@ impl<S: Scalar> PartView<S> {
                     let edge = name(id.into());
                     ViewEdge {
                         solid: solid_of_edge(model, id).map(|s| name(s.into())),
-                        sheet_faces: sheet_faces_of_edge.get(&id).cloned().unwrap_or_default(),
+                        faces: faces_of_edge.get(&id).cloned().unwrap_or_default(),
                         roles: roles_of(&EntityRef::Edge { name: edge.clone() }, part),
                         name: edge,
                         polyline: polyline.clone(),
@@ -709,23 +708,30 @@ impl<S: Scalar> PartView<S> {
             .iter()
             .filter_map(|l| l.view.pick_face(&l.pointer).map(|(t, f)| (t, l, f)))
             .min_by(|a, b| nearer(a.0, b.0));
-        // In front of the face hit, give or take the reach: a vertex or an
-        // edge on the face's own boundary lies right at it.
-        let visible = |t: S| {
-            face.as_ref()
-                .is_none_or(|(ft, _, _)| !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft))))
+        // In front of the face hit, give or take the reach — or on its
+        // boundary, of the same layer: `faces`, those a vertex or an edge
+        // bounds, name it. That is asked of the topology, not the depth: at
+        // a glancing look, an edge of the face hit lies further along the
+        // ray than the face is hit by more than a reach, and its triangles
+        // are chords, in front of a face that curves away.
+        let visible = |t: S, faces: &[String], layer: &Layer<'_, S>| {
+            face.as_ref().is_none_or(|(ft, l, f)| {
+                (l.instance == layer.instance && faces.contains(&f.name))
+                    || !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft)))
+            })
         };
 
         let mut points = Vec::new();
         for l in &layers {
             let ray = &l.pointer.ray;
-            let near =
-                |(dist, t): (S, S)| (l.pointer.within(dist, t, 1.0) && visible(t)).then_some(t);
+            let near = |(dist, t): (S, S), faces: &[String]| {
+                (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
+            };
             let vertices = l.view.vertices.iter().map(|v| {
                 let entity = EntityRef::Vertex {
                     name: v.name.clone(),
                 };
-                (entity, v.at, v.solid.as_ref())
+                (entity, v.at, v.solid.as_ref(), &v.faces[..])
             });
             let sketch_points = l.view.sketches.iter().flat_map(|sketch| {
                 sketch.points.iter().map(|p| {
@@ -733,12 +739,12 @@ impl<S: Scalar> PartView<S> {
                         sketch: sketch.name.clone(),
                         point: p.id,
                     };
-                    (entity, sketch.plane.uv_to_xyz(&p.at), None)
+                    (entity, sketch.plane.uv_to_xyz(&p.at), None, &[][..])
                 })
             });
-            for (entity, at, solid) in vertices.chain(sketch_points) {
+            for (entity, at, solid, faces) in vertices.chain(sketch_points) {
                 if accept_of(l, &entity, &[Role::Point], solid)
-                    && let Some(t) = near(ray.distance_to_point(&at))
+                    && let Some(t) = near(ray.distance_to_point(&at), faces)
                 {
                     points.push(l.hit(PartHit {
                         entity,
@@ -755,13 +761,15 @@ impl<S: Scalar> PartView<S> {
         let mut curves = Vec::new();
         for l in &layers {
             let ray = &l.pointer.ray;
-            let near =
-                |(dist, t): (S, S)| (l.pointer.within(dist, t, 1.0) && visible(t)).then_some(t);
+            let near = |(dist, t): (S, S), faces: &[String]| {
+                (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
+            };
             let mut polyline_hit =
                 |entity: EntityRef,
+                 faces: &[String],
                  polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>| {
                     let t = polyline
-                        .filter_map(|(a, b)| near(ray.distance_to_segment(&a, &b)))
+                        .filter_map(|(a, b)| near(ray.distance_to_segment(&a, &b), faces))
                         .min_by(|&a, &b| nearer(a, b));
                     if let Some(t) = t {
                         curves.push(l.hit(PartHit {
@@ -777,7 +785,7 @@ impl<S: Scalar> PartView<S> {
                 };
                 if accept_of(l, &entity, &e.roles, e.solid.as_ref()) {
                     let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
-                    polyline_hit(entity, &mut segments);
+                    polyline_hit(entity, &e.faces, &mut segments);
                 }
             }
             for sketch in &l.view.sketches {
@@ -790,7 +798,7 @@ impl<S: Scalar> PartView<S> {
                         let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
                         let mut segments =
                             c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
-                        polyline_hit(entity, &mut segments);
+                        polyline_hit(entity, &[], &mut segments);
                     }
                 }
             }

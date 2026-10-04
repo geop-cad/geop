@@ -328,7 +328,19 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         }
         if let Some(key) = self.armed.clone() {
             if let Some(Control::Reference(reference)) = form.dialog.get(&key) {
-                self.pick(context, view, event, &key, reference);
+                // A drag is no pick: while the field waits, it can only be
+                // of a handle (see `presentation`).
+                if let StepEditEvent::Drag {
+                    from,
+                    to,
+                    done,
+                    shift,
+                } = event
+                {
+                    self.drag(context, view, &form, from, to, *done, *shift, true);
+                } else {
+                    self.pick(context, view, event, &key, reference);
+                }
                 return;
             }
             self.armed = None;
@@ -377,7 +389,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 to,
                 done,
                 shift,
-            } => self.drag(context, view, &form, from, to, *done, *shift),
+            } => self.drag(context, view, &form, from, to, *done, *shift, false),
             StepEditEvent::Key { key } => {
                 if key == "Escape" {
                     self.selection.clear();
@@ -462,7 +474,8 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     /// A drag that did not start on either is a stroke of the tool in hand,
     /// if it strokes — else nothing, as for a pointer that cannot be
     /// followed (looking straight along a handle's track, or along the
-    /// plane).
+    /// plane). With `handles_only` — while a field waits for a pick — only a
+    /// handle is grabbed.
     #[allow(clippy::too_many_arguments)]
     fn drag(
         &mut self,
@@ -473,11 +486,18 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         to: &Pointer<S>,
         done: bool,
         shift: bool,
+        handles_only: bool,
     ) {
         let handles = handles(&form.dialog);
         if self.grab.is_none() {
             let visuals: Vec<Visual<S>> = form.visuals.iter().chain(&handles).cloned().collect();
-            let hit = hit_visuals(&visuals, from, Some(view), |v| grabs(v, form.tool));
+            let hit = hit_visuals(&visuals, from, Some(view), |v| {
+                if handles_only {
+                    is_handle(v)
+                } else {
+                    grabs(v, form.tool)
+                }
+            });
             self.grab = match hit {
                 Some(hit) => {
                     let key = hit.visual.key.clone();
@@ -495,7 +515,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                         },
                     })
                 }
-                None if form.tool == InHand::Strokes => Some(Grab::Stroke),
+                None if form.tool == InHand::Strokes && !handles_only => Some(Grab::Stroke),
                 None => return,
             };
         }
@@ -583,7 +603,8 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     /// drawn so, what the reference fields hold and what a click would pick
     /// lit, and what a click picks now. While a field waits for a pick,
     /// there is no plane to work in: what can be picked is shown in the
-    /// part as it stands.
+    /// part as it stands — and of the visuals, only the handles can be
+    /// grabbed.
     pub fn presentation(
         &self,
         context: Context<'_, S>,
@@ -602,15 +623,20 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         let mut visuals = form.visuals;
         visuals.extend(handles(&form.dialog));
         let tool = form.tool;
-        let hovered = self
-            .pointer
-            .filter(|_| self.armed.is_none())
-            .and_then(|pointer| {
-                hit_visuals(&visuals, &pointer, Some(view), |v| {
+        // While a field waits for a pick, only a handle is hovered: no pick
+        // takes one, so a press on it can only mean dragging it. Anything
+        // else under the pointer is the field's to pick.
+        let waiting = self.armed.is_some();
+        let hovered = self.pointer.and_then(|pointer| {
+            hit_visuals(&visuals, &pointer, Some(view), |v| {
+                if waiting {
+                    is_handle(v)
+                } else {
                     v.selectable || grabs(v, tool)
-                })
-                .map(|hit| (hit.visual.key.clone(), grabs(hit.visual, tool)))
-            });
+                }
+            })
+            .map(|hit| (hit.visual.key.clone(), grabs(hit.visual, tool)))
+        });
         for visual in &mut visuals {
             if is_handle(visual) {
                 continue;

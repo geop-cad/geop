@@ -97,8 +97,8 @@ export interface ViewInstance {
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
   /** Each with the solid it belongs to, if any — else the faces standing on their own it bounds, hidden with all of them. */
-  vertices: { name: string; solid: string | null; sheet_faces: string[]; at: Vec3 }[];
-  edges: { name: string; solid: string | null; sheet_faces: string[]; polyline: Vec3[] }[];
+  vertices: { name: string; solid: string | null; faces: string[]; at: Vec3 }[];
+  edges: { name: string; solid: string | null; faces: string[]; polyline: Vec3[] }[];
   /** Triangulated, with the kernel's surface normal at each corner. */
   faces: { name: string; solid: string | null; triangles: [Vec3, Vec3, Vec3][]; normals: [Vec3, Vec3, Vec3][] }[];
   /** Curves in their plane's `u`/`v` coordinates. */

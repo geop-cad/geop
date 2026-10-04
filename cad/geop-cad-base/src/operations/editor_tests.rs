@@ -480,3 +480,134 @@ fn new_shell_picks_its_faces_on_the_solid() {
         other => panic!("{other:?}"),
     }
 }
+
+/// An offset plane's handle, on the plane, drags its distance: grabbed
+/// from the side and pulled up by 0.3, the plane half a unit above the
+/// box's top goes to 0.8.
+#[test]
+fn offset_plane_dragged_by_its_handle() {
+    let (mut editor, _) = editor();
+    let mut program = editor.program().clone();
+    program.push(
+        "plane",
+        geop_ops_datums::AddDatumArgs {
+            selection: vec![EntityRef::Face {
+                name: "extrude(box,end)".into(),
+            }],
+            construction: geop_ops_datums::Construction::Offset { distance: 0.5 },
+        },
+    );
+    editor.handle(Command::Load {
+        program,
+        path: None,
+    });
+    let update = editor.handle(Command::Open { id: "plane".into() });
+    let step = update.step.expect("the plane is edited");
+    let (at, direction) = step
+        .presentation
+        .visuals
+        .iter()
+        .find_map(|v| match v.shape {
+            geop_ops::ui::Shape::Handle { at, direction } if v.key == "distance" => {
+                Some((at, direction))
+            }
+            _ => None,
+        })
+        .expect("the distance has a handle");
+    assert!(direction[2].abs().could_be_equal(S::ONE), "{direction:?}");
+    assert!(at[2].could_be_equal(S::from_f64(1.5)), "{at:?}");
+    // From the side, square to the track, through the handle.
+    let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
+    let side = |dz: f64| pointer([x, y - 10.0, z + dz], [0.0, 1.0, 0.0]);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: side(0.0),
+            shift: false,
+        },
+    });
+    assert!(
+        update.step.unwrap().presentation.grab,
+        "the handle is not grabbed"
+    );
+    editor.handle(Command::Event {
+        event: StepEditEvent::Drag {
+            from: side(0.0),
+            to: side(0.3),
+            done: true,
+            shift: false,
+        },
+    });
+    match &editor.handle(Command::Commit).error {
+        Some(e) => panic!("{e}"),
+        None => {}
+    }
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::AddDatum(args) => assert_eq!(
+            args.construction,
+            geop_ops_datums::Construction::Offset { distance: 0.8 }
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A new offset plane, made from the box's top, is dragged by its handle
+/// while it is still being made: picked, offset, grabbed, pulled up 0.3.
+#[test]
+fn new_offset_plane_dragged_by_its_handle() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "add_datum".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    editor.handle(click(pointer([0.3, 0.3, 10.0], [0.0, 0.0, -1.0])));
+    let update = editor.handle(dialog("construction", Value::Choice("offset".into())));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the plane is edited");
+    let (at, _) = step
+        .presentation
+        .visuals
+        .iter()
+        .find_map(|v| match v.shape {
+            geop_ops::ui::Shape::Handle { at, direction } if v.key == "distance" => {
+                Some((at, direction))
+            }
+            _ => None,
+        })
+        .expect("the distance has a handle");
+    let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
+    let side = |dz: f64| pointer([x, y - 10.0, z + dz], [0.0, 1.0, 0.0]);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: side(0.0),
+            shift: false,
+        },
+    });
+    assert!(
+        update.step.unwrap().presentation.grab,
+        "the handle is not grabbed"
+    );
+    let before = match &step.presentation.dialog.get("distance") {
+        Some(Control::Number(n)) => n.value,
+        other => panic!("{other:?}"),
+    };
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Drag {
+            from: side(0.0),
+            to: side(0.3),
+            done: true,
+            shift: false,
+        },
+    });
+    let after = match update.step.unwrap().presentation.dialog.get("distance") {
+        Some(Control::Number(n)) => n.value,
+        other => panic!("{other:?}"),
+    };
+    assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
+}

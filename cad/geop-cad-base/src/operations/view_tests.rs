@@ -242,3 +242,40 @@ fn sketch_lines() {
         })
     );
 }
+
+/// Seen at a glancing angle, an edge of the face the ray hits is picked
+/// wherever the pointer is within reach of it: aimed at the cube's top 0.1
+/// short of its far edge, from nearly level with the top, the ray passes
+/// a thousandth from the edge, within its reach of about 0.005 — but meets
+/// it 0.1 further along than the top, twenty reaches. The face does not
+/// hide its own edge. (The near top edge it passes 0.008 above, out of
+/// reach.)
+#[test]
+fn edge_of_the_face_hit_at_a_glancing_angle() {
+    let part = cube();
+    let view = PartView::of(&part).unwrap();
+    let (origin, aim) = ([0.5, -10.0, 1.1], [0.5, 0.9, 1.0]);
+    let glancing = Pointer {
+        ray: Ray::try_new(
+            v(origin[0], origin[1], origin[2]),
+            v(aim[0] - origin[0], aim[1] - origin[1], aim[2] - origin[2]),
+        )
+        .unwrap(),
+        reach: Reach::Cone {
+            slope: S::from_f64(0.0005),
+        },
+    };
+    let Some(EntityRef::Edge { name }) = picked(&view, &glancing, &[Role::Edge]) else {
+        panic!("no edge picked");
+    };
+    let edge = part.edge_id(&name).unwrap();
+    let model = part.topology();
+    let e = model.get_edge(edge).unwrap();
+    for vertex in [e.start_vertex, e.end_vertex] {
+        let p = model.get_vertex(vertex).unwrap().point;
+        assert!(
+            p[1].could_be_equal(S::ONE) && p[2].could_be_equal(S::ONE),
+            "{name} is not the far top edge"
+        );
+    }
+}
