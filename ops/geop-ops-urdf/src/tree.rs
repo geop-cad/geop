@@ -173,16 +173,20 @@ pub fn tree<S: Scalar>(mechanism: &Mechanism<'_, S>) -> GeopResult<Tree> {
         .collect();
     if !unreached.is_empty() {
         let root = &tree.links[0];
+        let one = unreached.len() == 1;
+        let parts = unreached.join(", ");
         return Err(GeopError::new(if root.bodies.is_empty() {
             format!(
-                "no part is fixed, so {} hang from nothing: a URDF robot is a tree of links from one root, the fixed part — fix the part the robot stands on",
-                unreached.join(", ")
+                "no part is fixed, so {parts} {} from nothing: a URDF robot is a tree of links from one root, the fixed part — fix the part the robot stands on",
+                if one { "hangs" } else { "hang" }
             )
         } else {
             format!(
-                "{} are joined to the fixed part {} by neither joints nor mates: a URDF robot is one tree of links from one root — join them to it, or fix them",
-                unreached.join(", "),
-                root.name
+                "{parts} {} joined to the fixed part {} by neither joints nor mates: a URDF robot is one tree of links from one root — join {} to it, or fix {}",
+                if one { "is" } else { "are" },
+                root.name,
+                if one { "it" } else { "them" },
+                if one { "it" } else { "them" },
             )
         }));
     }

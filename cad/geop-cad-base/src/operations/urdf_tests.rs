@@ -566,3 +566,150 @@ print(" ".join(str(x) for x in robot.get_transform("hand")[:3, 3]))
     }
     assert_links_where_drawn(&part, &exported.robot);
 }
+
+/// A slider lifting a link off a fixed base, a tool fastened on the
+/// link's far end, and a link hinged on the base's far end by a joint
+/// whose first end is on the link — the joint runs against the tree: a
+/// prismatic joint with its travel in metres, the tool merged into the
+/// slider's link, and the hinge turning the other way round its axis, so
+/// that every part is still where it is drawn.
+#[test]
+fn sliders_fastened_parts_and_reversed_joints() {
+    let (files, _) = workspace_example("arm");
+    let mut program = Program::new();
+    program.push("base", placed("link.geop", true, Vec::new()));
+    let slider = Mate::joint(
+        JointKind::Slider {
+            min: Some(n(0.0)),
+            max: Some(n(2.0)),
+        },
+        vec![
+            examples::link_rim("base", 0, "end"),
+            examples::link_rim("lift", 0, "start"),
+        ],
+    );
+    program.push("lift", placed("link.geop", false, vec![slider]));
+    let fastened = Mate::joint(
+        JointKind::Fastened,
+        vec![
+            examples::link_rim("lift", 1, "end"),
+            examples::link_rim("tool", 0, "start"),
+        ],
+    );
+    program.push("tool", placed("link.geop", false, vec![fastened]));
+    let hinge = Mate::joint(
+        JointKind::Revolute {
+            min: Some(n(-90.0)),
+            max: Some(n(90.0)),
+        },
+        vec![
+            examples::link_rim("swing", 0, "start"),
+            examples::link_rim("base", 1, "end"),
+        ],
+    );
+    program.push("swing", placed("link.geop", false, vec![hinge]));
+    let at = |p: [f64; 3], turn: f64| ParamValue::Pose(pose(p, [0.0, 0.0, turn]));
+    program.state = BTreeMap::from([
+        (pose_parameter("base"), at([0.0; 3], 0.0)),
+        (pose_parameter("lift"), at([0.0, 0.0, 0.7], 0.0)),
+        (pose_parameter("tool"), at([3.0, 0.0, 0.9], 0.0)),
+        (pose_parameter("swing"), at([3.0, 0.0, 0.2], 40.0)),
+    ]);
+    let part = build(files, "machine.geop", &program);
+    assert!(part.check_mates(|_| true).unwrap().converged);
+    let robot = export(&part, "machine", 8).unwrap().robot;
+
+    let links: Vec<(&str, Vec<&str>)> = robot
+        .links
+        .iter()
+        .map(|l| {
+            (
+                l.name.as_str(),
+                l.parts.iter().map(|p| p.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        links,
+        [
+            ("base", vec!["base"]),
+            ("lift", vec!["lift", "tool"]),
+            ("swing", vec!["swing"]),
+        ]
+    );
+    let lift = robot.joint("add_part(lift,m1)").unwrap();
+    assert_eq!(
+        lift.kind,
+        JointType::Prismatic {
+            lower: 0.0,
+            upper: 0.002
+        }
+    );
+    assert_eq!((lift.parent.as_str(), lift.axis), ("base", [0.0, 0.0, 1.0]));
+    let swing = robot.joint("add_part(swing,m1)").unwrap();
+    assert_eq!(
+        (swing.parent.as_str(), swing.axis),
+        ("base", [0.0, 0.0, -1.0])
+    );
+    // The tool weighs as much as the slider: both are links.
+    let link = robot.link("lift").unwrap();
+    let swing_mass = robot.link("swing").unwrap().inertial.unwrap().mass;
+    let ratio = link.inertial.unwrap().mass / swing_mass;
+    assert!((ratio - 2.0).abs() < 1e-12, "{ratio}");
+    assert_eq!(link.visuals.len(), 2);
+    assert_links_where_drawn(&part, &robot);
+}
+
+/// What a URDF joint cannot be is refused, naming the joint: a cylindrical
+/// joint, a revolute joint limited one way, a slider without its travel;
+/// and a part nothing joins to the fixed one, or no fixed part at all.
+#[test]
+fn what_urdf_cannot_express_is_refused_by_name() {
+    let (files, _) = workspace_example("arm");
+    let refusal = |kind: Option<JointKind<geop_ops::Design>>, fixed: bool| {
+        let mut program = Program::new();
+        program.push("base", placed("link.geop", fixed, Vec::new()));
+        let mates = kind
+            .map(|kind| {
+                Mate::joint(
+                    kind,
+                    vec![
+                        examples::link_rim("base", 1, "end"),
+                        examples::link_rim("arm", 0, "start"),
+                    ],
+                )
+            })
+            .into_iter()
+            .collect();
+        program.push("arm", placed("link.geop", false, mates));
+        let at = |x: f64, z: f64| ParamValue::Pose(pose([x, 0.0, z], [0.0; 3]));
+        program.state = BTreeMap::from([
+            (pose_parameter("base"), at(0.0, 0.0)),
+            (pose_parameter("arm"), at(3.0, 0.2)),
+        ]);
+        let part = build(files.clone(), "bad.geop", &program);
+        export(&part, "bad", 8).unwrap_err().to_string()
+    };
+    let joint = "\"add_part(arm,m1)\"";
+    let err = refusal(Some(JointKind::Cylindrical), true);
+    assert!(err.contains(joint) && err.contains("cylindrical"), "{err}");
+    let one_way = JointKind::Revolute {
+        min: None,
+        max: Some(n(90.0)),
+    };
+    let err = refusal(Some(one_way), true);
+    assert!(err.contains(joint) && err.contains("one way only"), "{err}");
+    let endless = JointKind::Slider {
+        min: Some(n(0.0)),
+        max: None,
+    };
+    let err = refusal(Some(endless), true);
+    assert!(err.contains(joint) && err.contains("its travel"), "{err}");
+    let err = refusal(None, true);
+    assert!(
+        err.contains("arm is joined to the fixed part base by neither"),
+        "{err}"
+    );
+    let err = refusal(None, false);
+    assert!(err.contains("no part is fixed"), "{err}");
+}
