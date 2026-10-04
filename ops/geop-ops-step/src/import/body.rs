@@ -13,7 +13,9 @@
 //!   patch of its own (see [`Builder::cut_wrapping_face`]); one going round
 //!   a torus' tube — a pipe bend's — is cut along parallels instead
 //!   ([`Builder::cut_tube_wrapping_face`]), and a whole torus into bands
-//!   round its axis first ([`Builder::cut_whole_torus`]).
+//!   round its axis first ([`Builder::cut_whole_torus`]). A face turning
+//!   about its axis more than once without going round it — a thread's
+//!   flank — is cut along meridians too ([`Builder::cut_helical_face`]).
 //! - **Closed edges.** A STEP edge may start and end at one vertex — a whole
 //!   circle. A geop edge may not, so one is split in two.
 //! - **Tolerance.** A STEP file's vertices, curves and surfaces agree only
@@ -500,6 +502,16 @@ impl<S: Scalar> Builder<'_, S> {
                     })?;
                 }
                 // Its pieces were pushed at the end; it is gone.
+                continue;
+            }
+            if let Some(revolved) = &revolved
+                && self.turns_more_than_once(f, revolved)?
+            {
+                self.cut_helical_face(f, revolved).map_err(|e| {
+                    e.with_context(format!(
+                        "cutting the face #{id}, which turns about its axis more than once without going round it, along meridians"
+                    ))
+                })?;
                 continue;
             }
             f += 1;
@@ -1227,6 +1239,261 @@ impl<S: Scalar> Builder<'_, S> {
                 same_sense,
                 loops,
                 outer: None,
+                patch: None,
+                shell,
+                name,
+                id,
+            });
+        }
+        self.faces.remove(f);
+        Ok(())
+    }
+
+    /// Whether a loop of face `f`, which does not wrap round the axis of
+    /// `revolved`, still turns about it through a whole turn or more from
+    /// end to end — as a thread's flank does, a strip winding round a
+    /// cylinder.
+    fn turns_more_than_once(&self, f: usize, revolved: &Revolved) -> GeopResult<bool> {
+        let natural = self.faces[f].outward_is_natural();
+        for lp in &self.faces[f].loops {
+            let angles = unwrap(revolved, &self.loop_points(lp)?, false, natural);
+            let lo = angles.iter().copied().fold(f64::INFINITY, f64::min);
+            let hi = angles.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if hi - lo >= std::f64::consts::TAU {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Cuts the face `f`, a strip turning about the axis of `revolved` more
+    /// than once without going round it — a thread's flank — along
+    /// meridians half a turn apart into pieces each turning less than once.
+    ///
+    /// Unwrapped, the angle about the axis runs on along the strip, and the
+    /// face is a region of the plane of angles and profile parameters. Each
+    /// cut, a line of one angle, crosses its loop an even number of times;
+    /// in order along the line, the crossings pair up into the stretches of
+    /// meridian inside the face. Every piece is then traced along the loop,
+    /// turning along a meridian at each crossing it reaches — the face
+    /// stays on the left throughout.
+    fn cut_helical_face(&mut self, f: usize, revolved: &Revolved) -> GeopResult<()> {
+        use std::f64::consts::{PI, TAU};
+        if self.faces[f].loops.len() != 1 {
+            return Err(GeopError::new(format!(
+                "it has {} loops: only a strip bounded by one loop is cut",
+                self.faces[f].loops.len()
+            )));
+        }
+        if revolved.v_is_angle() {
+            return Err(GeopError::new(
+                "it lies on a torus: only strips on cylinders, cones and other surfaces of revolution with a profile from end to end are cut",
+            ));
+        }
+        let lp = self.faces[f].loops[0].clone();
+        // The loop's angles, unwrapped from coedge to coedge, sampled.
+        let mut samples: Vec<(usize, f64, f64, f64)> = Vec::new(); // (coedge, t, angle, v)
+        let mut prev: Option<f64> = None;
+        for (k, &u) in lp.iter().enumerate() {
+            for (t, p) in self.samples(u, LOOP_SAMPLES)? {
+                let (Some(a), v) = revolved.chart(p) else {
+                    return Err(GeopError::new(format!(
+                        "its loop runs through its axis at {p:?}"
+                    )));
+                };
+                let a = prev.map_or(a, |r| r + (a - r + PI).rem_euclid(TAU) - PI);
+                prev = Some(a);
+                samples.push((k, t, a, v));
+            }
+        }
+        let lo = samples.iter().map(|s| s.2).fold(f64::INFINITY, f64::min);
+        let hi = samples
+            .iter()
+            .map(|s| s.2)
+            .fold(f64::NEG_INFINITY, f64::max);
+        // Cuts half a turn apart, as far from every vertex as can be.
+        let corners: Vec<f64> = samples
+            .iter()
+            .enumerate()
+            .filter(|&(i, s)| i == 0 || samples[i - 1].0 != s.0)
+            .map(|(_, s)| s.2)
+            .collect();
+        let clearance = |offset: f64| {
+            corners
+                .iter()
+                .map(|&a| {
+                    let r = (a - offset).rem_euclid(PI);
+                    r.min(PI - r)
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let offset = (0..720)
+            .map(|i| lo + PI * i as f64 / 720.0)
+            .max_by(|a, b| clearance(*a).total_cmp(&clearance(*b)))
+            .expect("candidates");
+        let cuts: Vec<f64> = (1..)
+            .map(|k| offset + PI * k as f64)
+            .take_while(|&a| a < hi)
+            .collect();
+
+        // Where the loop crosses each cut: the edge, its parameter, and
+        // the profile parameter there.
+        let mut crossings: Vec<(usize, f64, usize, f64)> = Vec::new(); // (edge, t, cut, v)
+        for w in samples.windows(2) {
+            let ((k0, t0, a0, _), (k1, t1, a1, _)) = (w[0], w[1]);
+            if k0 != k1 {
+                continue;
+            }
+            let u = lp[k0];
+            for (c, &cut) in cuts.iter().enumerate() {
+                // Once for each crossing, a sample on the cut included.
+                if (a0 < cut) == (a1 < cut) {
+                    continue;
+                }
+                // Bisection, as far as `f64` goes: where exactly is a free
+                // choice the meridian is built through.
+                let angle_at = |t: f64| -> GeopResult<f64> {
+                    let p = super::geometry::point_at(&self.edges[u.0].curve, t)?;
+                    let a = revolved
+                        .chart(p)
+                        .0
+                        .ok_or_else(|| GeopError::new("its loop runs through its axis"))?;
+                    Ok(cut + (a - cut + PI).rem_euclid(TAU) - PI)
+                };
+                let (mut ta, mut tb) = (t0, t1);
+                let below = angle_at(ta)? < cut;
+                for _ in 0..100 {
+                    let mid = 0.5 * (ta + tb);
+                    if mid == ta || mid == tb {
+                        break;
+                    }
+                    if (angle_at(mid)? < cut) == below {
+                        ta = mid;
+                    } else {
+                        tb = mid;
+                    }
+                }
+                let t = 0.5 * (ta + tb);
+                let v = revolved
+                    .chart(super::geometry::point_at(&self.edges[u.0].curve, t)?)
+                    .1;
+                crossings.push((u.0, t, c, v));
+            }
+        }
+        // Split every edge where it is crossed.
+        let mut by_edge: HashMap<usize, Vec<(f64, usize, f64)>> = HashMap::new();
+        for &(e, t, c, v) in &crossings {
+            by_edge.entry(e).or_default().push((t, c, v));
+        }
+        let mut edges: Vec<usize> = by_edge.keys().copied().collect();
+        edges.sort();
+        let mut on_cut: Vec<Vec<(f64, usize)>> = vec![Vec::new(); cuts.len()]; // (v, vertex)
+        for e in edges {
+            let mut list = by_edge[&e].clone();
+            list.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let ts: Vec<S> = list.iter().map(|x| S::from_f64(x.0)).collect();
+            let (d0, d1) = self.edges[e].curve.domain();
+            if ts
+                .iter()
+                .any(|t| !(t.definitely_greater(d0) && t.definitely_less(d1)))
+            {
+                return Err(GeopError::new(format!(
+                    "a cut crosses its loop at a vertex, at the end of the edge {}",
+                    self.edges[e].name.join(",")
+                )));
+            }
+            let created = self.split_edge(e, &ts)?;
+            for ((_, c, v), vertex) in list.into_iter().zip(created) {
+                on_cut[c].push((v, vertex));
+            }
+        }
+        // Along each cut, the crossings in order pair up into the
+        // stretches of meridian inside the face.
+        let mut partner: HashMap<usize, (usize, usize)> = HashMap::new(); // vertex -> (other, meridian)
+        let mut count = 0;
+        for (c, list) in on_cut.iter_mut().enumerate() {
+            list.sort_by(|a, b| a.0.total_cmp(&b.0));
+            if list.len() % 2 != 0 {
+                return Err(GeopError::new(format!(
+                    "the cut at the angle {} crosses its loop an odd number of times, {}",
+                    cuts[c],
+                    list.len()
+                )));
+            }
+            for pair in list.chunks(2) {
+                let ((vb, b), (vt, t)) = (pair[0], pair[1]);
+                let pb = to_p3(&self.vertices[b].point);
+                let pt = to_p3(&self.vertices[t].point);
+                let curve = self.meridian(revolved, cuts[c], (pb, vb, false), (pt, vt, false))?;
+                let mut name = self.faces[f].name.clone();
+                name.push(format!("m{count}"));
+                count += 1;
+                let m = self.edges.len();
+                self.edges.push(Edge {
+                    curve,
+                    start: b,
+                    end: t,
+                    name,
+                    alive: true,
+                });
+                partner.insert(b, (t, m));
+                partner.insert(t, (b, m));
+            }
+        }
+
+        // The pieces, traced along the split loop.
+        let lp = self.faces[f].loops[0].clone();
+        let starting: HashMap<usize, usize> = lp
+            .iter()
+            .enumerate()
+            .map(|(i, &u)| (self.ends(u).0, i))
+            .collect();
+        let mut used = vec![false; lp.len()];
+        let mut pieces: Vec<Vec<Use>> = Vec::new();
+        for first in 0..lp.len() {
+            if used[first] {
+                continue;
+            }
+            let mut piece = Vec::new();
+            let mut i = first;
+            loop {
+                if used[i] || piece.len() > 2 * lp.len() + partner.len() {
+                    return Err(GeopError::new(
+                        "tracing a piece along its loop and the meridians did not close",
+                    ));
+                }
+                used[i] = true;
+                piece.push(lp[i]);
+                let end = self.ends(lp[i]).1;
+                i = match partner.get(&end) {
+                    Some(&(other, m)) => {
+                        piece.push((m, self.edges[m].start == end));
+                        starting[&other]
+                    }
+                    None => (i + 1) % lp.len(),
+                };
+                if i == first {
+                    break;
+                }
+            }
+            pieces.push(piece);
+        }
+        let face = &self.faces[f];
+        let (surface, same_sense, shell, base_name, id) = (
+            face.surface.clone(),
+            face.same_sense,
+            face.shell,
+            face.name.clone(),
+            face.id,
+        );
+        for (q, piece) in pieces.into_iter().enumerate() {
+            let mut name = base_name.clone();
+            name.push(format!("q{q}"));
+            self.faces.push(Face {
+                surface: surface.clone(),
+                same_sense,
+                loops: vec![piece],
+                outer: Some(0),
                 patch: None,
                 shell,
                 name,

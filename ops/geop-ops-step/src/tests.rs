@@ -325,6 +325,100 @@ fn a_torus_crossing_its_axis_is_read_between_its_poles() {
     assert_bounds(model, [-3.0, 0.0, -2.0], [3.0, 0.0, 2.0]);
 }
 
+/// A helix of radius 1 and pitch 1 turning 1.5 times, from `(1, 0, z0)`, as
+/// STEP entities from `#first` on: the kernel's own, exactly on its
+/// cylinder. The id of the curve is `#first`.
+fn helix_entities(first: u64, z0: f64) -> String {
+    use geop_core_geometry::nurb_curve::{Handedness, NurbCurve3D};
+    use geop_core_math::primitives::CoordinateSystem;
+    let helix = NurbCurve3D::<S>::helix(
+        &CoordinateSystem::world_at(v(0.0, 0.0, z0)),
+        S::ONE,
+        S::ONE,
+        1.5,
+        Handedness::Right,
+    )
+    .unwrap();
+    let mut text = String::new();
+    let mut points = Vec::new();
+    let mut weights = Vec::new();
+    for (k, cp) in helix.control_points.iter().enumerate() {
+        let w = cp[3].to_f64();
+        let id = first + 1 + k as u64;
+        text += &format!(
+            "#{id}=CARTESIAN_POINT('',({:?},{:?},{:?}));\n",
+            cp[0].to_f64() / w,
+            cp[1].to_f64() / w,
+            cp[2].to_f64() / w
+        );
+        points.push(format!("#{id}"));
+        weights.push(format!("{w:?}"));
+    }
+    let mut knots: Vec<(f64, usize)> = Vec::new();
+    for k in &helix.knot_vector {
+        match knots.last_mut() {
+            Some((last, n)) if *last == k.to_f64() => *n += 1,
+            _ => knots.push((k.to_f64(), 1)),
+        }
+    }
+    let multiplicities: Vec<String> = knots.iter().map(|(_, n)| n.to_string()).collect();
+    let values: Vec<String> = knots.iter().map(|(k, _)| format!("{k:?}")).collect();
+    text += &format!(
+        "#{first}=(BOUNDED_CURVE()B_SPLINE_CURVE(2,({}),.UNSPECIFIED.,.F.,.F.)B_SPLINE_CURVE_WITH_KNOTS(({}),({}),.UNSPECIFIED.)CURVE()GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE(({}))REPRESENTATION_ITEM(''));\n",
+        points.join(","),
+        multiplicities.join(","),
+        values.join(","),
+        weights.join(",")
+    );
+    text
+}
+
+/// A thread's flank, as a strip of a cylinder of radius 1 between two
+/// helices a quarter of their pitch apart, turning one and a half times,
+/// their ends joined along the cylinder: cut along meridians into pieces
+/// that each turn less than once.
+#[test]
+fn a_strip_turning_more_than_once_is_cut_along_meridians() {
+    let body = format!(
+        "
+#100=CYLINDRICAL_SURFACE('',#8,1.);
+{}{}
+#120=CARTESIAN_POINT('',(1.,0.,0.));
+#121=VERTEX_POINT('',#120);
+#122=CARTESIAN_POINT('',(-1.,0.,1.5));
+#123=VERTEX_POINT('',#122);
+#124=CARTESIAN_POINT('',(-1.,0.,1.75));
+#125=VERTEX_POINT('',#124);
+#126=CARTESIAN_POINT('',(1.,0.,0.25));
+#127=VERTEX_POINT('',#126);
+#130=VECTOR('',#6,1.);
+#131=LINE('',#122,#130);
+#132=LINE('',#120,#130);
+#140=EDGE_CURVE('',#121,#123,#200,.T.);
+#141=EDGE_CURVE('',#123,#125,#131,.T.);
+#142=EDGE_CURVE('',#127,#125,#300,.T.);
+#143=EDGE_CURVE('',#121,#127,#132,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#141,.T.);
+#152=ORIENTED_EDGE('',*,*,#142,.F.);
+#153=ORIENTED_EDGE('',*,*,#143,.F.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_OUTER_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('flank',(#155),#100,.T.);
+#180=OPEN_SHELL('',(#156));
+#999=SHELL_BASED_SURFACE_MODEL('',(#180));",
+        helix_entities(200, 0.0),
+        helix_entities(300, 0.25)
+    );
+    let part = import(&file(".MILLI.,.METRE.", &body));
+    let model = part.topology();
+    // One and a half turns, cut every half turn: three pieces at least.
+    assert!(model.faces.len() >= 3, "{} faces", model.faces.len());
+    assert!(part.face_id("import(i,s0,f0,q0)").is_ok());
+    assert!(part.edge_id("import(i,s0,f0,m0)").is_ok());
+    assert_bounds(model, [-1.0, -1.0, 0.0], [1.0, 1.0, 1.75]);
+}
+
 #[test]
 fn lengths_are_read_in_millimetres() {
     let part = import(&file(".CENTI.,.METRE.", CYLINDER));

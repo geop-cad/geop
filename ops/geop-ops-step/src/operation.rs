@@ -29,8 +29,9 @@ use crate::import::{ImportedBody, read_step};
 /// is cut into sectors `fN,qM`, along meridians `fN,mM` — one going round
 /// a torus' tube likewise into pieces `fN,qM` along parallels `fN,mM`, and a
 /// whole torus first into bands `fN,bK` along parallels `fN,mK` starting at
-/// `fN,mK,v`; an edge split where a cut crosses it, or because it closes on
-/// itself, into pieces `eN,pM` at the vertices `eN,cM`.
+/// `fN,mK,v`, and a strip turning more than once into pieces `fN,qM` along
+/// meridians `fN,mM`; an edge split where a cut crosses it, or because it
+/// closes on itself, into pieces `eN,pM` at the vertices `eN,cM`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportStep;
 
