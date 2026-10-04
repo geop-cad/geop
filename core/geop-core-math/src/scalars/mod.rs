@@ -57,6 +57,71 @@ pub trait Scalar: Field + Copy + Display + Default {
     fn sin(self) -> Self;
     fn cos(self) -> Self;
 
+    /// An enclosure of the angle of the point `(x, self)` from the `x` axis,
+    /// in radians, in `(-pi, pi]`: of `atan2(y, x)` for every `y` in `self`
+    /// and `x` in `x`. All of `[-pi, pi]` where that is not one range of
+    /// angles: the box `(x, self)` holds the origin, or reaches across the
+    /// negative `x` axis, where the angle jumps.
+    ///
+    /// Over a box clear of the origin the angle is least and greatest at
+    /// corners. Those are taken in `f64` — free choices of where to put the
+    /// bounds — and then each is proven, not trusted: a bound `b` holds when
+    /// every point of the box lies on the far side of the ray at angle `b`,
+    /// `cos(b) y - sin(b) x` definitely of the right sign, evaluated in the
+    /// scalar's own outward-rounded arithmetic. Where rounding leaves that
+    /// undecided the bound moves outward, by steps that double, until it
+    /// holds.
+    fn atan2(self, x: Self) -> Self {
+        let y = self;
+        let whole = Self::PI.neg().union(Self::PI);
+        // On the negative `x` axis itself the angle is `pi`, just below it
+        // near `-pi`: a box reaching below it from there jumps too.
+        if (y.could_be_equal(Self::ZERO) && x.could_be_equal(Self::ZERO))
+            || (x.could_be_less(Self::ZERO)
+                && y.could_be_less(Self::ZERO)
+                && !y.definitely_less(Self::ZERO))
+        {
+            return whole;
+        }
+        // `+ 0.0` turns a zero's sign positive: on the negative `x` axis
+        // the angle is `pi`, never `-pi`.
+        let ys = [y.lower().to_f64() + 0.0, y.upper().to_f64() + 0.0];
+        let xs = [x.lower().to_f64(), x.upper().to_f64()];
+        let corners = ys.iter().flat_map(|&a| xs.iter().map(move |&b| a.atan2(b)));
+        let (low, high) = corners.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), a| {
+            (l.min(a), h.max(a))
+        });
+        // Whether every point of the box is at an angle `>= b` (`sign = 1`)
+        // or `<= b` (`sign = -1`).
+        let holds = |b: f64, sign: f64| {
+            let b = Self::from_f64(b);
+            let side = b.cos().mul(y).sub(b.sin().mul(x)).mul(Self::from_f64(sign));
+            !side.could_be_less(Self::ZERO)
+        };
+        let prove = |start: f64, sign: f64, limit: f64| -> Option<f64> {
+            let mut b = start;
+            let mut step = f64::EPSILON * start.abs().max(1.0);
+            for _ in 0..64 {
+                if holds(b, sign) {
+                    return Some(b);
+                }
+                b -= sign * step;
+                step *= 2.0;
+                if (b - limit) * sign < 0.0 {
+                    return None;
+                }
+            }
+            None
+        };
+        let pi = std::f64::consts::PI;
+        match (prove(low, 1.0, -pi - 1.0), prove(high, -1.0, pi + 1.0)) {
+            (Some(lo), Some(hi)) => Self::from_f64(lo)
+                .union(Self::from_f64(hi))
+                .intersect(whole),
+            _ => whole,
+        }
+    }
+
     // Three-valued comparisons
     fn could_be_equal(self, other: Self) -> bool;
     fn definitely_not_equal(self, other: Self) -> bool;
@@ -258,4 +323,40 @@ macro_rules! for_all_scalars {
         $fn::<$crate::scalars::ScalInF64>();
         $fn::<$crate::scalars::ScalInFPA64>();
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Scalar;
+
+    /// `atan2` encloses the true angle tightly in every quadrant, on the
+    /// axes, and right at the jump on the negative `x` axis.
+    fn check_atan2_encloses_the_angle<S: Scalar>() {
+        let f = S::from_f64;
+        for degrees in (-179..=180).step_by(7).chain([0, 90, 180, -90, 45]) {
+            let a = (degrees as f64).to_radians();
+            let angle = f(a.sin()).atan2(f(a.cos()));
+            assert!(angle.could_be_equal(f(a)), "{degrees}: {angle:?}");
+            // Fixed point resolves 2^-32, plain intervals far finer.
+            assert!(angle.width().to_f64() < 1e-8, "{degrees}: {angle:?}");
+        }
+        // pi itself, enclosed.
+        let pi = S::ZERO.atan2(f(-1.0));
+        assert!(pi.could_be_equal(S::PI), "{pi:?}");
+        assert!(pi.width().to_f64() < 1e-8, "{pi:?}");
+        // A box across the jump, or round the origin: all angles.
+        let across = f(-1e-3).union(f(1e-3)).atan2(f(-1.0));
+        assert!(across.could_be_equal(S::PI) && across.could_be_equal(S::PI.neg()));
+        let round = f(-1.0).union(f(1.0)).atan2(f(-1.0).union(f(1.0)));
+        assert!(round.could_be_equal(S::PI.neg()) && round.could_be_equal(S::PI));
+        // A wide box clear of the origin: its corners' angles, enclosed.
+        let wide = f(1.0).union(f(2.0)).atan2(f(1.0).union(f(3.0)));
+        assert!(wide.could_be_equal(f(1.0f64.atan2(3.0))));
+        assert!(wide.could_be_equal(f(2.0f64.atan2(1.0))));
+        assert!(!wide.could_be_equal(f(0.3)) && !wide.could_be_equal(f(1.11)));
+    }
+    #[test]
+    fn atan2_encloses_the_angle() {
+        for_all_scalars!(check_atan2_encloses_the_angle);
+    }
 }

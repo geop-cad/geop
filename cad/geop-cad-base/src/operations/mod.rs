@@ -6,7 +6,8 @@
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
 //! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
-//! patterns, mirrors and moves of bodies in `geop_ops_pattern`.
+//! patterns, mirrors and moves of bodies in `geop_ops_pattern`,
+//! wire harness routes in `geop_ops_harness`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -24,6 +25,7 @@ use geop_ops_pattern::{
     CircularPattern, CircularPatternArgs, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs,
     MoveBody, MoveBodyArgs,
 };
+use geop_ops_harness::{Route, RouteArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,7 @@ mod editor_tests;
 mod fillet_tests;
 #[cfg(test)]
 mod pattern_tests;
+mod harness_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
@@ -119,6 +122,9 @@ pub enum PartOperation {
     /// Move bodies, or a copy of them, turned and shifted.
     #[operation(label = "Move body")]
     MoveBody(MoveBodyArgs),
+    /// Route a bundle of wires from a connector through clips to another
+    /// connector, its bends checked and every wire's cut length reported.
+    Route(RouteArgs),
 }
 
 /// A program of the editor's operations.

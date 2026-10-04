@@ -15,6 +15,7 @@ use geop_core_topology::Model;
 
 use crate::assembly::Mate;
 
+mod cable;
 mod datum;
 mod describe;
 mod edit;
@@ -26,6 +27,7 @@ mod resolve;
 mod sketch;
 mod state;
 
+pub use cable::{Cable, CutWire};
 pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
 pub use edit::BodyNames;
 pub use ids::{DatumId, InstanceId, RefId, SketchId};
@@ -58,6 +60,9 @@ pub struct Part<S: Scalar> {
     pub(crate) datums: BTreeMap<DatumId, Datum<S>>,
     pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
     pub(crate) mates: BTreeMap<String, Mate>,
+    /// The cables routed in it, by the name of the solid each is swept
+    /// into (see [`Cable`]).
+    pub(crate) cables: BTreeMap<String, Cable<S>>,
     /// The parameter values the part is built with (see [`Part::pose_parameter`]).
     pub(crate) inputs: State,
     /// The parameters its steps declared, with the values they read.
@@ -84,6 +89,7 @@ impl<S: Scalar> Part<S> {
             datums: BTreeMap::new(),
             instances: BTreeMap::new(),
             mates: BTreeMap::new(),
+            cables: BTreeMap::new(),
             inputs: State::new(),
             declared: State::new(),
             parameters: crate::parameters::Parameters::default(),

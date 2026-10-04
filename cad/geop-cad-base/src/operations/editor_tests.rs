@@ -685,3 +685,120 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
         "{solids:?}"
     );
 }
+
+/// A new route picks what it runs through by clicks, in order: down
+/// through the box's hole — its rim on top, its rim at the bottom, both
+/// clips — and out to the box's far bottom corner. Too tight for the
+/// default hookup wire, it is refused, the bend drawn as failed; a thinner
+/// wire, chosen in the dialog, fits, and once built the dialog reports the
+/// route's length and every wire's cut length.
+#[test]
+fn new_route_is_picked_and_its_wires_chosen() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::New {
+        kind: "route".into(),
+    });
+    let step = update.step.expect("the route is edited");
+    assert_eq!(step.presentation.pickable, [Role::Point, Role::Circle]);
+    assert_eq!(step.missing, ["through"]);
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    // The hole, 0.4 round `(1, 1)` and 0.5 deep, seen at a slant: its rim
+    // on the box's top, then its rim on its floor, through the hole — both
+    // halfway between the vertices that split each circle.
+    let rim = 1.0 + 0.4 * std::f64::consts::FRAC_1_SQRT_2;
+    editor.handle(click(pointer(
+        [rim + 4.0, rim + 4.0, 1.0 + 5.0],
+        [-4.0, -4.0, -5.0],
+    )));
+    editor.handle(click(pointer(
+        [rim - 0.3, rim - 0.3, 1.5],
+        [0.3, 0.3, -1.0],
+    )));
+    // The box's bottom corner at `(2, 2, 0)`, from below.
+    let update = editor.handle(click(pointer([2.0, 2.0, -10.0], [0.0, 0.0, 1.0])));
+    let step = update.step.expect("the route is edited");
+    let Some(Control::Reference(through)) = step.presentation.dialog.get("through") else {
+        panic!("what the route runs through is picked");
+    };
+    let picked: Vec<&EntityRef> = through.entities().collect();
+    assert!(
+        matches!(
+            picked.as_slice(),
+            [
+                EntityRef::Edge { .. },
+                EntityRef::Edge { .. },
+                EntityRef::Vertex { .. }
+            ]
+        ),
+        "{picked:?}"
+    );
+    // The default wire bundles 1.4 across, which may bend no tighter than
+    // 7.2: the turn out to the corner is far tighter.
+    let error = step.error.expect("too tight a bend is refused");
+    assert!(
+        error.contains("may bend no tighter than radius 7.18"),
+        "{error}"
+    );
+    assert!(error.contains("between point 2"), "{error}");
+    assert!(
+        step.presentation
+            .visuals
+            .iter()
+            .any(|v| v.key.starts_with("route:") && v.style == geop_ops::ui::Style::Failed),
+        "the bend too tight is drawn as failed"
+    );
+
+    // The wire, selected, given a diameter of its own: 0.1 across.
+    editor.handle(dialog("wire:0", Value::Press));
+    editor.handle(dialog("wire_size", Value::Choice("diameter".into())));
+    let update = editor.handle(dialog("wire_diameter", Value::Number(0.1)));
+    let step = update.step.expect("the route is edited");
+    assert_eq!(step.error, None);
+    let update = editor.handle(dialog("service_loop", Value::Number(0.25)));
+    assert_eq!(update.step.expect("the route is edited").error, None);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert!(
+        update
+            .scene
+            .unwrap()
+            .part
+            .solids
+            .contains(&"route(route1)".into()),
+        "the bundle is drawn"
+    );
+
+    let cable = editor.part().cable("route(route1)").unwrap().clone();
+    // Straight down the hole, 0.5, then a single arc out to the corner.
+    assert!(cable.length.to_f64() > 0.5 + 1.5, "{:?}", cable.length);
+    let cut = cable.wires[0].cut_length.to_f64() - cable.length.to_f64();
+    assert!((cut - 0.5).abs() < 1e-9, "{cut}");
+    let update = editor.handle(Command::Open {
+        id: "route1".into(),
+    });
+    let presentation = update.step.expect("the route is edited").presentation;
+    let Some(Control::Text { text, tone }) = presentation.dialog.get("report") else {
+        panic!("what was built is reported: {:?}", presentation.dialog);
+    };
+    assert_eq!(*tone, Tone::Success);
+    assert!(
+        text.starts_with(&format!("Route {:.1} long", cable.length.to_f64())),
+        "{text}"
+    );
+    let Some(Control::List { items, .. }) = presentation.dialog.get("wires") else {
+        panic!("the wires are listed");
+    };
+    let detail = items[0].detail.as_deref().unwrap();
+    let cut_length = cable.wires[0].cut_length.to_f64();
+    assert!(
+        detail.ends_with(&format!("cut {cut_length:.1}")),
+        "{detail}"
+    );
+}

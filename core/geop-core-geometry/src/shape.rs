@@ -140,11 +140,38 @@ impl<S: Scalar> Arc<S> {
         self.start.could_be_equal(&self.end)
     }
 
-    /// The angle the arc turns through, in radians, in `(0, 2 pi]`.
-    ///
-    /// A plain `f64`: `Scalar` has no inverse trigonometry, and this is
-    /// only ever used to *choose* a point along the arc (see
-    /// [`Arc::point_at`]).
+    /// The angle the arc turns through, in radians, in `(0, 2 pi]`: an
+    /// enclosure, for what is measured — its length ([`Arc::length`]).
+    /// The whole turn for an arc that could be closed, as [`Arc::sweep`]
+    /// takes it.
+    pub fn angle(&self) -> GeopResult<S> {
+        if self.could_be_closed() {
+            return Ok(S::TWO.mul(S::PI));
+        }
+        let c = &self.circle;
+        let x = self.start.sub(&c.center);
+        let e = self.end.sub(&c.center);
+        let angle = c.normal.prod_dot(&x.prod_cross(&e)).atan2(x.prod_dot(&e));
+        if angle.definitely_greater(S::ZERO) {
+            Ok(angle)
+        } else if angle.definitely_less(S::ZERO) {
+            Ok(angle.add(S::TWO.mul(S::PI)))
+        } else {
+            Err(GeopError::new(format!(
+                "Arc::angle: the arc could turn by nothing or all round, from {:?} to {:?} about {:?}",
+                self.start, self.end, c.center
+            )))
+        }
+    }
+
+    /// How long the arc is: its radius times the angle it turns through.
+    pub fn length(&self) -> GeopResult<S> {
+        Ok(self.circle.radius.mul(self.angle()?))
+    }
+
+    /// The angle the arc turns through, in radians, in `(0, 2 pi]`, as a
+    /// plain `f64`: only ever used to *choose* a point along the arc (see
+    /// [`Arc::point_at`]); what is measured takes [`Arc::angle`].
     pub fn sweep(&self) -> f64 {
         if self.could_be_closed() {
             return std::f64::consts::TAU;
@@ -626,6 +653,12 @@ mod tests {
         assert!(!arc.could_be_closed());
         assert!(arc.sweep() > std::f64::consts::FRAC_PI_2);
         assert!(arc.sweep() < std::f64::consts::PI);
+        // Measured, the angle and the length are enclosures of the turn.
+        let angle = arc.angle().unwrap();
+        assert!(angle.could_be_equal(S::from_f64(arc.sweep())), "{angle:?}");
+        let length = arc.length().unwrap();
+        assert!(length.could_be_equal(angle), "{length:?}");
+        assert!(length.width().to_f64() < 1e-5, "{length:?}");
         // Clockwise, seen from below: the same circle, the other normal.
         let reversed = left.reverse().as_arc().unwrap().expect("still circular");
         assert!(reversed.circle.normal.could_be_equal(&v(0., 0., -1.)));

@@ -21,6 +21,7 @@ members = [
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
     "ops/geop-ops-pattern",
+    "ops/geop-ops-harness",
 ]
 
 [workspace.package]
@@ -52,6 +53,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"
 geop-ops-pattern = { path = "ops/geop-ops-pattern" }
+geop-ops-harness = { path = "ops/geop-ops-harness" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in

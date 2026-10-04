@@ -33,7 +33,8 @@ fn every_operation_is_offered() {
             "linear_pattern",
             "circular_pattern",
             "mirror",
-            "move_body"
+            "move_body",
+            "route"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

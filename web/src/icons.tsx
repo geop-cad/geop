@@ -287,6 +287,14 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M7 8 L11.5 4.5 M9 4.5 L11.5 4.5 L11.5 7" strokeWidth="1" />
     </>
   ),
+  route: (
+    <>
+      <rect x="1.5" y="12.5" width="3.5" height="4" rx="0.5" />
+      <rect x="15" y="3.5" width="3.5" height="4" rx="0.5" />
+      <path d="M5 14.5 L7 14.5 C 11 14.5, 9 5.5, 13 5.5 L15 5.5" />
+      <circle cx="10" cy="10" r="1.6" strokeWidth="1" />
+    </>
+  ),
   drag: (
     <>
       <path d="M10 2.5 L10 17.5 M2.5 10 L17.5 10" />
