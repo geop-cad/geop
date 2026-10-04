@@ -274,7 +274,7 @@ fn stress(program: Program, size: f64) {
         record(format!("fillet {edge}"), outcome(&part, Fillet, &args));
         let args = ChamferArgs {
             edges: vec![edge.clone()],
-            distance: size,
+            distance: size.into(),
             distance2: None,
         };
         record(format!("chamfer {edge}"), outcome(&part, Chamfer, &args));
@@ -284,7 +284,7 @@ fn stress(program: Program, size: f64) {
         let args = ShellArgs {
             solid: solid.clone(),
             faces: open.clone(),
-            thickness: size,
+            thickness: size.into(),
         };
         record(
             format!("shell open at {open:?}"),

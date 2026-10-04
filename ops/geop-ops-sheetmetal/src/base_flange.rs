@@ -11,6 +11,7 @@ use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops::{
     Context, Library, Namer, Part, PlacedSketch,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Choice, Form, Number, Tone, Unit},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
@@ -56,8 +57,9 @@ pub struct BaseFlangeArgs {
     /// The sketch: one area, or one chain of lines and arcs.
     pub sketch: String,
     pub rules: SheetMetalRules,
-    /// How far a chain's strip runs along the sketch's normal.
-    pub depth: f64,
+    /// How far a chain's strip runs along the sketch's normal: a number,
+    /// or a formula of the part's parameters.
+    pub depth: Formula,
     /// Put the material on the other side: of the sketch's plane, for an
     /// area; of the chain, for a chain.
     #[serde(default)]
@@ -73,7 +75,7 @@ impl Operation for BaseFlange {
         BaseFlangeArgs {
             sketch: before.sketch_names().pop().unwrap_or_default(),
             rules: SheetMetalRules::default(),
-            depth: 1.0,
+            depth: Formula::Plain(1.0),
             flip: false,
         }
     }
@@ -119,9 +121,10 @@ impl Operation for BaseFlange {
             .and_then(|placed| placed.sketch.shape())
             .is_ok_and(|shape| matches!(shape, Shape::Chain(_)));
         if chain {
-            f.number(
+            f.formula(
                 "depth",
-                Number::new("depth", args.depth, Unit::Length).range(0.0, 10.0),
+                Number::formula("depth", &args.depth, before.inputs(), Unit::Length)
+                    .range(0.0, 10.0),
                 |args, d| args.depth = d,
             );
         }
@@ -147,7 +150,10 @@ impl Operation for BaseFlange {
             Shape::Region(region) => {
                 plate(&namer, &args.sketch, &placed, Shape::Region(region), args)
             }
-            Shape::Chain(chain) => strip(&namer, &args.sketch, &placed, &chain, args),
+            Shape::Chain(chain) => {
+                let depth = args.depth.evaluate(&mut part).with_context(ctx)?;
+                strip(&namer, &args.sketch, &placed, &chain, depth, args)
+            }
         }
         .with_context(ctx)?;
         let solid = namer.root();
@@ -304,13 +310,14 @@ struct Turn<S: Scalar> {
     setback: S,
 }
 
-/// The sketch's chain of lines and arcs as a bent strip (see
+/// The sketch's chain of lines and arcs as a bent strip, `depth` deep (see
 /// [`BaseFlange`]).
 fn strip<S: Scalar>(
     namer: &Namer,
     sketch_name: &str,
     placed: &PlacedSketch<S>,
     chain: &ProfileLoop,
+    depth: f64,
     args: &BaseFlangeArgs,
 ) -> GeopResult<Sheet<S>> {
     let sketch = &placed.sketch;
@@ -358,10 +365,9 @@ fn strip<S: Scalar>(
     if args.flip {
         pieces = pieces.into_iter().rev().map(Piece::reversed).collect();
     }
-    if !(args.depth.is_finite() && args.depth > 0.0) {
+    if !(depth.is_finite() && depth > 0.0) {
         return Err(GeopError::new(format!(
-            "the strip's depth must be positive, not {}",
-            args.depth
+            "the strip's depth must be positive, not {depth}"
         )));
     }
 
@@ -410,7 +416,7 @@ fn strip<S: Scalar>(
         )));
     }
 
-    let depth = S::from_f64(args.depth);
+    let depth = S::from_f64(depth);
     let sketch_namer = namer.scoped(sketch_name);
     let mut flats: Vec<Flat<S>> = Vec::new();
     let mut bends: Vec<Bend<S>> = Vec::new();

@@ -30,6 +30,7 @@ use geop_core_topology::{Body, SolidId, build::BuiltBody};
 use geop_ops::{
     Namer, Part,
     operation::{EntityRef, Role},
+    parameters::Formula,
     ui::{Choice, Form, Number, Tone},
 };
 use geop_ops_booleans::{
@@ -120,15 +121,23 @@ fn path_field<'a, S: Scalar, A: 'a>(
 }
 
 /// How far one side of an extrude or revolve goes: a length — an angle, in
-/// degrees, for a revolve — or as far as the solid it is combined with: up
-/// to its next face, or through all of it. Serialized as `{"blind": 20.0}`,
-/// `"up_to_next"` or `"through_all"`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// degrees, for a revolve — plain or a formula of the part's parameters,
+/// or as far as the solid it is combined with: up to its next face, or
+/// through all of it. Serialized as `{"blind": 20.0}`, `{"blind":
+/// "height - 2"}`, `"up_to_next"` or `"through_all"`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Extent {
-    Blind(f64),
+    Blind(Formula),
     UpToNext,
     ThroughAll,
+}
+
+impl Extent {
+    /// A side `amount` far: a number, or a formula's text.
+    pub fn blind(amount: impl Into<Formula>) -> Self {
+        Extent::Blind(amount.into())
+    }
 }
 
 /// How far an extrude or revolve goes, from its sketch's plane: `side1`
@@ -148,10 +157,10 @@ pub struct Extents {
 }
 
 impl Extents {
-    /// One side, `amount` far.
-    pub fn blind(amount: f64) -> Self {
+    /// One side, `amount` far: a number, or a formula's text.
+    pub fn blind(amount: impl Into<Formula>) -> Self {
         Self {
-            side1: Extent::Blind(amount),
+            side1: Extent::blind(amount),
             symmetric: false,
             side2: None,
             reversed: false,
@@ -161,19 +170,36 @@ impl Extents {
     /// Whether a side goes as far as the solid it is combined with, which
     /// it then needs.
     pub fn reaches_target(&self) -> bool {
-        let far = |e: Extent| matches!(e, Extent::UpToNext | Extent::ThroughAll);
-        far(self.side1) || (!self.symmetric && self.side2.is_some_and(far))
+        let far = |e: &Extent| matches!(e, Extent::UpToNext | Extent::ThroughAll);
+        far(&self.side1) || (!self.symmetric && self.side2.as_ref().is_some_and(far))
     }
 
-    /// What to build for it, see [`Plan`]: `far(sign)` is how far, the way
-    /// `sign` says, reaches past the solid it is combined with.
-    fn plan(&self, far: impl Fn(f64) -> GeopResult<f64>) -> GeopResult<Plan> {
+    /// What to build for it, see [`Plan`], in the step building `part` —
+    /// which a length's formula reads its parameters from: `far(sign)` is
+    /// how far, the way `sign` says, reaches past the solid it is combined
+    /// with.
+    fn plan<S: Scalar>(
+        &self,
+        part: &mut Part<S>,
+        far: impl Fn(f64) -> GeopResult<f64>,
+    ) -> GeopResult<Plan> {
         use Extent::*;
         let ahead = if self.reversed { -1.0 } else { 1.0 };
-        let side = |sign: f64, extent: Extent| -> GeopResult<Side> {
+        let mut length = |extent: &Extent| -> GeopResult<Option<f64>> {
+            match extent {
+                Blind(d) => Ok(Some(d.evaluate(part)?)),
+                UpToNext | ThroughAll => Ok(None),
+            }
+        };
+        let blind1 = length(&self.side1)?;
+        let blind2 = match &self.side2 {
+            Some(e) if !self.symmetric => length(e)?,
+            _ => None,
+        };
+        let side = |sign: f64, extent: &Extent, blind: Option<f64>| -> GeopResult<Side> {
             Ok(match extent {
-                Blind(d) => Side {
-                    to: sign * d,
+                Blind(_) => Side {
+                    to: sign * blind.expect("a blind side's length is evaluated"),
                     up_to_next: false,
                 },
                 ThroughAll => Side {
@@ -186,11 +212,14 @@ impl Extents {
                 },
             })
         };
-        let sides = match (self.side1, self.symmetric, self.side2) {
-            (Blind(d), true, _) => return Ok(Plan::Whole(-d / 2.0, d / 2.0)),
-            (e, true, _) => vec![side(ahead, e)?, side(-ahead, e)?],
-            (e, false, None) => vec![side(ahead, e)?],
-            (e, false, Some(e2)) => vec![side(ahead, e)?, side(-ahead, e2)?],
+        let sides = match (&self.side1, self.symmetric, &self.side2) {
+            (Blind(_), true, _) => {
+                let d = blind1.expect("a blind side's length is evaluated");
+                return Ok(Plan::Whole(-d / 2.0, d / 2.0));
+            }
+            (e, true, _) => vec![side(ahead, e, blind1)?, side(-ahead, e, blind1)?],
+            (e, false, None) => vec![side(ahead, e, blind1)?],
+            (e, false, Some(e2)) => vec![side(ahead, e, blind1)?, side(-ahead, e2, blind2)?],
         };
         Ok(if sides.iter().any(|s| s.up_to_next) {
             Plan::Sides(sides)
@@ -200,20 +229,21 @@ impl Extents {
     }
 
     /// The fields to say how far: how the first side ends and, blind, how
-    /// far — typed, or dragged on its handle — whether it is turned the
-    /// other way, whether symmetric, and unless so, the other side the same
-    /// way. `amount(value, second)` makes a side's number field, keyed `key`
-    /// for the first side and `key2` for the second; a side turned blind
-    /// starts `default` far. `set1` sets the first side's length, which an
-    /// operation may want to react to.
+    /// far — typed, as a number or a formula of the part's parameters, or
+    /// dragged on its handle — whether it is turned the other way, whether
+    /// symmetric, and unless so, the other side the same way.
+    /// `amount(length, second)` makes a side's number field (see
+    /// [`Number::formula`]), keyed `key` for the first side and `key2` for
+    /// the second; a side turned blind starts `default` far. `set1` sets the
+    /// first side's length, which an operation may want to react to.
     pub(crate) fn show<'a, S: Scalar, A: 'a>(
         &self,
         form: &mut Form<'a, S, A>,
         key: &str,
-        amount: impl Fn(f64, bool) -> Number<S>,
+        amount: impl Fn(&Formula, bool) -> Number<S>,
         default: f64,
         extents: fn(&mut A) -> &mut Extents,
-        set1: impl Fn(&mut A, f64) + 'a,
+        set1: impl Fn(&mut A, Formula) + 'a,
     ) {
         let choices = |none: bool| {
             let mut choices = Vec::new();
@@ -225,16 +255,16 @@ impl Extents {
             choices.push(Choice::new("through_all", "Through all"));
             choices
         };
-        let mode = |extent: Option<Extent>| match extent {
+        let mode = |extent: Option<&Extent>| match extent {
             None => "none",
             Some(Extent::Blind(_)) => "blind",
             Some(Extent::UpToNext) => "up_to_next",
             Some(Extent::ThroughAll) => "through_all",
         };
-        let pick = move |old: Option<Extent>, mode: &str| match mode {
+        let pick = move |old: Option<&Extent>, mode: &str| match mode {
             "blind" => Some(Extent::Blind(match old {
-                Some(Extent::Blind(d)) => d,
-                _ => default,
+                Some(Extent::Blind(d)) => d.clone(),
+                _ => Formula::Plain(default),
             })),
             "up_to_next" => Some(Extent::UpToNext),
             "through_all" => Some(Extent::ThroughAll),
@@ -243,18 +273,18 @@ impl Extents {
         form.select(
             "end",
             "end",
-            mode(Some(self.side1)),
+            mode(Some(&self.side1)),
             choices(false),
             false,
             move |args, value| {
                 let this = extents(args);
-                if let Some(extent) = pick(Some(this.side1), value) {
+                if let Some(extent) = pick(Some(&this.side1), value) {
                     this.side1 = extent;
                 }
             },
         );
-        if let Extent::Blind(d) = self.side1 {
-            form.number(key, amount(d, false), set1);
+        if let Extent::Blind(d) = &self.side1 {
+            form.formula(key, amount(d, false), set1);
         }
         form.checkbox(
             "reversed",
@@ -271,16 +301,16 @@ impl Extents {
         form.select(
             "second",
             "second side",
-            mode(self.side2),
+            mode(self.side2.as_ref()),
             choices(true),
             false,
             move |args, value| {
                 let this = extents(args);
-                this.side2 = pick(this.side2, value);
+                this.side2 = pick(this.side2.as_ref(), value);
             },
         );
-        if let Some(Extent::Blind(d)) = self.side2 {
-            form.number(&format!("{key}2"), amount(d, true), move |args, d| {
+        if let Some(Extent::Blind(d)) = &self.side2 {
+            form.formula(&format!("{key}2"), amount(d, true), move |args, d| {
                 extents(args).side2 = Some(Extent::Blind(d))
             });
         }

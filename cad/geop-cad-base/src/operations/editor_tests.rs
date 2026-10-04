@@ -48,8 +48,8 @@ fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
 fn distance(editor: &Editor<S>, id: &str) -> f64 {
     let program = editor.program();
     match &program.steps[program.index_of(id).unwrap()].operation {
-        PartOperation::Extrude(args) => match args.extent.side1 {
-            geop_ops_extrude_revolve::Extent::Blind(d) => d,
+        PartOperation::Extrude(args) => match &args.extent.side1 {
+            geop_ops_extrude_revolve::Extent::Blind(d) => d.plain().expect("a plain distance"),
             other => panic!("{other:?} is no distance"),
         },
         other => panic!("{other:?}"),
@@ -249,7 +249,7 @@ fn new_steps_handles_are_dragged_in_steps() {
     };
     assert_eq!(
         extrude.extent.side1,
-        geop_ops_extrude_revolve::Extent::Blind(1.3)
+        geop_ops_extrude_revolve::Extent::blind(1.3)
     );
 }
 
@@ -657,9 +657,10 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
     assert!(update.error.is_none(), "{:?}", update.error);
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::LinearPattern(args) => {
-            assert_eq!(args.first.count, 4);
-            match args.first.spacing {
+            assert_eq!(args.first.count, 4.0.into());
+            match &args.first.spacing {
                 geop_ops_pattern::Spacing::Step(step) => {
+                    let step = step.plain().expect("a plain spacing");
                     assert!((step - 2.0).abs() < 1e-9, "{step}")
                 }
                 other => panic!("{other:?}"),
@@ -1851,7 +1852,7 @@ fn variable_fillet_set_up_in_the_dialog() {
     match &last.operation {
         PartOperation::Fillet(args) => {
             assert_eq!(args.edges.len(), 1, "{args:?}");
-            assert_eq!(args.end_radius, Some(0.2), "{args:?}");
+            assert_eq!(args.end_radius, Some(0.2.into()), "{args:?}");
             assert_eq!(args.vertex_radii.len(), 1, "{args:?}");
             assert_eq!(args.vertex_radii[0].radius, 0.15, "{args:?}");
         }

@@ -95,7 +95,7 @@ pub(super) fn enclosure() -> Program {
         ShellArgs {
             solid: "extrude(box)".into(),
             faces: vec!["extrude(box,end)".into()],
-            thickness: 0.2,
+            thickness: 0.2.into(),
         },
     );
     program

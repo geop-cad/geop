@@ -76,7 +76,7 @@ fn shell(solid: &str, faces: &[&str], thickness: f64) -> ShellArgs {
     ShellArgs {
         solid: solid.into(),
         faces: faces.iter().map(|f| f.to_string()).collect(),
-        thickness,
+        thickness: thickness.into(),
     }
 }
 

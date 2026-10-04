@@ -349,6 +349,90 @@ pub fn is_formula(text: &str) -> bool {
     text.trim().parse::<f64>().is_err()
 }
 
+/// A number an operation is given — a length, an angle, a count: a plain
+/// value, or a formula of the part's parameters that it follows, as a
+/// sketch's dimensions can be (see [`evaluate`]). Serialized as a number
+/// when plain and as the formula's text otherwise — `12.5`, `"width / 2"` —
+/// so a file written before an argument took formulas reads the same.
+///
+/// A step reads it with [`Formula::evaluate`], which declares every
+/// parameter the formula reads: a change to one of them rebuilds the step,
+/// a change to any other does not (see [`crate::ProgramRunner`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Formula {
+    Plain(f64),
+    Expression(String),
+}
+
+impl From<f64> for Formula {
+    fn from(value: f64) -> Self {
+        Formula::Plain(value)
+    }
+}
+
+impl From<&str> for Formula {
+    /// `text` as typed: plain if it is a number, a formula otherwise.
+    fn from(text: &str) -> Self {
+        let text = text.trim();
+        match text.parse() {
+            Ok(value) => Formula::Plain(value),
+            Err(_) => Formula::Expression(text.to_string()),
+        }
+    }
+}
+
+impl From<String> for Formula {
+    fn from(text: String) -> Self {
+        Formula::from(text.as_str())
+    }
+}
+
+impl std::fmt::Display for Formula {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Formula::Plain(value) => write!(f, "{value}"),
+            Formula::Expression(text) => f.write_str(text),
+        }
+    }
+}
+
+impl Formula {
+    /// Its value if it is plain; `None` for a formula.
+    pub fn plain(&self) -> Option<f64> {
+        match self {
+            Formula::Plain(value) => Some(*value),
+            Formula::Expression(_) => None,
+        }
+    }
+
+    /// The formula it follows, if it is one.
+    pub fn expression(&self) -> Option<&str> {
+        match self {
+            Formula::Plain(_) => None,
+            Formula::Expression(text) => Some(text),
+        }
+    }
+
+    /// Its value as the step building `part` reads it: every parameter
+    /// the formula reads declared read (see [`crate::Part::evaluate`]).
+    pub fn evaluate<S: Scalar>(&self, part: &mut crate::Part<S>) -> GeopResult<f64> {
+        match self {
+            Formula::Plain(value) => Ok(*value),
+            Formula::Expression(text) => part.evaluate(text),
+        }
+    }
+
+    /// Its value with the parameter values `inputs`, declaring nothing:
+    /// what a dialog shows, and what a handle is drawn at.
+    pub fn peek(&self, inputs: &State) -> GeopResult<f64> {
+        match self {
+            Formula::Plain(value) => Ok(*value),
+            Formula::Expression(text) => evaluate(text, |name| number(inputs, name)),
+        }
+    }
+}
+
 /// The names of parameters `expression` reads, in order, each once.
 pub fn names_in(expression: &str) -> Vec<String> {
     let mut names = Vec::new();

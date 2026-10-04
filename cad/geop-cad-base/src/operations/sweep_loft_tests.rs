@@ -233,7 +233,7 @@ fn sweep_joins_a_block() {
         ExtrudeArgs {
             sketch: "block_sketch".into(),
             extent: Extents {
-                side1: Extent::Blind(1.0),
+                side1: Extent::blind(1.0),
                 symmetric: true,
                 side2: None,
                 reversed: false,
@@ -456,7 +456,7 @@ fn slab(program: &mut Program) {
         ExtrudeArgs {
             sketch: "slab_sketch".into(),
             extent: Extents {
-                side1: Extent::Blind(1.0),
+                side1: Extent::blind(1.0),
                 symmetric: true,
                 side2: None,
                 reversed: false,

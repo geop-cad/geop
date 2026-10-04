@@ -108,7 +108,7 @@ fn chamfer_box_edges_and_rim() {
         "bevel",
         ChamferArgs {
             edges,
-            distance: 0.2,
+            distance: 0.2.into(),
             distance2: None,
         },
     );
@@ -117,8 +117,8 @@ fn chamfer_box_edges_and_rim() {
         "countersink",
         ChamferArgs {
             edges: vec![rim[2].clone()],
-            distance: 0.1,
-            distance2: Some(0.05),
+            distance: 0.1.into(),
+            distance2: Some(0.05.into()),
         },
     );
     let part = program.build::<S>(&NoFiles).unwrap();
@@ -135,7 +135,7 @@ fn fillet_and_chamfer_round_trip_through_json() {
     program.push(
         "round",
         FilletArgs {
-            end_radius: Some(0.3),
+            end_radius: Some(0.3.into()),
             vertex_radii: vec![VertexRadius {
                 vertex: "v".into(),
                 radius: 0.2,
@@ -147,8 +147,8 @@ fn fillet_and_chamfer_round_trip_through_json() {
         "bevel",
         ChamferArgs {
             edges: vec!["c".into()],
-            distance: 0.1,
-            distance2: Some(0.2),
+            distance: 0.1.into(),
+            distance2: Some(0.2.into()),
         },
     );
     let json = serde_json::to_value(&program).unwrap();
@@ -245,7 +245,7 @@ fn chamfer_l_block_inner_edge() {
         "bevel",
         ChamferArgs {
             edges: upright_edges_at(&before, 1.0, 1.0),
-            distance: 0.3,
+            distance: 0.3.into(),
             distance2: None,
         },
     );

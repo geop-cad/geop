@@ -71,7 +71,7 @@ fn base(part: Part<S>, rules: SheetMetalRules, depth: f64) -> Part<S> {
     let args = BaseFlangeArgs {
         sketch: "k".into(),
         rules,
-        depth,
+        depth: depth.into(),
         flip: false,
     };
     BaseFlange.apply(part, "b", &args, &NoFiles).unwrap()
@@ -80,8 +80,8 @@ fn base(part: Part<S>, rules: SheetMetalRules, depth: f64) -> Part<S> {
 fn flange(edge: &str) -> EdgeFlangeArgs {
     EdgeFlangeArgs {
         edge: edge.into(),
-        angle: 90.0,
-        length: 0.5,
+        angle: 90.0.into(),
+        length: 0.5.into(),
         reference: LengthReference::OuterSharp,
         position: FlangePosition::MaterialInside,
         radius: None,
@@ -323,7 +323,7 @@ fn flange_on_a_flange() {
         .unwrap();
     let mut second = flange("edge_flange(f1,flange,end,a)");
     second.position = FlangePosition::BendOutside;
-    second.angle = 60.0;
+    second.angle = 60.0.into();
     let part = EdgeFlange.apply(part, "f2", &second, &NoFiles).unwrap();
     assert_valid(&part);
     let flat = unfold(part, "edge_flange(f2)");
@@ -452,8 +452,8 @@ fn sweep_angles_radii_and_k_factors() {
                     1.0,
                 );
                 let mut args = flange("base_flange(b,k,c4,b)");
-                args.angle = angle;
-                args.length = 1.5;
+                args.angle = angle.into();
+                args.length = 1.5.into();
                 args.offset_start = 0.5;
                 match EdgeFlange.apply(part, "f1", &args, &NoFiles) {
                     Err(e) => {
@@ -490,7 +490,7 @@ fn sweep_angles_radii_and_k_factors() {
                 let args = BaseFlangeArgs {
                     sketch: "k".into(),
                     rules: rules(t, radius, k),
-                    depth: 0.5,
+                    depth: 0.5.into(),
                     flip: false,
                 };
                 let part = match BaseFlange.apply(part, "b", &args, &NoFiles) {

@@ -15,6 +15,7 @@ use geop_ops::Design;
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::Operation,
+    parameters::Formula,
     ui::{Form, Number, Track, Unit},
 };
 use geop_ops_booleans::{Combine, Tool};
@@ -133,18 +134,20 @@ impl Operation for Extrude {
             "distance",
             |length, second| {
                 let label = if second { "distance 2" } else { "distance" };
-                Number::new(label, length, Unit::Length)
-                    .range(-10.0, 10.0)
-                    .handle(distance_handle(before, args, length, second))
+                let number = Number::formula(label, length, before.inputs(), Unit::Length);
+                let at = distance_handle(before, args, number.value, second);
+                number.range(-10.0, 10.0).handle(at)
             },
             1.0,
             |args| &mut args.extent,
             |args, length| {
-                let from = match std::mem::replace(&mut args.extent.side1, Extent::Blind(length)) {
-                    Extent::Blind(from) => from,
-                    Extent::UpToNext | Extent::ThroughAll => length,
-                };
-                args.combine.follow_sign(from, length);
+                let to = length.plain();
+                let from = std::mem::replace(&mut args.extent.side1, Extent::Blind(length));
+                // A length typed or dragged across the plane turns a join
+                // into a cut; a formula is followed, not steered by.
+                if let (Extent::Blind(Formula::Plain(from)), Some(to)) = (from, to) {
+                    args.combine.follow_sign(from, to);
+                }
             },
         );
         f.checkbox("face", "face", args.face, |args, b| args.face = b);
@@ -196,7 +199,7 @@ impl Operation for Extrude {
         };
         let plan = args
             .extent
-            .plan(|sign| match &hull {
+            .plan(&mut part, |sign| match &hull {
                 Some(hull) => reach_past(hull, plane, sign),
                 None => Err(no_target()),
             })
