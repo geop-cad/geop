@@ -380,7 +380,10 @@ impl<S: Scalar> NurbSurface3D<S> {
         }
         for i in 0..nu {
             for j in 0..nv {
-                let constraints: Vec<(usize, &Plane<S>, &Vector3<S>, (usize, usize))> = (0..SIDES)
+                // Per side whose next row this point is in: the side, its
+                // plane, the way away from it, and the point on the side.
+                type Constraint<'a, S> = (usize, &'a Plane<S>, &'a Vector3<S>, (usize, usize));
+                let constraints: Vec<Constraint<S>> = (0..SIDES)
                     .filter_map(|k| {
                         let (plane, away) = planes[k].as_ref()?;
                         next_row(k, i, j).map(|base| (k, plane, away, base))

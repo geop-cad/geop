@@ -410,10 +410,14 @@ fn chain<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Vec<Side<S>>> {
     Ok(out)
 }
 
+/// What a fill is tangent to along an edge: a plane, and the direction in
+/// it away from the face it continues.
+type Tangency<S> = (Plane<S>, Vector3<S>);
+
 /// The plane of the flat face the edge `edge` bounds, and the direction in
 /// it away from that face at the middle of the edge — what a fill tangent
 /// along the edge continues.
-fn tangent_plane<S: Scalar>(part: &Part<S>, edge: EdgeId) -> GeopResult<(Plane<S>, Vector3<S>)> {
+fn tangent_plane<S: Scalar>(part: &Part<S>, edge: EdgeId) -> GeopResult<Tangency<S>> {
     let model = part.topology();
     let name = name_of(part, edge)?;
     let coedges = model.coedges_of_edge(edge);
@@ -457,7 +461,7 @@ fn has_corner<S: Scalar>(a: &Curve3<S>, b: &Curve3<S>) -> GeopResult<bool> {
 fn fill<S: Scalar>(
     namer: &Namer,
     sides: &[Side<S>],
-    planes: &[(EdgeId, (Plane<S>, Vector3<S>))],
+    planes: &[(EdgeId, Tangency<S>)],
 ) -> GeopResult<(BodySpec<S>, BodyNames)> {
     let n = sides.len();
     // The loop's corners, side `k` running from corner `k` to `k + 1`, and
@@ -527,7 +531,7 @@ fn fill<S: Scalar>(
         }
         let mut surface = NurbSurface3D::coons([&curves[0], &curves[1], &curves[2], &curves[3]])?;
         if !planes.is_empty() {
-            let mut at: [Option<(Plane<S>, Vector3<S>)>; 4] = Default::default();
+            let mut at: [Option<Tangency<S>>; 4] = Default::default();
             for (e, plane) in planes {
                 let k = sides.iter().position(|s| s.edge == *e).expect("a side");
                 at[k] = Some(plane.clone());

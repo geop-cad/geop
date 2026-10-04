@@ -166,7 +166,7 @@ fn ruled_between_edges_sharing_a_corner_is_refused() {
     let a = edge_between(&part, [0., 0., 1.], [1., 0., 1.]);
     let b = edge_between(&part, [1., 0., 1.], [1., 1., 1.]);
     let err = refused(span(part, &[a, b], &[]));
-    assert!(format!("{err}").contains("share an end"), "{err}");
+    assert!(err.contains("share an end"), "{err}");
 }
 
 /// The four edges of a cube's face, in any order: flat, so filled with
@@ -307,7 +307,7 @@ fn cover_tangent_to_a_flange() {
     ));
     // Tangent to a guide edge, whose face is curved: refused.
     let err = refused(span(part, &edges, &["guide(e2)".into()]));
-    assert!(format!("{err}").contains("not flat"), "{err}");
+    assert!(err.contains("not flat"), "{err}");
 }
 
 /// Edges that do not close a loop are refused, naming where it breaks off.
@@ -320,7 +320,7 @@ fn open_chain_is_refused() {
         edge_between(&part, [1., 1., 1.], [0., 1., 1.]),
     ];
     let err = refused(span(part, &edges, &[]));
-    assert!(format!("{err}").contains("not a closed loop"), "{err}");
+    assert!(err.contains("not a closed loop"), "{err}");
 }
 
 /// The circle round a cylinder's end: one flat disc.
