@@ -486,9 +486,8 @@ impl<S: Scalar> NurbSurface3D<S> {
                 dehomogenize::<S, 4, 3>(&[self.control_points[index]])[0]
             };
             let straight = (0..len).all(|i| {
-                (1..rows).all(|j| {
-                    could_be_parallel(&point(i, j).sub(&point(i, 0)), &axis.direction)
-                })
+                (1..rows)
+                    .all(|j| could_be_parallel(&point(i, j).sub(&point(i, 0)), &axis.direction))
             });
             if straight {
                 return Ok(Some(axis));

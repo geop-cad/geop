@@ -35,8 +35,8 @@ use geop_core_geometry::{
     shape::{Arc, Axis, Circle, Plane},
 };
 use geop_core_math::{
-    polygon::loops_contain,
     geop_error::{GeopError, GeopResult, WithContext},
+    polygon::loops_contain,
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
     with_context,
@@ -272,7 +272,10 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             let Some(&(d, _)) = faces.iter().find(|&&(f, _)| drafted[f]) else {
                 continue;
             };
-            if let Some(&(f, _)) = faces.iter().find(|&&(f, _)| matches!(kinds[f], Kind::Other)) {
+            if let Some(&(f, _)) = faces
+                .iter()
+                .find(|&&(f, _)| matches!(kinds[f], Kind::Other))
+            {
                 return Err(GeopError::new(format!(
                     "face {} meets the drafted face {} at vertex {}, and is neither planar nor cylindrical: drafting next to it is not supported",
                     names.faces[f], names.faces[d], names.vertices[v]
@@ -336,9 +339,8 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             if !moved[v] {
                 continue;
             }
-            points[v] = move_vertex(spec.vertices[v], faces, &surfaces, &kinds, size).map_err(
-                |e| e.with_context(format!("moving vertex {}", names.vertices[v])),
-            )?;
+            points[v] = move_vertex(spec.vertices[v], faces, &surfaces, &kinds, size)
+                .map_err(|e| e.with_context(format!("moving vertex {}", names.vertices[v])))?;
         }
 
         let mut drafted_solid = Self {
@@ -389,7 +391,11 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             (Kind::Plane(_), Kind::Plane(_)) if !closed => line3(start, end)?,
             (Kind::Plane(plane), Kind::Cylinder(axis))
             | (Kind::Cylinder(axis), Kind::Plane(plane)) => {
-                if plane.normal.prod_dot(&axis.direction).could_be_equal(S::ZERO) {
+                if plane
+                    .normal
+                    .prod_dot(&axis.direction)
+                    .could_be_equal(S::ZERO)
+                {
                     // The plane holds the axis' direction: it meets the
                     // cylinder along a ruling.
                     if closed {
@@ -409,7 +415,10 @@ impl<'a, S: Scalar> Drafted<'a, S> {
         };
         // A straight edge turned around: the faces now cross.
         if let Some(axis) = edge.curve.as_line()?
-            && !end.sub(&start).prod_dot(&axis.direction).definitely_greater(S::ZERO)
+            && !end
+                .sub(&start)
+                .prod_dot(&axis.direction)
+                .definitely_greater(S::ZERO)
         {
             return Err(GeopError::new(format!(
                 "the draft is too steep: the edge turns around (from {start:?} to {end:?})"
@@ -523,9 +532,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                 let (start, end) = (junctions[(k + n - 1) % n], junctions[k]);
                 let curve = match c.on {
                     CoedgeOn::Edge(e, sense) => Some(oriented(
-                        self.curves[e]
-                            .as_ref()
-                            .unwrap_or(&self.spec.edges[e].curve),
+                        self.curves[e].as_ref().unwrap_or(&self.spec.edges[e].curve),
                         sense,
                     )),
                     CoedgeOn::Vertex(_) => None,
@@ -624,7 +631,12 @@ fn plane_patch<S: Scalar>(
     NurbSurface3D::try_new(
         1,
         1,
-        vec![corner(lo, lo), corner(lo, hi), corner(hi, lo), corner(hi, hi)],
+        vec![
+            corner(lo, lo),
+            corner(lo, hi),
+            corner(hi, lo),
+            corner(hi, hi),
+        ],
         knots.clone(),
         knots,
     )

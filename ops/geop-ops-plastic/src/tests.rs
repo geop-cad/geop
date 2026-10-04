@@ -168,7 +168,6 @@ fn enclosure_outside_drafted() {
     );
 }
 
-
 /// The enclosure's rim, the face its open top leaves.
 fn rim(part: &Part<S>, solid: SolidId) -> FaceId {
     face_towards(part, solid, [0., 0., 1.])
@@ -310,5 +309,8 @@ fn rib_growing_out_of_the_top_is_refused() {
         panic!("a rib out of the top is refused");
     };
     let message = format!("{error}");
-    assert!(message.contains("without meeting it all along"), "{message}");
+    assert!(
+        message.contains("without meeting it all along"),
+        "{message}"
+    );
 }

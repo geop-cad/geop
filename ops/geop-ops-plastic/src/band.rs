@@ -59,7 +59,12 @@ impl<S: Scalar> Piece<S> {
     }
 
     fn end(&self) -> GeopResult<Vector2<S>> {
-        point(self.curve.control_points.last().expect("a curve has control points"))
+        point(
+            self.curve
+                .control_points
+                .last()
+                .expect("a curve has control points"),
+        )
     }
 
     /// The unit direction it starts and ends going in.
@@ -240,7 +245,15 @@ impl<S: Scalar> Chain<S> {
         if !self.closed {
             // Along the near side, back along the far one: the band is on
             // the left all the way round.
-            let near_end = point(near_side.curves.last().unwrap().control_points.last().unwrap())?;
+            let near_end = point(
+                near_side
+                    .curves
+                    .last()
+                    .unwrap()
+                    .control_points
+                    .last()
+                    .unwrap(),
+            )?;
             let near_start = point(&near_side.curves[0].control_points[0])?;
             let far = far_side.reversed();
             let far_start = point(&far.curves[0].control_points[0])?;

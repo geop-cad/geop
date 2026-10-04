@@ -380,6 +380,28 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M10 16 A7 7 0 0 0 7.8 10.8" />
     </>
   ),
+  draft: (
+    <>
+      <path d="M3 16 L17 16 L14 4 L6 4 Z" />
+      <path d="M6 4 L3 4 L3 16" strokeDasharray="1.5 1.5" />
+    </>
+  ),
+  lip: (
+    <>
+      <path d="M3 16 L3 8 L9 8 L9 4 L12 4 L12 8 L17 8 L17 16" />
+    </>
+  ),
+  groove: (
+    <>
+      <path d="M3 16 L3 6 L8 6 L8 10 L12 10 L12 6 L17 6 L17 16" />
+    </>
+  ),
+  rib: (
+    <>
+      <path d="M3 4 L3 16 L17 16 L17 4" />
+      <path d="M9 16 L9 8 L11 8 L11 16" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

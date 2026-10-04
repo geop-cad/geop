@@ -7,9 +7,9 @@ use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
+use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_fillet::FilletArgs;
-use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_plastic::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
 use geop_ops_shell::ShellArgs;
 use geop_ops_sketch::{AddSketchArgs, Sketch};
@@ -335,7 +335,10 @@ fn rib_out_of_the_top_is_refused() {
         panic!("a rib out of the top is refused");
     };
     let message = format!("{error}");
-    assert!(message.contains("without meeting it all along"), "{message}");
+    assert!(
+        message.contains("without meeting it all along"),
+        "{message}"
+    );
 }
 
 /// A rib, grown normal to its sketch — across the cavity from the `-y`
@@ -395,7 +398,10 @@ fn plastic_sweep() {
                 height,
             },
         );
-        assert_valid_case(&program.build::<S>(&NoFiles).unwrap(), &format!("lip {width} {height}"));
+        assert_valid_case(
+            &program.build::<S>(&NoFiles).unwrap(),
+            &format!("lip {width} {height}"),
+        );
         let mut program = enclosure();
         program.push(
             "g",

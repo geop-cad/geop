@@ -611,3 +611,94 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A new draft picks the faces to tilt by clicking them, then the neutral
+/// plane: the enclosure's +x wall from the side, its bottom from below.
+#[test]
+fn new_draft_picks_its_faces_and_neutral_plane() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program: super::plastic_tests::enclosure(),
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::New {
+        kind: "draft".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let update = editor.handle(click(pointer([10.0, 1.0, 0.5], [-1.0, 0.0, 0.0])));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("neutral", Value::Press));
+    let update = editor.handle(click(pointer([1.0, 1.0, -10.0], [0.0, 0.0, 1.0])));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("angle", Value::Number(5.0)));
+    let step = editor
+        .handle(Command::Commit)
+        .program
+        .expect("the program changed");
+    assert!(step.steps.iter().all(|s| s.error.is_none()));
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::Draft(args) => {
+            assert_eq!(args.faces, [super::plastic_tests::wall("c5")], "{args:?}");
+            assert_eq!(
+                args.neutral,
+                Some(EntityRef::Face {
+                    name: "extrude(box,start)".into()
+                })
+            );
+            assert_eq!(args.angle, 5.0);
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = editor
+        .handle(Command::Seek { marker: None })
+        .scene
+        .expect("the scene is sent");
+    assert!(
+        scene.part.solids.iter().any(|s| s.starts_with("draft(")),
+        "{:?}",
+        scene.part.solids
+    );
+}
+
+/// A new rib starts from the newest sketch and solid; set to grow down,
+/// parallel to its sketch, it builds.
+#[test]
+fn new_rib_grows_from_the_newest_sketch() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program: super::plastic_tests::enclosure_with_rib_sketch(),
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New { kind: "rib".into() });
+    let step = update.step.expect("a step is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    editor.handle(dialog("direction", Value::Choice("parallel".into())));
+    let update = editor.handle(dialog("flipped", Value::Bool(true)));
+    let step = update.step.expect("the rib is edited");
+    assert_eq!(step.error, None);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::Rib(args) => {
+            assert_eq!(args.sketch, "rib_sketch");
+            assert_eq!(args.solid, "shell(s)");
+            assert!(args.flipped);
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = update.scene.expect("the scene is sent anew");
+    assert!(
+        scene.part.solids.iter().any(|s| s.starts_with("rib(")),
+        "{:?}",
+        scene.part.solids
+    );
+}

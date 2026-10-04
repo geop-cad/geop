@@ -20,9 +20,9 @@ use geop_ops_extrude_revolve::{
     Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
-use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -35,6 +35,8 @@ mod edit_tests;
 mod editor_tests;
 #[cfg(test)]
 mod fillet_tests;
+#[cfg(test)]
+mod plastic_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
@@ -53,8 +55,6 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
-#[cfg(test)]
-mod plastic_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

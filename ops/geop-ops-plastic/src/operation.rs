@@ -2,12 +2,12 @@
 //! [`Groove`] and [`Draft`].
 
 use geop_core_geometry::shape::Plane;
-use geop_core_topology::{EdgeId, FaceId};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
+use geop_core_topology::{EdgeId, FaceId};
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
@@ -404,8 +404,16 @@ impl Operation for Groove {
             height: S::from_f64(args.height),
         };
         let clearance = S::from_f64(args.clearance);
-        groove(&mut part, &namer, operation_id, face, &edges, size, clearance)
-            .with_context(ctx)?;
+        groove(
+            &mut part,
+            &namer,
+            operation_id,
+            face,
+            &edges,
+            size,
+            clearance,
+        )
+        .with_context(ctx)?;
         Ok(part)
     }
 }
@@ -552,7 +560,10 @@ impl Operation for Rib {
                 .iter()
                 .find(|d| d.0 == args.direction)
                 .map_or("", |d| d.1),
-            DIRECTIONS.iter().map(|&(_, v, l)| Choice::new(v, l)).collect(),
+            DIRECTIONS
+                .iter()
+                .map(|&(_, v, l)| Choice::new(v, l))
+                .collect(),
             false,
             |args, value| {
                 if let Some(&(direction, ..)) = DIRECTIONS.iter().find(|d| d.1 == value) {

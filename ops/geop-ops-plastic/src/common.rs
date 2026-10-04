@@ -61,7 +61,10 @@ pub fn halfway<S: Scalar>(curve: &Curve3<S>) -> GeopResult<(Vector3<S>, Vector3<
 
 /// The normal of `surface` at `point`, which lies on it — pointing out of
 /// the solid, for a face's surface.
-pub fn normal_at<S: Scalar>(surface: &NurbSurface3D<S>, point: &Vector3<S>) -> GeopResult<Vector3<S>> {
+pub fn normal_at<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    point: &Vector3<S>,
+) -> GeopResult<Vector3<S>> {
     let (u, v) = surface_could_contain(surface, point, MAX_NODES, min_subdivision_size())?
         .ok_or_else(|| GeopError::new(format!("{point:?} is not on the surface")))?;
     let (u, v) = surface.project(*point, u.sharpen(), v.sharpen(), PROJECT_ITERATIONS)?;

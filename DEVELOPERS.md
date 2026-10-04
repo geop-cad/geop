@@ -58,4 +58,6 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
+ops/geop-ops-plastic          housings: ribs grown up to the walls, lips and
+                               grooves along a rim, drafts on planar faces
 ```

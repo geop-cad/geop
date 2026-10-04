@@ -58,7 +58,10 @@ fn squares_offset_to_their_left() {
     let cw = polygon(&[[0., 0.], [0., 1.], [1., 1.], [1., 0.]]);
     let outer = corners(&cw.offset(S::from_f64(0.1)).unwrap());
     assert!(
-        close(&outer, &[[-0.1, -0.1], [-0.1, 1.1], [1.1, 1.1], [1.1, -0.1]]),
+        close(
+            &outer,
+            &[[-0.1, -0.1], [-0.1, 1.1], [1.1, 1.1], [1.1, -0.1]]
+        ),
         "{outer:?}"
     );
     let inner = corners(&cw.offset(S::from_f64(-0.1)).unwrap());
@@ -77,7 +80,10 @@ fn band_around_a_hole() {
     assert_eq!(band.len(), 2);
     let outer = corners(&band[0].curves);
     assert!(
-        close(&outer, &[[-0.2, -0.2], [1.2, -0.2], [1.2, 1.2], [-0.2, 1.2]]),
+        close(
+            &outer,
+            &[[-0.2, -0.2], [1.2, -0.2], [1.2, 1.2], [-0.2, 1.2]]
+        ),
         "{outer:?}"
     );
     let hole = corners(&band[1].curves);

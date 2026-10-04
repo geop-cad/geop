@@ -100,16 +100,13 @@ pub fn rim_chain<S: Scalar>(
             })
             .collect::<GeopResult<_>>()?;
         let on = |c: &CoedgeSpec<S>| matches!(c.on, CoedgeOn::Edge(e, _) if wanted.contains(&e));
-        let lp = loops
-            .iter()
-            .find(|lp| lp.iter().any(on))
-            .ok_or_else(|| {
-                GeopError::new(format!(
-                    "edge {} does not bound face {}",
-                    name(edges[0].into()),
-                    name(face.into())
-                ))
-            })?;
+        let lp = loops.iter().find(|lp| lp.iter().any(on)).ok_or_else(|| {
+            GeopError::new(format!(
+                "edge {} does not bound face {}",
+                name(edges[0].into()),
+                name(face.into())
+            ))
+        })?;
         let picked: Vec<bool> = lp.iter().map(on).collect();
         if picked.iter().filter(|&&p| p).count() != wanted.len() {
             return Err(GeopError::new(format!(
@@ -164,9 +161,8 @@ pub fn rim_chain<S: Scalar>(
                 "edge {edge_name} is neither straight nor circular: a lip or groove runs along straight and circular edges"
             )));
         };
-        convex_along(&spec, e, f, &curve, &plane.normal).map_err(|err| {
-            err.with_context(format!("edge {edge_name} of the rim"))
-        })?;
+        convex_along(&spec, e, f, &curve, &plane.normal)
+            .map_err(|err| err.with_context(format!("edge {edge_name} of the rim")))?;
         // Into the plane's `(u, v)`, homogeneous: an affine map.
         let mut flat = Vec::with_capacity(curve.control_points.len());
         for cp in &curve.control_points {
@@ -243,7 +239,7 @@ fn stitch<S: Scalar>(chain: &mut Chain<S>) -> GeopResult<()> {
     let count = if chain.closed { n } else { n - 1 };
     for i in 0..count {
         let j = (i + 1) % n;
-        let end = chain.pieces[i].curve.control_points.last().unwrap().clone();
+        let end = *chain.pieces[i].curve.control_points.last().unwrap();
         let start = chain.pieces[j].curve.control_points[0];
         let p = |h: &Vector3<S>| -> GeopResult<Vector2<S>> {
             Ok(Vector2::from_array([h[0].div(h[2])?, h[1].div(h[2])?]))
@@ -283,9 +279,10 @@ fn convex_along<S: Scalar>(
         .enumerate()
         .filter(|&(g, _)| g != f)
         .find(|(_, face)| {
-            loops_of(face)
-                .iter()
-                .any(|lp| lp.iter().any(|c| matches!(c.on, CoedgeOn::Edge(x, _) if x == e)))
+            loops_of(face).iter().any(|lp| {
+                lp.iter()
+                    .any(|c| matches!(c.on, CoedgeOn::Edge(x, _) if x == e))
+            })
         })
         .map(|(g, _)| g)
         .ok_or_else(|| GeopError::new("the edge bounds the rim alone"))?;
@@ -330,7 +327,10 @@ pub fn lip<S: Scalar>(
     edges: &[EdgeId],
     size: LipSize<S>,
 ) -> GeopResult<()> {
-    let ctx = with_context!("lip({}, face={face}, edges={edges:?}, {size:?})", namer.root());
+    let ctx = with_context!(
+        "lip({}, face={face}, edges={edges:?}, {size:?})",
+        namer.root()
+    );
     check_size("width", size.width).with_context(ctx)?;
     check_size("height", size.height).with_context(ctx)?;
     let target = target_name(part, face).with_context(ctx)?;
@@ -420,7 +420,9 @@ pub fn groove<S: Scalar>(
 /// The name of the solid `face` is a face of.
 fn target_name<S: Scalar>(part: &Part<S>, face: FaceId) -> GeopResult<String> {
     let Body::Solid(solid) = part.topology().body_of_face(face)? else {
-        return Err(GeopError::new("the rim stands on its own: it is no face of a solid"));
+        return Err(GeopError::new(
+            "the rim stands on its own: it is no face of a solid",
+        ));
     };
     part.name_of(solid)
         .map(str::to_string)

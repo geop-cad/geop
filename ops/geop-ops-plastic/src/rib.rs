@@ -69,6 +69,7 @@ pub enum Growth {
 /// `profile` in `plane`, up to the solid `target`, and joins it, for the
 /// operation `operation_id` whose names `namer` builds: the result is named
 /// `namer`'s root. See the module docs.
+#[allow(clippy::too_many_arguments)]
 pub fn rib<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
@@ -224,8 +225,14 @@ fn extended<S: Scalar>(
     let back = first.tangent(t0)?.normalize()?.neg();
     let on = last.tangent(t1)?.normalize()?;
     let into_wall = |from: Vector2<S>, along: Vector2<S>, joint: &str| {
-        wall_middle(part, target, lift(&from), &lift_direction(plane, &along), reach)
-            .map_err(|e| e.with_context(format!("running the rib's end {joint} on")))
+        wall_middle(
+            part,
+            target,
+            lift(&from),
+            &lift_direction(plane, &along),
+            reach,
+        )
+        .map_err(|e| e.with_context(format!("running the rib's end {joint} on")))
     };
     if let Some(at) = into_wall(start, back, &joints[0])? {
         let to = point_in_plane(plane, &at);
@@ -258,7 +265,10 @@ fn extended<S: Scalar>(
 
 /// `d`, a direction in `plane`'s `(u, v)`, in space.
 fn lift_direction<S: Scalar>(plane: &CoordinateSystem<S>, d: &Vector2<S>) -> Vector3<S> {
-    plane.u().prod_scalar(d[0]).add(&plane.v().prod_scalar(d[1]))
+    plane
+        .u()
+        .prod_scalar(d[0])
+        .add(&plane.v().prod_scalar(d[1]))
 }
 
 /// `p`, a point of `plane`, in its `(u, v)`.
@@ -376,7 +386,12 @@ fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopRes
     for piece in &chain.pieces {
         let (t0, t1) = piece.curve.domain();
         for t in [t0, t1] {
-            if !piece.curve.tangent(t)?.prod_dot(&chord).definitely_greater(S::ZERO) {
+            if !piece
+                .curve
+                .tangent(t)?
+                .prod_dot(&chord)
+                .definitely_greater(S::ZERO)
+            {
                 return Err(GeopError::new(format!(
                     "{} turns back against the direction from the profile's start to its end: grown parallel to the sketch, the rib would fold over itself",
                     piece.name
