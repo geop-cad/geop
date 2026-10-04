@@ -1,12 +1,15 @@
 //! 2-D engineering drawings of a part: projected views with hidden lines
-//! and silhouettes ([`hidden_lines`]), laid out on a sheet with dimensions,
-//! centre marks and a title block ([`sheet`]), written as SVG or DXF, and
-//! the [`Drawing`] operation of a program, which describes one.
+//! and silhouettes ([`hidden_lines`]) — of an assembly, of every part
+//! placed, where it is placed ([`scene`]) — laid out on a sheet with
+//! dimensions, centre marks, a title block and a ballooned bill of
+//! materials ([`sheet`]), written as SVG or DXF, and the [`Drawing`]
+//! operation of a program, which describes one.
 
 pub mod drawing;
 pub mod dxf;
 pub mod hidden_lines;
 pub mod operation;
+pub mod scene;
 pub mod section;
 pub mod sheet;
 pub mod silhouette;

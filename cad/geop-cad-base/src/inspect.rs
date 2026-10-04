@@ -89,6 +89,7 @@ pub fn parts_list<S: Scalar>(
                 geop_ops_bom::LineKind::Part { material, .. } => material,
                 geop_ops_bom::LineKind::Wire { colour, .. } => format!("wire, {colour}"),
             },
+            placements: line.placements,
         })
         .collect())
 }

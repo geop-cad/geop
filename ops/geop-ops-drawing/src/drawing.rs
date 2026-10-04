@@ -3,10 +3,12 @@
 //! each with its visible and hidden lines, centre marks on its circles and
 //! its overall size dimensioned, the dimensions asked for, a section view
 //! with its cut hatched, a border and a title block — and, if asked for,
-//! the parts list of the parts placed in it above the title block.
+//! the parts list of the parts placed in it above the title block, each
+//! line ballooned where its part is drawn.
 
 use geop_core_geometry::{
-    intersection::curve_curve_overlaps_and_crossings, nurb_curve::NurbCurve2D,
+    intersection::curve_curve_overlaps_and_crossings,
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -15,12 +17,14 @@ use geop_core_math::{
 };
 use geop_core_topology::{FaceId, Model};
 use geop_ops::{EntityRef, Part};
+use geop_ops_inspect::bodies::resolve;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     MAX_NODES,
-    hidden_lines::{LineKind, ProjectedView, ViewOptions, point_seen, project_view},
+    hidden_lines::{LineKind, ProjectedView, ViewOptions},
     min_subdivision_size,
+    scene::{Body, Scene},
     section::{cut_faces, section_part},
     sheet::{Anchor, Layer, P, Shape, Sheet, lift, strokes_of},
     view::{ViewFrame, ViewKind},
@@ -136,15 +140,19 @@ pub struct DrawingArgs {
     pub material: String,
     /// A bill of materials of the parts placed in it, as a table above the
     /// title block: each part's item number, quantity, name, designation
-    /// and material (see [`PartsListLine`]).
+    /// and material (see [`PartsListLine`]) — and, with parts placed, a
+    /// balloon per line with its item number, pointing at its part.
     #[serde(default)]
     pub bom: bool,
 }
 
 /// A line of a drawing's bill of materials: a kind of part placed — its
 /// item number, how many there are, what it is called, what it is ordered
-/// as (`ISO 4762 M4x12`, empty for a part that is made) and made of. Who
-/// lists the parts placed is the caller's: the drawing only lays them out.
+/// as (`ISO 4762 M4x12`, empty for a part that is made) and made of — and
+/// where it is placed, as the entities of placed parts are named: `screw`,
+/// `arm/screw` for one placed in the part placed as `arm`, `""` for the
+/// part drawn. Who lists the parts placed is the caller's: the drawing lays
+/// them out, and balloons them where they are placed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PartsListLine {
     pub item: String,
@@ -152,6 +160,7 @@ pub struct PartsListLine {
     pub name: String,
     pub designation: String,
     pub material: String,
+    pub placements: Vec<String>,
 }
 
 fn default_views() -> Vec<ViewKind> {
@@ -219,6 +228,13 @@ const LIST_COLUMNS: [(&str, f64); 5] = [
     ("MATERIAL", 40.0),
 ];
 const LIST_TEXT: f64 = 2.5;
+/// Item-number balloons: their radius, how far they stand off the box of
+/// the view they go around — past its overall dimensions — and the paper
+/// that view needs around it for them; the dot their leaders end in.
+const BALLOON_RADIUS: f64 = 4.0;
+const BALLOON_OFFSET: f64 = 22.0;
+const BALLOON_MARGIN: f64 = BALLOON_OFFSET + BALLOON_RADIUS;
+const LEADER_DOT: f64 = 0.5;
 
 /// A scale as written: `1:2`, `5:1`.
 pub fn scale_label(scale: f64) -> String {
@@ -243,11 +259,14 @@ struct Placed<S: Scalar> {
     view: ProjectedView<S>,
     /// Hatched regions of a section view, as boundary curves on the paper
     /// in model units, one list per cut face.
-    hatched: Vec<Vec<NurbCurve2D<S>>>,
+    hatched: Vec<Hatched<S>>,
     /// Its box on the paper in model units, `[x_min, y_min, x_max, y_max]`.
     extents: [f64; 4],
     /// Where its box's centre lands on the sheet.
     center: P,
+    /// The paper it needs around its box, besides the gap between views,
+    /// in millimetres: for balloons.
+    margin: f64,
 }
 
 /// Where a view goes on the sheet.
@@ -290,9 +309,11 @@ pub fn drawn_faces<S: Scalar>(model: &Model<S>) -> Vec<FaceId> {
 /// The part's drawing as `args` describe it, dated `date`, with `parts`
 /// its bill of materials if `args` asks for one.
 ///
-/// Only the part's own solids and sheets are drawn, not the parts placed in
-/// it: an assembly placing every part it has is drawn as its bill of
-/// materials alone. A dimension that no view shows truly is refused,
+/// The part's own solids and sheets are drawn, and every part placed in
+/// it, however deep, where it is placed (see [`Scene`]). With a bill of
+/// materials, each line of it placed in the drawing gets a balloon with its
+/// item number, its leader pointing at its part in one view (see
+/// [`balloon_view`]). A dimension that no view shows truly is refused,
 /// naming it, as is a bill too long for the sheet.
 pub fn compose<S: Scalar>(
     part: &Part<S>,
@@ -313,9 +334,9 @@ pub fn compose<S: Scalar>(
             args.sheet.name().to_uppercase()
         )));
     }
-    let model = part.topology();
-    let faces = drawn_faces(model);
-    if faces.is_empty() && !args.bom {
+    let scene = Scene::of(part).with_context(&ctx)?;
+    let empty = scene.bodies.is_empty();
+    if empty && !args.bom {
         return Err(GeopError::new(
             "the part has nothing to draw: it has no faces",
         ));
@@ -325,7 +346,7 @@ pub fn compose<S: Scalar>(
         hidden_lines: args.hidden_lines,
     };
     let mut slots: Vec<Slot> = Vec::new();
-    for &kind in args.views.iter().filter(|_| !faces.is_empty()) {
+    for &kind in args.views.iter().filter(|_| !empty) {
         if !slots.contains(&Slot::View(kind)) {
             slots.push(Slot::View(kind));
         }
@@ -334,12 +355,13 @@ pub fn compose<S: Scalar>(
     for &slot in &slots {
         let Slot::View(kind) = slot else { continue };
         let frame = kind.frame()?;
-        let view = project_view(model, &faces, &frame, &options)
+        let view = scene
+            .project(&frame, &options)
             .map_err(|e| ctx(e.with_context(format!("the {} view", kind.name()))))?;
         placed.push((slot, view, Vec::new()));
     }
-    if let Some(plane) = args.section.as_ref().filter(|_| !faces.is_empty()) {
-        let (view, hatched) = section_view(part, plane, &options)
+    if let Some(plane) = args.section.as_ref().filter(|_| !empty) {
+        let (view, hatched) = section_view(part, &scene, plane, &options)
             .map_err(|e| ctx(e.with_context(format!("the section view on {}", plane.label()))))?;
         placed.push((Slot::Section, view, hatched));
     }
@@ -353,6 +375,7 @@ pub fn compose<S: Scalar>(
                 view,
                 hatched,
                 center: [0.0, 0.0],
+                margin: 0.0,
             })
         })
         .collect();
@@ -370,25 +393,36 @@ pub fn compose<S: Scalar>(
         draw_parts_list(&mut sheet, parts);
         return Ok(sheet);
     }
+    let balloons = match args.bom && scene.bodies.iter().any(|b| !b.path.is_empty()) {
+        true => balloon_view(&scene, &placed, parts)?,
+        false => None,
+    };
+    if let Some((index, _)) = &balloons {
+        placed[*index].margin = BALLOON_MARGIN;
+    }
 
     // The grid: each occupied column as wide as its widest view, each row
-    // as high as its highest, in model units.
-    let mut columns: Vec<(usize, f64)> = Vec::new();
-    let mut rows: Vec<(usize, f64)> = Vec::new();
+    // as high as its highest, in model units — and with as much paper
+    // either side of its views as the widest margin of one asks for.
+    let mut columns: Vec<(usize, f64, f64)> = Vec::new();
+    let mut rows: Vec<(usize, f64, f64)> = Vec::new();
     for p in &placed {
         let (c, r) = p.kind.cell(args.projection);
         let (w, h) = (p.extents[2] - p.extents[0], p.extents[3] - p.extents[1]);
-        grow(&mut columns, c, w);
-        grow(&mut rows, r, h);
+        grow(&mut columns, c, w, p.margin);
+        grow(&mut rows, r, h, p.margin);
     }
-    columns.sort_by_key(|&(c, _)| c);
-    rows.sort_by_key(|&(r, _)| r);
-    let model_width: f64 = columns.iter().map(|&(_, w)| w).sum();
-    let model_height: f64 = rows.iter().map(|&(_, h)| h).sum();
+    columns.sort_by_key(|&(c, _, _)| c);
+    rows.sort_by_key(|&(r, _, _)| r);
+    let model_width: f64 = columns.iter().map(|&(_, w, _)| w).sum();
+    let model_height: f64 = rows.iter().map(|&(_, h, _)| h).sum();
+    let paper_width: f64 = columns.iter().map(|&(_, _, m)| 2.0 * m).sum();
+    let paper_height: f64 = rows.iter().map(|&(_, _, m)| 2.0 * m).sum();
     let area_width = width - 2.0 * MARGIN;
     let area_height = height - 2.0 * MARGIN - TITLE_HEIGHT - list_height;
-    let fit = ((area_width - GAP * (columns.len() + 1) as f64) / model_width.max(1e-300))
-        .min((area_height - GAP * (rows.len() + 1) as f64) / model_height.max(1e-300));
+    let fit = ((area_width - paper_width - GAP * (columns.len() + 1) as f64)
+        / model_width.max(1e-300))
+    .min((area_height - paper_height - GAP * (rows.len() + 1) as f64) / model_height.max(1e-300));
     let scale = match args.scale {
         Some(s) if s.is_finite() && s > 0.0 => s,
         Some(s) => {
@@ -403,25 +437,27 @@ pub fn compose<S: Scalar>(
             .unwrap_or(SCALES[SCALES.len() - 1]),
     };
     // Centred on the sheet's area above the title block and the bill.
-    let used_width = scale * model_width + GAP * (columns.len() - 1) as f64;
-    let used_height = scale * model_height + GAP * (rows.len() - 1) as f64;
+    let used_width = scale * model_width + paper_width + GAP * (columns.len() - 1) as f64;
+    let used_height = scale * model_height + paper_height + GAP * (rows.len() - 1) as f64;
     let left = MARGIN + (area_width - used_width) / 2.0;
     let top = height - MARGIN - (area_height - used_height) / 2.0;
     for p in &mut placed {
         let (c, r) = p.kind.cell(args.projection);
-        let ci = columns.iter().position(|&(k, _)| k == c).unwrap_or(0);
-        let ri = rows.iter().position(|&(k, _)| k == r).unwrap_or(0);
+        let ci = columns.iter().position(|&(k, _, _)| k == c).unwrap_or(0);
+        let ri = rows.iter().position(|&(k, _, _)| k == r).unwrap_or(0);
         let x: f64 = left
             + columns[..ci]
                 .iter()
-                .map(|&(_, w)| scale * w + GAP)
+                .map(|&(_, w, m)| scale * w + 2.0 * m + GAP)
                 .sum::<f64>()
+            + columns[ci].2
             + scale * columns[ci].1 / 2.0;
         let y: f64 = top
             - rows[..ri]
                 .iter()
-                .map(|&(_, h)| scale * h + GAP)
+                .map(|&(_, h, m)| scale * h + 2.0 * m + GAP)
                 .sum::<f64>()
+            - rows[ri].2
             - scale * rows[ri].1 / 2.0;
         p.center = [x, y];
     }
@@ -433,12 +469,222 @@ pub fn compose<S: Scalar>(
         draw_dimension(&mut sheet, part, &placed, dimension, index, scale)
             .map_err(|e| ctx(e.with_context(format!("dimension {}: {dimension:?}", index + 1))))?;
     }
-    draw_threads(&mut sheet, part, &faces, &placed, scale, &options).with_context(&ctx)?;
+    draw_threads(&mut sheet, &scene, &placed, scale, &options).with_context(&ctx)?;
+    if let Some((index, targets)) = &balloons {
+        draw_balloons(&mut sheet, &placed[*index], targets, scale).with_context(&ctx)?;
+    }
     draw_frame(&mut sheet, args, scale, date);
     if args.bom {
         draw_parts_list(&mut sheet, parts);
     }
     Ok(sheet)
+}
+
+/// What a balloon points at: an item number, and a point of its part on
+/// the paper of its view, in model units.
+type Target = (String, P);
+
+/// The view the balloons go around, by its index in `placed`, and each
+/// balloon's target: the view in which the most lines of the bill show a
+/// visible line of their parts — the isometric one first among equals,
+/// which sees each part from where most of it shows. A balloon's leader
+/// points at the point of its part's lines in the view farthest out from
+/// the view's centre, of those a quarter, half and three quarters along
+/// each: a visible one, or a hidden one if that is all it has there. A
+/// point far out is one a leader reaches without crossing other parts, and
+/// one inside a line is no corner other lines share.
+///
+/// A line of the bill with no faces drawn — a wire, or a part placed
+/// nowhere in the drawing — gets no balloon.
+fn balloon_view<S: Scalar>(
+    scene: &Scene<'_, S>,
+    placed: &[Placed<S>],
+    parts: &[PartsListLine],
+) -> GeopResult<Option<(usize, Vec<Target>)>> {
+    // The line of the bill each body is counted in.
+    let mut line_of: Vec<Option<usize>> = vec![None; scene.bodies.len()];
+    let paths: std::collections::HashMap<&str, usize> = parts
+        .iter()
+        .enumerate()
+        .flat_map(|(k, line)| line.placements.iter().map(move |p| (p.as_str(), k)))
+        .collect();
+    for (b, body) in scene.bodies.iter().enumerate() {
+        line_of[b] = paths.get(body.path.as_str()).copied();
+    }
+    let mut order: Vec<usize> = (0..placed.len())
+        .filter(|&i| matches!(placed[i].kind, Slot::View(_)))
+        .collect();
+    order.sort_by_key(|&i| placed[i].kind != Slot::View(ViewKind::Iso));
+    let mut best: Option<(usize, usize, Vec<Target>)> = None;
+    for i in order {
+        let p = &placed[i];
+        let middle = [
+            (p.extents[0] + p.extents[2]) / 2.0,
+            (p.extents[1] + p.extents[3]) / 2.0,
+        ];
+        // Per line of the bill: whether its point is seen, how far out it
+        // is, and where.
+        let mut found: Vec<Option<(bool, f64, P)>> = vec![None; parts.len()];
+        for l in &p.view.lines {
+            let Some(k) = line_of[l.body] else { continue };
+            let (t0, t1) = l.curve.domain();
+            for f in [0.25, 0.5, 0.75] {
+                let q = l
+                    .curve
+                    .evaluate(t0.add(t1.sub(t0).mul(S::from_f64(f))).sharpen())?;
+                let q = [q[0].to_f64(), q[1].to_f64()];
+                let out = (q[0] - middle[0]).hypot(q[1] - middle[1]);
+                if found[k].is_none_or(|(visible, o, _)| (l.visible, out) > (visible, o)) {
+                    found[k] = Some((l.visible, out, q));
+                }
+            }
+        }
+        let seen = found.iter().flatten().filter(|f| f.0).count();
+        let targets = found
+            .iter()
+            .zip(parts)
+            .filter_map(|(f, line)| f.map(|(_, _, q)| (line.item.clone(), q)))
+            .collect();
+        if best.as_ref().is_none_or(|(_, s, _)| seen > *s) {
+            best = Some((i, seen, targets));
+        }
+    }
+    Ok(best
+        .filter(|(_, _, targets)| !targets.is_empty())
+        .map(|(i, _, targets)| (i, targets)))
+}
+
+/// The point `s` along the rectangle `r` (`[x_min, y_min, x_max, y_max]`),
+/// counter-clockwise from its lower left corner.
+fn along_rectangle(r: [f64; 4], s: f64) -> P {
+    let (w, h) = (r[2] - r[0], r[3] - r[1]);
+    let s = s.rem_euclid(2.0 * (w + h));
+    if s < w {
+        [r[0] + s, r[1]]
+    } else if s < w + h {
+        [r[2], r[1] + s - w]
+    } else if s < 2.0 * w + h {
+        [r[2] - (s - w - h), r[3]]
+    } else {
+        [r[0], r[3] - (s - 2.0 * w - h)]
+    }
+}
+
+/// How far along the rectangle `r` (see [`along_rectangle`]) the ray from
+/// `from`, inside it, along `d` leaves it.
+fn rectangle_exit(r: [f64; 4], from: P, d: P) -> f64 {
+    let (w, h) = (r[2] - r[0], r[3] - r[1]);
+    // The side the ray reaches first, and how far along the rectangle.
+    let mut best = (f64::INFINITY, 0.0);
+    // Bottom, right, top, left: the coordinate fixed on each, its value,
+    // and where along the rectangle it starts.
+    let sides = [
+        (1, r[1], 0.0),
+        (0, r[2], w),
+        (1, r[3], w + h),
+        (0, r[0], 2.0 * w + h),
+    ];
+    for (k, &(axis, value, start)) in sides.iter().enumerate() {
+        if d[axis] == 0.0 {
+            continue;
+        }
+        let t = (value - from[axis]) / d[axis];
+        if t <= 0.0 || t >= best.0 {
+            continue;
+        }
+        let q = add(from, times(d, t));
+        let along = match k {
+            0 => q[0] - r[0],
+            1 => q[1] - r[1],
+            2 => r[2] - q[0],
+            _ => r[3] - q[1],
+        };
+        best = (t, start + along);
+    }
+    best.1
+}
+
+/// The balloons around the view `p`: each a circle with its item number,
+/// on a rectangle standing `BALLOON_OFFSET` off the view's box, its leader
+/// running to a dot on its target. Each goes where the ray from the view's
+/// centre through its target meets the rectangle, and they are spread
+/// along it, in that order, until none overlaps the next: so leaders run
+/// outwards, and do not cross.
+fn draw_balloons<S: Scalar>(
+    sheet: &mut Sheet,
+    p: &Placed<S>,
+    targets: &[Target],
+    scale: f64,
+) -> GeopResult<()> {
+    let place = placer(p, scale);
+    let [x0, y0, x1, y1] = p.extents;
+    let (lo, hi) = (place([x0, y0]), place([x1, y1]));
+    let ring = [
+        lo[0] - BALLOON_OFFSET,
+        lo[1] - BALLOON_OFFSET,
+        hi[0] + BALLOON_OFFSET,
+        hi[1] + BALLOON_OFFSET,
+    ];
+    let perimeter = 2.0 * (ring[2] - ring[0] + ring[3] - ring[1]);
+    let spacing = 2.0 * BALLOON_RADIUS + BALLOON_RADIUS / 2.0;
+    if targets.len() as f64 * spacing > perimeter {
+        return Err(GeopError::new(format!(
+            "{} balloons do not fit around the view: choose a larger sheet",
+            targets.len()
+        )));
+    }
+    let mut balloons: Vec<(f64, &Target)> = targets
+        .iter()
+        .map(|target| {
+            let d = sub(place(target.1), p.center);
+            let d = if d == [0.0, 0.0] { [0.0, 1.0] } else { d };
+            (rectangle_exit(ring, p.center, d), target)
+        })
+        .collect();
+    balloons.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Spread forwards — and, should the last then run into the first round
+    // the rectangle, backwards from there.
+    for k in 1..balloons.len() {
+        balloons[k].0 = balloons[k].0.max(balloons[k - 1].0 + spacing);
+    }
+    let n = balloons.len();
+    if n > 1 && balloons[n - 1].0 > balloons[0].0 + perimeter - spacing {
+        balloons[n - 1].0 = balloons[0].0 + perimeter - spacing;
+        for k in (0..n - 1).rev() {
+            balloons[k].0 = balloons[k].0.min(balloons[k + 1].0 - spacing);
+        }
+    }
+    for (s, (item, target)) in balloons {
+        let center = along_rectangle(ring, s);
+        let at = place(*target);
+        let toward = unit(sub(at, center));
+        sheet.stroke(
+            Layer::Dimension,
+            Shape::Circle {
+                center,
+                radius: BALLOON_RADIUS,
+            },
+        );
+        sheet.stroke(
+            Layer::Dimension,
+            Shape::Line(add(center, times(toward, BALLOON_RADIUS)), at),
+        );
+        sheet.stroke(
+            Layer::Dimension,
+            Shape::Circle {
+                center: at,
+                radius: LEADER_DOT,
+            },
+        );
+        sheet.label(
+            Layer::Dimension,
+            [center[0], center[1] - TEXT / 2.0],
+            TEXT,
+            Anchor::Middle,
+            item.clone(),
+        );
+    }
+    Ok(())
 }
 
 /// The bill of materials as a table standing on the title block, as wide
@@ -511,137 +757,188 @@ enum ThreadSeen {
 /// face is hidden there, and labelled with its designation in the first
 /// view that draws it. A view seeing the axis obliquely, and the section
 /// view, draw no threads.
+///
+/// The threads of the parts placed are drawn where they are placed, and
+/// not labelled: the bill of materials designates the parts they are on.
 fn draw_threads<S: Scalar>(
     sheet: &mut Sheet,
-    part: &Part<S>,
-    faces: &[FaceId],
+    scene: &Scene<'_, S>,
     placed: &[Placed<S>],
     scale: f64,
     options: &ViewOptions,
 ) -> GeopResult<()> {
-    let model = part.topology();
-    let mut threads: Vec<_> = part.threads().collect();
-    threads.sort_by_key(|(name, _)| *name);
-    for (name, thread) in threads {
-        let ctx = |e: GeopError| e.with_context(format!("the cosmetic thread {name}"));
-        let (start, along) = (thread.axis.point, thread.axis.direction);
-        let end = start.add(&along.prod_scalar(S::from_f64(thread.length)));
-        let drawn = if thread.internal {
-            thread.major_diameter
-        } else {
-            thread.minor_diameter
-        } / 2.0;
-        let mut labelled = false;
-        for p in placed
-            .iter()
-            .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso))
-        {
-            let frame = &p.view.frame;
-            let look = frame.direction.vector();
-            let seen = if look.prod_dot(&along).could_be_equal(S::ZERO) {
-                ThreadSeen::Side
-            } else if look
-                .prod_cross(&along)
-                .to_array()
-                .iter()
-                .all(|c| c.could_be_equal(S::ZERO))
-            {
-                ThreadSeen::End
-            } else {
-                continue;
+    for body in &scene.bodies {
+        let mut threads: Vec<_> = body.part.threads().collect();
+        threads.sort_by_key(|(name, _)| *name);
+        for (name, thread) in threads {
+            let ctx = |e: GeopError| match body.path.as_str() {
+                "" => e.with_context(format!("the cosmetic thread {name}")),
+                path => e.with_context(format!(
+                    "the cosmetic thread {name} of the part placed as {path}"
+                )),
             };
-            let place = placer(p, scale);
-            let at = |q: &Vector3<S>| {
-                let v = frame.project_point(q);
-                place([v[0].to_f64(), v[1].to_f64()])
-            };
-            // Whether the threaded face is seen: from the side, at its
-            // point nearest the eye halfway along — on a shaft that is
-            // in front, in a hole behind the material round it; end on,
-            // where the thread is drawn at its end nearer the eye.
-            let (probe, label_at) = match seen {
-                ThreadSeen::Side => {
-                    let middle = start.add(&along.prod_scalar(S::from_f64(thread.length / 2.0)));
-                    (
-                        middle.add(&frame.toward_eye().prod_scalar(thread.radius)),
-                        at(&end),
-                    )
-                }
-                ThreadSeen::End => {
-                    let near = if frame
-                        .direction
-                        .dot(&start)
-                        .definitely_greater(frame.direction.dot(&end))
-                    {
-                        end
-                    } else {
-                        start
-                    };
-                    let frame_there =
-                        geop_ops::operation::frame_along(near, &along).with_context(&ctx)?;
-                    let side = *frame_there.u();
-                    let c = at(&near);
-                    let reach = scale * drawn * std::f64::consts::FRAC_1_SQRT_2;
-                    (
-                        near.add(&side.prod_scalar(S::from_f64(drawn))),
-                        [c[0] + reach, c[1] + reach],
-                    )
-                }
-            };
-            let visible = point_seen(model, faces, frame, probe).with_context(&ctx)?;
-            if !visible && !options.hidden_lines {
-                continue;
+            let (mut start, mut along) = (thread.axis.point, thread.axis.direction);
+            if let Some(pose) = &body.pose {
+                let motion = pose.motion();
+                start = motion.apply(&start);
+                along = motion.rotate(&along);
             }
-            let layer = if visible {
-                Layer::Thread
-            } else {
-                Layer::Hidden
+            let seen = Seen {
+                scene,
+                placed,
+                scale,
+                options,
             };
-            match seen {
-                ThreadSeen::Side => {
-                    let off = look
-                        .prod_cross(&along)
-                        .normalize()
-                        .with_context(&ctx)?
-                        .prod_scalar(S::from_f64(drawn));
-                    for off in [off, off.neg()] {
-                        sheet.stroke(layer, Shape::Line(at(&start.add(&off)), at(&end.add(&off))));
-                    }
-                }
-                ThreadSeen::End => {
-                    // Open in the quarter up and to the right, as drafting
-                    // leaves it, a little turned.
-                    sheet.stroke(
-                        layer,
-                        Shape::Arc {
-                            center: at(&start),
-                            radius: scale * drawn,
-                            start: 100f64.to_radians(),
-                            end: 10f64.to_radians(),
-                        },
-                    );
-                }
-            }
-            if !labelled {
-                sheet.label(
-                    Layer::Dimension,
-                    [label_at[0] + 1.5, label_at[1] + 1.5],
-                    TEXT,
-                    Anchor::Start,
-                    thread.designation.clone(),
-                );
-                labelled = true;
-            }
+            draw_thread(sheet, &seen, thread, start, along, body.path.is_empty())
+                .with_context(&ctx)?;
         }
     }
     Ok(())
 }
 
-/// Makes `cells` hold `key` at least `size`.
-fn grow(cells: &mut Vec<(usize, f64)>, key: usize, size: f64) {
-    match cells.iter_mut().find(|(k, _)| *k == key) {
-        Some((_, s)) => *s = s.max(size),
-        None => cells.push((key, size)),
+/// What drawing a cosmetic thread looks at: the bodies drawn, the views
+/// placed and the sheet's scale.
+struct Seen<'a, 'p, S: Scalar> {
+    scene: &'a Scene<'p, S>,
+    placed: &'a [Placed<S>],
+    scale: f64,
+    options: &'a ViewOptions,
+}
+
+/// The cosmetic thread `thread`, from `start` along the unit vector
+/// `along`, in every view that sees it (see [`draw_threads`]), labelled
+/// in the first if `label`.
+fn draw_thread<S: Scalar>(
+    sheet: &mut Sheet,
+    seen: &Seen<'_, '_, S>,
+    thread: &geop_ops::part::CosmeticThread<S>,
+    start: Vector3<S>,
+    along: Vector3<S>,
+    label: bool,
+) -> GeopResult<()> {
+    let Seen {
+        scene,
+        placed,
+        scale,
+        options,
+    } = *seen;
+    let end = start.add(&along.prod_scalar(S::from_f64(thread.length)));
+    let drawn = if thread.internal {
+        thread.major_diameter
+    } else {
+        thread.minor_diameter
+    } / 2.0;
+    let mut labelled = !label;
+    for p in placed
+        .iter()
+        .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso))
+    {
+        let frame = &p.view.frame;
+        let look = frame.direction.vector();
+        let seen = if look.prod_dot(&along).could_be_equal(S::ZERO) {
+            ThreadSeen::Side
+        } else if look
+            .prod_cross(&along)
+            .to_array()
+            .iter()
+            .all(|c| c.could_be_equal(S::ZERO))
+        {
+            ThreadSeen::End
+        } else {
+            continue;
+        };
+        let place = placer(p, scale);
+        let at = |q: &Vector3<S>| {
+            let v = frame.project_point(q);
+            place([v[0].to_f64(), v[1].to_f64()])
+        };
+        // Whether the threaded face is seen: from the side, at its
+        // point nearest the eye halfway along — on a shaft that is
+        // in front, in a hole behind the material round it; end on,
+        // where the thread is drawn at its end nearer the eye.
+        let (probe, label_at) = match seen {
+            ThreadSeen::Side => {
+                let middle = start.add(&along.prod_scalar(S::from_f64(thread.length / 2.0)));
+                (
+                    middle.add(&frame.toward_eye().prod_scalar(thread.radius)),
+                    at(&end),
+                )
+            }
+            ThreadSeen::End => {
+                let near = if frame
+                    .direction
+                    .dot(&start)
+                    .definitely_greater(frame.direction.dot(&end))
+                {
+                    end
+                } else {
+                    start
+                };
+                let frame_there = geop_ops::operation::frame_along(near, &along)?;
+                let side = *frame_there.u();
+                let c = at(&near);
+                let reach = scale * drawn * std::f64::consts::FRAC_1_SQRT_2;
+                (
+                    near.add(&side.prod_scalar(S::from_f64(drawn))),
+                    [c[0] + reach, c[1] + reach],
+                )
+            }
+        };
+        let visible = scene.point_seen(frame, probe)?;
+        if !visible && !options.hidden_lines {
+            continue;
+        }
+        let layer = if visible {
+            Layer::Thread
+        } else {
+            Layer::Hidden
+        };
+        match seen {
+            ThreadSeen::Side => {
+                let off = look
+                    .prod_cross(&along)
+                    .normalize()?
+                    .prod_scalar(S::from_f64(drawn));
+                for off in [off, off.neg()] {
+                    sheet.stroke(layer, Shape::Line(at(&start.add(&off)), at(&end.add(&off))));
+                }
+            }
+            ThreadSeen::End => {
+                // Open in the quarter up and to the right, as drafting
+                // leaves it, a little turned.
+                sheet.stroke(
+                    layer,
+                    Shape::Arc {
+                        center: at(&start),
+                        radius: scale * drawn,
+                        start: 100f64.to_radians(),
+                        end: 10f64.to_radians(),
+                    },
+                );
+            }
+        }
+        if !labelled {
+            sheet.label(
+                Layer::Dimension,
+                [label_at[0] + 1.5, label_at[1] + 1.5],
+                TEXT,
+                Anchor::Start,
+                thread.designation.clone(),
+            );
+            labelled = true;
+        }
+    }
+    Ok(())
+}
+
+/// Makes `cells` hold `key` at least `size`, with at least `margin`.
+fn grow(cells: &mut Vec<(usize, f64, f64)>, key: usize, size: f64, margin: f64) {
+    match cells.iter_mut().find(|(k, _, _)| *k == key) {
+        Some((_, s, m)) => {
+            *s = s.max(size);
+            *m = m.max(margin);
+        }
+        None => cells.push((key, size, margin)),
     }
 }
 
@@ -678,8 +975,8 @@ fn draw_view<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> GeopRes
         })
         .collect();
     sheet.strokes.extend(strokes_of(&curves, &place, scale)?);
-    for boundary in &p.hatched {
-        for (a, b) in hatch(boundary, scale)? {
+    for (boundary, mirrored) in &p.hatched {
+        for (a, b) in hatch(boundary, scale, *mirrored)? {
             sheet.stroke(Layer::Hatch, Shape::Line(place(a), place(b)));
         }
     }
@@ -845,16 +1142,12 @@ fn draw_dimension<S: Scalar>(
     index: usize,
     scale: f64,
 ) -> GeopResult<()> {
-    let model = part.topology();
     let orthographic = placed
         .iter()
         .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso));
     match dimension {
         Dimension::Distance { from, to } => {
-            let point = |name: &str| -> GeopResult<Vector3<S>> {
-                Ok(model.get_vertex(part.vertex_id(name)?)?.point)
-            };
-            let (a, b) = (point(from)?, point(to)?);
+            let (a, b) = (placed_vertex(part, from)?, placed_vertex(part, to)?);
             let span = b.sub(&a);
             let p = orthographic
                 .into_iter()
@@ -895,9 +1188,7 @@ fn draw_dimension<S: Scalar>(
             );
         }
         Dimension::Radius { edge } | Dimension::Diameter { edge } => {
-            let id = part.edge_id(edge)?;
-            let curve = &model.get_edge(id)?.curve;
-            let arc = curve
+            let arc = placed_edge(part, edge)?
                 .as_arc()?
                 .ok_or_else(|| GeopError::new(format!("the edge {edge} is not circular")))?;
             let p = orthographic
@@ -947,6 +1238,34 @@ fn draw_dimension<S: Scalar>(
         }
     }
     Ok(())
+}
+
+/// Where the vertex `name` of `part` — or of a part placed in it, named as
+/// `part` names it — is.
+pub(crate) fn placed_vertex<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<Vector3<S>> {
+    let (owner, local, pose) = resolve(part, &EntityRef::Vertex { name: name.into() })?;
+    let point = owner
+        .topology()
+        .get_vertex(owner.vertex_id(&local.label())?)?
+        .point;
+    Ok(match pose {
+        Some(pose) => pose.apply(&point),
+        None => point,
+    })
+}
+
+/// The curve of the edge `name` of `part` — or of a part placed in it,
+/// named as `part` names it — where it is.
+pub(crate) fn placed_edge<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<NurbCurve3D<S>> {
+    let (owner, local, pose) = resolve(part, &EntityRef::Edge { name: name.into() })?;
+    let curve = &owner
+        .topology()
+        .get_edge(owner.edge_id(&local.label())?)?
+        .curve;
+    Ok(match pose {
+        Some(pose) => curve.transform(&pose.motion()),
+        None => curve.clone(),
+    })
 }
 
 /// The border and the title block.
@@ -1012,18 +1331,34 @@ fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
     field(sheet, half, y0, "PROJECTION", args.projection.label());
 }
 
-/// The part cut at `plane`, seen from the side its normal points to, and
-/// its cut faces' boundaries for hatching.
+/// A region of a section view to hatch: its boundary curves on the paper,
+/// in model units, and whether its hatching is mirrored — which it is on
+/// every other part cut, so that two parts cut side by side tell apart.
+type Hatched<S> = (Vec<NurbCurve2D<S>>, bool);
+
+/// A body's part cut, with the cutting plane's origin and normal in its
+/// own frame.
+type Cut<S> = (Part<S>, Vector3<S>, Vector3<S>);
+
+/// The drawing's bodies (`scene`, of `part`) cut at `plane`, seen from the
+/// side its normal points to, and their cut faces' boundaries for hatching.
+///
+/// Each body is cut in its own part's frame (see [`section_part`]): a body
+/// wholly on the side the normal points to is gone, one wholly on the
+/// other side, or with no solid to cut, is drawn whole. Refused if no body
+/// has a solid to cut.
 fn section_view<S: Scalar>(
     part: &Part<S>,
+    scene: &Scene<'_, S>,
     plane: &EntityRef,
     options: &ViewOptions,
-) -> GeopResult<(ProjectedView<S>, Vec<Vec<NurbCurve2D<S>>>)> {
+) -> GeopResult<(ProjectedView<S>, Vec<Hatched<S>>)> {
     let frame_of = plane.resolve_plane(part)?;
     let normal = frame_of.w().normalize()?;
-    let cut = section_part(part, frame_of.origin(), &normal)?;
-    let model = cut.topology();
-    let faces = drawn_faces(model);
+    let origin = *frame_of.origin();
+    if scene.bodies.iter().all(|b| b.model().solids.is_empty()) {
+        return Err(GeopError::new("the part has no solid to cut"));
+    }
     // Up on the paper: the world axis least along the line of sight.
     let up = {
         let axis = (0..3)
@@ -1044,34 +1379,115 @@ fn section_view<S: Scalar>(
         up
     };
     let frame = ViewFrame::looking(normal.neg(), up)?;
+    // Each body as it is drawn: whole, or its part cut where the plane is
+    // in its own frame.
+    let mut cuts: Vec<(usize, Option<Cut<S>>)> = Vec::new();
+    for (k, body) in scene.bodies.iter().enumerate() {
+        if body.model().solids.is_empty() {
+            cuts.push((k, None));
+            continue;
+        }
+        match scene.side_of(k, &origin, &normal) {
+            Some(true) => continue,
+            Some(false) => cuts.push((k, None)),
+            None => {
+                let (o, n) = match &body.pose {
+                    Some(pose) => {
+                        let back = pose.inverse().motion();
+                        (back.apply(&origin), back.rotate(&normal))
+                    }
+                    None => (origin, normal),
+                };
+                let cut = section_part(body.part, &o, &n).map_err(|e| {
+                    e.with_context(format!("cutting the part placed as {:?}", body.path))
+                })?;
+                cuts.push((k, Some((cut, o, n))));
+            }
+        }
+    }
+    let bodies = cuts
+        .iter()
+        .map(|(k, cut)| {
+            let body = &scene.bodies[*k];
+            match cut {
+                None => Body {
+                    path: body.path.clone(),
+                    part: body.part,
+                    faces: body.faces.clone(),
+                    pose: body.pose,
+                },
+                Some((cut, _, _)) => Body {
+                    path: body.path.clone(),
+                    part: cut,
+                    faces: drawn_faces(cut.topology()),
+                    pose: body.pose,
+                },
+            }
+        })
+        .filter(|b| !b.faces.is_empty())
+        .collect();
     let options = ViewOptions {
         hidden_lines: false,
         ..*options
     };
-    let view = project_view(model, &faces, &frame, &options)?;
+    let view = Scene::new(bodies)?.project(&frame, &options)?;
     let mut hatched = Vec::new();
-    for face in cut_faces(model, &faces, frame_of.origin(), &normal)? {
-        let mut boundary = Vec::new();
-        for coedge in model.iterate_face_coedges(face) {
-            if let geop_core_topology::CoedgeGeometry::Edge(edge) =
-                model.get_coedge(coedge)?.geometry
-            {
-                boundary.push(frame.project_curve(&model.get_edge(edge)?.curve)?);
+    for (index, (k, (cut, o, n))) in cuts
+        .iter()
+        .filter_map(|(k, cut)| cut.as_ref().map(|c| (k, c)))
+        .enumerate()
+    {
+        let model = cut.topology();
+        let motion = scene.bodies[*k].pose.map(|p| p.motion());
+        for face in cut_faces(model, &drawn_faces(model), o, n)? {
+            let mut boundary = Vec::new();
+            for coedge in model.iterate_face_coedges(face) {
+                if let geop_core_topology::CoedgeGeometry::Edge(edge) =
+                    model.get_coedge(coedge)?.geometry
+                {
+                    let curve = &model.get_edge(edge)?.curve;
+                    let curve = match &motion {
+                        Some(m) => curve.transform(m),
+                        None => curve.clone(),
+                    };
+                    boundary.push(frame.project_curve(&curve)?);
+                }
             }
+            hatched.push((boundary, index % 2 == 1));
         }
-        hatched.push(boundary);
     }
     Ok((view, hatched))
 }
 
 /// Hatch lines across the region `boundary` bounds (model units on the
-/// paper), at 45 degrees, `HATCH_SPACING` apart on a sheet at `scale`.
+/// paper), at 45 degrees — or, `mirrored`, at 135 — `HATCH_SPACING` apart
+/// on a sheet at `scale`.
 ///
 /// Each line is cut where it crosses the boundary, and alternate stretches
 /// are inside. A line through a corner of the boundary, or along it, cannot
 /// be counted that way; where to put the lines is a free choice, so such a
 /// line is moved a little instead.
-fn hatch<S: Scalar>(boundary: &[NurbCurve2D<S>], scale: f64) -> GeopResult<Vec<(P, P)>> {
+fn hatch<S: Scalar>(
+    boundary: &[NurbCurve2D<S>],
+    scale: f64,
+    mirrored: bool,
+) -> GeopResult<Vec<(P, P)>> {
+    if mirrored {
+        let flip = |c: &NurbCurve2D<S>| {
+            let points = c
+                .control_points
+                .iter()
+                .map(|q| Vector3::from_array([q[0].neg(), q[1], q[2]]))
+                .collect();
+            NurbCurve2D::try_new(c.degree, points, c.knot_vector.clone())
+        };
+        let flipped = boundary.iter().map(flip).collect::<GeopResult<Vec<_>>>()?;
+        let back = |p: P| [-p[0], p[1]];
+        return Ok(hatch(&flipped, scale, false)?
+            .into_iter()
+            .map(|(a, b)| (back(a), back(b)))
+            .collect());
+    }
     let mut lo = [f64::INFINITY; 2];
     let mut hi = [f64::NEG_INFINITY; 2];
     for curve in boundary {
