@@ -1793,7 +1793,7 @@ fn fit_loop<S: Scalar>(
         for (v, extra) in [(start, [curve_start, on_start]), (end, [curve_end, on_end])] {
             for (p, source) in extra
                 .into_iter()
-                .zip(["the end of the edge", "its foot point on the face"])
+                .zip(["the end of the edge", "its foot point on this face, at the end of the edge"])
             {
                 let off = distance(to_p3(&p), to_p3(&vertices[v].origin));
                 if off > ACCURACY {
