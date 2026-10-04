@@ -109,6 +109,11 @@ ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
                                B-rep solids and sheets of a file into exact
                                NURBS bodies, writing a part's bodies as one;
                                the import operation
+ops/geop-ops-bom              bills of materials: placed parts grouped by
+                               file and parameter values, flat or indented,
+                               with designations, materials, masses, sheet
+                               thickness and harness wires cut to length;
+                               CSV; `geop bom`, the editor's BOM query
 ```
 
 STEP files are tested against a downloaded corpus of public files (NIST
