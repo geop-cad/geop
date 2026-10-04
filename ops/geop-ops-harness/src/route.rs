@@ -198,7 +198,7 @@ impl<S: Scalar> RoutePath<S> {
             let (p0, p1) = (&waypoints[i].point, &waypoints[i + 1].point);
             let place = format!("between {} and {}", label(i), label(i + 1));
             let [first, second] =
-                biarc(p0, &tangents[i], p1, &tangents[i + 1]).with_context(ctx)?;
+                biarc(&place, p0, &tangents[i], p1, &tangents[i + 1]).with_context(ctx)?;
             let mut push = |curve: NurbCurve3D<S>, name: String, joint: String| {
                 chain.curves.push(curve);
                 chain.curve_names.push(name);
@@ -337,8 +337,9 @@ struct Piece<S: Scalar> {
 }
 
 /// The biarc from `p0` heading `t0` to `p1` heading `t1` (see the module
-/// docs).
+/// docs), `place` being where it lies, as the route says it.
 fn biarc<S: Scalar>(
+    place: &str,
     p0: &Vector3<S>,
     t0: &Vector3<S>,
     p1: &Vector3<S>,
@@ -352,21 +353,37 @@ fn biarc<S: Scalar>(
     // The positive root `2c / (sqrt(disc) - b)`, which needs no division by
     // `a`, zero when the two directions are parallel.
     let denominator = root.sub(b);
+    let numbers = || format!("heading {t0:?} at {p0:?} and {t1:?} at {p1:?}");
     if !denominator.definitely_greater(S::ZERO) {
         return Err(GeopError::new(format!(
-            "route: heading {t0:?} at {p0:?} and {t1:?} at {p1:?}, the route would have to loop round to arrive: add a waypoint between"
-        )));
+            "route: {place}, the route would have to loop round to arrive: add a waypoint between them"
+        ))
+        .with_context(numbers()));
     }
     let d = S::TWO.mul(c).div(denominator)?;
     let q1 = p0.add(&t0.prod_scalar(d));
     let q2 = p1.sub(&t1.prod_scalar(d));
     let joint = q1.add(&q2).prod_scalar(S::ONE.div(S::TWO)?);
-    Ok([piece(p0, &q1, &joint)?, piece(&joint, &q2, p1)?])
+    let turns_back = || {
+        GeopError::new(format!(
+            "route: {place}, the route would have to turn right back on itself: add a waypoint between them"
+        ))
+        .with_context(numbers())
+    };
+    match [piece(p0, &q1, &joint)?, piece(&joint, &q2, p1)?] {
+        [Some(first), Some(second)] => Ok([first, second]),
+        _ => Err(turns_back()),
+    }
 }
 
 /// The arc from `a` to `b` whose legs meet at `q` — legs of one length — or
-/// the line, if they could be straight on.
-fn piece<S: Scalar>(a: &Vector3<S>, q: &Vector3<S>, b: &Vector3<S>) -> GeopResult<Piece<S>> {
+/// the line, if they could be straight on. None if they could turn right
+/// back.
+fn piece<S: Scalar>(
+    a: &Vector3<S>,
+    q: &Vector3<S>,
+    b: &Vector3<S>,
+) -> GeopResult<Option<Piece<S>>> {
     let (first, second) = (q.sub(a), b.sub(q));
     let dot = first.prod_dot(&second);
     if first
@@ -375,20 +392,18 @@ fn piece<S: Scalar>(a: &Vector3<S>, q: &Vector3<S>, b: &Vector3<S>) -> GeopResul
         .could_be_equal(S::ZERO)
     {
         if !dot.definitely_greater(S::ZERO) {
-            return Err(GeopError::new(format!(
-                "route: the route could turn right back on itself between {a:?} and {b:?}"
-            )));
+            return Ok(None);
         }
-        return Ok(Piece {
+        return Ok(Some(Piece {
             curve: line3(*a, *b)?,
             straight: true,
-        });
+        }));
     }
     // The weight is the cosine of half the turn between the legs.
     let cos = dot.div(first.norm().mul(second.norm()))?;
     let weight = S::ONE.add(cos).div(S::TWO)?.sqrt()?;
-    Ok(Piece {
+    Ok(Some(Piece {
         curve: arc3(*a, *q, *b, weight)?,
         straight: false,
-    })
+    }))
 }

@@ -396,3 +396,123 @@ fn unsupported_routes_are_refused() {
     for_all_scalars!(check_unsupported_routes_are_refused);
 }
 
+/// Every combination of a start connector's heading, an end connector's
+/// place and heading, and what lies between — nothing, a free point, a
+/// coordinate system — routed: each either builds a valid bundle at least
+/// as long as the straight lines between its points, and no shorter than
+/// the polyline through points sampled along it, or is refused by the
+/// route itself, saying why. Never does it fail anywhere deeper.
+#[test]
+#[ignore = "slow: a sweep of 432 waypoint configurations, five minutes — run with `cargo test -- --ignored`"]
+fn waypoint_configurations_route_or_are_refused() {
+    type S = geop_core_math::scalars::ScalInF64;
+    let directions: [Vector3<S>; 6] = [
+        v(1.0, 0.0, 0.0),
+        v(0.0, 1.0, 0.0),
+        v(0.0, 0.0, 1.0),
+        v(-1.0, 0.0, 0.0),
+        v(0.0, -1.0, 0.0),
+        v(0.6, 0.0, 0.8),
+    ];
+    let ends = [
+        v(60.0, 0.0, 0.0),
+        v(40.0, 30.0, 0.0),
+        v(10.0, -20.0, 35.0),
+        v(-30.0, 25.0, 15.0),
+    ];
+    let middles: [Option<(Vector3<S>, Option<Vector3<S>>)>; 3] = [
+        None,
+        Some((v(25.0, 15.0, 10.0), None)),
+        Some((v(20.0, -10.0, 5.0), Some(v(0.0, 0.0, 1.0)))),
+    ];
+    let (mut built, mut refused) = (0, 0);
+    for start in &directions {
+        for end in &ends {
+            for end_heading in &directions {
+                for middle in &middles {
+                    let mut part = Part::<S>::new();
+                    connectors(
+                        &mut part,
+                        &[("start", v(0.0, 0.0, 0.0), *start), ("end", *end, *end_heading)],
+                    );
+                    let mut through = vec![datum("start")];
+                    let mut points = vec![v::<S>(0.0, 0.0, 0.0)];
+                    if let Some((at, heading)) = middle {
+                        match heading {
+                            Some(z) => connectors(&mut part, &[("middle", *at, *z)]),
+                            None => {
+                                part.add_datum(
+                                    Datum {
+                                        kind: DatumKind::Point,
+                                        frame: CoordinateSystem::world_at(*at),
+                                    },
+                                    "middle",
+                                )
+                                .unwrap();
+                            }
+                        }
+                        through.push(datum("middle"));
+                        points.push(*at);
+                    }
+                    through.push(datum("end"));
+                    points.push(*end);
+                    let case = format!("{start:?} -> {middle:?} -> {end:?} heading {end_heading:?}");
+                    let args = args(through, 1.0, 1.0);
+                    let part = match route(part, &args) {
+                        Ok(part) => part,
+                        Err(e) => {
+                            let message = e.root_message();
+                            assert!(message.starts_with("route: "), "{case}: {e:?}");
+                            assert!(message.contains("point"), "{case}: {message}");
+                            refused += 1;
+                            continue;
+                        }
+                    };
+                    built += 1;
+                    let params = ValidationParameters::default();
+                    if let Err(e) = validate(&params, part.topology()) {
+                        panic!("{case}: {e:?}");
+                    }
+                    let cable = part.cable("route(r)").unwrap();
+                    let chords: f64 = points
+                        .windows(2)
+                        .map(|w| w[1].sub(&w[0]).norm().to_f64())
+                        .sum();
+                    assert!(cable.length.upper().to_f64() >= chords, "{case}: {:?}", cable.length);
+                    let waypoints: Vec<Waypoint<S>> = args
+                        .through
+                        .iter()
+                        .enumerate()
+                        .map(|(i, e)| Waypoint::of(&part, e, i).unwrap())
+                        .collect();
+                    let path = RoutePath::through(&waypoints).unwrap();
+                    let sampled: f64 = path
+                        .chain
+                        .curves
+                        .iter()
+                        .map(|curve| {
+                            let at = |k: usize| {
+                                curve.evaluate(S::from_f64(k as f64 / 64.0)).unwrap()
+                            };
+                            (0..64)
+                                .map(|k| at(k + 1).sub(&at(k)).norm().to_f64())
+                                .sum::<f64>()
+                        })
+                        .sum();
+                    assert!(
+                        cable.length.upper().to_f64() >= sampled,
+                        "{case}: {:?} < {sampled}",
+                        cable.length
+                    );
+                    assert!(
+                        cable.length.to_f64() - sampled < 1e-3 * cable.length.to_f64(),
+                        "{case}: {:?} vs sampled {sampled}",
+                        cable.length
+                    );
+                }
+            }
+        }
+    }
+    assert!(built > refused, "{built} built, {refused} refused");
+}
+
