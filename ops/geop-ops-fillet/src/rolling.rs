@@ -25,8 +25,9 @@
 //! where the faces' tangent planes at the contact points meet that plane,
 //! weighted by the cosine of the angle between the arc's chord and its
 //! tangent. However exactly `C` was found, that arc touches each face's
-//! tangent plane at its contact point, so the blend is tangent to both
-//! faces at every station. (With a varying radius the ball's true
+//! tangent plane at its contact point — but for a tilt of [`TILT`] towards
+//! the ball, which keeps the approximation between stations from dipping
+//! through the face (checked there). (With a varying radius the ball's true
 //! envelope touches along a small circle, not a great one; the great circle
 //! is as tangent to both faces, and the difference is of the order of how
 //! fast the radius changes.) The *tool* — what a boolean cuts away or fills
@@ -48,11 +49,16 @@
 //!
 //! **Chains.** An edge is blended together with every edge it runs on into
 //! tangentially, between faces running on tangentially — the tangent chain:
-//! a circle made of quarter arcs, a slot's rim of lines and arcs. Each edge
-//! of the chain gets a span of the tool of its own, all meeting at stations
-//! on the chain's vertices; the faces either side may change along it, from
-//! one face to the next tangent to it, and the ball touches whichever of
-//! them it reaches.
+//! a circle made of quarter arcs, a slot's rim of lines and arcs. The
+//! stations run evenly along it, half a step off its vertices; the faces
+//! either side may change along it, from one face to the next tangent to
+//! it, and the ball touches whichever of them it reaches. Where it rolls
+//! from one onto the next, a station is put exactly on the edge between
+//! them, and the tool's spline breaks there (see [`crossing`]): across it
+//! the faces' curvature may jump. So it does at every vertex of a chain
+//! whose radius varies, where the radius changes its rate. Rolling over a
+//! crease is refused. A closed chain's tool breaks at four stations at
+//! least, so that no face of it closes onto itself.
 //!
 //! **Ends.** A closed chain has none. An open one ends as a straight blend
 //! does (see [`crate::blend`]), at a corner of exactly three faces, the

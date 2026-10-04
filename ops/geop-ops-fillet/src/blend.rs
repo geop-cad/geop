@@ -44,6 +44,10 @@
 //!   So the edge has to be part of a whole circle of such edges (a circle
 //!   is built of quarter arcs): the whole circle is blended, once, whichever
 //!   of its arcs are picked.
+//! - **any other edge** — or any edge whose fillet radius varies — is
+//!   rounded by a ball rolled along it and its tangent chain, its tool
+//!   skinned through the ball's sections (see [`crate::rolling`]). A chamfer
+//!   is only swept.
 //!
 //! A blend has to meet both faces inside them — checked halfway along the
 //! edge — so one too large for its faces, or ending exactly on another of
