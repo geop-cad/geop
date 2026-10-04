@@ -32,11 +32,13 @@ pub struct MassSummary {
 }
 
 impl MassSummary {
-    pub fn of<S: Scalar>(properties: &MassProperties<S>) -> GeopResult<Self> {
+    /// The summary of `properties` of a body whose boundary has the area
+    /// `area`, with whether that area's quadrature converged.
+    pub fn of<S: Scalar>(properties: &MassProperties<S>, area: (S, bool)) -> GeopResult<Self> {
         let principal = properties.principal()?;
         Ok(Self {
             volume: Bounded::of(properties.volume),
-            area: Bounded::of(properties.area),
+            area: Bounded::of(area.0),
             mass: Bounded::of(properties.mass),
             center: [0, 1, 2].map(|k| Bounded::of(properties.center[k])),
             inertia: properties.inertia.map(|row| row.map(Bounded::of)),
@@ -44,7 +46,7 @@ impl MassSummary {
             principal_axes: principal
                 .axes
                 .map(|axis| [0, 1, 2].map(|k| axis[k].to_f64())),
-            converged: properties.converged,
+            converged: properties.converged && area.1,
         })
     }
 }
@@ -89,15 +91,18 @@ pub fn material_of<S: Scalar>(part: &Part<S>) -> (String, f64, bool) {
 pub fn mass_report<S: Scalar>(part: &Part<S>) -> GeopResult<MassReport> {
     let mut bodies = Vec::new();
     let mut all = Vec::new();
+    let mut area = (S::ZERO, true);
     let mut complete = true;
     for placed in placed_solids(part)? {
         let (material, density, assumed) = material_of(placed.part);
-        let computed = placed
-            .mass_properties()
-            .and_then(|p| Ok((MassSummary::of(&p)?, p)));
+        let computed = placed.mass_properties().and_then(|p| {
+            let a = placed.part.topology().solid_area(placed.solid)?;
+            Ok((MassSummary::of(&p, a)?, p, a))
+        });
         let (properties, error) = match computed {
-            Ok((summary, p)) => {
+            Ok((summary, p, a)) => {
                 all.push(p);
+                area = (area.0.add(a.0), area.1 && a.1);
                 (Some(summary), None)
             }
             Err(e) => {
@@ -116,7 +121,7 @@ pub fn mass_report<S: Scalar>(part: &Part<S>) -> GeopResult<MassReport> {
     }
     let total = match complete {
         true => MassProperties::combine(&all)?
-            .map(|p| MassSummary::of(&p))
+            .map(|p| MassSummary::of(&p, area))
             .transpose()?,
         false => None,
     };

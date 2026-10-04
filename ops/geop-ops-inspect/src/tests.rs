@@ -281,7 +281,8 @@ fn mass_properties_are_placed() {
     let mass = part.topology().mass_properties(solid).unwrap();
     // A quarter turn about z, then up by 5.
     let pose = Pose::from_euler(v(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(S::from_f64)).unwrap();
-    let placed = MassSummary::of(&mass.placed(&pose).unwrap()).unwrap();
+    let area = part.topology().solid_area(solid).unwrap();
+    let placed = MassSummary::of(&mass.placed(&pose).unwrap(), area).unwrap();
     for (k, want) in [-0.5, 1.0, 5.5].into_iter().enumerate() {
         assert_near("centre", placed.center[k], want, 1e-9);
     }
