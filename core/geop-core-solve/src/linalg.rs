@@ -14,30 +14,40 @@ pub(crate) struct Elimination<S: Scalar> {
     pub pivots: Vec<(usize, usize)>,
 }
 
-/// Gauss-Jordan elimination of `rows` (each over `n` variables), each
-/// column's pivot the entry of largest magnitude below the rows already
-/// used — a free choice among those that cannot be zero; a column whose
-/// every candidate could be zero has none. Which constraints are
-/// independent and which variables they determine is decided from the
-/// rows' own enclosures; where it matters for correctness,
+/// Gauss-Jordan elimination of `rows` (each over `n` variables) with
+/// complete pivoting: each pivot the entry of largest magnitude among the
+/// rows and the columns not used yet — a free choice among those that
+/// cannot be zero; elimination stops when every candidate could be zero.
+/// Which constraints are independent and which variables they determine is
+/// decided from the rows' own enclosures; where it matters for correctness,
 /// [`crate::System::enclose`] verifies what it is used for.
+///
+/// Complete, not column by column: going column by column takes the first
+/// column with any entry that cannot be zero, and rounding leaves entries
+/// of `1e-16` that cannot. Such a pivot determines a variable the
+/// constraints barely touch, in place of one they do — a half circle
+/// tangent to two parallel sides was left with its sweep free and two
+/// tangencies over the same coordinate, and could not be enclosed.
 pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
     let mut origin: Vec<usize> = (0..rows.len()).collect();
-    let mut pivots = Vec::new();
+    let mut pivots: Vec<(usize, usize)> = Vec::new();
+    let mut used = vec![false; n];
     let mut r = 0;
-    for col in 0..n {
-        let Some(best) = (r..rows.len())
-            .filter(|&i| rows[i][col].definitely_not_equal(S::ZERO))
-            .reduce(|a, b| {
-                let size = |i: usize| rows[i][col].abs().sharpen();
-                if size(b).definitely_greater(size(a)) {
-                    b
-                } else {
-                    a
+    loop {
+        let size = |v: S| v.abs().sharpen();
+        let mut best: Option<(usize, usize)> = None;
+        for i in r..rows.len() {
+            for col in (0..n).filter(|&c| !used[c]) {
+                let v = rows[i][col];
+                if v.definitely_not_equal(S::ZERO)
+                    && best.is_none_or(|(bi, bc)| size(v).definitely_greater(size(rows[bi][bc])))
+                {
+                    best = Some((i, col));
                 }
-            })
-        else {
-            continue;
+            }
+        }
+        let Some((best, col)) = best else {
+            break;
         };
         rows.swap(r, best);
         origin.swap(r, best);
@@ -54,6 +64,7 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
                 rows[i][c] = rows[i][c].sub(factor.mul(rows[r][c]));
             }
         }
+        used[col] = true;
         pivots.push((col, origin[r]));
         r += 1;
     }

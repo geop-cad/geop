@@ -5,7 +5,7 @@ use std::f64::consts::PI;
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_sketch::PointId;
+use geop_core_sketch::{Constraint, PointId};
 use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
@@ -110,6 +110,7 @@ fn swept(profile: &str, path: &str) -> SweepArgs {
 fn lofted(profiles: &[&str]) -> LoftArgs {
     LoftArgs {
         profiles: profiles.iter().map(|p| p.to_string()).collect(),
+        matches: Vec::new(),
         face: false,
         combine: Combine::NewBody,
     }
@@ -542,4 +543,242 @@ fn sweep_and_loft_steps_round_trip() {
     assert!(json.contains("\"operation\":\"loft\""), "{json}");
     let back: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(back, program);
+}
+
+/// Rebuilt from a part whose loft failed while enclosing its first sketch:
+/// a D — two sides joined by a half circle tangent to both, closed by an
+/// upright side — lofted into a triangle a unit above.
+#[test]
+fn loft_a_d_into_a_triangle() {
+    let mut d = Sketch::new();
+    let p = [
+        d.add_point(n(-0.8559366928294662), n(0.6532261597610688)),
+        d.add_point(n(0.6690494426064505), n(0.6532261597610689)),
+        d.add_point(n(0.6690494426064503), n(-0.40501734890700397)),
+        d.add_point(n(-0.8559366928294662), n(-0.405017348907004)),
+    ];
+    let top = d.add_line(p[0], p[1]);
+    let end = d.add_arc(p[1], p[2], n(-PI));
+    let bottom = d.add_line(p[2], p[3]);
+    let side = d.add_line(p[3], p[0]);
+    d.constrain(Constraint::Horizontal { line: top });
+    d.constrain(Constraint::Tangent { a: top, b: end });
+    d.constrain(Constraint::Horizontal { line: bottom });
+    d.constrain(Constraint::Tangent { a: end, b: bottom });
+    d.constrain(Constraint::Vertical { line: side });
+    let mut triangle = Sketch::new();
+    polygon(
+        &mut triangle,
+        &[
+            [-0.4948716405501765, 0.879258752572198],
+            [-0.4948716405501765, -0.6736145210517424],
+            [0.7189527425188181, 0.1424512068640546],
+        ],
+    );
+    let mut program = Program::new();
+    program.push("d", sketch(base(FrameAxis::Z), d));
+    lifted(&mut program, "above", 1.0);
+    program.push(
+        "triangle",
+        sketch(
+            EntityRef::Datum {
+                name: "above".into(),
+                component: None,
+            },
+            triangle,
+        ),
+    );
+    program.push("loft", lofted(&["d", "triangle"]));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["loft(loft)"]);
+}
+
+/// A rectangle, a triangle a unit above it and a circle a unit above that,
+/// lofted through in turn.
+#[test]
+fn loft_a_rectangle_through_a_triangle_into_a_circle() {
+    let mut rectangle = Sketch::new();
+    polygon(
+        &mut rectangle,
+        &[[-0.6, -0.4], [0.6, -0.4], [0.6, 0.4], [-0.6, 0.4]],
+    );
+    let mut triangle = Sketch::new();
+    polygon(&mut triangle, &[[-0.5, -0.4], [0.5, -0.4], [0.0, 0.5]]);
+    let mut program = Program::new();
+    program.push("rectangle", sketch(base(FrameAxis::Z), rectangle));
+    for (name, distance) in [("one", 1.0), ("two", 2.0)] {
+        lifted(&mut program, name, distance);
+    }
+    let on = |name: &str| EntityRef::Datum {
+        name: name.into(),
+        component: None,
+    };
+    program.push("triangle", sketch(on("one"), triangle));
+    program.push("circle", sketch(on("two"), circle(0.0, 0.0, 0.4)));
+    program.push("loft", lofted(&["rectangle", "triangle", "circle"]));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["loft(loft)"]);
+}
+
+/// A square's corner matched with a point a third of the way round a
+/// circle above it: the loft runs from that corner to that point — the
+/// circle is split there — and the loft is a valid solid.
+#[test]
+fn loft_with_matched_points() {
+    let mut square = Sketch::new();
+    let corners = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+    let p: Vec<PointId> = corners
+        .iter()
+        .map(|c| square.add_point(n(c[0]), n(c[1])))
+        .collect();
+    for i in 0..4 {
+        square.add_line(p[i], p[(i + 1) % 4]);
+    }
+    let angle = 2.0 * PI / 3.0;
+    let mut round = Sketch::new();
+    let c = round.add_point(n(0.0), n(0.0));
+    let rim = round.add_circle(c, n(0.5));
+    let mark = round.add_point(n(0.5 * angle.cos()), n(0.5 * angle.sin()));
+    round.constrain(Constraint::PointOnCurve {
+        point: mark,
+        curve: rim,
+    });
+    let mut program = Program::new();
+    program.push("square", sketch(base(FrameAxis::Z), square));
+    lifted(&mut program, "above", 1.0);
+    program.push(
+        "round",
+        sketch(
+            EntityRef::Datum {
+                name: "above".into(),
+                component: None,
+            },
+            round,
+        ),
+    );
+    let mut args = lofted(&["square", "round"]);
+    args.matches = vec![
+        EntityRef::SketchPoint {
+            sketch: "square".into(),
+            point: p[2],
+        },
+        EntityRef::SketchPoint {
+            sketch: "round".into(),
+            point: mark,
+        },
+    ];
+    program.push("loft", args);
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    let at = |q: [f64; 3]| {
+        model
+            .vertices
+            .iter()
+            .find(|(_, v)| (0..3).all(|k| v.point[k].could_be_equal(S::from_f64(q[k]))))
+            .map(|(&id, _)| id)
+    };
+    let corner = at([0.5, 0.5, 0.0]).expect("the matched corner");
+    let target = at([0.5 * angle.cos(), 0.5 * angle.sin(), 1.0]).expect("the matched point");
+    assert!(
+        model
+            .edges
+            .values()
+            .any(|e| (e.start_vertex == corner && e.end_vertex == target)
+                || (e.start_vertex == target && e.end_vertex == corner)),
+        "no edge runs from the matched corner to the matched point"
+    );
+}
+
+/// The D of [`loft_a_d_into_a_triangle`] with two pairs of points matched:
+/// its upright side's top and bottom corners with those of the triangle's
+/// upright side. The loft joins each matched pair by an edge.
+#[test]
+fn loft_a_d_into_a_triangle_matched_at_two_points() {
+    let mut d = Sketch::new();
+    let p = [
+        d.add_point(n(-0.8559366928294662), n(0.6532261597610688)),
+        d.add_point(n(0.6690494426064505), n(0.6532261597610689)),
+        d.add_point(n(0.6690494426064503), n(-0.40501734890700397)),
+        d.add_point(n(-0.8559366928294662), n(-0.405017348907004)),
+    ];
+    let top = d.add_line(p[0], p[1]);
+    let end = d.add_arc(p[1], p[2], n(-PI));
+    let bottom = d.add_line(p[2], p[3]);
+    let side = d.add_line(p[3], p[0]);
+    d.constrain(Constraint::Horizontal { line: top });
+    d.constrain(Constraint::Tangent { a: top, b: end });
+    d.constrain(Constraint::Horizontal { line: bottom });
+    d.constrain(Constraint::Tangent { a: end, b: bottom });
+    d.constrain(Constraint::Vertical { line: side });
+    let corners = [
+        [-0.4948716405501765, 0.879258752572198],
+        [-0.4948716405501765, -0.6736145210517424],
+        [0.7189527425188181, 0.1424512068640546],
+    ];
+    let mut triangle = Sketch::new();
+    let q: Vec<PointId> = corners
+        .iter()
+        .map(|c| triangle.add_point(n(c[0]), n(c[1])))
+        .collect();
+    for i in 0..3 {
+        triangle.add_line(q[i], q[(i + 1) % 3]);
+    }
+    let mut program = Program::new();
+    program.push("d", sketch(base(FrameAxis::Z), d));
+    lifted(&mut program, "above", 1.0);
+    program.push(
+        "triangle",
+        sketch(
+            EntityRef::Datum {
+                name: "above".into(),
+                component: None,
+            },
+            triangle,
+        ),
+    );
+    let point = |sketch: &str, point: PointId| EntityRef::SketchPoint {
+        sketch: sketch.into(),
+        point,
+    };
+    let mut args = lofted(&["d", "triangle"]);
+    args.matches = vec![
+        point("d", p[0]),
+        point("triangle", q[0]),
+        point("d", p[3]),
+        point("triangle", q[1]),
+    ];
+    program.push("loft", args);
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    let at = |x: f64, y: f64, z: f64| {
+        model
+            .vertices
+            .iter()
+            .find(|(_, v)| {
+                [x, y, z]
+                    .iter()
+                    .enumerate()
+                    .all(|(k, &c)| v.point[k].could_be_equal(S::from_f64(c)))
+            })
+            .map(|(&id, _)| id)
+            .unwrap_or_else(|| panic!("no vertex at {x}, {y}, {z}"))
+    };
+    let joined = |a, b| {
+        model.edges.values().any(|e| {
+            (e.start_vertex == a && e.end_vertex == b) || (e.start_vertex == b && e.end_vertex == a)
+        })
+    };
+    let d_top = at(-0.8559366928294662, 0.6532261597610688, 0.0);
+    let d_bottom = at(-0.8559366928294662, -0.405017348907004, 0.0);
+    let t_top = at(corners[0][0], corners[0][1], 1.0);
+    let t_bottom = at(corners[1][0], corners[1][1], 1.0);
+    assert!(joined(d_top, t_top), "the top corners are not joined");
+    assert!(
+        joined(d_bottom, t_bottom),
+        "the bottom corners are not joined"
+    );
 }

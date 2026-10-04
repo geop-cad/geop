@@ -9,18 +9,30 @@
 //! - **winding**: each is turned, if need be, to run the same way round
 //!   seen along the loft — counter-clockwise looking back from the next
 //!   section — mirroring its frame where its plane faces the other way;
-//! - **pieces**: a section of fewer curves has its longest ones halved
-//!   until it has as many as the others;
-//! - **start**: a closed section starts at whichever joint lines its joints
-//!   up best with the section before — its shape about its centre — and an
-//!   open one runs whichever way round lines its ends up;
+//! - **matched points**: points the designer matched across the closed
+//!   sections — the first of each section with each other, the second with
+//!   each other, and so on — are lofted into each other: that is how one
+//!   says which part of one profile goes where on the next. Every section
+//!   matched has as many, running round it in the same order; it starts at
+//!   its first;
+//! - **pieces**: every section gets as many curves — between two matched
+//!   points of a matched section as many as between the same two of every
+//!   other — by halving its longest ones;
+//! - **start**: a closed section that is not matched starts at whichever
+//!   joint lines its joints up best with its neighbour towards the first
+//!   matched section (or the section before, with none) — its shape about
+//!   its centre — and an open one runs whichever way round lines its ends
+//!   up;
 //! - **curves**: the `i`-th curves of all sections are made compatible, one
 //!   degree and one knot vector (see `NurbCurve::compatible`).
 //!
 //! Open chains loft into sheets: between two curves, the ruled surface
 //! joining them.
 
-use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D};
+use geop_core_geometry::{
+    contains::curve::curve_could_contain,
+    nurb_curve::{NurbCurve, NurbCurve2D},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -38,12 +50,15 @@ use crate::{
 
 /// One profile to loft through: a closed loop or an open chain, drawn in
 /// `plane`'s `(u, v)` — a closed one counter-clockwise, as a sketch's outer
-/// loop runs — and what its station is called.
+/// loop runs — and what its station is called. `matched`: the joints of a
+/// closed loop matched with the other sections', in the order they are
+/// matched (see [`mark`] and the module docs).
 #[derive(Clone, Debug)]
 pub struct Section<S: Scalar> {
     pub plane: CoordinateSystem<S>,
     pub profile: Profile<S>,
     pub name: String,
+    pub matched: Vec<String>,
 }
 
 /// A section as it is skinned: its frame and its profile in it.
@@ -143,12 +158,95 @@ fn halved<S: Scalar>(profile: &Profile<S>, i: usize) -> GeopResult<Profile<S>> {
 }
 
 /// The closed `profile` starting at its joint `k`.
-fn starting_at<S: Scalar>(profile: &Profile<S>, k: usize) -> Profile<S> {
+pub fn starting_at<S: Scalar>(profile: &Profile<S>, k: usize) -> Profile<S> {
     let mut out = profile.clone();
     out.curves.rotate_left(k);
     out.curve_names.rotate_left(k);
     out.joint_names.rotate_left(k);
     out
+}
+
+/// The closed `profile` with a joint at `point`, and that joint's name:
+/// the joint already there, or — where `point` lies along a curve — a new
+/// one named `joint`, the curve split there, its second half `X#joint`.
+/// Where exactly along the curve is a free choice within where `point`
+/// could be: the halves are exact pieces of it either way. An error if
+/// `point` is on no curve of the profile.
+pub fn mark<S: Scalar>(
+    profile: &Profile<S>,
+    point: &Vector2<S>,
+    joint: &str,
+) -> GeopResult<(Profile<S>, String)> {
+    const MAX_NODES: usize = 20_000;
+    let size = S::from_f64(1e-7);
+    let n = profile.curves.len();
+    for (i, curve) in profile.curves.iter().enumerate() {
+        let (t0, t1) = curve.domain();
+        if curve.evaluate(t0)?.could_be_equal(point) {
+            return Ok((profile.clone(), profile.joint_names[i].clone()));
+        }
+        let Some(t) = curve_could_contain(curve, point, MAX_NODES, size)? else {
+            continue;
+        };
+        if t.could_be_equal(t1) {
+            return Ok((profile.clone(), profile.joint_names[(i + 1) % n].clone()));
+        }
+        let (a, b) = curve.split(t.sharpen())?;
+        let mut out = profile.clone();
+        let name = profile.curve_names[i].clone();
+        out.curves
+            .splice(i..=i, [a.with_unit_domain()?, b.with_unit_domain()?]);
+        out.curve_names.insert(i + 1, format!("{name}#{joint}"));
+        out.joint_names.insert(i + 1, joint.to_string());
+        return Ok((out, joint.to_string()));
+    }
+    Err(GeopError::new(format!(
+        "the point at {point:?} is on none of the profile's curves"
+    )))
+}
+
+/// Where the joints `matched` are along `profile`, which starts at the
+/// first: their indices, increasing — an error if they do not run round it
+/// in that order.
+fn matched_indices<S: Scalar>(
+    profile: &Profile<S>,
+    matched: &[String],
+    name: &str,
+) -> GeopResult<Vec<usize>> {
+    let indices = matched
+        .iter()
+        .map(|joint| {
+            profile
+                .joint_names
+                .iter()
+                .position(|j| j == joint)
+                .ok_or_else(|| GeopError::new(format!("loft: no joint {joint} on {name}")))
+        })
+        .collect::<GeopResult<Vec<_>>>()?;
+    if indices.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(GeopError::new(format!(
+            "loft: the matching points of {name} do not run round it in the order they are matched with the other profiles'"
+        )));
+    }
+    Ok(indices)
+}
+
+/// How many curves `profile` has between each two consecutive joints of
+/// `indices` (see [`matched_indices`]), the last run back to the start.
+fn runs<S: Scalar>(profile: &Profile<S>, indices: &[usize]) -> Vec<usize> {
+    let n = profile.curves.len();
+    (0..indices.len())
+        .map(|j| indices.get(j + 1).copied().unwrap_or(n) - indices[j])
+        .collect()
+}
+
+/// The longest curve of `profile` among `range`, by its control polygon.
+fn longest_among<S: Scalar>(profile: &Profile<S>, range: std::ops::Range<usize>) -> usize {
+    range
+        .max_by(|&a, &b| {
+            polygon_length(&profile.curves[a]).total_cmp(&polygon_length(&profile.curves[b]))
+        })
+        .expect("a run has curves")
 }
 
 /// The sections made to correspond, as the module docs say — closed ones
@@ -202,27 +300,99 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
         }
     }
 
-    // Pieces: as many curves in every section.
+    // Matched points: each matched section starting at its first, the runs
+    // between them as long in every matched section.
+    let matched: Vec<usize> = (0..sections.len())
+        .filter(|&s| !sections[s].matched.is_empty())
+        .collect();
+    let mut targets: Vec<usize> = Vec::new();
+    if let Some(&first) = matched.first() {
+        if !closed {
+            return Err(GeopError::new(
+                "loft: matching points are for closed profiles: open chains are lofted end to end",
+            ));
+        }
+        let count = sections[first].matched.len();
+        if let Some(&s) = matched
+            .iter()
+            .find(|&&s| sections[s].matched.len() != count)
+        {
+            return Err(GeopError::new(format!(
+                "loft: {} has {} matching points, {} has {}: every profile matched has as many",
+                sections[s].name,
+                sections[s].matched.len(),
+                sections[first].name,
+                count
+            )));
+        }
+        targets = vec![0; count];
+        for &s in &matched {
+            let start = placed[s]
+                .profile
+                .joint_names
+                .iter()
+                .position(|j| *j == sections[s].matched[0])
+                .ok_or_else(|| GeopError::new("loft: the first matching point is no joint"))?;
+            placed[s].profile = starting_at(&placed[s].profile, start);
+            let indices =
+                matched_indices(&placed[s].profile, &sections[s].matched, &sections[s].name)?;
+            for (t, run) in targets.iter_mut().zip(runs(&placed[s].profile, &indices)) {
+                *t = (*t).max(run);
+            }
+        }
+    }
+
+    // Pieces: as many curves in every section — run by run in a matched one.
     let most = placed
         .iter()
         .map(|p| p.profile.curves.len())
         .max()
-        .unwrap_or(0);
-    for p in &mut placed {
-        while p.profile.curves.len() < most {
-            let longest = (0..p.profile.curves.len())
-                .max_by(|&a, &b| {
-                    polygon_length(&p.profile.curves[a])
-                        .total_cmp(&polygon_length(&p.profile.curves[b]))
-                })
-                .expect("a profile has curves");
+        .unwrap_or(0)
+        .max(targets.iter().sum());
+    // A section not matched with more curves than the runs add up to: the
+    // last run takes the rest.
+    let matched_total: usize = targets.iter().sum();
+    if let Some(last) = targets.last_mut() {
+        *last += most - matched_total;
+    }
+    for (s, p) in placed.iter_mut().enumerate() {
+        if sections[s].matched.is_empty() {
+            while p.profile.curves.len() < most {
+                let longest = longest_among(&p.profile, 0..p.profile.curves.len());
+                p.profile = halved(&p.profile, longest)?;
+            }
+            continue;
+        }
+        loop {
+            let indices = matched_indices(&p.profile, &sections[s].matched, &sections[s].name)?;
+            let short = runs(&p.profile, &indices)
+                .into_iter()
+                .zip(&targets)
+                .position(|(run, &target)| run < target);
+            let Some(j) = short else {
+                break;
+            };
+            let end = indices
+                .get(j + 1)
+                .copied()
+                .unwrap_or(p.profile.curves.len());
+            let longest = longest_among(&p.profile, indices[j]..end);
             p.profile = halved(&p.profile, longest)?;
         }
     }
 
-    // Start: line each section's joints up with the one before.
-    for s in 1..placed.len() {
-        let before = placed[s - 1].joints()?;
+    // Start: a matched section where it is matched; the others lined up
+    // with their neighbour towards the first matched one.
+    let reference = matched.first().copied().unwrap_or(0);
+    let order: Vec<(usize, usize)> = (reference + 1..placed.len())
+        .map(|s| (s, s - 1))
+        .chain((0..reference).rev().map(|s| (s, s + 1)))
+        .collect();
+    for (s, neighbour) in order {
+        if !sections[s].matched.is_empty() {
+            continue;
+        }
+        let before = placed[neighbour].joints()?;
         let candidates: Vec<Profile<S>> = if closed {
             (0..most)
                 .map(|k| starting_at(&placed[s].profile, k))
@@ -239,7 +409,7 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
             .joints()?;
             // Closed: the shapes about their centres; open: where they are.
             let (ca, cb) = if closed {
-                (centres[s], centres[s - 1])
+                (centres[s], centres[neighbour])
             } else {
                 ([0.0; 3], [0.0; 3])
             };
@@ -390,6 +560,7 @@ mod tests {
             plane,
             profile: Profile::closed(curves).with_prefix(&format!("{name},")),
             name: name.into(),
+            matched: Vec::new(),
         }
     }
 
@@ -504,6 +675,7 @@ mod tests {
             plane,
             profile: Profile::open(curves).with_prefix(&format!("{name},")),
             name: name.to_string(),
+            matched: Vec::new(),
         };
         let mut part = Part::<S>::new();
         let namer = Namer::new("loft", "l").unwrap();

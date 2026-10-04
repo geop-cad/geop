@@ -21,7 +21,7 @@ use geop_ops::{
 use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, RevolveArgs};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
@@ -1235,6 +1235,115 @@ pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
 }
 
 /// Every example, by name.
+/// The NACA 2412 section, chord 1 from its leading edge at the origin to
+/// its trailing edge at `(1, 0)`: the upper side from the trailing edge to
+/// the leading edge, then the lower side back — points of the four-digit
+/// formula, cosine spaced, used as the control points of a spline each.
+const NACA_2412_UPPER: [P2; 15] = [
+    [1.0, 0.0],
+    [0.9876, 0.0026],
+    [0.9509, 0.0101],
+    [0.8917, 0.0214],
+    [0.8129, 0.0349],
+    [0.7182, 0.049],
+    [0.6123, 0.062],
+    [0.5006, 0.0723],
+    [0.3886, 0.0784],
+    [0.2813, 0.0782],
+    [0.1853, 0.071],
+    [0.1056, 0.0576],
+    [0.0464, 0.0399],
+    [0.0107, 0.0201],
+    [0.0, 0.0],
+];
+const NACA_2412_LOWER: [P2; 15] = [
+    [0.0, 0.0],
+    [0.0144, -0.0176],
+    [0.0526, -0.0306],
+    [0.1126, -0.0387],
+    [0.1912, -0.0422],
+    [0.2848, -0.0416],
+    [0.3889, -0.0384],
+    [0.4994, -0.0334],
+    [0.6102, -0.027],
+    [0.7157, -0.0202],
+    [0.8106, -0.0138],
+    [0.8901, -0.0082],
+    [0.9501, -0.0038],
+    [0.9873, -0.001],
+    [1.0, 0.0],
+];
+
+/// The NACA 2412 section of chord `chord`, its leading edge at `(x, 0)`,
+/// drawn in a plane of the origin's `y` axis — which draws in `(x, -z)`,
+/// so the section is drawn upside down to stand the right way up.
+fn naca_2412(chord: f64, x: f64) -> Sketch {
+    let mut s = Sketch::new();
+    let point = |s: &mut Sketch, p: P2| s.add_point(n(x + chord * p[0]), n(-chord * p[1]));
+    let trailing = point(&mut s, NACA_2412_UPPER[0]);
+    let leading = point(&mut s, NACA_2412_LOWER[0]);
+    let side = |s: &mut Sketch, points: &[P2], first: PointId, last: PointId| {
+        let mut control = vec![first];
+        for &p in &points[1..points.len() - 1] {
+            control.push(point(s, p));
+        }
+        control.push(last);
+        s.add_spline(control);
+    };
+    side(&mut s, &NACA_2412_UPPER, trailing, leading);
+    side(&mut s, &NACA_2412_LOWER, leading, trailing);
+    s
+}
+
+/// A wing: the NACA 2412 section, chord 1 at the root, lofted into the
+/// same section of chord 0.6 at the tip, 3 out along `y` and swept back
+/// 0.3.
+pub fn airfoil_wing() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "root",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )),
+            sketch: naca_2412(1.0, 0.0),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "span",
+        AddDatumArgs {
+            selection: vec![EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )],
+            construction: Construction::Offset { distance: 3.0 },
+        },
+    );
+    program.push(
+        "tip",
+        AddSketchArgs {
+            plane: Some(EntityRef::Datum {
+                name: "span".into(),
+                component: None,
+            }),
+            sketch: naca_2412(0.6, 0.3),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "wing",
+        LoftArgs {
+            profiles: vec!["root".into(), "tip".into()],
+            matches: Vec::new(),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1248,6 +1357,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("pin", pin()),
         ("link", link()),
         ("parametric_plate", parametric_plate()),
+        ("airfoil_wing", airfoil_wing()),
     ]
 }
 
@@ -1584,6 +1694,12 @@ mod tests {
     }
 
     /// Reproduces the real bug report described on `revolved_cone_on_box`.
+    #[test]
+    fn airfoil_wing_round_trips() {
+        let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
+        assert_eq!(part.solid_names(), ["loft(wing)"]);
+    }
+
     #[test]
     fn revolved_cone_on_box_round_trips() {
         let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());

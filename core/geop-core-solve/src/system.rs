@@ -654,7 +654,11 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
                 .map(|&r| cols.iter().map(|&c| rows[r].1[c]).collect())
                 .collect()
         };
-        let singular = || GeopError::new("the residuals are singular at their solution");
+        let singular = || {
+            GeopError::new(format!(
+                "the residuals are singular at their solution: rows {picked:?} over variables {cols:?} of {rows:?}"
+            ))
+        };
         let product = |y: &[Vec<S>], k: usize, column: &dyn Fn(usize) -> S| {
             (0..m).fold(S::ZERO, |sum, j| sum.add(y[k][j].mul(column(j))))
         };

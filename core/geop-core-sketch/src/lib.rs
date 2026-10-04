@@ -651,6 +651,31 @@ mod tests {
         }
     }
 
+    /// A slot's end drawn as a half circle tangent to the two sides it joins
+    /// — a D, closed by an upright side: its solution is enclosed. Rebuilt
+    /// from a part whose loft failed while enclosing it.
+    #[test]
+    fn half_circle_tangent_to_parallel_sides_is_enclosed() {
+        let mut s = Sketch::new();
+        let p = [
+            s.add_point(n(-0.8559366928294662), n(0.6532261597610688)),
+            s.add_point(n(0.6690494426064505), n(0.6532261597610689)),
+            s.add_point(n(0.6690494426064503), n(-0.40501734890700397)),
+            s.add_point(n(-0.8559366928294662), n(-0.405017348907004)),
+        ];
+        let top = s.add_line(p[0], p[1]);
+        let end = s.add_arc(p[1], p[2], n(-PI));
+        let bottom = s.add_line(p[2], p[3]);
+        let side = s.add_line(p[3], p[0]);
+        s.constrain(Constraint::Horizontal { line: top });
+        s.constrain(Constraint::Tangent { a: top, b: end });
+        s.constrain(Constraint::Horizontal { line: bottom });
+        s.constrain(Constraint::Tangent { a: end, b: bottom });
+        s.constrain(Constraint::Vertical { line: side });
+        assert!(s.solve().unwrap().converged);
+        s.enclose::<ScalInF64>().unwrap();
+    }
+
     /// What the constraints leave free is the designer's choice, kept
     /// exactly as drawn; only what they determine is enclosed.
     #[test]

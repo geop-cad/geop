@@ -5,7 +5,7 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_sketch::Shape;
+use geop_core_sketch::{PointId, Shape};
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
@@ -15,7 +15,7 @@ use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
 use super::extrude::sketch_profile;
-use crate::loft::{Section, loft};
+use crate::loft::{Section, loft, mark};
 
 /// Lofts through the profiles of two or more sketches, in order, into a
 /// solid named `loft(L)` for the operation `L` — each sketch's one area, a
@@ -26,7 +26,11 @@ use crate::loft::{Section, loft};
 ///
 /// Consecutive profiles are joined by ruled walls (see [`crate::loft`]);
 /// profiles of different numbers of curves are matched up by halving the
-/// longest curves of the ones with fewer.
+/// longest curves of the ones with fewer. Sketch points on the profiles'
+/// loops picked among the [`LoftArgs::matches`] are lofted into each other:
+/// each profile's first with the others' first, its second with their
+/// second, and so on — the curve such a point lies on split there, its
+/// second half named `X#P`.
 ///
 /// Named after the first sketch's elements — `X` a piece of a curve and `P`
 /// a joint of the sketch `K` — and the sketches `K`, `M`, ... themselves:
@@ -44,6 +48,12 @@ pub struct Loft;
 pub struct LoftArgs {
     /// The sketches to loft through, in order.
     pub profiles: Vec<String>,
+    /// Points that correspond across the profiles: sketch points on the
+    /// profiles' loops — corners, or points along curves — each profile's
+    /// in the order picked, the `k`-th of every profile lofted into each
+    /// other.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matches: Vec<EntityRef>,
     /// Loft into faces standing on their own, rather than a solid.
     #[serde(default)]
     pub face: bool,
@@ -62,12 +72,14 @@ impl Operation for Loft {
         let sketches = before.sketch_names();
         LoftArgs {
             profiles: sketches[sketches.len().saturating_sub(2)..].to_vec(),
+            matches: Vec::new(),
             face: false,
             combine: Combine::new_for(before),
         }
     }
 
-    /// The sketches, picked in order; whether a face; and how to combine.
+    /// The sketches, picked in order; the points matched on them; whether a
+    /// face; and how to combine.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -102,6 +114,21 @@ impl Operation for Loft {
                         .collect();
                 },
             );
+            f.reference(
+                "matches",
+                "matching points",
+                args.matches.clone(),
+                &[Role::Point],
+                None,
+                true,
+                |edit, picked| {
+                    edit.args.matches = picked
+                        .into_iter()
+                        .filter(|entity| matches!(entity, EntityRef::SketchPoint { .. }))
+                        .collect();
+                },
+            );
+            f.optional("matches");
         }
         f.checkbox("face", "face", args.face, |args, b| args.face = b);
         if !args.face {
@@ -122,7 +149,7 @@ impl Operation for Loft {
         let sections = args
             .profiles
             .iter()
-            .map(|name| section(&part, name, args.face))
+            .map(|name| section(&part, name, args.face, &matched_points(args, name)?))
             .collect::<GeopResult<Vec<_>>>()
             .with_context(ctx)?;
         if args.face {
@@ -143,9 +170,37 @@ impl Operation for Loft {
     }
 }
 
+/// The points of the profile `name` among `args.matches`, in the order
+/// picked: an error for a point of a sketch that is no profile.
+fn matched_points(args: &LoftArgs, name: &str) -> GeopResult<Vec<PointId>> {
+    let mut found = Vec::new();
+    for entity in &args.matches {
+        let EntityRef::SketchPoint { sketch, point } = entity else {
+            return Err(GeopError::new(format!(
+                "loft: a matching point has to be a sketch point, not {entity}"
+            )));
+        };
+        if !args.profiles.contains(sketch) {
+            return Err(GeopError::new(format!(
+                "loft: the matching point {point} is of the sketch {sketch:?}, which is no profile"
+            )));
+        }
+        if sketch == name {
+            found.push(*point);
+        }
+    }
+    Ok(found)
+}
+
 /// The sketch `name` of `part` as a section: its one loop — or, for a face,
-/// its one open chain if it encloses nothing.
-fn section<S: Scalar>(part: &Part<S>, name: &str, face: bool) -> GeopResult<Section<S>> {
+/// its one open chain if it encloses nothing — with a joint at each of its
+/// points `matched`.
+fn section<S: Scalar>(
+    part: &Part<S>,
+    name: &str,
+    face: bool,
+    matched: &[PointId],
+) -> GeopResult<Section<S>> {
     let ctx = with_context!("profile {name:?}");
     let placed = part.sketch(part.sketch_id(name).with_context(ctx)?)?;
     let sketch = &placed.sketch;
@@ -165,13 +220,28 @@ fn section<S: Scalar>(part: &Part<S>, name: &str, face: bool) -> GeopResult<Sect
         }
         Shape::Chain(chain) => (chain, false),
     };
+    let mut profile = sketch_profile(
+        name,
+        lp.to_nurbs(sketch, &geometry).with_context(ctx)?,
+        closed,
+    );
+    let mut joints = Vec::new();
+    for &point in matched {
+        let at = geometry.points.get(&point).ok_or_else(|| {
+            GeopError::new(format!(
+                "loft: the matching point {point} is no point of the sketch"
+            ))
+        })?;
+        let (marked, joint) = mark(&profile, at, &format!("{name},{point}"))
+            .with_context(with_context!("the matching point {point}"))
+            .with_context(ctx)?;
+        profile = marked;
+        joints.push(joint);
+    }
     Ok(Section {
         plane: placed.plane.clone(),
-        profile: sketch_profile(
-            name,
-            lp.to_nurbs(sketch, &geometry).with_context(ctx)?,
-            closed,
-        ),
+        profile,
         name: name.to_string(),
+        matched: joints,
     })
 }
