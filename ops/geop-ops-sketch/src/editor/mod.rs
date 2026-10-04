@@ -18,11 +18,14 @@
 //! next is selected for it until it has all it needs.
 //!
 //! The trim tool removes what it is clicked on or dragged across, up to
-//! where the sketch meets it (see [`trim`]).
+//! where the sketch meets it (see [`trim`]). Mirror, patterns and offset
+//! make geometry from what is selected, tied to it by constraints (see
+//! [`modify`]).
 
 mod dialog;
 mod drawing;
 mod gestures;
+mod modify;
 mod snap;
 #[cfg(test)]
 mod tests;
@@ -38,7 +41,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_core_sketch::{ConstraintId, CurveId, PointId};
+use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 use geop_ops::{
     Design, Part,
     operation::Role,
@@ -70,14 +73,16 @@ pub enum DrawTool {
     TangentArc,
     Polygon,
     Slot,
+    ArcSlot,
     Spline,
     Point,
     Fillet,
+    Chamfer,
 }
 
-/// What the palette shows of a drawing tool.
-pub struct DrawInfo {
-    pub tool: DrawTool,
+/// What the palette shows of a tool.
+pub struct DrawInfo<T = DrawTool> {
+    pub tool: T,
     /// Its name in events and the icon it is shown as.
     pub name: &'static str,
     pub label: &'static str,
@@ -85,7 +90,7 @@ pub struct DrawInfo {
 }
 
 impl DrawTool {
-    pub const ALL: [DrawInfo; 14] = {
+    pub const ALL: [DrawInfo; 16] = {
         use DrawTool::*;
         const fn t(
             tool: DrawTool,
@@ -132,9 +137,11 @@ impl DrawTool {
             t(TangentArc, "tangent_arc", "Tangent arc", Some("t")),
             t(Polygon, "polygon", "Polygon", Some("g")),
             t(Slot, "slot", "Slot", None),
+            t(ArcSlot, "arc_slot", "Arc slot", None),
             t(Spline, "spline", "Spline", Some("s")),
             t(Point, "point", "Point", Some("p")),
             t(Fillet, "fillet", "Fillet a corner", Some("f")),
+            t(Chamfer, "chamfer", "Chamfer a corner", None),
         ]
     };
 
@@ -154,11 +161,68 @@ impl DrawTool {
     fn needs(self) -> Option<usize> {
         use DrawTool::*;
         match self {
-            Point | Fillet => Some(1),
+            Point | Fillet | Chamfer => Some(1),
             Line | Rectangle | CenterRectangle | Circle | TangentArc | Polygon => Some(2),
             ThreePointRectangle | ThreePointCircle | Arc | CenterArc | Slot => Some(3),
+            ArcSlot => Some(4),
             Spline => None,
         }
+    }
+
+    /// Whether it changes what is drawn rather than drawing anew.
+    fn modifies(self) -> bool {
+        matches!(self, DrawTool::Fillet | DrawTool::Chamfer)
+    }
+}
+
+/// A tool that makes geometry from what is selected, tied to it by
+/// constraints (see [`modify`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModifyTool {
+    Offset,
+    Mirror,
+    LinearPattern,
+    CircularPattern,
+}
+
+impl ModifyTool {
+    pub const ALL: [DrawInfo<ModifyTool>; 4] = {
+        use ModifyTool::*;
+        [
+            DrawInfo {
+                tool: Offset,
+                name: "offset",
+                label: "Offset — click curves for their chains, then where the offset goes",
+                shortcut: Some("o"),
+            },
+            DrawInfo {
+                tool: Mirror,
+                name: "mirror",
+                label: "Mirror — click the line to mirror across",
+                shortcut: None,
+            },
+            DrawInfo {
+                tool: LinearPattern,
+                name: "linear_pattern",
+                label: "Linear pattern of what is selected — click a line for its direction",
+                shortcut: None,
+            },
+            DrawInfo {
+                tool: CircularPattern,
+                name: "circular_pattern",
+                label: "Circular pattern of what is selected — click its center",
+                shortcut: None,
+            },
+        ]
+    };
+
+    fn by_name(name: &str) -> Option<ModifyTool> {
+        Self::ALL.iter().find(|i| i.name == name).map(|i| i.tool)
+    }
+
+    /// Whether it starts from a selection made beforehand.
+    fn needs_selection(self) -> bool {
+        matches!(self, ModifyTool::LinearPattern | ModifyTool::CircularPattern)
     }
 }
 
@@ -174,6 +238,8 @@ pub enum Tool {
     /// Removing what is clicked or dragged across, up to where the sketch
     /// meets it.
     Trim,
+    /// Making geometry from what is selected.
+    Modify(ModifyTool),
 }
 
 /// The trim tool's shortcut.
@@ -272,6 +338,42 @@ pub struct SketchSession {
     error: Option<String>,
     /// What the trim tool meets.
     stroke: Stroke,
+    /// Whether a polygon's sides touch its circle rather than its corners
+    /// lying on it.
+    circumscribed: bool,
+    /// The options of the tools that make geometry from geometry.
+    modify: ModifyOptions,
+}
+
+/// What mirror, patterns and offset are set to make.
+#[derive(Clone, Debug, PartialEq)]
+struct ModifyOptions {
+    /// The line mirrored across, once clicked.
+    mirror_line: Option<CurveId>,
+    /// How many copies a pattern has, the original among them.
+    count: usize,
+    /// A linear pattern's spacing: when the tool is taken up, as far as
+    /// what is selected reaches, and half as far again.
+    spacing: f64,
+    /// A circular pattern's angle between copies, in degrees; none to
+    /// spread them over the whole circle.
+    pitch: Option<f64>,
+    /// An offset to both sides.
+    both: bool,
+    corners: Corners,
+}
+
+impl Default for ModifyOptions {
+    fn default() -> Self {
+        Self {
+            mirror_line: None,
+            count: 3,
+            spacing: 1.0,
+            pitch: None,
+            both: false,
+            corners: Corners::Round,
+        }
+    }
 }
 
 impl Default for SketchSession {
@@ -288,6 +390,8 @@ impl Default for SketchSession {
             prompt: None,
             error: None,
             stroke: Stroke::default(),
+            circumscribed: false,
+            modify: ModifyOptions::default(),
         }
     }
 }
@@ -480,7 +584,7 @@ pub(crate) fn form<'a, S: Scalar>(
     f.tool = match s.tool {
         Tool::Select => InHand::Nothing,
         Tool::Trim => InHand::Strokes,
-        Tool::Draw(_) | Tool::Constrain(_) => InHand::Clicks,
+        Tool::Draw(_) | Tool::Constrain(_) | Tool::Modify(_) => InHand::Clicks,
     };
     f
 }

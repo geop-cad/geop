@@ -499,19 +499,32 @@ impl<S: Scalar> Sketch<S> {
         )
     }
 
+    /// The dimension of the spacing of the pattern `by`: a
+    /// [`Constraint::Length`] of its line, or the [`Constraint::Angle`]
+    /// between the radii to its arc's ends — if it has one still.
+    pub fn pattern_spacing(&self, by: CurveId) -> Option<ConstraintId> {
+        let (s, e) = self.curves.get(&by)?.endpoints()?;
+        let ends = |l: CurveId| self.curves.get(&l).and_then(|k| k.endpoints());
+        self.constraints.iter().find_map(|(&id, c)| match *c {
+            Constraint::Length { curve, .. } if curve == by => Some(id),
+            Constraint::Angle { a, b, .. }
+                if ends(a).is_some_and(|(_, q)| q == s) && ends(b).is_some_and(|(_, q)| q == e) =>
+            {
+                Some(id)
+            }
+            _ => None,
+        })
+    }
+
     /// The construction a pattern made for itself: `by`, and a circular
     /// pattern's radii to its ends.
     fn pattern_own_curves(&self, by: CurveId) -> Vec<CurveId> {
         let mut own = vec![by];
-        for c in self.constraints.values() {
-            if let Constraint::Angle { a, b, .. } = *c
-                && let Some((s, e)) = self.curves.get(&by).and_then(|k| k.endpoints())
-            {
-                let ends = |l: CurveId| self.curves.get(&l).and_then(|k| k.endpoints());
-                if ends(a).is_some_and(|(_, q)| q == s) && ends(b).is_some_and(|(_, q)| q == e) {
-                    own.extend([a, b]);
-                }
-            }
+        if let Some(Constraint::Angle { a, b, .. }) = self
+            .pattern_spacing(by)
+            .and_then(|k| self.constraints.get(&k))
+        {
+            own.extend([*a, *b]);
         }
         own
     }

@@ -20,6 +20,7 @@ impl<S: Scalar> Editing<'_, S> {
     fn hints(&self, pointer: &Pointer<S>, t: S) -> Hints {
         Hints {
             sides: self.s.sides,
+            circumscribed: self.s.circumscribed,
             tangent_to: self.s.draft.previous,
             sweep: self.s.draft.sweep,
             min_size: pointer.reach_at(1.0, t).to_f64(),
@@ -81,7 +82,7 @@ impl<S: Scalar> Editing<'_, S> {
                 }
                 draft.at_end = near;
             }
-            (DrawTool::CenterArc, [m, s]) => {
+            (DrawTool::CenterArc | DrawTool::ArcSlot, [m, s]) => {
                 let raw = angle_between(sub(s.at, m.at), sub(placed.at, m.at));
                 let previous = draft.sweep;
                 self.s.draft.sweep = if previous == 0.0 {
@@ -164,6 +165,7 @@ impl<S: Scalar> Editing<'_, S> {
         if self.s.tool == Tool::Draw(DrawTool::Spline) && self.s.draft.placed.len() >= 2 {
             let hints = Hints {
                 sides: self.s.sides,
+                circumscribed: self.s.circumscribed,
                 tangent_to: None,
                 sweep: 0.0,
                 min_size: 0.0,
@@ -494,6 +496,11 @@ impl<S: Scalar> Editing<'_, S> {
     pub(super) fn take(&mut self, tool: Tool) {
         self.finish_draft();
         self.s.stroke = Stroke::default();
+        self.s.error = None;
+        self.s.modify.mirror_line = None;
+        if tool == Tool::Modify(ModifyTool::LinearPattern) {
+            self.s.modify.spacing = self.default_spacing();
+        }
         self.s.tool = if self.s.tool == tool {
             Tool::Select
         } else {
@@ -654,6 +661,8 @@ impl<S: Scalar> Editing<'_, S> {
                     self.take(Tool::Trim);
                 } else if let Some(info) = DrawTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
                     self.take(Tool::Draw(info.tool));
+                } else if let Some(info) = ModifyTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
+                    self.take(Tool::Modify(info.tool));
                 } else if let Some(info) = ConstraintTool::ALL.iter().find(|i| shortcut(i.shortcut))
                 {
                     self.press_constraint(info.tool);
@@ -701,6 +710,7 @@ impl<S: Scalar> Editing<'_, S> {
                 (Button::Primary, Tool::Select) if *double => self.double_click(pointer),
                 (Button::Primary, Tool::Select) => {}
                 (Button::Primary, Tool::Constrain(tool)) => self.pick_for(tool, pointer),
+                (Button::Primary, Tool::Modify(tool)) => self.modify_click(tool, pointer),
                 (Button::Primary, Tool::Trim) => {
                     let met: Vec<_> = self.meets(pointer).into_iter().collect();
                     self.trim(&met);

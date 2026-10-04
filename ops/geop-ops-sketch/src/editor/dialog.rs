@@ -2,7 +2,7 @@
 //! what the sketch projects; one line on what to do next and one on how
 //! the sketch stands; and its constraints.
 
-use geop_ops::ui::{Control, Number, Prompt, Unit};
+use geop_ops::ui::{Choice, Control, Number, Prompt, Unit};
 
 use super::*;
 use crate::references::Source;
@@ -29,6 +29,21 @@ fn tool_hint(s: &SketchSession) -> String {
         }
         Tool::Trim => {
             "Click a curve, or drag across curves, to remove them up to where they meet others · Esc to stop"
+        }
+        Tool::Modify(ModifyTool::Offset) => {
+            "Click curves to offset their chains, then click where the offset goes · Esc to stop"
+        }
+        Tool::Modify(ModifyTool::Mirror) if s.modify.mirror_line.is_some() => {
+            "Click curves to mirror them · Esc to stop"
+        }
+        Tool::Modify(ModifyTool::Mirror) => {
+            "Click the line to mirror what is selected across · Esc to stop"
+        }
+        Tool::Modify(ModifyTool::LinearPattern) => {
+            "Click a line to repeat what is selected along, towards its end clicked nearer · Esc to stop"
+        }
+        Tool::Modify(ModifyTool::CircularPattern) => {
+            "Click the point — or circle — to repeat what is selected round · Esc to stop"
         }
         Tool::Draw(tool) => match (tool, placed) {
             (DrawTool::Line, 0) => "Click where the line starts",
@@ -57,13 +72,18 @@ fn tool_hint(s: &SketchSession) -> String {
             (DrawTool::TangentArc, 0) => "Click the end of a curve to continue",
             (DrawTool::TangentArc, _) => "Click where the arc ends",
             (DrawTool::Polygon, 0) => "Click the center",
+            (DrawTool::Polygon, _) if s.circumscribed => "Click the middle of a side",
             (DrawTool::Polygon, _) => "Click a corner",
             (DrawTool::Slot, 0) => "Click the first center",
             (DrawTool::Slot, 1) => "Click the second center",
             (DrawTool::Slot, _) => "Click to give the width",
+            (DrawTool::ArcSlot, 0) => "Click the center of its arc",
+            (DrawTool::ArcSlot, 1) => "Click where its arc starts",
+            (DrawTool::ArcSlot, 2) => "Move round, and click where its arc ends",
+            (DrawTool::ArcSlot, _) => "Click to give the width",
             (DrawTool::Spline, _) => "Click control points · double-click or Enter finishes",
             (DrawTool::Point, _) => "Click to place a point",
-            (DrawTool::Fillet, _) => "Click the corner where two lines meet",
+            (DrawTool::Fillet | DrawTool::Chamfer, _) => "Click the corner where two lines meet",
         },
     };
     let snapping = if matches!(s.tool, Tool::Draw(_)) {
@@ -72,6 +92,107 @@ fn tool_hint(s: &SketchSession) -> String {
         ""
     };
     format!("{text}{snapping}")
+}
+
+/// The options of the tool in hand: a polygon's sides, how many copies a
+/// pattern makes and how far apart, which sides an offset goes to.
+fn tool_options<'a, S: Scalar>(
+    d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
+    s: &SketchSession,
+) {
+    let number = |d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
+                  key: &str,
+                  number: Number<S>,
+                  set: fn(&mut SketchSession, f64)| {
+        d.on(key, move |edit, value| {
+            if let Value::Number(v) = value {
+                set(edit.session, v);
+            }
+        });
+        d.dialog.push(key, Control::Number(number));
+    };
+    let checkbox = |d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
+                    key: &str,
+                    label: &str,
+                    value: bool,
+                    set: fn(&mut SketchSession, bool)| {
+        d.on(key, move |edit, value| {
+            if let Value::Bool(b) = value {
+                set(edit.session, b);
+            }
+        });
+        let control = Control::Checkbox {
+            label: label.into(),
+            value,
+        };
+        d.dialog.push(key, control);
+    };
+    let count = |d: &mut Form<'a, S, AddSketchArgs, SketchSession>| {
+        let field = Number::new("copies", s.modify.count as f64, Unit::Count).range(2.0, 24.0);
+        number(d, "count", field, |s, n| {
+            s.modify.count = (n.round() as usize).clamp(2, 1000);
+        });
+    };
+    match s.tool {
+        Tool::Draw(DrawTool::Polygon) => {
+            let sides = Number::new("sides", s.sides as f64, Unit::Count).range(3.0, 12.0);
+            number(d, "sides", sides, |s, n| {
+                s.sides = (n.round() as usize).clamp(3, 64);
+            });
+            checkbox(
+                d,
+                "circumscribed",
+                "Sides touch the circle",
+                s.circumscribed,
+                |s, b| s.circumscribed = b,
+            );
+        }
+        Tool::Modify(ModifyTool::LinearPattern) => {
+            count(d);
+            let spacing = Number::new("spacing", s.modify.spacing, Unit::Length);
+            number(d, "spacing", spacing, |s, v| {
+                if v > 0.0 {
+                    s.modify.spacing = v;
+                }
+            });
+        }
+        Tool::Modify(ModifyTool::CircularPattern) => {
+            count(d);
+            let pitch = s.modify.pitch.unwrap_or(360.0 / s.modify.count as f64);
+            let angle = Number::new("angle between copies", pitch, Unit::Angle);
+            number(d, "pitch", angle, |s, v| s.modify.pitch = Some(v));
+        }
+        Tool::Modify(ModifyTool::Offset) => {
+            checkbox(d, "both", "Both sides", s.modify.both, |s, b| {
+                s.modify.both = b
+            });
+            d.on("corners", move |edit, value| {
+                if let Value::Choice(choice) = value {
+                    edit.session.modify.corners = match choice.as_str() {
+                        "extend" => Corners::Extend,
+                        _ => Corners::Round,
+                    };
+                }
+            });
+            let value = match s.modify.corners {
+                Corners::Round => "round",
+                Corners::Extend => "extend",
+            };
+            d.dialog.push(
+                "corners",
+                Control::Select {
+                    label: "corners".into(),
+                    value: value.into(),
+                    options: vec![
+                        Choice::new("round", "Rounded"),
+                        Choice::new("extend", "Extended"),
+                    ],
+                    searchable: false,
+                },
+            );
+        }
+        _ => {}
+    }
 }
 
 /// How the sketch stands: solved or not, how free it still is, how many
@@ -135,11 +256,7 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
     let mut tools: Vec<Action> = DrawTool::ALL
         .iter()
         .map(|i| {
-            let group = if i.tool == DrawTool::Fillet {
-                "Modify"
-            } else {
-                "Draw"
-            };
+            let group = if i.tool.modifies() { "Modify" } else { "Draw" };
             Action::new(i.name, i.label)
                 .title(format!("{}{}", i.label, shortcut(i.shortcut)))
                 .icon(i.name)
@@ -157,6 +274,19 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
             .group("Modify")
             .active(s.tool == Tool::Trim),
     );
+    let curves_selected = picks.iter().any(|p| matches!(p, Pick::Curve(_)));
+    for i in &ModifyTool::ALL {
+        let active = s.tool == Tool::Modify(i.tool);
+        let action = Action::new(i.name, i.label)
+            .icon(i.name)
+            .group("Modify")
+            .active(active);
+        tools.push(if i.tool.needs_selection() && !curves_selected && !active {
+            action.disabled(format!("{}: select the curves to copy first", i.label))
+        } else {
+            action.title(format!("{}{}", i.label, shortcut(i.shortcut)))
+        });
+    }
     tools.push(
         Action::new("construction", "Construction")
             .title(
@@ -173,18 +303,24 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
             name => {
                 if let Some(tool) = DrawTool::by_name(name) {
                     e.take(Tool::Draw(tool));
+                } else if let Some(tool) = ModifyTool::by_name(name) {
+                    e.take(Tool::Modify(tool));
                 }
             }
         });
     });
-    if s.tool == Tool::Draw(DrawTool::Polygon) {
-        d.on("sides", move |edit, value| {
+    tool_options(d, s);
+    if let [Pick::Curve(by)] = picks[..]
+        && let Some(count) = sketch.pattern_count(by)
+    {
+        d.on("pattern_count", move |edit, value| {
             if let Value::Number(n) = value {
-                edit.session.sides = (n.round() as usize).clamp(3, 64);
+                let count = (n.round().max(2.0)) as usize;
+                editing(before, edit, |e| e.set_pattern_count(by, count));
             }
         });
-        let sides = Number::new("sides", s.sides as f64, Unit::Count).range(3.0, 12.0);
-        d.dialog.push("sides", Control::Number(sides));
+        let field = Number::new("pattern count", count as f64, Unit::Count).range(2.0, 24.0);
+        d.dialog.push("pattern_count", Control::Number(field));
     }
 
     let constraints: Vec<Action> = ConstraintTool::ALL
