@@ -29,16 +29,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
     ///
     /// `J` is singular exactly where the surface's own parametrization is —
     /// a coordinate-singular pole (e.g. the apex of a `revolve`d disk cap,
-    /// where every `v` collapses to one point and `Sv = 0`). Rather than
-    /// erroring there (`div` by an exactly- or interval-possibly-zero
-    /// determinant), that iteration's update is simply skipped, leaving
-    /// `(u, v)` exactly where the *previous*, non-singular iteration left
-    /// it. For a target genuinely at or very near such a pole, earlier
-    /// iterations still pull `(u, v)` right up to the singular edge_loop
-    /// before this kicks in, so the frozen result is still a meaningful
-    /// (if imprecise right at the pole) answer — good enough for a caller
-    /// to then recognize "this converged onto a known singular vertex" and
-    /// handle it explicitly, instead of the whole projection just failing.
+    /// where every `v` collapses to one point and `Sv = 0`). There only the
+    /// collapsed parameter stops moving the point; the other still does, so
+    /// that iteration takes the Newton step along it alone — down the
+    /// meridian, off the pole, after which the full step takes over. A seed
+    /// on the pole would otherwise never leave it, whatever the target. For
+    /// a target at the pole that step is zero, and `(u, v)` stays. Where
+    /// neither derivative is definitely nonzero, the update is skipped,
+    /// leaving `(u, v)` where the previous iteration left it.
     pub fn project(
         &self,
         target: Vector3<S>,
@@ -65,8 +63,22 @@ impl<S: Scalar> NurbSurface<S, 4> {
             let det = a11.mul(a22).sub(a12.mul(a12));
             let du = b1.mul(a22).sub(b2.mul(a12)).div(det);
             let dv = a11.mul(b2).sub(a12.mul(b1)).div(det);
-            let (Ok(du), Ok(dv)) = (du, dv) else {
-                continue;
+            let (du, dv) = match (du, dv) {
+                (Ok(du), Ok(dv)) => (du, dv),
+                // Singular: along the one derivative that moves the point.
+                _ if a22.definitely_greater(S::ZERO) => {
+                    match self.off_pole(target, &p, (v, v_lo, v_hi), (u, u_lo, u_hi), false)? {
+                        Some((along, d)) => (along.sub(u), d),
+                        None => continue,
+                    }
+                }
+                _ if a11.definitely_greater(S::ZERO) => {
+                    match self.off_pole(target, &p, (u, u_lo, u_hi), (v, v_lo, v_hi), true)? {
+                        Some((along, d)) => (d, along.sub(v)),
+                        None => continue,
+                    }
+                }
+                _ => continue,
             };
 
             // Sharpened every iteration, not just at the end: Newton is
@@ -121,6 +133,50 @@ impl<S: Scalar> NurbSurface<S, 4> {
         }
 
         Ok((u, v))
+    }
+
+    /// The step off a pole at `p` towards `target`. The collapsed parameter
+    /// does not move the point there, so which meridian to leave along is a
+    /// free choice — `collapsed` is its value now and its domain; `fixed`,
+    /// the other parameter's value and domain, is where the pole is. Of the
+    /// meridians at the collapsed domain's ends, its middle and where it is
+    /// now, the one the Newton step along goes furthest towards the target
+    /// on — into the domain, off the pole: `(meridian, step)`, or `None`
+    /// if none does. `u_collapsed` says the collapsed parameter is `v`.
+    fn off_pole(
+        &self,
+        target: Vector3<S>,
+        p: &Vector3<S>,
+        (fixed, fixed_lo, fixed_hi): (S, S, S),
+        (now, lo, hi): (S, S, S),
+        u_collapsed: bool,
+    ) -> GeopResult<Option<(S, S)>> {
+        let r = target.sub(p);
+        let middle = S::interpolate(lo, hi, S::from_f64(0.5));
+        let mut best: Option<(S, S, f64)> = None;
+        for along in [now, lo, middle, hi] {
+            let (su, sv) = if u_collapsed {
+                self.derivatives(fixed, along)?
+            } else {
+                self.derivatives(along, fixed)?
+            };
+            let meridian = if u_collapsed { su } else { sv };
+            let toward = meridian.prod_dot(&r);
+            let Ok(step) = toward.div(meridian.prod_dot(&meridian)) else {
+                continue;
+            };
+            // Off the pole: the step leads into the domain.
+            let to = fixed.add(step);
+            if !(to.definitely_greater(fixed_lo) && to.definitely_less(fixed_hi)) {
+                continue;
+            }
+            // How far towards the target, to first order: `toward * step`.
+            let progress = toward.mul(step).midpoint().to_f64();
+            if best.as_ref().is_none_or(|(_, _, b)| progress > *b) {
+                best = Some((along, step, progress));
+            }
+        }
+        Ok(best.map(|(along, step, _)| (along, step)))
     }
 }
 

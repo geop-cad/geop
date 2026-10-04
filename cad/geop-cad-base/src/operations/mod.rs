@@ -44,6 +44,8 @@ mod shell_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]
+mod stress_tests;
+#[cfg(test)]
 mod sweep_loft_tests;
 #[cfg(test)]
 mod tests;

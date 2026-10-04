@@ -6,7 +6,7 @@ use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::{
     boundary::BoundaryType,
     loop_sampling::sample_loop_to_polygon,
-    validation::{ValidationParameters, validate},
+    validation::{ValidationParameters, validate, validate_manifold},
 };
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
@@ -34,6 +34,29 @@ fn assert_builds_valid(program: &Program) {
         );
     }
     assert_draws_its_trims(&part);
+}
+
+/// Whether `part` is a valid manifold model — if not, every validation
+/// error's root message, one per line, and the names of the entities they
+/// mention.
+pub(crate) fn check_valid(part: &Part<S>) -> Result<(), String> {
+    let params = ValidationParameters::default();
+    let errors = match validate(&params, part.topology()) {
+        Err(errors) => errors,
+        Ok(()) => match validate_manifold(&params, part.topology()) {
+            Err(errors) => errors,
+            Ok(()) => return Ok(()),
+        },
+    };
+    let all = errors
+        .iter()
+        .map(|e| e.root_message())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(format!(
+        "{all}\nwhere {}",
+        names_mentioned(part, &all).join(", ")
+    ))
 }
 
 /// The names of the vertices, edges and faces of `part` that `text` — a

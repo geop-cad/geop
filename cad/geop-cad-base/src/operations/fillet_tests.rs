@@ -3,7 +3,6 @@
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::operation::Role;
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
@@ -11,27 +10,15 @@ use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_fillet::{ChamferArgs, FilletArgs};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
-use super::regression_tests::names_mentioned;
+use super::regression_tests::check_valid;
 use crate::examples::{self, n};
 use crate::{Command, Editor, Program};
 
 /// Checks `part` is a valid manifold model, naming in the failure every
 /// entity the errors mention.
-pub(crate) fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    let report = |errors: Vec<geop_core_math::geop_error::GeopError>| {
-        let all = errors
-            .iter()
-            .map(|e| e.root_message())
-            .collect::<Vec<_>>()
-            .join("\n");
-        panic!("{all}\nwhere {}", names_mentioned(part, &all).join(", "));
-    };
-    if let Err(errors) = validate(&params, part.topology()) {
-        report(errors);
-    }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        report(errors);
+fn assert_valid(part: &Part<S>) {
+    if let Err(e) = check_valid(part) {
+        panic!("{e}");
     }
 }
 

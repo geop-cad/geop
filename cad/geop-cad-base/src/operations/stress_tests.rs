@@ -1,0 +1,503 @@
+//! Fillets, chamfers and shells across boxes, cylinders and spheres, whole
+//! and with parts cut off, added or drilled: every edge blended on its own,
+//! and the solid shelled closed and open at each of its faces in turn.
+//!
+//! An operation may refuse what it does not support — saying so — but what
+//! it builds has to be a valid solid, and it must not fail otherwise. Each
+//! body is one test, so they run side by side; each lists every case that
+//! went wrong, not only the first.
+
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
+use geop_core_math::scalars::ScalInF64 as S;
+use geop_ops::operation::Operation;
+use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
+use geop_ops_booleans::Combine;
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, RevolveArgs};
+use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_shell::{Shell, ShellArgs};
+use geop_ops_sketch::{AddSketchArgs, Sketch};
+
+use super::regression_tests::check_valid;
+use crate::Program;
+use crate::examples::n;
+
+/// What one blend or shell came to.
+enum Outcome {
+    /// A valid solid.
+    Built,
+    /// Refused as unsupported, saying why.
+    Refused,
+    /// Anything else: an error that is not a refusal, an invalid result, a
+    /// panic — what the case is listed for.
+    Wrong(String),
+}
+
+/// Whether an error's root message is the operation refusing what it does
+/// not support, rather than failing at what it does.
+fn is_refusal(message: &str) -> bool {
+    [
+        "not supported",
+        "only ",
+        "too large",
+        "too thick",
+        "has to",
+        "is not planar",
+        "no corner to blend",
+        "cannot end on a smooth surface",
+        "does not stand square",
+        "could run along the edge",
+        "could meet tangentially",
+        "reach across the axis",
+        "shrinks the meridian",
+        "across its axis",
+        "exactly on another edge",
+    ]
+    .iter()
+    .any(|refusal| message.contains(refusal))
+}
+
+/// Applies `operation` with `args` to a copy of `part` and says how it went.
+fn outcome<O: Operation>(part: &Part<S>, operation: O, args: &O::Args) -> Outcome {
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        operation.apply(part.clone(), "op", args, &NoFiles)
+    }));
+    match run {
+        Err(panic) => Outcome::Wrong(format!(
+            "panicked: {}",
+            panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default()
+        )),
+        Ok(Err(e)) if is_refusal(e.root_message()) => Outcome::Refused,
+        Ok(Err(e)) => Outcome::Wrong(format!("failed: {e:?}")),
+        Ok(Ok(built)) => match check_valid(&built) {
+            Ok(()) => Outcome::Built,
+            Err(e) => Outcome::Wrong(format!("invalid: {e}")),
+        },
+    }
+}
+
+fn plane(axis: FrameAxis) -> Option<EntityRef> {
+    Some(EntityRef::datum_component(
+        ORIGIN,
+        DatumComponent::Plane(axis),
+    ))
+}
+
+fn polygon(corners: &[[f64; 2]]) -> Sketch {
+    let mut s = Sketch::new();
+    let p: Vec<_> = corners
+        .iter()
+        .map(|c| s.add_point(n(c[0]), n(c[1])))
+        .collect();
+    for i in 0..p.len() {
+        s.add_line(p[i], p[(i + 1) % p.len()]);
+    }
+    s
+}
+
+fn rectangle(x0: f64, y0: f64, x1: f64, y1: f64) -> Sketch {
+    polygon(&[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+}
+
+fn circle(cx: f64, cy: f64, r: f64) -> Sketch {
+    let mut s = Sketch::new();
+    let c = s.add_point(n(cx), n(cy));
+    s.add_circle(c, n(r));
+    s
+}
+
+/// Pushes `sketch` on `on` as `name_sketch`, and its extrude `extent` as
+/// `name`, combined by `combine`.
+fn extrude(
+    program: &mut Program,
+    name: &str,
+    on: Option<EntityRef>,
+    sketch: Sketch,
+    extent: Extents,
+    combine: Combine,
+) {
+    let sketch_name = format!("{name}_sketch");
+    program.push(
+        &sketch_name,
+        AddSketchArgs {
+            plane: on,
+            sketch,
+            ..Default::default()
+        },
+    );
+    program.push(
+        name,
+        ExtrudeArgs {
+            sketch: sketch_name,
+            extent,
+            face: false,
+            combine,
+        },
+    );
+}
+
+/// Both ways from the sketch plane, `half` each.
+fn both_ways(half: f64) -> Extents {
+    Extents {
+        symmetric: true,
+        ..Extents::blind(half)
+    }
+}
+
+fn cut_from(target: &str) -> Combine {
+    Combine::Difference {
+        target: target.into(),
+    }
+}
+
+fn join_to(target: &str) -> Combine {
+    Combine::Union {
+        target: target.into(),
+    }
+}
+
+/// A box of 2 x 2 x 1 on the ground: the solid `extrude(body)`.
+fn block() -> Program {
+    let mut program = Program::new();
+    extrude(
+        &mut program,
+        "body",
+        plane(FrameAxis::Z),
+        rectangle(0.0, 0.0, 2.0, 2.0),
+        Extents::blind(1.0),
+        Combine::NewBody,
+    );
+    program
+}
+
+/// A cylinder of radius 1 and height 1.5 around the z axis: the solid
+/// `extrude(body)`.
+fn cylinder() -> Program {
+    let mut program = Program::new();
+    extrude(
+        &mut program,
+        "body",
+        plane(FrameAxis::Z),
+        circle(0.0, 0.0, 1.0),
+        Extents::blind(1.5),
+        Combine::NewBody,
+    );
+    program
+}
+
+/// A sphere of radius 1 around the origin, a half disc turned round the y
+/// axis: the solid `revolve(body)`.
+fn sphere() -> Program {
+    let mut s = Sketch::new();
+    let top = s.add_point(n(0.0), n(1.0));
+    let bottom = s.add_point(n(0.0), n(-1.0));
+    s.add_arc(bottom, top, n(std::f64::consts::PI));
+    let axis = s.add_line(top, bottom);
+    let mut program = Program::new();
+    program.push(
+        "body_sketch",
+        AddSketchArgs {
+            plane: plane(FrameAxis::Z),
+            sketch: s,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "body",
+        RevolveArgs {
+            sketch: "body_sketch".into(),
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "body_sketch".into(),
+                curve: axis,
+            }),
+            extent: Extents::blind(360.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
+/// The one solid `program` builds, and its name.
+fn build(program: &Program) -> (Part<S>, String) {
+    let part = program.build::<S>(&NoFiles).unwrap();
+    let solids = part.solid_names();
+    let [solid] = solids.as_slice() else {
+        panic!("not one solid: {solids:?}");
+    };
+    if let Err(e) = check_valid(&part) {
+        panic!("the body itself is invalid: {e}");
+    }
+    let solid = solid.clone();
+    (part, solid)
+}
+
+/// Every edge of `part` blended on its own, by fillet and by chamfer, and
+/// the solid shelled closed and open at each face; panics listing every
+/// case gone wrong. `size` is the fillet's radius, the chamfer's distance
+/// and the walls' thickness.
+fn stress(program: Program, size: f64) {
+    let (part, solid) = build(&program);
+    let model = part.topology();
+    let mut edges: Vec<String> = model
+        .edges
+        .keys()
+        .map(|&id| part.name_of(id).unwrap().to_string())
+        .collect();
+    edges.sort();
+    let mut faces: Vec<String> = model
+        .faces
+        .keys()
+        .map(|&id| part.name_of(id).unwrap().to_string())
+        .collect();
+    faces.sort();
+
+    let mut wrong = Vec::new();
+    let mut tally = [0usize; 2];
+    let mut record = |case: String, outcome: Outcome| match outcome {
+        Outcome::Built => tally[0] += 1,
+        Outcome::Refused => tally[1] += 1,
+        Outcome::Wrong(why) => wrong.push(format!("{case}: {why}")),
+    };
+    for edge in &edges {
+        let args = FilletArgs {
+            edges: vec![edge.clone()],
+            radius: size,
+        };
+        record(format!("fillet {edge}"), outcome(&part, Fillet, &args));
+        let args = ChamferArgs {
+            edges: vec![edge.clone()],
+            distance: size,
+            distance2: None,
+        };
+        record(format!("chamfer {edge}"), outcome(&part, Chamfer, &args));
+    }
+    let shells = std::iter::once(Vec::new()).chain(faces.iter().map(|f| vec![f.clone()]));
+    for open in shells {
+        let args = ShellArgs {
+            solid: solid.clone(),
+            faces: open.clone(),
+            thickness: size,
+        };
+        record(
+            format!("shell open at {open:?}"),
+            outcome(&part, Shell, &args),
+        );
+    }
+    let [built, refused] = tally;
+    assert!(
+        wrong.is_empty(),
+        "{} of {} cases went wrong ({built} built, {refused} refused):\n\n{}",
+        wrong.len(),
+        wrong.len() + built + refused,
+        wrong.join("\n\n")
+    );
+}
+
+#[test]
+fn stress_block() {
+    stress(block(), 0.1);
+}
+
+#[test]
+fn stress_block_drilled() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "hole",
+        plane(FrameAxis::Z),
+        circle(1.0, 1.0, 0.4),
+        Extents::blind(1.0),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_block_pocketed() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "pocket",
+        Some(EntityRef::Face {
+            name: "extrude(body,end)".into(),
+        }),
+        rectangle(0.5, 0.5, 1.5, 1.5),
+        Extents::blind(-0.4),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_block_stepped() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "step",
+        plane(FrameAxis::Z),
+        rectangle(-0.5, 1.5, 1.0, 2.5),
+        Extents::blind(0.5),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_block_corner_cut_off() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "corner",
+        plane(FrameAxis::Z),
+        polygon(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]]),
+        Extents::blind(1.0),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_block_with_boss() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "boss",
+        Some(EntityRef::Face {
+            name: "extrude(body,end)".into(),
+        }),
+        circle(1.0, 1.0, 0.4),
+        Extents::blind(0.5),
+        join_to("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_cylinder() {
+    stress(cylinder(), 0.1);
+}
+
+#[test]
+fn stress_cylinder_drilled() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "hole",
+        plane(FrameAxis::Z),
+        circle(0.0, 0.0, 0.3),
+        Extents::blind(1.5),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_cylinder_drilled_off_axis() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "hole",
+        plane(FrameAxis::Z),
+        circle(0.4, 0.0, 0.2),
+        Extents::blind(1.5),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_cylinder_with_flat() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "flat",
+        plane(FrameAxis::Z),
+        rectangle(0.6, -2.0, 2.0, 2.0),
+        Extents::blind(1.5),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_cylinder_pocketed() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "pocket",
+        Some(EntityRef::Face {
+            name: "extrude(body,end)".into(),
+        }),
+        circle(0.0, 0.0, 0.5),
+        Extents::blind(-0.5),
+        cut_from("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_cylinder_with_boss() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "boss",
+        Some(EntityRef::Face {
+            name: "extrude(body,end)".into(),
+        }),
+        circle(0.0, 0.0, 0.4),
+        Extents::blind(0.5),
+        join_to("extrude(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_sphere() {
+    stress(sphere(), 0.1);
+}
+
+#[test]
+fn stress_hemisphere() {
+    let mut program = sphere();
+    extrude(
+        &mut program,
+        "half",
+        plane(FrameAxis::Z),
+        rectangle(-2.0, -2.0, 2.0, 2.0),
+        Extents::blind(-2.0),
+        cut_from("revolve(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_sphere_drilled() {
+    let mut program = sphere();
+    extrude(
+        &mut program,
+        "hole",
+        plane(FrameAxis::Z),
+        circle(0.0, 0.0, 0.3),
+        both_ways(2.0),
+        cut_from("revolve(body)"),
+    );
+    stress(program, 0.1);
+}
+
+#[test]
+fn stress_sphere_with_side_cut_off() {
+    let mut program = sphere();
+    extrude(
+        &mut program,
+        "side",
+        plane(FrameAxis::Z),
+        rectangle(0.5, -2.0, 2.0, 2.0),
+        both_ways(2.0),
+        cut_from("revolve(body)"),
+    );
+    stress(program, 0.1);
+}
