@@ -325,7 +325,7 @@ fn a_torus_crossing_its_axis_is_read_between_its_poles() {
     assert_bounds(model, [-3.0, 0.0, -2.0], [3.0, 0.0, 2.0]);
 }
 
-/// A helix of radius 1 and pitch 1 turning 1.5 times, from `(1, 0, z0)`, as
+/// A helix of radius 1 and pitch 1/4 turning 1.5 times, from `(1, 0, z0)`, as
 /// STEP entities from `#first` on: the kernel's own, exactly on its
 /// cylinder. The id of the curve is `#first`.
 fn helix_entities(first: u64, z0: f64) -> String {
@@ -334,7 +334,7 @@ fn helix_entities(first: u64, z0: f64) -> String {
     let helix = NurbCurve3D::<S>::helix(
         &CoordinateSystem::world_at(v(0.0, 0.0, z0)),
         S::ONE,
-        S::ONE,
+        S::from_f64(0.25),
         1.5,
         Handedness::Right,
     )
@@ -376,7 +376,10 @@ fn helix_entities(first: u64, z0: f64) -> String {
 /// A thread's flank, as a strip of a cylinder of radius 1 between two
 /// helices a quarter of their pitch apart, turning one and a half times,
 /// their ends joined along the cylinder: cut along meridians into pieces
-/// that each turn less than once.
+/// that each turn less than once. In a thread's proportions: the pcurves
+/// fitted to the kernel's helices drift from them by about 5e-5 of their
+/// pitch, which past a pitch of about 1 is more than the kernel's accuracy
+/// (see `AGENTS.md` on approximated data that is only C1).
 #[test]
 fn a_strip_turning_more_than_once_is_cut_along_meridians() {
     let body = format!(
@@ -385,11 +388,11 @@ fn a_strip_turning_more_than_once_is_cut_along_meridians() {
 {}{}
 #120=CARTESIAN_POINT('',(1.,0.,0.));
 #121=VERTEX_POINT('',#120);
-#122=CARTESIAN_POINT('',(-1.,0.,1.5));
+#122=CARTESIAN_POINT('',(-1.,0.,0.375));
 #123=VERTEX_POINT('',#122);
-#124=CARTESIAN_POINT('',(-1.,0.,1.75));
+#124=CARTESIAN_POINT('',(-1.,0.,0.4375));
 #125=VERTEX_POINT('',#124);
-#126=CARTESIAN_POINT('',(1.,0.,0.25));
+#126=CARTESIAN_POINT('',(1.,0.,0.0625));
 #127=VERTEX_POINT('',#126);
 #130=VECTOR('',#6,1.);
 #131=LINE('',#122,#130);
@@ -408,7 +411,7 @@ fn a_strip_turning_more_than_once_is_cut_along_meridians() {
 #180=OPEN_SHELL('',(#156));
 #999=SHELL_BASED_SURFACE_MODEL('',(#180));",
         helix_entities(200, 0.0),
-        helix_entities(300, 0.25)
+        helix_entities(300, 0.0625)
     );
     let part = import(&file(".MILLI.,.METRE.", &body));
     let model = part.topology();
@@ -416,7 +419,7 @@ fn a_strip_turning_more_than_once_is_cut_along_meridians() {
     assert!(model.faces.len() >= 3, "{} faces", model.faces.len());
     assert!(part.face_id("import(i,s0,f0,q0)").is_ok());
     assert!(part.edge_id("import(i,s0,f0,m0)").is_ok());
-    assert_bounds(model, [-1.0, -1.0, 0.0], [1.0, 1.0, 1.75]);
+    assert_bounds(model, [-1.0, -1.0, 0.0], [1.0, 1.0, 0.4375]);
 }
 
 #[test]

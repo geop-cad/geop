@@ -23,7 +23,7 @@
 //!   is the union of every place the file says it is: its point, the ends
 //!   of its edges' curves, and its foot points on its faces' surfaces (see
 //!   `AGENTS.md` on combining enclosures of one value with `union`). An
-//!   edge is widened until its enclosure reaches that of its pcurve's points
+//!   edge is widened until it reaches the midpoints of its pcurve's points
 //!   on each of its faces. What lies further apart than the kernel's
 //!   accuracy is refused, naming the entities and saying how far.
 //!
@@ -1911,6 +1911,9 @@ struct Patch<S: Scalar> {
     /// For a surface of revolution, the angles and profile parameters it
     /// was built over: for messages.
     extent: Option<[f64; 4]>,
+    /// Whether it is a plane's: a parallelogram, on which every pcurve is
+    /// its edge in the plane's coordinates (see [`plane_pcurve`]).
+    planar: bool,
 }
 
 /// A row of a patch's control points collapsed to one point: a pole of its
@@ -2175,11 +2178,13 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface,
                 extent: None,
+                planar: true,
             })
         }
         SurfaceKind::Nurbs(nurbs) => Ok(Patch {
             surface: nurbs.to_nurbs()?,
             extent: None,
+            planar: false,
         }),
         SurfaceKind::Extrusion { curve, vector } => {
             let length2 = dot(*vector, *vector);
@@ -2206,6 +2211,7 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface: start.sweep(s3(scale(*vector, v1 - v0))),
                 extent: None,
+                planar: false,
             })
         }
         SurfaceKind::Revolved(revolved) => {
@@ -2216,6 +2222,7 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface: revolved.patch(from, to, v0, v1)?,
                 extent: Some([from, to, v0, v1]),
+                planar: false,
             })
         }
     }
@@ -2393,7 +2400,6 @@ fn fit_loop<S: Scalar>(
         }
     };
     let poles = poles_of(surface, scope.uncertainty)?;
-    let _ = patch;
     // The pole a vertex sits at, if any.
     let pole_of = |v: usize, vertices: &[Vertex<S>]| -> Option<Pole<S>> {
         let p = to_p3(&vertices[v].origin);
@@ -2455,20 +2461,25 @@ fn fit_loop<S: Scalar>(
             };
         let pin_start = pin(corners[(k + n - 1) % n], start, true)?;
         let pin_end = pin(corners[k], end, false)?;
-        let pcurve = surface
-            .fit_pcurve(
-                &curve,
-                Some(pin_start),
-                Some(pin_end),
-                MAX_NODES,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
-            )
-            .with_context(&|e: GeopError| {
-                e.with_context(format!(
-                    "fitting the pcurve of the edge {}",
-                    edge.name.join(",")
-                ))
-            })?;
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "fitting the pcurve of the edge {}",
+                edge.name.join(",")
+            ))
+        };
+        let pcurve = if patch.planar {
+            plane_pcurve(surface, &curve, pin_start, pin_end).with_context(&ctx)?
+        } else {
+            surface
+                .fit_pcurve(
+                    &curve,
+                    Some(pin_start),
+                    Some(pin_end),
+                    MAX_NODES,
+                    S::from_f64(MIN_SUBDIVISION_SIZE),
+                )
+                .with_context(&ctx)?
+        };
         out.push((CoedgeOnLocal::Edge(u.0, u.1), pcurve));
         pins.push((pin_start, pin_end));
     }
@@ -2533,6 +2544,52 @@ fn fit_loop<S: Scalar>(
         }
     }
     Ok(joined)
+}
+
+/// The pcurve of `curve` on `surface`, a plane's parallelogram patch
+/// `P00 + u e1 + v e2` on `[0, 1]²`: the curve in the plane's coordinates,
+/// exact — its homogeneous control points mapped by the affine map's
+/// inverse, its weights and knots its own — and pinned at `start` and `end`,
+/// its ends' foot points, as every pcurve of a loop is (see `fit_loop`).
+/// Fitted instead, a cubic through samples of a large circle drifts from it
+/// by more than the kernel's accuracy.
+fn plane_pcurve<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    curve: &NurbCurve3D<S>,
+    start: Vector2<S>,
+    end: Vector2<S>,
+) -> GeopResult<NurbCurve2D<S>> {
+    let corner = |i: usize, j: usize| {
+        let cp = surface.control_points[i * surface.num_v + j];
+        Vector3::from_array([cp[0], cp[1], cp[2]])
+    };
+    let origin = corner(0, 0);
+    let (e1, e2) = (corner(1, 0).sub(&origin), corner(0, 1).sub(&origin));
+    let (a, b, c) = (e1.prod_dot(&e1), e1.prod_dot(&e2), e2.prod_dot(&e2));
+    let det = a.mul(c).sub(b.mul(b));
+    let n = curve.control_points.len();
+    let mut control_points = Vec::with_capacity(n);
+    for (k, cp) in curve.control_points.iter().enumerate() {
+        let w = cp[3];
+        let pin = match k {
+            0 => Some(start),
+            _ if k + 1 == n => Some(end),
+            _ => None,
+        };
+        let (u, v) = match pin {
+            Some(p) => (p[0].mul(w), p[1].mul(w)),
+            None => {
+                let d = Vector3::from_array([cp[0], cp[1], cp[2]]).sub(&origin.prod_scalar(w));
+                let (s1, s2) = (d.prod_dot(&e1), d.prod_dot(&e2));
+                (
+                    c.mul(s1).sub(b.mul(s2)).div(det)?,
+                    a.mul(s2).sub(b.mul(s1)).div(det)?,
+                )
+            }
+        };
+        control_points.push(Vector3::from_array([u, v, w]));
+    }
+    NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
 }
 
 /// The widest a vertex or a control point may be in the kernel (its
@@ -2636,11 +2693,15 @@ fn edge_gap<S: Scalar>(
             }
         }
         let near = curve.evaluate(s)?;
-        // How far apart the two enclosures are, where they do not overlap:
-        // what the curve must widen by to reach the point.
+        // How far the point lies outside the curve's enclosure: what the
+        // curve must widen by to reach it.
         for c in 0..3 {
-            let apart = (point[c].lower().sub(near[c].upper()).upper().to_f64())
-                .max(near[c].lower().sub(point[c].upper()).upper().to_f64())
+            // Up to the point's midpoint, not merely its enclosure: an edge
+            // that only touches its pcurve's points, by a rounding, is
+            // not found to pass through them by the validation's clipping.
+            let mid = point[c].midpoint();
+            let apart = (mid.sub(near[c].upper()).upper().to_f64())
+                .max(near[c].lower().sub(mid).upper().to_f64())
                 .max(0.0);
             gap[c] = gap[c].max(apart);
             if worst.is_none_or(|w: Worst| apart > w.apart) {
