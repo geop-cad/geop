@@ -584,6 +584,14 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M10 8 L10 14 M7.5 11.5 L10 14 L12.5 11.5" />
     </>
   ),
+  // A bill of materials: a sheet of numbered lines.
+  bom: (
+    <>
+      <path d="M4 3 L16 3 L16 17 L4 17 Z" />
+      <path d="M6.5 7 L7.5 7 M6.5 10 L7.5 10 M6.5 13 L7.5 13" />
+      <path d="M9.5 7 L13.5 7 M9.5 10 L13.5 10 M9.5 13 L13.5 13" strokeWidth="1" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

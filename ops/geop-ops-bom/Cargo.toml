@@ -1,0 +1,16 @@
+[package]
+name = "geop-ops-bom"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-ops.workspace = true
+# Each part's mass, of its own material.
+geop-ops-inspect.workspace = true
+# A sheet-metal body's thickness, recorded on it.
+geop-ops-sheetmetal.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }

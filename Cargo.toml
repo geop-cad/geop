@@ -32,6 +32,7 @@ members = [
     "ops/geop-ops-harness",
     "ops/geop-ops-hole",
     "ops/geop-ops-urdf",
+    "ops/geop-ops-bom",
 ]
 
 [workspace.package]
@@ -74,6 +75,7 @@ geop-ops-pattern = { path = "ops/geop-ops-pattern" }
 geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }
 geop-ops-urdf = { path = "ops/geop-ops-urdf" }
+geop-ops-bom = { path = "ops/geop-ops-bom" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in

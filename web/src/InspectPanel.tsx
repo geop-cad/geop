@@ -1,4 +1,15 @@
-import type { Bounded, EntityRef, InterferenceReport, MassReport, MassSummary, Measurement } from "./geop";
+import type {
+  Bom,
+  BomLine,
+  BomStructure,
+  Bounded,
+  EntityRef,
+  InterferenceReport,
+  MassReport,
+  MassSummary,
+  Measurement,
+  Query,
+} from "./geop";
 import { Icon } from "./icons";
 import type { Section } from "./section";
 
@@ -9,9 +20,12 @@ interface Props {
   measurement: Measurement | null;
   mass: MassReport | null;
   interference: InterferenceReport | null;
+  bom: Bom | null;
   /** Whether a question is being answered. */
   busy: boolean;
-  onQuery: (query: "mass_properties" | "interference") => void;
+  onQuery: (query: Query) => void;
+  /** Save the bill of materials as a CSV file. */
+  onExportBom: (structure: BomStructure) => void;
   section: Section | null;
   onSection: (section: Section | null) => void;
   /** How big the part is: how far a section can move. */
@@ -29,6 +43,67 @@ function show(b: Bounded, digits = 3): string {
 /** A mass in kilograms, or grams below one. */
 function showMass(b: Bounded): string {
   return b.value < 1 ? `${show({ value: b.value * 1000, error: b.error * 1000 })} g` : `${show(b)} kg`;
+}
+
+/** What a line of a bill of materials is, in full: shown when hovered. */
+function lineDetails(line: BomLine): string {
+  if (line.kind === "wire") {
+    return [`cable ${line.cable}`, `${line.colour}`, `Ø${line.diameter} mm`, `cut to ${line.cut_length.value.toFixed(1)} mm`].join("\n");
+  }
+  return [
+    line.file,
+    line.parameters,
+    line.assumed ? "No material given: weighed as water" : line.material,
+    line.thickness.length > 0 ? `sheet ${line.thickness.join(", ")} mm` : "",
+    line.unit_mass ? `${showMass(line.unit_mass)} each` : "",
+    line.error ?? "",
+  ]
+    .filter((s) => s !== "")
+    .join("\n");
+}
+
+/** A bill of materials: per line its item number, quantity, name and designation, and its total mass or length. */
+function BomTable({ bom }: { bom: Bom }) {
+  return (
+    <table className="inspect-table bom-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Qty</th>
+          <th>Part</th>
+          <th className="bom-number">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bom.lines.map((line) => (
+          <tr key={line.item} title={lineDetails(line)}>
+            <td>{line.item}</td>
+            <td>{line.quantity}</td>
+            <td style={{ paddingLeft: `${Math.max(0, line.level - 1) * 0.8}rem` }}>
+              <div className="bom-name">{line.name}</div>
+              {line.designation && <div className="hint">{line.designation}</div>}
+              {line.kind === "part" && line.assumed && <div className="hint">no material</div>}
+            </td>
+            <td className="bom-number">
+              {line.kind === "wire"
+                ? `${line.total_length.value.toFixed(0)} mm`
+                : line.total_mass
+                  ? showMass(line.total_mass)
+                  : "?"}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+      {bom.total_mass && (
+        <tfoot>
+          <tr>
+            <th colSpan={3}>Total</th>
+            <td className="bom-number">{showMass(bom.total_mass)}</td>
+          </tr>
+        </tfoot>
+      )}
+    </table>
+  );
 }
 
 function Summary({ summary }: { summary: MassSummary }) {
@@ -92,8 +167,10 @@ export function InspectPanel({
   measurement,
   mass,
   interference,
+  bom,
   busy,
   onQuery,
+  onExportBom,
   section,
   onSection,
   size,
@@ -129,6 +206,15 @@ export function InspectPanel({
         >
           <Icon name="interference" />
           <span>Interference</span>
+        </button>
+        <button
+          className="op-button"
+          disabled={!enabled || busy}
+          title="Bill of materials: every part with its quantity, designation and mass"
+          onClick={() => onQuery({ bom: { structure: bom?.structure ?? "flat" } })}
+        >
+          <Icon name="bom" />
+          <span>BOM</span>
         </button>
         <button
           className={["op-button", section ? "active" : ""].join(" ")}
@@ -217,6 +303,28 @@ export function InspectPanel({
               {body.properties && <Summary summary={body.properties} />}
             </details>
           ))}
+        </div>
+      )}
+
+      {bom && (
+        <div className="inspect-result">
+          <div className="inspect-row">
+            {(["flat", "indented"] as const).map((structure) => (
+              <button
+                key={structure}
+                className={["small", bom.structure === structure ? "active" : ""].join(" ")}
+                disabled={!enabled || busy}
+                title={structure === "flat" ? "Every part once, counted in the whole assembly" : "By sub-assembly, counted per assembly"}
+                onClick={() => onQuery({ bom: { structure } })}
+              >
+                {structure === "flat" ? "Flat" : "Indented"}
+              </button>
+            ))}
+            <button className="small" disabled={!enabled} title="Save the bill of materials as a CSV file" onClick={() => onExportBom(bom.structure)}>
+              Save CSV
+            </button>
+          </div>
+          {bom.lines.length === 0 ? <p className="hint">Nothing to list.</p> : <BomTable bom={bom} />}
         </div>
       )}
 

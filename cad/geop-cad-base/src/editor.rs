@@ -170,6 +170,13 @@ pub enum Command<S: Scalar> {
     /// Write the part shown — up to where the program runs, the parts it
     /// places included — as a STEP file: the update's [`Update::export`].
     ExportStep,
+    /// Write the bill of materials of the part shown (see
+    /// [`geop_ops_bom`]), laid out as `structure` says, as a CSV file named
+    /// after the program's file: the update's [`Update::export`].
+    ExportBom {
+        #[serde(default)]
+        structure: geop_ops_bom::Structure,
+    },
 }
 
 /// How finely an exported robot's curved faces are meshed: as finely as
@@ -375,8 +382,8 @@ pub struct Update<S: Scalar> {
     pub step: Option<StepState<S>>,
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
-    /// The file [`Command::ExportDrawing`] or [`Command::ExportUrdf`]
-    /// wrote.
+    /// The file [`Command::ExportDrawing`], [`Command::ExportUrdf`],
+    /// [`Command::ExportStep`] or [`Command::ExportBom`] wrote.
     pub export: Option<Export>,
     /// What the drag tool or the measure tool shows, while it is in hand
     /// and no step is edited: the part it would drag lit, and whether a
@@ -644,7 +651,7 @@ impl<S: Scalar> Editor<S> {
         let mut error = result.as_ref().err().map(|e| e.to_string());
         let shown_part = self.runner.part_at(steps);
         let inspection = match self.query.take() {
-            Some(query) => inspect::answer(query, shown_part)
+            Some(query) => inspect::answer(query, shown_part, &self.file())
                 .map_err(|e| error = Some(e.to_string()))
                 .ok(),
             None => self
@@ -1064,6 +1071,15 @@ impl<S: Scalar> Editor<S> {
                 self.exported = Some(Export {
                     name: format!("{stem}.step"),
                     content: Content::Text(text),
+                });
+                Changed::Nothing
+            }
+            Command::ExportBom { structure } => {
+                let bom = inspect::bill_of_materials(self.runner.part(), &self.file(), structure)?;
+                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
+                self.exported = Some(Export {
+                    name: format!("{stem}_bom.csv"),
+                    content: Content::Text(bom.to_csv()),
                 });
                 Changed::Nothing
             }
@@ -1570,6 +1586,12 @@ fn library<'w, S: Scalar>(workspace: &'w Workspace<S>, path: Option<&str>) -> im
 impl<S: Scalar> Editor<S> {
     /// The name of the program's file, without folders or `.geop` — what
     /// an exported file is named after — once the editor has been told it.
+    /// The program's file, as the workspace names it — `part.geop` until
+    /// the editor is told.
+    fn file(&self) -> String {
+        self.path.clone().unwrap_or_else(|| "part.geop".to_string())
+    }
+
     fn file_stem(&self) -> Option<String> {
         self.path
             .as_deref()

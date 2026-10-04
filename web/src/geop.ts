@@ -408,13 +408,18 @@ export type Command =
   /** Take the measure tool in hand, or put it down: with no step edited, clicks pick up to two entities to measure. */
   | { command: "measure_tool"; on: boolean }
   /** Ask a question of the part as drawn, answered in [[Update]] `inspection`; changes nothing. */
-  | { command: "inspect"; query: "mass_properties" | "interference" }
+  | { command: "inspect"; query: Query }
   /** Write a drawing of the part — the drawing step `id`, else the one edited or the last — as SVG or DXF. */
   | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string }
   /** Write the assembly as a URDF robot: a ZIP archive of `robot.urdf` and its meshes. */
   | { command: "export_urdf" }
   /** Write the part shown as a STEP file: the update's `export`. */
-  | { command: "export_step" };
+  | { command: "export_step" }
+  /** Write the bill of materials of the part shown as a CSV file: the update's `export`. */
+  | { command: "export_bom"; structure: BomStructure };
+
+/** A question asked of the part as drawn — see `geop_cad_base::inspect::Query`. */
+export type Query = "mass_properties" | "interference" | { bom: { structure: BomStructure } };
 
 /** A file the kernel wrote, to save: text, or bytes in base64. */
 export interface ExportedFile {
@@ -572,7 +577,7 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
-  /** The file `export_drawing`, `export_urdf` or `export_step` wrote, to save. */
+  /** The file `export_drawing`, `export_urdf`, `export_step` or `export_bom` wrote, to save. */
   export: ExportedFile | null;
   /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
@@ -632,10 +637,61 @@ export interface InterferenceReport {
   unchecked: { a: string; b: string; error: string }[];
 }
 
+// ── bills of materials — see `geop_ops_bom` ──────────────────────────────────
+
+/** Every part once with its count in the whole, or the tree of sub-assemblies. */
+export type BomStructure = "flat" | "indented";
+
+/** A line of a bill of materials: a part (or sub-assembly), or a wire cut to length. */
+export type BomLine = {
+  /** `3`, or `2.1` — the first under item 2 — in an indented bill. */
+  item: string;
+  /** 0 in a flat bill; 1 for what the assembly places itself in an indented one. */
+  level: number;
+  quantity: number;
+  name: string;
+  designation: string | null;
+} & (
+  | {
+      kind: "part";
+      file: string;
+      /** The values of the parameters it defines: `size=M4x12`. */
+      parameters: string;
+      material: string;
+      /** Whether no material was given, and water assumed. */
+      assumed: boolean;
+      /** Of its sheet-metal bodies, mm. */
+      thickness: number[];
+      /** kg, of one; `null` if it could not be computed — `error` says why. */
+      unit_mass: Bounded | null;
+      total_mass: Bounded | null;
+      error: string | null;
+    }
+  | {
+      kind: "wire";
+      cable: string;
+      gauge: number | null;
+      /** mm. */
+      diameter: number;
+      colour: string;
+      /** mm, of one piece. */
+      cut_length: Bounded;
+      total_length: Bounded;
+    }
+);
+
+export interface Bom {
+  structure: BomStructure;
+  lines: BomLine[];
+  /** kg; `null` if some line's mass could not be computed. */
+  total_mass: Bounded | null;
+}
+
 export type Inspection =
   | ({ kind: "measure" } & Measurement)
   | ({ kind: "mass_properties" } & MassReport)
-  | ({ kind: "interference" } & InterferenceReport);
+  | ({ kind: "interference" } & InterferenceReport)
+  | ({ kind: "bom" } & Bom);
 
 /** Apply `command` in the kernel, and get back what to show now. */
 export async function send(command: Command): Promise<Update> {

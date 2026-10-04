@@ -9,6 +9,9 @@
 //! `.step` or `.stp`, it writes the part's B-rep as a STEP file instead
 //! (see `geop_ops_step::export`): exact geometry other CAD systems open.
 //!
+//! `geop bom robot.geop -o bom.csv` writes an assembly's bill of materials
+//! (see `geop_ops_bom`); `--indented` lists it by sub-assembly.
+//!
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
 //! [`serve`]).
@@ -65,6 +68,10 @@ enum Command {
     /// inertia and meshes — for simulators: a directory of `robot.urdf`
     /// and `meshes/*.stl`, or one `.zip` of them.
     Urdf(UrdfArgs),
+    /// Build an assembly and write its bill of materials as CSV: every
+    /// part with its quantity, designation, material and mass, and every
+    /// wire of its harnesses cut to length.
+    Bom(BomArgs),
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
@@ -158,6 +165,21 @@ struct UrdfArgs {
     /// How finely curved faces are meshed: higher is smoother, and bigger.
     #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
     quality: u16,
+}
+
+#[derive(clap::Args)]
+struct BomArgs {
+    /// The assembly to list, e.g. `robot.geop`.
+    program: PathBuf,
+    /// Where to write the CSV file. Written to the standard output if not
+    /// given.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// List the tree of sub-assemblies, each part counted per one of the
+    /// assembly placing it, rather than every part once with its count in
+    /// the whole.
+    #[arg(long)]
+    indented: bool,
 }
 
 /// Today's date, `YYYY-MM-DD` (UTC), for a title block.
@@ -443,6 +465,27 @@ fn urdf(args: &UrdfArgs) -> GeopResult<(PathBuf, usize, usize)> {
     Ok((output, robot.robot.links.len(), robot.robot.joints.len()))
 }
 
+/// The bill of materials `args` ask for: written as CSV where they say,
+/// and returned.
+fn bom(args: &BomArgs) -> GeopResult<geop_ops_bom::Bom> {
+    let (_, part, _) = build(&args.program)?;
+    let structure = match args.indented {
+        true => geop_ops_bom::Structure::Indented,
+        false => geop_ops_bom::Structure::Flat,
+    };
+    let file = args.program.to_string_lossy();
+    let bom = geop_cad_base::inspect::bill_of_materials(&part, &file, structure)?;
+    let csv = bom.to_csv();
+    match &args.output {
+        Some(path) => std::fs::write(path, csv)
+            .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))?,
+        None => std::io::stdout()
+            .write_all(csv.as_bytes())
+            .map_err(|e| GeopError::new(format!("writing the bill of materials: {e}")))?,
+    }
+    Ok(bom)
+}
+
 fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     let io_err = |what: &str, path: &Path| {
         let what = what.to_string();
@@ -661,6 +704,11 @@ fn main() -> ExitCode {
         Command::Urdf(args) => urdf(&args).map(|(output, links, joints)| {
             eprintln!("{links} links, {joints} joints -> {}", output.display());
         }),
+        Command::Bom(args) => bom(&args).map(|bom| {
+            if let Some(output) = &args.output {
+                eprintln!("{} lines -> {}", bom.lines.len(), output.display());
+            }
+        }),
         Command::Examples(args) => export_examples(&args).map(|compiled| {
             for c in &compiled {
                 eprintln!("{} triangles -> {}", c.triangles, c.output.display());
@@ -845,6 +893,36 @@ mod tests {
         assert!(bytes.starts_with(b"PK\x03\x04"));
         let urdf_at = bytes.windows(10).position(|w| w == b"robot.urdf");
         assert!(urdf_at.is_some());
+    }
+
+    /// The bolted plate's bill of materials, written as CSV: its plate,
+    /// screw and nut, the standard parts by their norms.
+    #[test]
+    fn writes_the_bill_of_materials_of_the_bolted_plate() {
+        let dir = scratch("bom");
+        let (_, files) = examples::workspaces()
+            .into_iter()
+            .find(|(name, _)| *name == "bolted_plate")
+            .unwrap();
+        for (file, program) in &files {
+            std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+        }
+        let output = dir.join("bom.csv");
+        let args = BomArgs {
+            program: dir.join("bolted_plate.geop"),
+            output: Some(output.clone()),
+            indented: false,
+        };
+        let listed = bom(&args).unwrap();
+        assert_eq!(listed.lines.len(), 3);
+        let csv = std::fs::read_to_string(&output).unwrap();
+        let rows: Vec<&str> = csv.lines().collect();
+        assert_eq!(rows.len(), 5, "{csv}");
+        assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
+        assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
+        let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
+        assert!(rows[2].contains(screw), "{csv}");
+        assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
     }
 
     /// An assembly compiles with the parts it places, each where it is

@@ -1478,6 +1478,26 @@ button.danger:hover:not(:disabled) {
   font-family: ui-monospace, monospace;
   color: #e8e8e8;
 }
+.bom-table th,
+.bom-table td {
+  padding: 0.1rem 0.3rem 0.1rem 0;
+  vertical-align: top;
+}
+.bom-table tbody tr:hover {
+  background: #232323;
+}
+.bom-table .bom-name {
+  font-family: inherit;
+  word-break: break-word;
+}
+.bom-table .bom-number {
+  text-align: right;
+  white-space: nowrap;
+}
+.bom-table tfoot th,
+.bom-table tfoot td {
+  border-top: 1px solid #333;
+}
 .inspect-row {
   display: flex;
   flex-wrap: wrap;
