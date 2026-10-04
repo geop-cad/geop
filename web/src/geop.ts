@@ -321,7 +321,9 @@ export type Style =
   | "guide"
   | "handle"
   /** Where what is drawn or dragged would snap to. */
-  | "snap";
+  | "snap"
+  /** What the tool in hand would remove. */
+  | "removed";
 
 export type Visual = { key: string; style: Style } & Shape;
 

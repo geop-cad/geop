@@ -103,6 +103,13 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M4 10 L4 4 L10 4" strokeDasharray="1.5 1.5" />
     </>
   ),
+  trim: (
+    <>
+      <path d="M3 10 L17 10" strokeDasharray="1.5 1.5" />
+      <path d="M7 3 L7 17 M13 3 L13 17" />
+      <path d="M8.5 6 L11.5 14 M11.5 6 L8.5 14" strokeWidth="1.2" />
+    </>
+  ),
   construction: (
     <>
       <path d="M3 17 L17 3" strokeDasharray="2.5 2" />

@@ -16,6 +16,9 @@
 //! [`crate::constraints`]): pressed with a selection that is all it needs,
 //! it is added at once; otherwise the tool is taken up, and what is clicked
 //! next is selected for it until it has all it needs.
+//!
+//! The trim tool removes what it is clicked on or dragged across, up to
+//! where the sketch meets it (see [`trim`]).
 
 mod dialog;
 mod drawing;
@@ -23,6 +26,7 @@ mod gestures;
 mod snap;
 #[cfg(test)]
 mod tests;
+mod trim;
 mod visuals;
 
 use dialog::draw_dialog;
@@ -39,8 +43,8 @@ use geop_ops::{
     Design, Part,
     operation::Role,
     ui::{
-        Action, Button, CanvasEvent, Edit, Form, ListItem, Pointer, Shape, Style, Tone, Value,
-        Visual, hit::hit_visuals,
+        Action, Button, CanvasEvent, Edit, Form, InHand, ListItem, Pointer, Shape, Style, Tone,
+        Value, Visual, hit::hit_visuals,
     },
 };
 
@@ -167,6 +171,22 @@ pub enum Tool {
     Draw(DrawTool),
     /// Picking what a constraint is added to.
     Constrain(ConstraintTool),
+    /// Removing what is clicked or dragged across, up to where the sketch
+    /// meets it.
+    Trim,
+}
+
+/// The trim tool's shortcut.
+const TRIM_SHORTCUT: &str = "m";
+
+/// Where the trim tool meets the sketch: with no button held, under the
+/// pointer; dragged, along the way the pointer went.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Stroke {
+    /// Where the pointer went, in the plane, while dragged.
+    path: Vec<P2>,
+    /// Every curve met, and a point of the plane where it was met.
+    met: Vec<(CurveId, P2)>,
 }
 
 /// A point placed for what is being drawn: where, and what it snapped to.
@@ -250,6 +270,8 @@ pub struct SketchSession {
     prompt: Option<ConstraintId>,
     /// Why the last value typed was refused.
     error: Option<String>,
+    /// What the trim tool meets.
+    stroke: Stroke,
 }
 
 impl Default for SketchSession {
@@ -265,6 +287,7 @@ impl Default for SketchSession {
             sides: 6,
             prompt: None,
             error: None,
+            stroke: Stroke::default(),
         }
     }
 }
@@ -454,7 +477,11 @@ pub(crate) fn form<'a, S: Scalar>(
     draw_dialog(&mut f, before, &args, &s, selection, &frame);
     f.visuals = visuals(&args, &s, selection, &frame);
     f.focus = Some(frame);
-    f.tool = s.tool != Tool::Select;
+    f.tool = match s.tool {
+        Tool::Select => InHand::Nothing,
+        Tool::Trim => InHand::Strokes,
+        Tool::Draw(_) | Tool::Constrain(_) => InHand::Clicks,
+    };
     f
 }
 

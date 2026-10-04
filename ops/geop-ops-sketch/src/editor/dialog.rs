@@ -27,6 +27,9 @@ fn tool_hint(s: &SketchSession) -> String {
                 info.doc.to_lowercase()
             );
         }
+        Tool::Trim => {
+            "Click a curve, or drag across curves, to remove them up to where they meet others · Esc to stop"
+        }
         Tool::Draw(tool) => match (tool, placed) {
             (DrawTool::Line, 0) => "Click where the line starts",
             (DrawTool::Line, _) if s.draft.arc => {
@@ -145,6 +148,16 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
         })
         .collect();
     tools.push(
+        Action::new("trim", "Trim")
+            .title(format!(
+                "Trim{}: click a curve, or drag across curves, to remove them up to where they meet others",
+                shortcut(Some(TRIM_SHORTCUT))
+            ))
+            .icon("trim")
+            .group("Modify")
+            .active(s.tool == Tool::Trim),
+    );
+    tools.push(
         Action::new("construction", "Construction")
             .title(
                 "Construction geometry (X): the curves selected, or — with none — what is drawn next",
@@ -156,6 +169,7 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
     d.actions("tool", tools, move |edit, name| {
         editing(before, edit, |e| match name {
             "construction" => e.toggle_construction(),
+            "trim" => e.take(Tool::Trim),
             name => {
                 if let Some(tool) = DrawTool::by_name(name) {
                     e.take(Tool::Draw(tool));

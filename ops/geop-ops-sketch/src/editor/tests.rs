@@ -136,6 +136,46 @@ impl Editor {
         self.send(StepEditEvent::Key { key: key.into() });
     }
 
+    /// A drag through `points`, as the viewer sends it: from where it went
+    /// down to each point in turn, released at the last.
+    fn stroke(&mut self, points: &[P2]) {
+        let [first, rest @ ..] = points else {
+            return;
+        };
+        self.hover(first[0], first[1]);
+        for (i, p) in rest.iter().enumerate() {
+            self.send(StepEditEvent::Drag {
+                from: down(first[0], first[1]),
+                to: down(p[0], p[1]),
+                done: i + 1 == rest.len(),
+                shift: false,
+            });
+        }
+    }
+
+    /// How many visuals are drawn as what the tool in hand would remove.
+    fn removed(&self) -> usize {
+        self.presentation
+            .visuals
+            .iter()
+            .filter(|v| v.style == Style::Removed)
+            .count()
+    }
+
+    /// The drawn line from `a` to `b`, either way round.
+    fn line_between(&self, a: P2, b: P2) -> Option<CurveId> {
+        let s = self.sketch();
+        self.drawn_curves()
+            .into_iter()
+            .find_map(|(id, k)| match *k {
+                CurveKind::Line { start, end } => {
+                    let (p, q) = (xy(s, start), xy(s, end));
+                    ((close(p, a) && close(q, b)) || (close(p, b) && close(q, a))).then_some(id)
+                }
+                _ => None,
+            })
+    }
+
     /// Draws a polyline through `points` with the line tool, and puts the
     /// tool down.
     fn lines(&mut self, points: &[P2]) {
@@ -1029,4 +1069,245 @@ fn points_snap_to_intersections() {
     // With shift, no snapping: a point anywhere.
     e.click_with(1.503, 1.004, false, true);
     assert_eq!(on(&e, *e.drawn_points().last().unwrap()), 0);
+}
+
+/// A curve the sketch meets nowhere goes as a whole, with its constraints
+/// and its points; hovering it shows that first. The trim tool takes a
+/// press anywhere, to drag across what it removes.
+#[test]
+fn trimming_removes_a_curve_met_nowhere() {
+    let mut e = drawing();
+    e.lines(&[[0.5, 0.5], [1.5, 0.5]]);
+    assert!(e.has(|c| matches!(c, Constraint::Horizontal { .. })));
+    e.key("m");
+    assert_eq!(e.session().tool, Tool::Trim);
+    e.hover(0.2, 1.4);
+    assert!(e.presentation.grab, "a press anywhere strokes");
+    assert_eq!(e.removed(), 0);
+    e.hover(1.0, 0.5);
+    assert_eq!(e.removed(), 1);
+    e.click(1.0, 0.5);
+    assert!(e.drawn_curves().is_empty());
+    assert!(e.drawn_points().is_empty());
+    assert!(!e.has(|c| matches!(c, Constraint::Horizontal { .. })));
+    assert_eq!(e.session().tool, Tool::Trim, "the tool stays in hand");
+}
+
+/// A curve crossed is cut back to the crossing: it keeps its id and its
+/// constraints, and ends at a new point on the curve crossing it. Cut back
+/// to that point in turn, the other curve ends there too: a corner.
+#[test]
+fn trimming_cuts_back_to_where_curves_cross() {
+    let mut e = drawing();
+    e.lines(&[[0.2, 0.5], [1.8, 0.5]]);
+    e.lines(&[[1.0, 0.1], [1.0, 0.9]]);
+    let across = e.line_between([0.2, 0.5], [1.8, 0.5]).unwrap();
+    let up = e.line_between([1.0, 0.1], [1.0, 0.9]).unwrap();
+    e.key("m");
+    e.click(0.5, 0.5);
+    assert_eq!(e.line_between([1.0, 0.5], [1.8, 0.5]), Some(across));
+    assert!(e.has(|c| matches!(c, Constraint::Horizontal { line } if *line == across)));
+    assert!(e.has(|c| matches!(c, Constraint::PointOnCurve { curve, .. } if *curve == up)));
+    assert_eq!(
+        e.drawn_points().len(),
+        4,
+        "the cut end went: {:?}",
+        e.sketch()
+    );
+    assert!(e.report().converged, "{:?}", e.report());
+
+    e.click(1.0, 0.3);
+    assert_eq!(e.line_between([1.0, 0.5], [1.0, 0.9]), Some(up));
+    assert_eq!(e.drawn_curves().len(), 2);
+    assert_eq!(e.drawn_points().len(), 3);
+    let s = e.sketch();
+    let (a, b) = (s.curves[&across].points(), s.curves[&up].points());
+    assert!(a.iter().any(|p| b.contains(p)), "a corner: {s:?}");
+    assert!(!e.has(|c| matches!(c, Constraint::PointOnCurve { .. })));
+    assert!(e.report().converged, "{:?}", e.report());
+}
+
+/// The middle of a curve crossed twice goes: what is left either side
+/// stays on one line by constraint, the first part keeping the curve's own
+/// constraints — but not its length, which no longer holds.
+#[test]
+fn trimming_the_middle_splits_a_curve() {
+    let mut e = drawing();
+    e.lines(&[[0.2, 0.5], [2.2, 0.5]]);
+    e.lines(&[[0.8, 0.1], [0.8, 0.9]]);
+    e.lines(&[[1.6, 0.1], [1.6, 0.9]]);
+    let across = e.line_between([0.2, 0.5], [2.2, 0.5]).unwrap();
+    e.click(1.2, 0.5);
+    e.act("constrain", "distance");
+    e.click(1.2, 1.2);
+    e.key("Escape");
+    assert!(e.has(|c| matches!(c, Constraint::Length { .. })));
+
+    e.key("m");
+    e.hover(1.2, 0.5);
+    assert_eq!(e.removed(), 1);
+    e.click(1.2, 0.5);
+    assert_eq!(e.drawn_curves().len(), 4);
+    assert_eq!(e.line_between([0.2, 0.5], [0.8, 0.5]), Some(across));
+    let rest = e
+        .line_between([1.6, 0.5], [2.2, 0.5])
+        .expect("the far part");
+    assert!(e.has(|c| matches!(*c, Constraint::Collinear { a, b } if (a, b) == (across, rest))));
+    assert_eq!(e.count(|c| matches!(c, Constraint::Horizontal { .. })), 1);
+    assert!(!e.has(|c| matches!(c, Constraint::Length { .. })));
+    assert!(e.report().converged, "{:?}", e.report());
+}
+
+/// A circle crossed twice keeps the arc not clicked, about its center.
+#[test]
+fn trimming_a_circle_leaves_an_arc() {
+    let mut e = drawing();
+    e.key("c");
+    e.click(1.0, 1.0);
+    e.click(1.5, 1.0);
+    e.lines(&[[0.2, 1.0], [1.8, 1.0]]);
+    e.key("m");
+    e.click(1.0, 1.5);
+    let arcs: Vec<f64> = e
+        .drawn_curves()
+        .iter()
+        .filter_map(|(_, k)| match k {
+            CurveKind::Arc { sweep, .. } => Some(sweep.to_f64()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1, "{:?}", e.sketch());
+    assert!((arcs[0] - std::f64::consts::PI).abs() < 1e-6, "{arcs:?}");
+    assert!(
+        !e.drawn_curves()
+            .iter()
+            .any(|(_, k)| matches!(k, CurveKind::Circle { .. }))
+    );
+    assert!(e.has(|c| matches!(c, Constraint::Center { .. })));
+    // The arc's ends lie on the line.
+    assert_eq!(e.count(|c| matches!(c, Constraint::PointOnCurve { .. })), 2);
+    assert!(e.report().converged, "{:?}", e.report());
+    // Cut back to the arc, the line closes a region with it.
+    e.click(0.3, 1.0);
+    e.click(1.7, 1.0);
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+    assert!(e.report().converged, "{:?}", e.report());
+}
+
+/// Dragged across, the trim tool shows what it would remove along the way,
+/// and removes every curve the way it went crosses when let go.
+#[test]
+fn dragging_trims_every_curve_crossed() {
+    let mut e = drawing();
+    for x in [0.5, 1.0, 1.5] {
+        e.lines(&[[x, 0.2], [x, 0.8]]);
+    }
+    e.lines(&[[0.5, 1.5], [1.5, 1.5]]);
+    e.key("m");
+    e.hover(0.3, 0.5);
+    e.send(StepEditEvent::Drag {
+        from: down(0.3, 0.5),
+        to: down(1.2, 0.52),
+        done: false,
+        shift: false,
+    });
+    assert_eq!(e.removed(), 2, "crossed so far");
+    assert!(e.presentation.visuals.iter().any(|v| v.key == "stroke"));
+    e.send(StepEditEvent::Drag {
+        from: down(0.3, 0.5),
+        to: down(1.7, 0.55),
+        done: true,
+        shift: false,
+    });
+    assert_eq!(e.drawn_curves().len(), 1, "{:?}", e.sketch());
+    assert!(e.line_between([0.5, 1.5], [1.5, 1.5]).is_some());
+    assert!(e.session().stroke.path.is_empty());
+    assert_eq!(e.removed(), 0);
+    // A stroke that winds through several pieces of one curve takes each.
+    e.lines(&[[0.2, 1.0], [2.0, 1.0]]);
+    e.lines(&[[0.8, 0.6], [0.8, 1.4]]);
+    e.lines(&[[1.4, 0.6], [1.4, 1.4]]);
+    e.key("m");
+    e.stroke(&[[0.5, 0.9], [0.5, 1.1], [1.7, 1.1], [1.7, 0.9]]);
+    assert!(
+        e.line_between([0.8, 1.0], [1.4, 1.0]).is_some(),
+        "{:?}",
+        e.sketch()
+    );
+    assert!(e.line_between([0.2, 1.0], [0.8, 1.0]).is_none());
+    assert!(e.line_between([1.4, 1.0], [2.0, 1.0]).is_none());
+    assert!(e.report().converged, "{:?}", e.report());
+}
+
+/// A fillet's arc meets its lines only where it is tangent to them, at its
+/// ends: trimmed, it goes whole, with its tangencies and its radius.
+#[test]
+fn trimming_a_fillet_removes_its_constraints() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.2, 0.2);
+    e.click(1.2, 1.2);
+    e.act("tool", "fillet");
+    e.click(1.2, 1.2);
+    e.key("Escape");
+    e.key("Escape");
+    assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 2);
+    let arc = e
+        .drawn_curves()
+        .iter()
+        .find_map(|(id, k)| matches!(k, CurveKind::Arc { .. }).then_some(*id))
+        .unwrap();
+    let mid = super::snap::curve_mid(e.sketch(), arc).unwrap();
+    e.key("m");
+    e.click(mid[0], mid[1]);
+    assert_eq!(e.drawn_curves().len(), 4, "{:?}", e.sketch());
+    assert!(!e.has(|c| matches!(c, Constraint::Tangent { .. } | Constraint::Radius { .. })));
+    assert!(e.report().converged, "{:?}", e.report());
+}
+
+/// A point on a curve by constraint cuts it like a crossing: a line
+/// started on another's middle cuts that one there. Trimmed back to it,
+/// the point ends the line instead of being its middle; the line started
+/// there, met nowhere else, goes whole — and the point stays, still the
+/// other's end.
+#[test]
+fn points_on_a_curve_cut_it() {
+    let mut e = drawing();
+    e.lines(&[[0.2, 0.5], [1.8, 0.5]]);
+    e.lines(&[[1.002, 0.5], [1.0, 1.2]]);
+    assert!(e.has(|c| matches!(c, Constraint::Midpoint { .. })));
+    e.key("m");
+    e.click(0.5, 0.5);
+    assert!(
+        e.line_between([1.0, 0.5], [1.8, 0.5]).is_some(),
+        "{:?}",
+        e.sketch()
+    );
+    assert!(!e.has(|c| matches!(c, Constraint::Midpoint { .. })));
+    assert_eq!(e.drawn_points().len(), 3, "{:?}", e.sketch());
+    assert!(e.report().converged, "{:?}", e.report());
+    e.click(1.0, 0.9);
+    assert_eq!(e.drawn_curves().len(), 1);
+    assert!(e.line_between([1.0, 0.5], [1.8, 0.5]).is_some());
+    assert_eq!(e.drawn_points().len(), 2);
+}
+
+/// The sketch's own axes are no curves to trim back to, and cannot be
+/// trimmed: a rectangle's side across one goes whole, and a click on the
+/// axis itself does nothing.
+#[test]
+fn the_axes_neither_cut_nor_are_trimmed() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(-0.5, 0.4);
+    e.click(0.6, 1.2);
+    let curves = e.sketch().curves.len();
+    e.key("m");
+    e.hover(0.0, 0.8);
+    assert_eq!(e.removed(), 0, "the axis is no curve to trim");
+    e.click(0.0, 0.8);
+    assert_eq!(e.sketch().curves.len(), curves);
+    e.click(0.3, 0.4);
+    assert_eq!(e.drawn_curves().len(), 3, "{:?}", e.sketch());
+    assert!(e.report().converged, "{:?}", e.report());
 }

@@ -187,6 +187,15 @@ pub enum CanvasEvent<S: Scalar> {
         done: bool,
         shift: bool,
     },
+    /// A drag of the tool in hand, where it strokes (see
+    /// [`super::InHand::Strokes`]): the ray where it went down and the ray
+    /// where the pointer is now. `done` on release.
+    Stroke {
+        from: Pointer<S>,
+        to: Pointer<S>,
+        done: bool,
+        shift: bool,
+    },
     /// A key, as the browser names it.
     Key { key: String },
 }

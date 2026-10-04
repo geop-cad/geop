@@ -7,8 +7,8 @@ use std::any::Any;
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 
 use super::{
-    Button, CanvasEvent, Control, Dialog, PartView, Pointer, Presentation, Reference, Shape,
-    StepEditEvent, Style, Tone, Value, Visual, hit::hit_visuals,
+    Button, CanvasEvent, Control, Dialog, InHand, PartView, Pointer, Presentation, Reference,
+    Shape, StepEditEvent, Style, Tone, Value, Visual, hit::hit_visuals,
 };
 use crate::{
     Part,
@@ -32,6 +32,8 @@ enum Grab<S: Scalar> {
         key: String,
         plane: Option<(Vector3<S>, Vector3<S>)>,
     },
+    /// A stroke of the tool in hand, from where it went down.
+    Stroke,
 }
 
 /// A step being edited: the step with its arguments as they now are, and
@@ -55,7 +57,8 @@ enum Grab<S: Scalar> {
 ///   read, and to change as its fields are used.
 /// - A draggable visual is dragged in the plane worked in — or, where there
 ///   is none, in the plane through where it was grabbed, facing the eye —
-///   as a [`CanvasEvent::Move`].
+///   as a [`CanvasEvent::Move`]. With a tool in hand that strokes, a drag
+///   from anywhere else is the tool's, as a [`CanvasEvent::Stroke`].
 ///
 /// Whatever else the pointer and the keys do goes to the operation as a
 /// [`CanvasEvent`]: clicks while it has a tool in hand, and those on
@@ -114,8 +117,8 @@ fn is_handle<S: Scalar>(visual: &Visual<S>) -> bool {
 
 /// Whether a press on `visual` grabs it: a handle always, a draggable
 /// visual unless a tool is in hand.
-fn grabs<S: Scalar>(visual: &Visual<S>, tool: bool) -> bool {
-    is_handle(visual) || (visual.draggable && !tool)
+fn grabs<S: Scalar>(visual: &Visual<S>, tool: InHand) -> bool {
+    is_handle(visual) || (visual.draggable && tool == InHand::Nothing)
 }
 
 /// Says what each entity `reference` holds is, in `part`: what it can be
@@ -347,13 +350,14 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 shift,
             } => {
                 let selectable = |v: &Visual<S>| v.selectable;
-                let hit = (*button == Button::Primary && !*double && !form.tool)
+                let in_hand = form.tool != InHand::Nothing;
+                let hit = (*button == Button::Primary && !*double && !in_hand)
                     .then(|| hit_visuals(&form.visuals, pointer, Some(view), selectable))
                     .flatten();
                 match hit {
                     Some(hit) => toggle(&mut self.selection, hit.visual.key.clone()),
                     None => {
-                        if *button == Button::Primary && !*shift && !form.tool {
+                        if *button == Button::Primary && !*shift && !in_hand {
                             self.selection.clear();
                         }
                         self.pass(
@@ -455,9 +459,10 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     ///
     /// What is dragged is hit-tested where the drag started, once: while
     /// dragged, it moves away from there. After that it is found by its key.
-    /// Nothing for a drag that did not start on either, and for a pointer
-    /// that cannot be followed (looking straight along a handle's track, or
-    /// along the plane).
+    /// A drag that did not start on either is a stroke of the tool in hand,
+    /// if it strokes — else nothing, as for a pointer that cannot be
+    /// followed (looking straight along a handle's track, or along the
+    /// plane).
     #[allow(clippy::too_many_arguments)]
     fn drag(
         &mut self,
@@ -472,23 +477,27 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         let handles = handles(&form.dialog);
         if self.grab.is_none() {
             let visuals: Vec<Visual<S>> = form.visuals.iter().chain(&handles).cloned().collect();
-            let Some(hit) = hit_visuals(&visuals, from, Some(view), |v| grabs(v, form.tool)) else {
-                return;
+            let hit = hit_visuals(&visuals, from, Some(view), |v| grabs(v, form.tool));
+            self.grab = match hit {
+                Some(hit) => {
+                    let key = hit.visual.key.clone();
+                    Some(match form.dialog.get(&key) {
+                        Some(Control::Number(n)) if is_handle(hit.visual) => Grab::Handle {
+                            key,
+                            value: n.value,
+                        },
+                        _ => Grab::Visual {
+                            key,
+                            plane: form
+                                .focus
+                                .is_none()
+                                .then(|| (from.ray.at(hit.t), *from.ray.dir())),
+                        },
+                    })
+                }
+                None if form.tool == InHand::Strokes => Some(Grab::Stroke),
+                None => return,
             };
-            let key = hit.visual.key.clone();
-            self.grab = Some(match form.dialog.get(&key) {
-                Some(Control::Number(n)) if is_handle(hit.visual) => Grab::Handle {
-                    key,
-                    value: n.value,
-                },
-                _ => Grab::Visual {
-                    key,
-                    plane: form
-                        .focus
-                        .is_none()
-                        .then(|| (from.ray.at(hit.t), *from.ray.dir())),
-                },
-            });
         }
         let Some(grab) = &self.grab else {
             return;
@@ -549,6 +558,20 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                         },
                     );
                 }
+            }
+            Grab::Stroke => {
+                if done {
+                    self.grab = None;
+                }
+                self.pass(
+                    context,
+                    CanvasEvent::Stroke {
+                        from: *from,
+                        to: *to,
+                        done,
+                        shift,
+                    },
+                );
             }
         }
     }
@@ -614,7 +637,10 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             } else {
                 form.focus
             },
-            grab: self.grab.is_some() || hovered.is_some_and(|(_, grab)| grab),
+            // A tool that strokes takes a press anywhere.
+            grab: self.grab.is_some()
+                || hovered.is_some_and(|(_, grab)| grab)
+                || (tool == InHand::Strokes && self.armed.is_none()),
             prompt: form.prompt,
         }
     }
