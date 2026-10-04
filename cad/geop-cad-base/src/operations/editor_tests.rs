@@ -611,3 +611,71 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A boundary surface picks the box's four top edges, clicked from above
+/// and outside, and fills them; a new thicken then starts from that sheet
+/// and makes it a slab.
+#[test]
+fn new_boundary_surface_picks_edges_then_thickens() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::New {
+        kind: "boundary_surface".into(),
+    });
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Edge]);
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    // Each down onto the box's top rim at 45 degrees, from outside it.
+    for (origin, dir) in [
+        ([0.5, -5.0, 6.0], [0.0, 1.0, -1.0]),
+        ([7.0, 0.5, 6.0], [-1.0, 0.0, -1.0]),
+        ([1.5, 7.0, 6.0], [0.0, -1.0, -1.0]),
+        ([-5.0, 1.5, 6.0], [1.0, 0.0, -1.0]),
+    ] {
+        let update = editor.handle(click(pointer(origin, dir)));
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let step = program.steps.last().unwrap();
+    match &step.operation {
+        PartOperation::BoundarySurface(args) => assert_eq!(args.edges.len(), 4, "{args:?}"),
+        other => panic!("{other:?}"),
+    }
+    let sheet = format!("boundary({})", step.id);
+    let scene = update.scene.expect("the scene is sent anew");
+    let faces = |scene: &crate::editor::SceneState<S>| -> Vec<String> {
+        scene.part.faces.iter().map(|f| f.name.clone()).collect()
+    };
+    assert!(faces(&scene).contains(&sheet), "{:?}", faces(&scene));
+
+    let update = editor.handle(Command::New {
+        kind: "thicken".into(),
+    });
+    let step = update.step.expect("the thicken is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    editor.handle(dialog("thickness", Value::Number(0.2)));
+    let update = editor.handle(dialog("side", Value::Choice("both".into())));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let step = program.steps.last().unwrap();
+    match &step.operation {
+        PartOperation::Thicken(args) => {
+            assert_eq!(args.face, sheet);
+            assert_eq!(args.thickness, 0.2);
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = update.scene.expect("the scene is sent anew");
+    let slab = format!("thicken({})", step.id);
+    assert!(scene.part.solids.contains(&slab), "{:?}", scene.part.solids);
+    assert!(!faces(&scene).contains(&sheet));
+}

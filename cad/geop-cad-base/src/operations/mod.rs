@@ -5,7 +5,8 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! surfaces in `geop_ops_surface`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -21,6 +22,10 @@ use geop_ops_extrude_revolve::{
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
+use geop_ops_surface::{
+    BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
+    OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
+};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -101,6 +106,26 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Span a face standing on its own between two edges, or fill a closed
+    /// loop of edges — optionally tangent to the flat faces along them.
+    #[operation(label = "Boundary surface")]
+    BoundarySurface(BoundarySurfaceArgs),
+    /// Copy faces a distance along their normals into a face standing on
+    /// its own.
+    #[operation(label = "Offset surface")]
+    OffsetSurface(OffsetSurfaceArgs),
+    /// Make a solid of a face standing on its own, a thickness on either
+    /// side of it or on both.
+    Thicken(ThickenArgs),
+    /// Join faces standing on their own along the edges where they meet,
+    /// into a solid once they close up.
+    Knit(KnitArgs),
+    /// Cut a face standing on its own back to one side of another face.
+    #[operation(label = "Trim surface")]
+    TrimSurface(TrimSurfaceArgs),
+    /// Carry a face standing on its own on past one of its edges.
+    #[operation(label = "Extend surface")]
+    ExtendSurface(ExtendSurfaceArgs),
 }
 
 /// A program of the editor's operations.

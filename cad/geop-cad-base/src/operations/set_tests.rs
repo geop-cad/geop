@@ -29,7 +29,13 @@ fn every_operation_is_offered() {
             "chamfer",
             "shell",
             "add_datum",
-            "add_part"
+            "add_part",
+            "boundary_surface",
+            "offset_surface",
+            "thicken",
+            "knit",
+            "trim_surface",
+            "extend_surface"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");
