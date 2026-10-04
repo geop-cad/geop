@@ -31,6 +31,48 @@ pub(crate) fn min_subdivision_size<S: Scalar>() -> S {
     S::from_f64(1e-7)
 }
 
+/// A file format a drawing is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Format {
+    Svg,
+    Dxf,
+}
+
+impl Format {
+    /// The format a file name's extension names, if it names one.
+    pub fn of_path(path: &str) -> Option<Format> {
+        let ext = path.rsplit('.').next()?.to_ascii_lowercase();
+        match ext.as_str() {
+            "svg" => Some(Format::Svg),
+            "dxf" => Some(Format::Dxf),
+            _ => None,
+        }
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Svg => "svg",
+            Format::Dxf => "dxf",
+        }
+    }
+}
+
+/// `part`'s drawing as `args` describe it, dated `date`, written as
+/// `format`.
+pub fn render<S: Scalar>(
+    part: &geop_ops::Part<S>,
+    args: &DrawingArgs,
+    date: &str,
+    format: Format,
+) -> geop_core_math::geop_error::GeopResult<String> {
+    let sheet = compose(part, args, date)?;
+    Ok(match format {
+        Format::Svg => to_svg(&sheet),
+        Format::Dxf => to_dxf(&sheet),
+    })
+}
+
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

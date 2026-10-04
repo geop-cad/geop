@@ -20,6 +20,7 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
+use geop_ops_drawing::{Drawing, DrawingArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,8 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod drawing_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.
@@ -101,6 +104,9 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Describe a 2-D drawing of the part — views with hidden lines, a
+    /// section, dimensions and a title block — to export as SVG or DXF.
+    Drawing(DrawingArgs),
 }
 
 /// A program of the editor's operations.

@@ -121,6 +121,26 @@ pub enum Command<S: Scalar> {
     DragTool {
         on: bool,
     },
+    /// Write a drawing of the part (see [`geop_ops_drawing`]) as an SVG or
+    /// DXF file, dated `date`: the drawing step `id` — if not given, the
+    /// one being edited, else the program's last; the default drawing of
+    /// the whole part if it has none. The file comes back as
+    /// [`Update::export`].
+    ExportDrawing {
+        #[serde(default)]
+        id: Option<String>,
+        format: geop_ops_drawing::Format,
+        #[serde(default)]
+        date: String,
+    },
+}
+
+/// A file the editor wrote for the front end to save.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Export {
+    /// What to call it: after the program file, or `drawing`.
+    pub name: String,
+    pub text: String,
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -248,6 +268,8 @@ pub struct Update<S: Scalar> {
     pub step: Option<StepState<S>>,
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
+    /// The file [`Command::ExportDrawing`] wrote.
+    pub export: Option<Export>,
     /// What the drag tool shows, while it is in hand and no step is
     /// edited: the part it would drag lit, and whether a press grabs it.
     pub tool: Option<Presentation<S>>,
@@ -342,6 +364,8 @@ pub struct Editor<S: Scalar> {
     dragged: Option<geop_ops::assembly::MateReport>,
     /// The files the last command added, for the update to say.
     added: Option<Vec<File>>,
+    /// The file the last command wrote, for the update to carry.
+    exported: Option<Export>,
     /// The keys of the components whose views were sent: the viewer has
     /// them.
     sent: std::collections::HashSet<String>,
@@ -382,6 +406,7 @@ impl<S: Scalar> Editor<S> {
                 .collect(),
             dragged: None,
             added: None,
+            exported: None,
             sent: std::collections::HashSet::new(),
             drag_tool: None,
             drawn: None,
@@ -477,6 +502,7 @@ impl<S: Scalar> Editor<S> {
             tool: self.tool_presentation(step.is_none()),
             step,
             files: self.added.take(),
+            export: self.exported.take(),
         }
     }
 
@@ -821,6 +847,30 @@ impl<S: Scalar> Editor<S> {
             Command::DragTool { on } => {
                 idle(self)?;
                 self.drag_tool = on.then(DragTool::default);
+                Changed::Run
+            }
+            Command::ExportDrawing { id, format, date } => {
+                let (index, mut args) = self.drawing(id.as_deref())?;
+                let stem = self
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.rsplit('/').next())
+                    .map(|f| f.trim_end_matches(".geop").to_string())
+                    .filter(|s| !s.is_empty());
+                if args.name.is_empty() {
+                    args.name = stem.clone().unwrap_or_default();
+                }
+                let library = library(&self.workspace, self.path.as_deref());
+                self.runner.run(&self.program, Some(index), &library);
+                let part = self.runner.part_at(index);
+                let text = geop_ops_drawing::render(part, &args, &date, format)?;
+                let base = stem.unwrap_or_else(|| "drawing".to_string());
+                self.exported = Some(Export {
+                    name: format!("{base}.{}", format.extension()),
+                    text,
+                });
+                // Running only up to the drawing moved the runner: run again
+                // as far as the program is shown.
                 Changed::Run
             }
             Command::Undo | Command::Redo if self.open.is_some() => {
@@ -1245,6 +1295,38 @@ impl<S: Scalar> Editor<S> {
 /// yet, one in the workspace's top folder.
 fn library<'w, S: Scalar>(workspace: &'w Workspace<S>, path: Option<&str>) -> impl Library<S> + 'w {
     workspace.scope(path.unwrap_or_default())
+}
+
+impl<S: Scalar> Editor<S> {
+    /// The drawing to export, and how many steps run before it: the step
+    /// `id`, else the drawing being edited, else the program's last; the
+    /// default drawing of the part as far as it runs if there is none.
+    fn drawing(&self, id: Option<&str>) -> GeopResult<(usize, geop_ops_drawing::DrawingArgs)> {
+        use geop_core_math::geop_error::GeopError;
+        if let Some(open) = &self.open
+            && id.is_none_or(|id| id == open.id)
+            && let PartOperation::Drawing(args) = open.editor.step()
+        {
+            return Ok((open.index, args.clone()));
+        }
+        if let Some(id) = id {
+            let index = self.program.index_of(id)?;
+            return match &self.program.steps[index].operation {
+                PartOperation::Drawing(args) => Ok((index, args.clone())),
+                _ => Err(GeopError::new(format!("the step {id:?} is no drawing"))),
+            };
+        }
+        let runs = self.marker.unwrap_or(self.program.steps.len());
+        let last = self.program.steps[..runs]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, step)| match &step.operation {
+                PartOperation::Drawing(args) => Some((i, args.clone())),
+                _ => None,
+            });
+        Ok(last.unwrap_or((runs, geop_ops_drawing::DrawingArgs::default())))
+    }
 }
 
 /// What a command changed.

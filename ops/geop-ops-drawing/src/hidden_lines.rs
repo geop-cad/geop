@@ -49,7 +49,7 @@ use geop_core_topology::{
 
 use crate::{
     MAX_NODES, min_subdivision_size,
-    silhouette::{Silhouette, face_silhouettes},
+    silhouette::{Silhouette, edge_crossings, face_silhouettes},
     view::ViewFrame,
 };
 
@@ -140,6 +140,11 @@ struct Source<S: Scalar> {
     kind: LineKind,
     edge: Option<EdgeId>,
     silhouette: Option<Silhouette<S>>,
+    /// The faces it lies on: those an edge bounds, a silhouette's face.
+    on: Vec<FaceId>,
+    /// Which curve it is a piece of, once curves are cut into monotone
+    /// pieces.
+    origin: usize,
     /// Its projection's box, `[x_lo, y_lo, x_hi, y_hi]`, holding every
     /// control point's whole enclosure.
     bounds: [f64; 4],
@@ -385,25 +390,33 @@ pub fn project_view<S: Scalar>(
     options: &ViewOptions,
 ) -> GeopResult<ProjectedView<S>> {
     let d = frame.direction.vector();
-    let mut sources: Vec<Source<S>> = Vec::new();
+    // Each curve with the parameters it is cut at before anything else.
+    let mut sources: Vec<(Source<S>, Vec<S>)> = Vec::new();
     let mut add = |curve3: NurbCurve3D<S>,
                    kind: LineKind,
                    edge: Option<EdgeId>,
-                   silhouette: Option<Silhouette<S>>|
+                   silhouette: Option<Silhouette<S>>,
+                   on: Vec<FaceId>,
+                   cuts: Vec<S>|
      -> GeopResult<()> {
         let curve = frame.project_curve(&curve3)?;
         if is_point(&curve)? {
             return Ok(());
         }
         let bounds = bounds(&curve)?;
-        sources.push(Source {
-            curve3,
-            curve,
-            kind,
-            edge,
-            silhouette,
-            bounds,
-        });
+        sources.push((
+            Source {
+                curve3,
+                curve,
+                kind,
+                edge,
+                silhouette,
+                on,
+                origin: sources.len(),
+                bounds,
+            },
+            cuts,
+        ));
         Ok(())
     };
     for (edge_id, coedges) in edge_coedges(model, faces) {
@@ -413,7 +426,15 @@ pub fn project_view<S: Scalar>(
             continue;
         }
         let curve = model.get_edge(edge_id)?.curve.clone();
-        add(curve, kind, Some(edge_id), None).with_context(&ctx)?;
+        // Where it crosses the silhouettes of the faces it bounds.
+        let mut cuts = Vec::new();
+        let mut on = Vec::new();
+        for &coedge_id in &coedges {
+            let face = model.get_coedge(coedge_id)?.face;
+            on.push(face);
+            cuts.extend(edge_crossings(model, face, coedge_id, &curve, &d).with_context(&ctx)?);
+        }
+        add(curve, kind, Some(edge_id), None, on, cuts).with_context(&ctx)?;
     }
     for &face_id in faces {
         for silhouette in face_silhouettes(model, face_id, &d)? {
@@ -422,46 +443,96 @@ pub fn project_view<S: Scalar>(
                 LineKind::Silhouette,
                 None,
                 Some(silhouette),
+                vec![face_id],
+                Vec::new(),
             )?;
         }
     }
 
-    // Where each curve has to be cut.
-    let mut cuts: Vec<Vec<S>> = vec![Vec::new(); sources.len()];
+    // Every curve cut where it is stationary along either axis of the
+    // paper, before the curves are compared: then each runs one way along
+    // both, and a curve seen edge on — its projection a segment it runs
+    // back and forth along — becomes segments that overlap others plainly
+    // instead of folding onto themselves.
     let axes = [
         Vector2::from_array([S::ONE, S::ZERO]),
         Vector2::from_array([S::ZERO, S::ONE]),
     ];
-    for (i, source) in sources.iter().enumerate() {
+    let mut monotone = Vec::with_capacity(sources.len());
+    for (source, mut stationary) in sources {
         for axis in &axes {
-            cuts[i].extend(
+            stationary.extend(
                 source
                     .curve
                     .stationary_parameters(axis, MAX_NODES, min_subdivision_size())
-                    .map_err(|e| e.with_context(format!("project_view: line {i}")))?,
+                    .map_err(|e| {
+                        e.with_context(format!(
+                            "project_view: the {:?} of edge {:?}",
+                            source.kind, source.edge
+                        ))
+                    })?,
             );
         }
+        let domain = source.curve.domain();
+        let mut ends = vec![domain.0];
+        ends.extend(cut_points(stationary, domain));
+        ends.push(domain.1);
+        if ends.len() == 2 {
+            monotone.push(source);
+            continue;
+        }
+        for pair in ends.windows(2) {
+            let curve = source.curve.sub_curve(pair[0], pair[1])?;
+            if is_point(&curve)? {
+                continue;
+            }
+            monotone.push(Source {
+                curve3: source.curve3.sub_curve(pair[0], pair[1])?,
+                bounds: bounds(&curve)?,
+                curve,
+                kind: source.kind,
+                edge: source.edge,
+                silhouette: source.silhouette.clone(),
+                on: source.on.clone(),
+                origin: source.origin,
+            });
+        }
     }
+    let sources = monotone;
+
+    // Where each piece has to be cut.
+    let mut cuts: Vec<Vec<S>> = vec![Vec::new(); sources.len()];
     for i in 0..sources.len() {
         for j in i + 1..sources.len() {
             if !boxes_meet(&sources[i].bounds, &sources[j].bounds) {
                 continue;
             }
-            let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
-                &sources[i].curve,
-                &sources[j].curve,
-                MAX_NODES,
-                min_subdivision_size(),
-            )
-            .map_err(|e| e.with_context(format!("project_view: lines {i} and {j}")))?;
-            for (s, t) in crossings {
-                cuts[i].push(s);
-                cuts[j].push(t);
+            // An edge meets the silhouette of a face it bounds where it
+            // crosses it on the face — found already, and cut at — and
+            // touches it there on the paper, tangentially: no search
+            // here could isolate that.
+            let bounds_silhouette = |a: &Source<S>, b: &Source<S>| {
+                a.edge.is_some() && b.kind == LineKind::Silhouette && b.edge.is_none()
+                    && b.on.iter().any(|f| a.on.contains(f))
+            };
+            if bounds_silhouette(&sources[i], &sources[j])
+                || bounds_silhouette(&sources[j], &sources[i])
+            {
+                continue;
             }
-            for o in overlaps {
-                cuts[i].extend([o.start.t, o.end.t]);
-                cuts[j].extend([o.start.partner, o.end.partner]);
-            }
+            let (a_cuts, b_cuts) = meetings(&sources[i], &sources[j]).map_err(|e| {
+                let describe = |s: &Source<S>| match s.edge {
+                    Some(edge) => format!("{:?} of edge {edge}", s.kind),
+                    None => format!("{:?} of face {:?}", s.kind, s.silhouette.as_ref().map(|s| s.face)),
+                };
+                e.with_context(format!(
+                    "project_view: where the {} and the {} cross on the paper",
+                    describe(&sources[i]),
+                    describe(&sources[j])
+                ))
+            })?;
+            cuts[i].extend(a_cuts);
+            cuts[j].extend(b_cuts);
         }
     }
 
@@ -472,7 +543,9 @@ pub fn project_view<S: Scalar>(
         .map(|&f| Occluder::of(model, f))
         .collect::<GeopResult<Vec<_>>>()?;
     let length = ray_length(&occluders);
-    let mut lines = Vec::new();
+    // Every piece, in order along each curve: its source, its range, and
+    // its visibility or why no point of it could be decided.
+    let mut pieces: Vec<(usize, S, S, Result<bool, GeopError>)> = Vec::new();
     for (index, (source, cuts)) in sources.iter().zip(cuts).enumerate() {
         let domain = source.curve.domain();
         let mut ends = vec![domain.0];
@@ -486,31 +559,138 @@ pub fn project_view<S: Scalar>(
                     source.kind, source.edge
                 ))
             };
-            let mid = a.add(b).div(S::TWO).with_context(&ctx)?.sharpen();
-            let mut point = source.curve3.evaluate(mid).with_context(&ctx)?;
-            if let Some(silhouette) = &source.silhouette {
-                point = silhouette.exact_point(model, &d, &point).with_context(&ctx)?;
+            // Any point of the piece decides it; the middle first, and two
+            // more should a ray from there graze a face too closely for
+            // its search to settle — as one does from where an edge
+            // crosses the silhouette of a face it bounds, the ray leaving
+            // tangent to that face.
+            let mut outcome = Err(GeopError::new("no point tried"));
+            for f in [0.5, 0.25, 0.75] {
+                let decide = || -> GeopResult<bool> {
+                    let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
+                    let mut point = source.curve3.evaluate(t)?;
+                    if let Some(silhouette) = &source.silhouette {
+                        point = silhouette.exact_point(model, &d, &point)?;
+                    }
+                    seen(model, &occluders, point, &toward_eye, length)
+                };
+                outcome = decide().map_err(ctx);
+                if outcome.is_ok() {
+                    break;
+                }
             }
-            let visible = seen(model, &occluders, point, &toward_eye, length).with_context(&ctx)?;
-            if !visible && !options.hidden_lines {
-                continue;
-            }
-            lines.push(ViewLine {
-                curve: source.curve.sub_curve(a, b).with_context(&ctx)?,
-                curve3: source.curve3.sub_curve(a, b).with_context(&ctx)?,
-                kind: source.kind,
-                visible,
-                edge: source.edge,
-                source: index,
-                range: (a, b),
-            });
+            pieces.push((index, a, b, outcome));
         }
+    }
+    // A piece none of whose points could be decided is a sliver next to
+    // such a graze: it takes the visibility of its nearest neighbour along
+    // the same curve.
+    let known: Vec<Option<bool>> = pieces.iter().map(|p| p.3.as_ref().ok().copied()).collect();
+    let origin = |k: usize| sources[pieces[k].0].origin;
+    let mut lines = Vec::new();
+    for k in 0..pieces.len() {
+        let visible = match known[k] {
+            Some(v) => v,
+            None => {
+                let along = |i: usize| (origin(i) == origin(k)).then_some(known[i]).flatten();
+                let neighbour = (1..pieces.len()).find_map(|step| {
+                    let before = k.checked_sub(step).and_then(along);
+                    before.or_else(|| (k + step < pieces.len()).then(|| along(k + step)).flatten())
+                });
+                match neighbour {
+                    Some(v) => v,
+                    None => {
+                        let (_, _, _, outcome) = pieces.swap_remove(k);
+                        return Err(outcome.unwrap_err());
+                    }
+                }
+            }
+        };
+        let (index, a, b, _) = &pieces[k];
+        let source = &sources[*index];
+        if !visible && !options.hidden_lines {
+            continue;
+        }
+        lines.push(ViewLine {
+            curve: source.curve.sub_curve(*a, *b)?,
+            curve3: source.curve3.sub_curve(*a, *b)?,
+            kind: source.kind,
+            visible,
+            edge: source.edge,
+            source: *index,
+            range: (*a, *b),
+        });
     }
 
     Ok(ProjectedView {
         frame: *frame,
         lines: rejoin(&sources, drop_drawn(lines)?)?,
     })
+}
+
+/// Where the projections of `a` and `b` cross or begin and end running
+/// along each other: the parameters to cut each at.
+fn search<S: Scalar>(a: &NurbCurve2D<S>, b: &NurbCurve2D<S>) -> GeopResult<(Vec<S>, Vec<S>)> {
+    let (overlaps, crossings) =
+        curve_curve_overlaps_and_crossings(a, b, MAX_NODES, min_subdivision_size())?;
+    let (mut on_a, mut on_b) = (Vec::new(), Vec::new());
+    for (s, t) in crossings {
+        on_a.push(s);
+        on_b.push(t);
+    }
+    for o in overlaps {
+        on_a.extend([o.start.t, o.end.t]);
+        on_b.extend([o.start.partner, o.end.partner]);
+    }
+    Ok((on_a, on_b))
+}
+
+/// Where the pieces `a` and `b` have to be cut for each other (see
+/// [`search`]).
+///
+/// Two curves meeting at a common end often meet there tangentially on the
+/// paper — an edge running into another smoothly, seen from the side —
+/// and a subdivision search cannot isolate a tangency: it runs out of
+/// nodes. Their common end is an end of both pieces already, so nothing
+/// needs cutting there. Should the search fail, it is run again on the
+/// halves of the two, leaving out the two halves that meet at the common
+/// end. A crossing within those two halves, other than at the common end,
+/// would go unseen: a known limit, taken rather than failing the view.
+fn meetings<S: Scalar>(a: &Source<S>, b: &Source<S>) -> GeopResult<(Vec<S>, Vec<S>)> {
+    let error = match search(&a.curve, &b.curve) {
+        Ok(found) => return Ok(found),
+        Err(e) => e,
+    };
+    let ends = |c: &NurbCurve3D<S>| -> GeopResult<[Vector3<S>; 2]> {
+        let (t0, t1) = c.domain();
+        Ok([c.evaluate(t0)?, c.evaluate(t1)?])
+    };
+    let (ea, eb) = (ends(&a.curve3)?, ends(&b.curve3)?);
+    let shared = (0..2)
+        .flat_map(|i| (0..2).map(move |j| (i, j)))
+        .find(|&(i, j)| ea[i].could_be_equal(&eb[j]));
+    let ends_context = format!("their ends in space: {ea:?} and {eb:?}");
+    let Some((end_a, end_b)) = shared else {
+        return Err(error.with_context(ends_context));
+    };
+    let error = error.with_context(ends_context);
+    let halves = |c: &NurbCurve2D<S>| -> GeopResult<[NurbCurve2D<S>; 2]> {
+        let (l, r) = c.split_mid()?;
+        Ok([l, r])
+    };
+    let (ha, hb) = (halves(&a.curve)?, halves(&b.curve)?);
+    let (mut on_a, mut on_b) = (Vec::new(), Vec::new());
+    for (i, half_a) in ha.iter().enumerate() {
+        for (j, half_b) in hb.iter().enumerate() {
+            if i == end_a && j == end_b {
+                continue;
+            }
+            let (x, y) = search(half_a, half_b).map_err(|e| e.with_context(format!("searched again without the common end, after: {error}")))?;
+            on_a.extend(x);
+            on_b.extend(y);
+        }
+    }
+    Ok((on_a, on_b))
 }
 
 /// `lines` with the pieces of one curve that follow on from each other, and

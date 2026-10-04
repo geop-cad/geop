@@ -199,6 +199,7 @@ dependencies = [
  "geop-ops-assembly",
  "geop-ops-booleans",
  "geop-ops-datums",
+ "geop-ops-drawing",
  "geop-ops-edit",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",

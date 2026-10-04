@@ -37,7 +37,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
-    FaceId, Model,
+    CoedgeId, FaceId, Model,
     contains::face::{PointClassification, face_contains},
 };
 
@@ -394,17 +394,47 @@ fn trace<S: Scalar>(
     lines: &mut [GridLine<S>],
 ) -> GeopResult<Vec<(S, S)>> {
     let mut forward = Vec::new();
-    if let Ending::Closed = march(surface, d, seed, true, step, lines, &mut forward)? {
+    let points = if let Ending::Closed = march(surface, d, seed, true, step, lines, &mut forward)? {
         let mut points = vec![seed];
         points.extend(forward);
-        return Ok(points);
+        points
+    } else {
+        let mut backward = Vec::new();
+        march(surface, d, seed, false, step, lines, &mut backward)?;
+        backward.reverse();
+        backward.push(seed);
+        backward.extend(forward);
+        backward
+    };
+    thin(surface, points, step)
+}
+
+/// `points` without those crowding the one before: where a curve is
+/// sampled is a free choice, and samples a sliver apart — a step that
+/// reached the domain's boundary all but, then the boundary itself — make
+/// the fit through them ill posed. The ends stay.
+fn thin<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    points: Vec<(S, S)>,
+    step: S,
+) -> GeopResult<Vec<(S, S)>> {
+    let close = step.div(S::from_f64(8.0))?;
+    let at = |p: &(S, S)| surface.evaluate(p.0, p.1);
+    let count = points.len();
+    let mut kept: Vec<(S, S)> = Vec::with_capacity(count);
+    for (k, p) in points.into_iter().enumerate() {
+        if let Some(last) = kept.last()
+            && at(last)?.sub(&at(&p)?).norm().definitely_less(close)
+        {
+            if k + 1 == count && kept.len() > 1 {
+                kept.pop();
+            } else {
+                continue;
+            }
+        }
+        kept.push(p);
     }
-    let mut backward = Vec::new();
-    march(surface, d, seed, false, step, lines, &mut backward)?;
-    backward.reverse();
-    backward.push(seed);
-    backward.extend(forward);
-    Ok(backward)
+    Ok(kept)
 }
 
 /// The size of `surface`: the diagonal of its control points' box.
@@ -491,6 +521,85 @@ impl<S: Scalar> Silhouette<S> {
     }
 }
 
+/// Samples along an edge looking for where it crosses a silhouette.
+const EDGE_SAMPLES: usize = 32;
+
+/// Where the edge `curve`, bounding the face `face_id` along the coedge
+/// `coedge_id`, crosses the face's silhouette seen along `d`: the
+/// parameters where the face's normal there turns perpendicular to `d`.
+///
+/// Projected, an edge touches the silhouette of a face it bounds
+/// tangentially where it crosses it — a contact no search on the paper can
+/// isolate, so it is found here, in space: `g`'s sign sampled along the
+/// edge, and each change bisected. Only isolated crossings: an edge along
+/// which the face is seen edge on throughout has none.
+pub fn edge_crossings<S: Scalar>(
+    model: &Model<S>,
+    face_id: FaceId,
+    coedge_id: CoedgeId,
+    curve: &NurbCurve3D<S>,
+    d: &Vector3<S>,
+) -> GeopResult<Vec<S>> {
+    let surface = &model.get_face(face_id)?.surface;
+    if surface.as_plane()?.is_some() || swept_along(surface, d) {
+        return Ok(Vec::new());
+    }
+    let coedge = model.get_coedge(coedge_id)?;
+    let (t0, t1) = curve.domain();
+    let (s0, s1) = coedge.pcurve.domain();
+    let edge_domain = model.get_edge(coedge.edge()?)?.curve.domain();
+    // Where on the surface the edge's point at `t` is: projected from the
+    // pcurve's point as far along it — a seed, a free choice.
+    let foot = |t: S| -> Option<(S, S)> {
+        let f = t.sub(edge_domain.0).div(edge_domain.1.sub(edge_domain.0)).ok()?;
+        let f = match coedge.sense {
+            geop_core_topology::Sense::Forward => f,
+            geop_core_topology::Sense::Reversed => S::ONE.sub(f),
+        };
+        let seed = coedge.pcurve.evaluate(s0.add(s1.sub(s0).mul(f)).sharpen()).ok()?;
+        let point = curve.evaluate(t).ok()?;
+        surface
+            .project(point, seed[0], seed[1], CORRECTOR_ITERATIONS)
+            .ok()
+    };
+    let sign_at = |t: S| -> Option<bool> {
+        let (u, v) = foot(t)?;
+        sign(surface, d, u, v)
+    };
+    let params: Vec<S> = (0..=EDGE_SAMPLES)
+        .map(|k| match k {
+            0 => t0,
+            k if k == EDGE_SAMPLES => t1,
+            k => fraction(t0, t1, k as f64 / EDGE_SAMPLES as f64),
+        })
+        .collect();
+    let mut crossings = Vec::new();
+    let mut last: Option<(S, bool)> = None;
+    for &t in &params {
+        let Some(s) = sign_at(t) else { continue };
+        if let Some((a, previous)) = last
+            && previous != s
+        {
+            let (mut lo, mut hi) = (a, t);
+            for _ in 0..BISECTIONS {
+                let mid = lo.add(hi).div(S::TWO)?.sharpen();
+                match sign_at(mid) {
+                    Some(m) if m == previous => lo = mid,
+                    Some(_) => hi = mid,
+                    None => {
+                        lo = mid;
+                        hi = mid;
+                        break;
+                    }
+                }
+            }
+            crossings.push(lo.union(hi));
+        }
+        last = Some((t, s));
+    }
+    Ok(crossings)
+}
+
 /// The silhouette of `face_id` seen along the unit vector `d`, as curves on
 /// the face: none for a plane, or for a face seen edge on throughout.
 pub fn face_silhouettes<S: Scalar>(
@@ -547,7 +656,8 @@ fn trim<S: Scalar>(
     if uv.len() < 2 {
         return Ok(Vec::new());
     }
-    let fit = NurbCurve2D::interpolate(&uv, (uv.len() - 1).min(3))?;
+    let fit = NurbCurve2D::interpolate(&uv, (uv.len() - 1).min(3))
+        .map_err(|e| e.with_context(format!("fitting the traced silhouette through {uv:?}")))?;
     let (t0, t1) = fit.domain();
 
     // Where the trace crosses or runs along the face's trim.
@@ -608,7 +718,8 @@ fn trim<S: Scalar>(
         if points3.len() < 2 {
             continue;
         }
-        let curve = NurbCurve3D::interpolate(&points3, (points3.len() - 1).min(3))?;
+        let curve = NurbCurve3D::interpolate(&points3, (points3.len() - 1).min(3))
+            .map_err(|e| e.with_context(format!("fitting a silhouette through {points3:?}")))?;
         silhouettes.push(Silhouette {
             face: face_id,
             curve,
