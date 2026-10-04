@@ -295,9 +295,9 @@ fn mass_properties_are_placed() {
 /// are traced all the way.
 ///
 /// With the trace's stride fixed at 0.1 these took 400 steps each, and the
-/// cubic fitted through the marched points had so many spans that the
-/// overlap's volume, integrated along them, came out a thousand times
-/// wider than this test allows. The stride now scales with the faces.
+/// overlap's volume, integrated along the cubic fitted through the marched
+/// points, came out wider than this test allows (1.08e-6 of 1000). The
+/// stride now scales with the faces.
 #[test]
 fn long_bars_overlap() {
     let mut part = Part::<S>::new();

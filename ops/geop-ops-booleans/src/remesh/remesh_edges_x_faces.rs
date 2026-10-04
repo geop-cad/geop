@@ -105,12 +105,12 @@ const MIN_TRACED_LEGS: usize = 8;
 const STEPS_PER_REVOLUTION: usize = 64;
 
 /// How many marching steps to spend across the smaller of the two surfaces
-/// a trace runs between (see [`NurbSurface::size`]), where neither curves.
-/// The curve lies on both, so this is the scale of the features it can
-/// pass: the stride grows and shrinks with the part instead of being fixed
-/// in model units. A fixed 0.1 took 400 steps along a 40 mm cut, and the
-/// cubic fitted through them so many spans that integrating a face's area
-/// along it lost precision; it was also more than a cut 0.05 wide.
+/// a trace runs between (see [`NurbSurface3D::size`]), where neither
+/// curves. The curve lies on both, so this is the scale of the features it
+/// can pass: the stride grows and shrinks with the part instead of being
+/// fixed in model units. A fixed 0.1 took 400 steps along a 40 mm cut, and
+/// the volume integrated along the cubic fitted through them came out wider
+/// than `long_bars_overlap` allows; it was also more than a cut 0.05 wide.
 /// Like [`STEPS_PER_REVOLUTION`] this bounds effort and the fit's width,
 /// not whether a trace finds its end — a stride reaches a vertex wherever
 /// one lies on it (see [`candidate_within`]).
