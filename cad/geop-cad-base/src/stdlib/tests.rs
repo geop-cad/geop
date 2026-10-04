@@ -142,7 +142,6 @@ families_build! {
     hex_standoffs_build: "std:hex_standoff.geop",
     ball_bearings_build: "std:ball_bearing.geop",
     tslot_2020_builds: "std:tslot_2020.geop",
-    #[ignore = "slow: the 20x40 profile's boolean, as the 20x20's — run with `cargo test -- --ignored`"]
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
 }
