@@ -1315,8 +1315,9 @@ fn unwrap(revolved: &Revolved, points: &[P3], closing: bool, ccw: bool) -> Vec<f
     out
 }
 
-/// Where the largest gap between the angles `angles` ends, going round:
-/// the angle a range covering them all starts at.
+/// The middle of the largest gap between the angles `angles`, going
+/// round: where a range covering them all can start, clear of every one —
+/// an angle a rounding below it is not read as a whole turn on.
 fn start_of_largest_gap(angles: &mut [f64]) -> f64 {
     use std::f64::consts::TAU;
     angles.sort_by(f64::total_cmp);
@@ -1331,7 +1332,7 @@ fn start_of_largest_gap(angles: &mut [f64]) -> f64 {
             gap = (g, i);
         }
     }
-    angles[gap.1]
+    angles[gap.1] - gap.0 / 2.0
 }
 
 /// How often unwrapped closing angles go round.
