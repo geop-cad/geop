@@ -92,3 +92,33 @@ fn new_steps_start_from_what_was_built() {
     }
     assert!(PartOperation::new_step("no_such_operation", part).is_err());
 }
+
+/// Every operation's dialog opens, the way the toolbar opens it, on an
+/// empty part and on a drilled box, and is cancelled again: none may fail
+/// for want of something to work on — in the browser a panic leaves the
+/// editor unusable — and each answers with a step to edit or says why not.
+#[test]
+fn every_operation_opens_on_any_part() {
+    use crate::{Command, Editor};
+    for program in [None, Some(examples::box_with_drill_hole())] {
+        let mut editor = Editor::<S>::new();
+        if let Some(program) = program {
+            let update = editor.handle(Command::Load {
+                program,
+                path: None,
+            });
+            assert!(update.error.is_none(), "{:?}", update.error);
+        }
+        for info in PartOperation::infos() {
+            let update = editor.handle(Command::New {
+                kind: info.kind.to_string(),
+            });
+            assert!(
+                update.step.is_some() || update.error.is_some(),
+                "{}: neither a step nor a reason",
+                info.kind
+            );
+            editor.handle(Command::Cancel);
+        }
+    }
+}

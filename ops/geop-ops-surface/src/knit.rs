@@ -126,6 +126,11 @@ pub fn knit<S: Scalar>(
     sheets: &[ShellId],
     solid: bool,
 ) -> GeopResult<Body> {
+    if sheets.is_empty() {
+        return Err(GeopError::new(
+            "knitting needs faces standing on their own: pick the sheets to join",
+        ));
+    }
     if sheets.len() < 2 && !solid {
         return Err(GeopError::new("knitting needs two sheets at least"));
     }
