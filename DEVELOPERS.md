@@ -29,7 +29,8 @@ core/geop-core-solve          the constraint solver every system shares:
                                and the couplings between them, solved in
                                groups no mate ties together
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
-                               as residuals, profile extraction
+                               as residuals, profile extraction, geometry
+                               made from geometry (mirror, patterns, offset)
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is

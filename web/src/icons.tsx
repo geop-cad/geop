@@ -606,6 +606,20 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M17 15 L6 15 A4.5 4.5 0 0 1 6 6 L13 6" strokeWidth="1" />
     </>
   ),
+  // A sketch's curves offset: a corner, and its copy further in.
+  offset: (
+    <>
+      <path d="M4 16 L4 9 A5 5 0 0 1 9 4 L16 4" />
+      <path d="M7.5 16 L7.5 9.5 A2 2 0 0 1 9.5 7.5 L16 7.5" strokeDasharray="1.5 1.5" />
+    </>
+  ),
+  // A slot bent round a center.
+  arc_slot: (
+    <>
+      <path d="M3.5 14 A6.5 6.5 0 0 1 16.5 14 A1.75 1.75 0 0 1 13 14 A3 3 0 0 0 7 14 A1.75 1.75 0 0 1 3.5 14 Z" />
+      {dot(10, 14, 1.2)}
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */
