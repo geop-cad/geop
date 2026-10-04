@@ -1001,9 +1001,10 @@ impl<S: Scalar> Builder<'_, S> {
                         [k] => *k,
                         _ => {
                             return Err(ctx(GeopError::new(format!(
-                                "its loops do not bound one region: {} of {} run counter-clockwise about its normal (signed areas {areas:?})",
+                                "its loops do not bound one region: {} of {} run counter-clockwise about its normal (signed areas {areas:?}; its outward normal the surface's natural one: {natural}; built over the angles and profile parameters {:?})",
                                 ccw.len(),
-                                areas.len()
+                                areas.len(),
+                                patch.extent
                             ))));
                         }
                     }
@@ -1021,7 +1022,12 @@ impl<S: Scalar> Builder<'_, S> {
         for (surface, outer, holes) in &face_specs {
             for (on, pcurve) in outer.iter().chain(holes.iter().flatten()) {
                 if let CoedgeOnLocal::Edge(e, forward) = *on {
-                    let gap = edge_gap(&edges[e].curve, forward, surface, pcurve)?;
+                    let gap = edge_gap(&edges[e].curve, forward, surface, pcurve).map_err(|err| {
+                        err.with_context(format!(
+                            "measuring how far the edge {} lies from where its pcurve puts it",
+                            edges[e].name.join(",")
+                        ))
+                    })?;
                     for c in 0..3 {
                         gaps[e][c] = gaps[e][c].max(gap[c]);
                     }
@@ -1096,6 +1102,9 @@ enum CoedgeOnLocal {
 /// The surface a face lies on, built to cover it.
 struct Patch<S: Scalar> {
     surface: NurbSurface3D<S>,
+    /// For a surface of revolution, the angles and profile parameters it
+    /// was built over: for messages.
+    extent: Option<[f64; 4]>,
 }
 
 /// A row of a patch's control points collapsed to one point: a pole of its
@@ -1312,10 +1321,11 @@ fn patch_of<S: Scalar>(
                 vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
                 vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
             )?;
-            Ok(Patch { surface })
+            Ok(Patch { surface, extent: None })
         }
         SurfaceKind::Nurbs(nurbs) => Ok(Patch {
             surface: nurbs.to_nurbs()?,
+            extent: None,
         }),
         SurfaceKind::Extrusion { curve, vector } => {
             let length2 = dot(*vector, *vector);
@@ -1335,6 +1345,7 @@ fn patch_of<S: Scalar>(
             let start = curve.translate(s3(scale(*vector, v0)));
             Ok(Patch {
                 surface: start.sweep(s3(scale(*vector, v1 - v0))),
+                extent: None,
             })
         }
         SurfaceKind::Revolved(revolved) => {
@@ -1344,6 +1355,7 @@ fn patch_of<S: Scalar>(
             };
             Ok(Patch {
                 surface: revolved.patch(from, to, v0, v1)?,
+                extent: Some([from, to, v0, v1]),
             })
         }
     }
@@ -1370,7 +1382,7 @@ fn revolved_extent(revolved: &Revolved, face: &Face, loops: &[Vec<P3>], scope: &
     let span = hi - lo;
     if span >= std::f64::consts::TAU {
         return Err(GeopError::new(format!(
-            "#{}: a face going all the way round its axis without a loop that does",
+            "#{}: a face spanning a full turn or more around its axis without a loop going round it — as a thread's flank does — is not supported",
             face.id
         )));
     }

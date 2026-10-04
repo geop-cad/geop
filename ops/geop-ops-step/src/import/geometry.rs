@@ -985,9 +985,11 @@ impl<'a> Reader<'a> {
                         "a surface of revolution whose curve does not lie in a plane through its axis",
                     )
                 };
-                // The file's normal is the curve's tangent across the turn;
-                // the NURBS' runs the profile's way across the turn — so
-                // they agree where the profile runs against the curve.
+                // The file's surface is parametrized by the turn, then the
+                // curve (ISO 10303-42), its normal the turn across the
+                // curve's tangent; the NURBS' is the turn across the
+                // profile's — so they agree where the profile runs the
+                // curve's way.
                 let (frame, profile, along) = match curve {
                     CurveDef::Nurbs(curve) => {
                         // Angle 0 is the half plane the profile lies in.
@@ -1069,7 +1071,7 @@ impl<'a> Reader<'a> {
                         profile,
                         on_axis: scope.uncertainty,
                     }),
-                    flipped: along != reversed,
+                    flipped: along == reversed,
                 })
             }
             "SURFACE_OF_LINEAR_EXTRUSION" => {
