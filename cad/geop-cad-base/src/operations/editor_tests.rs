@@ -1810,6 +1810,41 @@ fn a_part_exported_as_step_is_imported_back() {
     assert_eq!(solids, vec![format!("import({id},s0)")]);
 }
 
+/// "Download STL" writes every solid of the part shown as a binary STL
+/// mesh, named after the program's file — the placed parts' solids too, so
+/// the pin in the plate adds to the plate's triangles.
+#[test]
+fn a_part_is_exported_as_stl_with_its_placed_parts() {
+    /// The triangles of a binary STL file, checked against its length.
+    fn triangles(update: Update<S>) -> u32 {
+        assert!(update.error.is_none(), "{:?}", update.error);
+        let export = update.export.expect("a file is written");
+        let crate::editor::Content::Bytes(bytes) = export.content else {
+            panic!("a binary file");
+        };
+        assert!(!bytes.starts_with(b"solid"), "a binary header");
+        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap());
+        assert_eq!(bytes.len(), 84 + 50 * count as usize);
+        count
+    }
+    let (mut editor, _) = editor();
+    let plate = triangles(editor.handle(Command::ExportStl));
+    assert!(plate > 0);
+
+    editor.handle(Command::LoadWorkspaceExample {
+        name: "pin_in_plate".into(),
+        folder: None,
+    });
+    let json = editor.handle_json(r#"{"command": "export_stl"}"#).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(update["export"]["name"], "assembly.stl");
+    let assembly = triangles(editor.handle(Command::ExportStl));
+    assert!(
+        assembly > plate,
+        "{assembly} triangles, the plate alone {plate}"
+    );
+}
+
 /// A fillet whose radius varies, set up as the front end does: the box's
 /// upright edge at the origin picked, "variable radius" ticked — which
 /// brings up the end radius, starting at the radius — the end radius set,

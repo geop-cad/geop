@@ -32,6 +32,7 @@ use geop_ops::{
         Visual,
     },
 };
+use geop_ops_rasterize::stl;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -170,6 +171,10 @@ pub enum Command<S: Scalar> {
     /// Write the part shown — up to where the program runs, the parts it
     /// places included — as a STEP file: the update's [`Update::export`].
     ExportStep,
+    /// Write every solid of the part shown — up to where the program runs,
+    /// the parts it places included — as a binary STL mesh, as finely as
+    /// the editor draws it: the update's [`Update::export`].
+    ExportStl,
     /// Write the bill of materials of the part shown (see
     /// [`geop_ops_bom`]), laid out as `structure` says, as a CSV file named
     /// after the program's file: the update's [`Update::export`].
@@ -188,9 +193,9 @@ pub enum Command<S: Scalar> {
     },
 }
 
-/// How finely an exported robot's curved faces are meshed: as finely as
-/// the editor draws them.
-const URDF_QUALITY: usize = 24;
+/// How finely the curved faces of an exported mesh — an STL file, a robot's
+/// links — are meshed: as finely as the editor draws them.
+const MESH_QUALITY: usize = 24;
 
 /// A file the editor wrote for the front end to save.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -392,7 +397,8 @@ pub struct Update<S: Scalar> {
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
     /// The file [`Command::ExportDrawing`], [`Command::ExportUrdf`],
-    /// [`Command::ExportStep`] or [`Command::ExportBom`] wrote.
+    /// [`Command::ExportStep`], [`Command::ExportStl`] or
+    /// [`Command::ExportBom`] wrote.
     pub export: Option<Export>,
     /// What the drag tool or the measure tool shows, while it is in hand
     /// and no step is edited: the part it would drag lit, and whether a
@@ -1068,14 +1074,7 @@ impl<S: Scalar> Editor<S> {
                 Changed::Nothing
             }
             Command::ExportStep => {
-                let stem = self
-                    .path
-                    .as_deref()
-                    .and_then(|p| p.rsplit('/').next())
-                    .map(|n| n.strip_suffix(".geop").unwrap_or(n))
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or("part")
-                    .to_string();
+                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
                 let text = geop_ops_step::write_step(self.runner.part(), &stem)?;
                 self.exported = Some(Export {
                     name: format!("{stem}.step"),
@@ -1090,6 +1089,24 @@ impl<S: Scalar> Editor<S> {
                 self.exported = Some(Export {
                     name: format!("{stem}_flat.dxf"),
                     content: Content::Text(dxf),
+                });
+                Changed::Nothing
+            }
+            Command::ExportStl => {
+                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
+                let triangles: Vec<_> = self
+                    .runner
+                    .part()
+                    .solid_meshes(MESH_QUALITY)?
+                    .iter()
+                    .flat_map(|(_, triangles)| triangles.iter().map(stl::outward))
+                    .collect();
+                let mut bytes = Vec::new();
+                stl::write_stl(&triangles, &stem, stl::StlFormat::Binary, &mut bytes)
+                    .map_err(|e| GeopError::new(format!("writing {stem}.stl: {e}")))?;
+                self.exported = Some(Export {
+                    name: format!("{stem}.stl"),
+                    content: Content::Bytes(bytes),
                 });
                 Changed::Nothing
             }
@@ -1147,7 +1164,7 @@ impl<S: Scalar> Editor<S> {
                 let library = library(&self.workspace, self.path.as_deref());
                 self.runner.run(&self.program, Some(index), &library);
                 let name = self.file_stem().unwrap_or_else(|| "robot".to_string());
-                let robot = geop_ops_urdf::export(self.runner.part_at(index), &name, URDF_QUALITY)?;
+                let robot = geop_ops_urdf::export(self.runner.part_at(index), &name, MESH_QUALITY)?;
                 self.exported = Some(Export {
                     name: format!("{name}.zip"),
                     content: Content::Bytes(robot.zip()?),

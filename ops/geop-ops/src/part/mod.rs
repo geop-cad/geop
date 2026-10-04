@@ -23,6 +23,7 @@ mod edit;
 mod euler;
 mod ids;
 mod instance;
+mod mesh;
 mod names;
 mod resolve;
 mod sketch;
@@ -37,6 +38,7 @@ pub use describe::{
 pub use edit::BodyNames;
 pub use ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId};
 pub use instance::{Component, Instance};
+pub use mesh::SolidMeshes;
 pub use names::{NameRegistry, Namer, validate_operation_id};
 pub use sketch::PlacedSketch;
 pub use state::{ParamValue, State, pose_parameter};

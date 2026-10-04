@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# end-to-end checks: screenshots of failing checks
+e2e/out/
