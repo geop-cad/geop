@@ -2524,7 +2524,10 @@ fn an_assembly_drawing_lists_its_parts() {
     let dimensions = layer("DIMENSIONS");
     assert_eq!(dimensions.matches("r=\"4\"/>").count(), 3, "{dimensions}");
     for item in ["1", "2", "3"] {
-        assert!(dimensions.contains(&format!(">{item}</text>")), "balloon {item}");
+        assert!(
+            dimensions.contains(&format!(">{item}</text>")),
+            "balloon {item}"
+        );
     }
     // A STEP file names them so too: one product per size.
     let step = editor.handle(Command::ExportStep);

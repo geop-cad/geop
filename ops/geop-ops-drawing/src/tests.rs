@@ -286,7 +286,13 @@ fn repeated_parts_share_their_view() {
     let mut part = Part::<S>::new();
     let unit = block(1.0);
     for k in 0..100 {
-        place(&mut part, &unit, &format!("b{k}"), v(2.0 * k as f64, 0.0, 0.0), [0.0; 3]);
+        place(
+            &mut part,
+            &unit,
+            &format!("b{k}"),
+            v(2.0 * k as f64, 0.0, 0.0),
+            [0.0; 3],
+        );
     }
     let scene = Scene::of(&part).unwrap();
     assert_eq!(scene.bodies.len(), 100);
@@ -298,7 +304,13 @@ fn repeated_parts_share_their_view() {
     assert_extents(&front, [0.0, 0.0, 199.0, 1.0]);
 
     // Turned, a block is seen from another side: a view of its own.
-    place(&mut part, &unit, "turned", v(0.0, 5.0, 0.0), [0.0, 0.0, 90.0]);
+    place(
+        &mut part,
+        &unit,
+        "turned",
+        v(0.0, 5.0, 0.0),
+        [0.0, 0.0, 90.0],
+    );
     assert_eq!(Scene::of(&part).unwrap().groups().len(), 2);
 
     // A column of blocks seen from its end: the one in front hides the
@@ -306,14 +318,25 @@ fn repeated_parts_share_their_view() {
     // it is drawn.
     let mut column = Part::<S>::new();
     for k in 0..10 {
-        place(&mut column, &unit, &format!("b{k}"), v(0.0, 9.0 - 2.0 * k as f64, 0.0), [0.0; 3]);
+        place(
+            &mut column,
+            &unit,
+            &format!("b{k}"),
+            v(0.0, 9.0 - 2.0 * k as f64, 0.0),
+            [0.0; 3],
+        );
     }
     let scene = Scene::of(&column).unwrap();
     let front = scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
     assert_eq!((count(&front, true), count(&front, false)), (4, 0));
-    assert!(front.lines.iter().all(|l| scene.bodies[l.body].path == "b9"));
+    assert!(
+        front
+            .lines
+            .iter()
+            .all(|l| scene.bodies[l.body].path == "b9")
+    );
 }
 
 /// A block of side 2 in front of another, which stands 1 to its right and

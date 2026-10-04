@@ -47,8 +47,7 @@ use crate::{
     drawing::drawn_faces,
     hidden_lines::{
         COARSE_SUBDIVISION, Occluder, ProjectedView, ViewLine, ViewOptions, bounds, boxes_meet,
-        cut_points,
-        drop_drawn, meetings, project_view, ray_length, seen,
+        cut_points, drop_drawn, meetings, project_view, ray_length, seen,
     },
     view::{ViewAxis, ViewFrame},
 };
@@ -140,15 +139,13 @@ impl<'p, S: Scalar> Scene<'p, S> {
             let motion = body.pose.map(|p| p.motion());
             let mut b = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
             for o in &occluders[index] {
-                for k in 0..3 {
-                    b[k][0] = b[k][0].min(o.bounds[k][0]);
-                    b[k][1] = b[k][1].max(o.bounds[k][1]);
+                for (b, o) in b.iter_mut().zip(&o.bounds) {
+                    *b = [b[0].min(o[0]), b[1].max(o[1])];
                 }
             }
             corners.push(std::array::from_fn(|i| {
-                let c = Vector3::from_array(std::array::from_fn(|k| {
-                    S::from_f64(b[k][(i >> k) & 1])
-                }));
+                let c =
+                    Vector3::from_array(std::array::from_fn(|k| S::from_f64(b[k][(i >> k) & 1])));
                 match &motion {
                     Some(m) => m.apply(&c),
                     None => c,
@@ -165,10 +162,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
                 hi[k] = hi[k].max(c[k].upper().to_f64());
             }
         }
-        let diagonal = (0..3)
-            .map(|k| (hi[k] - lo[k]).powi(2))
-            .sum::<f64>()
-            .sqrt();
+        let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
         let length = match bodies.len() {
             // One body: as a view of its model alone has it.
             1 => ray_length(&occluders[0]),
@@ -311,7 +305,12 @@ impl<'p, S: Scalar> Scene<'p, S> {
         let toward_eye = frame.toward_eye();
         let at: Vec<Vector3<S>> = group
             .iter()
-            .map(|&k| self.bodies[k].pose.map(|p| p.position()).unwrap_or_else(Vector3::zero))
+            .map(|&k| {
+                self.bodies[k]
+                    .pose
+                    .map(|p| p.position())
+                    .unwrap_or_else(Vector3::zero)
+            })
             .collect();
         for (i, &k) in group.iter().enumerate() {
             let (paper, depth) = (frame.project_point(&at[i]), toward_eye.prod_dot(&at[i]));
@@ -472,7 +471,10 @@ impl<'p, S: Scalar> Scene<'p, S> {
                     let whole = lo.could_be_equal(domain.0) && hi.could_be_equal(domain.1);
                     let (curve, curve3) = match whole {
                         true => (line.curve.clone(), line.curve3.clone()),
-                        false => (line.curve.sub_curve(lo, hi)?, line.curve3.sub_curve(lo, hi)?),
+                        false => (
+                            line.curve.sub_curve(lo, hi)?,
+                            line.curve3.sub_curve(lo, hi)?,
+                        ),
                     };
                     let here = bounds(&curve)?;
                     if !boxes_meet(&here, &reach[b].paper) || reach[b].near < farthest(&curve3)? {
@@ -487,21 +489,19 @@ impl<'p, S: Scalar> Scene<'p, S> {
                             (&other.curve, &other.curve3),
                             S::from_f64(COARSE_SUBDIVISION),
                         )
-                        .map_err(
-                                |e| {
-                                    e.with_context(format!(
-                                        "where the {:?} of edge {:?} of the part placed as {:?} \
+                        .map_err(|e| {
+                            e.with_context(format!(
+                                "where the {:?} of edge {:?} of the part placed as {:?} \
                                          and the {:?} of edge {:?} of the part placed as {:?} \
                                          cross on the paper",
-                                        line.kind,
-                                        line.edge,
-                                        self.bodies[line.body].path,
-                                        other.kind,
-                                        other.edge,
-                                        self.bodies[b].path
-                                    ))
-                                },
-                            )?;
+                                line.kind,
+                                line.edge,
+                                self.bodies[line.body].path,
+                                other.kind,
+                                other.edge,
+                                self.bodies[b].path
+                            ))
+                        })?;
                         cuts.extend(on_line);
                     }
                     let mut ends = vec![lo];
@@ -594,10 +594,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
             }
             pieces.push((lo, hi, outcome));
         }
-        let known: Vec<Option<bool>> = pieces
-            .iter()
-            .map(|p| p.2.as_ref().ok().copied())
-            .collect();
+        let known: Vec<Option<bool>> = pieces.iter().map(|p| p.2.as_ref().ok().copied()).collect();
         pieces
             .into_iter()
             .enumerate()

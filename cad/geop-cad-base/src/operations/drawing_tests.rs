@@ -360,7 +360,10 @@ fn example_assembly(name: &str) -> (&'static str, Part<S>) {
 /// The paper's `y` range a line spans: its heights in the front view.
 fn heights(line: &geop_ops_drawing::ViewLine<S>) -> (f64, f64) {
     let (a, b) = line.curve.domain();
-    let (p, q) = (line.curve.evaluate(a).unwrap(), line.curve.evaluate(b).unwrap());
+    let (p, q) = (
+        line.curve.evaluate(a).unwrap(),
+        line.curve.evaluate(b).unwrap(),
+    );
     let (p, q) = (p[1].to_f64(), q[1].to_f64());
     (p.min(q), p.max(q))
 }
@@ -570,7 +573,9 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
     let workspace = crate::Workspace::<S>::new(crate::stdlib::WithStandardParts(files));
-    let part = program.build(&workspace.scope("bolted_plate.geop")).unwrap();
+    let part = program
+        .build(&workspace.scope("bolted_plate.geop"))
+        .unwrap();
     let plate = part
         .instance(part.instance_id("plate").unwrap())
         .unwrap()
@@ -598,9 +603,15 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
             }
         }
     }
-    assert!(rising > 10 && falling > 10, "{rising} and {falling} hatch lines");
+    assert!(
+        rising > 10 && falling > 10,
+        "{rising} and {falling} hatch lines"
+    );
     assert!(sheet.labels.iter().any(|l| l.text == "SECTION A-A"));
-    assert!(sheet.labels.iter().any(|l| l.text == "⌀4.5"), "the hole's diameter");
+    assert!(
+        sheet.labels.iter().any(|l| l.text == "⌀4.5"),
+        "the hole's diameter"
+    );
 }
 
 /// A plate with `n` by `n` M3x10 screws standing on it, 10 apart, and as

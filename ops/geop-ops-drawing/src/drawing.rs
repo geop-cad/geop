@@ -3,7 +3,8 @@
 //! each with its visible and hidden lines, centre marks on its circles and
 //! its overall size dimensioned, the dimensions asked for, a section view
 //! with its cut hatched, a border and a title block — and, if asked for,
-//! the parts list of the parts placed in it above the title block.
+//! the parts list of the parts placed in it above the title block, each
+//! line ballooned where its part is drawn.
 
 use geop_core_geometry::{
     intersection::curve_curve_overlaps_and_crossings,
@@ -139,7 +140,8 @@ pub struct DrawingArgs {
     pub material: String,
     /// A bill of materials of the parts placed in it, as a table above the
     /// title block: each part's item number, quantity, name, designation
-    /// and material (see [`PartsListLine`]).
+    /// and material (see [`PartsListLine`]) — and, with parts placed, a
+    /// balloon per line with its item number, pointing at its part.
     #[serde(default)]
     pub bom: bool,
 }
@@ -820,112 +822,110 @@ fn draw_thread<S: Scalar>(
         scale,
         options,
     } = *seen;
+    let end = start.add(&along.prod_scalar(S::from_f64(thread.length)));
+    let drawn = if thread.internal {
+        thread.major_diameter
+    } else {
+        thread.minor_diameter
+    } / 2.0;
+    let mut labelled = !label;
+    for p in placed
+        .iter()
+        .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso))
     {
-        let end = start.add(&along.prod_scalar(S::from_f64(thread.length)));
-        let drawn = if thread.internal {
-            thread.major_diameter
-        } else {
-            thread.minor_diameter
-        } / 2.0;
-        let mut labelled = !label;
-        for p in placed
+        let frame = &p.view.frame;
+        let look = frame.direction.vector();
+        let seen = if look.prod_dot(&along).could_be_equal(S::ZERO) {
+            ThreadSeen::Side
+        } else if look
+            .prod_cross(&along)
+            .to_array()
             .iter()
-            .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso))
+            .all(|c| c.could_be_equal(S::ZERO))
         {
-            let frame = &p.view.frame;
-            let look = frame.direction.vector();
-            let seen = if look.prod_dot(&along).could_be_equal(S::ZERO) {
-                ThreadSeen::Side
-            } else if look
-                .prod_cross(&along)
-                .to_array()
-                .iter()
-                .all(|c| c.could_be_equal(S::ZERO))
-            {
-                ThreadSeen::End
-            } else {
-                continue;
-            };
-            let place = placer(p, scale);
-            let at = |q: &Vector3<S>| {
-                let v = frame.project_point(q);
-                place([v[0].to_f64(), v[1].to_f64()])
-            };
-            // Whether the threaded face is seen: from the side, at its
-            // point nearest the eye halfway along — on a shaft that is
-            // in front, in a hole behind the material round it; end on,
-            // where the thread is drawn at its end nearer the eye.
-            let (probe, label_at) = match seen {
-                ThreadSeen::Side => {
-                    let middle = start.add(&along.prod_scalar(S::from_f64(thread.length / 2.0)));
-                    (
-                        middle.add(&frame.toward_eye().prod_scalar(thread.radius)),
-                        at(&end),
-                    )
-                }
-                ThreadSeen::End => {
-                    let near = if frame
-                        .direction
-                        .dot(&start)
-                        .definitely_greater(frame.direction.dot(&end))
-                    {
-                        end
-                    } else {
-                        start
-                    };
-                    let frame_there = geop_ops::operation::frame_along(near, &along)?;
-                    let side = *frame_there.u();
-                    let c = at(&near);
-                    let reach = scale * drawn * std::f64::consts::FRAC_1_SQRT_2;
-                    (
-                        near.add(&side.prod_scalar(S::from_f64(drawn))),
-                        [c[0] + reach, c[1] + reach],
-                    )
-                }
-            };
-            let visible = scene.point_seen(frame, probe)?;
-            if !visible && !options.hidden_lines {
-                continue;
+            ThreadSeen::End
+        } else {
+            continue;
+        };
+        let place = placer(p, scale);
+        let at = |q: &Vector3<S>| {
+            let v = frame.project_point(q);
+            place([v[0].to_f64(), v[1].to_f64()])
+        };
+        // Whether the threaded face is seen: from the side, at its
+        // point nearest the eye halfway along — on a shaft that is
+        // in front, in a hole behind the material round it; end on,
+        // where the thread is drawn at its end nearer the eye.
+        let (probe, label_at) = match seen {
+            ThreadSeen::Side => {
+                let middle = start.add(&along.prod_scalar(S::from_f64(thread.length / 2.0)));
+                (
+                    middle.add(&frame.toward_eye().prod_scalar(thread.radius)),
+                    at(&end),
+                )
             }
-            let layer = if visible {
-                Layer::Thread
-            } else {
-                Layer::Hidden
-            };
-            match seen {
-                ThreadSeen::Side => {
-                    let off = look
-                        .prod_cross(&along)
-                        .normalize()?
-                        .prod_scalar(S::from_f64(drawn));
-                    for off in [off, off.neg()] {
-                        sheet.stroke(layer, Shape::Line(at(&start.add(&off)), at(&end.add(&off))));
-                    }
-                }
-                ThreadSeen::End => {
-                    // Open in the quarter up and to the right, as drafting
-                    // leaves it, a little turned.
-                    sheet.stroke(
-                        layer,
-                        Shape::Arc {
-                            center: at(&start),
-                            radius: scale * drawn,
-                            start: 100f64.to_radians(),
-                            end: 10f64.to_radians(),
-                        },
-                    );
+            ThreadSeen::End => {
+                let near = if frame
+                    .direction
+                    .dot(&start)
+                    .definitely_greater(frame.direction.dot(&end))
+                {
+                    end
+                } else {
+                    start
+                };
+                let frame_there = geop_ops::operation::frame_along(near, &along)?;
+                let side = *frame_there.u();
+                let c = at(&near);
+                let reach = scale * drawn * std::f64::consts::FRAC_1_SQRT_2;
+                (
+                    near.add(&side.prod_scalar(S::from_f64(drawn))),
+                    [c[0] + reach, c[1] + reach],
+                )
+            }
+        };
+        let visible = scene.point_seen(frame, probe)?;
+        if !visible && !options.hidden_lines {
+            continue;
+        }
+        let layer = if visible {
+            Layer::Thread
+        } else {
+            Layer::Hidden
+        };
+        match seen {
+            ThreadSeen::Side => {
+                let off = look
+                    .prod_cross(&along)
+                    .normalize()?
+                    .prod_scalar(S::from_f64(drawn));
+                for off in [off, off.neg()] {
+                    sheet.stroke(layer, Shape::Line(at(&start.add(&off)), at(&end.add(&off))));
                 }
             }
-            if !labelled {
-                sheet.label(
-                    Layer::Dimension,
-                    [label_at[0] + 1.5, label_at[1] + 1.5],
-                    TEXT,
-                    Anchor::Start,
-                    thread.designation.clone(),
+            ThreadSeen::End => {
+                // Open in the quarter up and to the right, as drafting
+                // leaves it, a little turned.
+                sheet.stroke(
+                    layer,
+                    Shape::Arc {
+                        center: at(&start),
+                        radius: scale * drawn,
+                        start: 100f64.to_radians(),
+                        end: 10f64.to_radians(),
+                    },
                 );
-                labelled = true;
             }
+        }
+        if !labelled {
+            sheet.label(
+                Layer::Dimension,
+                [label_at[0] + 1.5, label_at[1] + 1.5],
+                TEXT,
+                Anchor::Start,
+                thread.designation.clone(),
+            );
+            labelled = true;
         }
     }
     Ok(())
@@ -1336,6 +1336,10 @@ fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
 /// every other part cut, so that two parts cut side by side tell apart.
 type Hatched<S> = (Vec<NurbCurve2D<S>>, bool);
 
+/// A body's part cut, with the cutting plane's origin and normal in its
+/// own frame.
+type Cut<S> = (Part<S>, Vector3<S>, Vector3<S>);
+
 /// The drawing's bodies (`scene`, of `part`) cut at `plane`, seen from the
 /// side its normal points to, and their cut faces' boundaries for hatching.
 ///
@@ -1377,7 +1381,7 @@ fn section_view<S: Scalar>(
     let frame = ViewFrame::looking(normal.neg(), up)?;
     // Each body as it is drawn: whole, or its part cut where the plane is
     // in its own frame.
-    let mut cuts: Vec<(usize, Option<(Part<S>, Vector3<S>, Vector3<S>)>)> = Vec::new();
+    let mut cuts: Vec<(usize, Option<Cut<S>>)> = Vec::new();
     for (k, body) in scene.bodies.iter().enumerate() {
         if body.model().solids.is_empty() {
             cuts.push((k, None));

@@ -364,9 +364,7 @@ pub(crate) fn seen<S: Scalar>(
 
 /// The ray length that clears every occluder from anywhere on them: twice
 /// the diagonal of their boxes' box.
-pub(crate) fn ray_length<'o, S: Scalar>(
-    occluders: impl IntoIterator<Item = &'o Occluder<S>>,
-) -> S {
+pub(crate) fn ray_length<'o, S: Scalar>(occluders: impl IntoIterator<Item = &'o Occluder<S>>) -> S {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
     for o in occluders {

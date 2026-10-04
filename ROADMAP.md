@@ -71,7 +71,8 @@ Each item names the workstream that delivers it (see below). Items marked
 - STEP AP214/AP242 import and export of B-rep solids, validated against a
   downloaded public corpus. — `step`
 - Drawings: projected views with hidden lines, dimensions, export to SVG and
-  DXF. — `drawings`
+  DXF; assembly drawings with hidden lines across parts and ballooned bills
+  of materials. — `drawings`
 - URDF export of an assembly for robot simulation: links from rigidly
   held parts, revolute/continuous/prismatic joints, mimics from couplings,
   inertia, meshes; closed loops refused. — `urdf`
