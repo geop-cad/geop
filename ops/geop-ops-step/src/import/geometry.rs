@@ -368,6 +368,30 @@ impl Revolved {
         }
     }
 
+    /// The parallel at the profile parameter `v` — the circle about the
+    /// axis the profile's point there turns along — from the angle `from`
+    /// counter-clockwise about the axis to `to`: all the way round where
+    /// they are one.
+    pub fn parallel<S: Scalar>(&self, v: f64, from: f64, to: f64) -> GeopResult<NurbCurve3D<S>> {
+        let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
+        let p = self.profile_point(v);
+        let [rho, _, h] = self.frame.local(p);
+        let at =
+            |angle: f64| -> GeopResult<Vector3<S>> { Ok(self.turn::<S>(angle)?.apply(&s3(p))) };
+        let start = at(from)?;
+        let end = if to == from { start } else { at(to)? };
+        Arc {
+            circle: Circle {
+                center: s3(self.frame.point([0.0, 0.0, h])),
+                normal: s3(self.frame.z),
+                radius: S::from_f64(rho),
+            },
+            start,
+            end,
+        }
+        .to_curve()
+    }
+
     pub fn axis<S: Scalar>(&self) -> GeopResult<Axis<S>> {
         Axis::try_new(
             Vector3::from_array(self.frame.origin.map(S::from_f64)),

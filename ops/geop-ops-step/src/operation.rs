@@ -54,18 +54,39 @@ pub fn add_bodies<S: Scalar>(
     // Checked on their own first: a body the file describes badly is
     // refused by name, before it is mixed into the part.
     let mut alone = Model::new();
-    for body in &bodies {
-        alone
+    // What the file calls each entity built, by its id in `alone`: for
+    // naming what a problem found mentions.
+    let mut file_names: Vec<(String, String)> = Vec::new();
+    for (k, body) in bodies.iter().enumerate() {
+        let built = alone
             .build_body(body.spec.clone())
             .map_err(|e| e.with_context(format!("building the body {:?}", body.label)))?;
+        let mut name = |id: String, name: &[String]| {
+            file_names.push((id, format!("s{k},{}", name.join(","))));
+        };
+        for (id, n) in built.vertices.iter().zip(&body.vertex_names) {
+            name(id.to_string(), n);
+        }
+        for (id, n) in built.edges.iter().zip(&body.edge_names) {
+            name(id.to_string(), n);
+        }
+        for (id, n) in built.faces.iter().zip(&body.face_names) {
+            name(id.to_string(), n);
+        }
     }
     if let Err(errors) = validate_fast(&ValidationParameters::default(), &alone) {
         let shown: Vec<String> = errors.iter().take(5).map(|e| e.to_string()).collect();
+        let shown = shown.join("; ");
+        let mentioned: Vec<String> = file_names
+            .iter()
+            .filter(|(id, _)| shown.contains(id.as_str()))
+            .map(|(id, name)| format!("{id} = {name}"))
+            .collect();
         return Err(GeopError::new(format!(
-            "the file's bodies are not valid in geop ({} problem{}): {}",
+            "the file's bodies are not valid in geop ({} problem{}): {shown} — where {}",
             errors.len(),
             if errors.len() == 1 { "" } else { "s" },
-            shown.join("; ")
+            mentioned.join(", ")
         )));
     }
     for (k, body) in bodies.into_iter().enumerate() {

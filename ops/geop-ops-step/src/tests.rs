@@ -433,3 +433,95 @@ fn a_sheet_round_trips() {
     let back = round_trip(&part);
     assert!(back.topology().solids.is_empty());
 }
+
+/// `component` placed at `pose`.
+fn placed(
+    component: &std::sync::Arc<geop_ops::Component<S>>,
+    pose: geop_core_math::primitives::Pose<S>,
+) -> geop_ops::Instance<S> {
+    geop_ops::Instance {
+        component: component.clone(),
+        pose,
+        parameter: None,
+        fixed: true,
+        flexible: false,
+    }
+}
+
+/// An assembly — a base plate placing a peg twice, once turned to lie along
+/// `x`, and a subassembly placing the same peg — is written as products:
+/// one per distinct component, each placement an occurrence. Read back, it
+/// is flattened into its solids where they are placed.
+#[test]
+fn an_assembly_is_written_as_products_and_occurrences() {
+    use geop_core_math::primitives::{Pose, Quaternion};
+    use std::{collections::BTreeSet, sync::Arc};
+    let component = |file: &str, part: Part<S>| {
+        Arc::new(geop_ops::Component::new(
+            file.into(),
+            part,
+            BTreeSet::from([file.to_string()]),
+        ))
+    };
+    let mut peg = Part::new();
+    revolved_cylinder(
+        &mut peg,
+        "c",
+        v(0.0, 0.0, 0.0),
+        S::from_f64(0.5),
+        S::from_f64(2.0),
+    )
+    .unwrap();
+    let peg = component("parts/peg.geop", peg);
+    let at = |x: f64, y: f64, z: f64| Pose::new(v(x, y, z), Quaternion::identity()).unwrap();
+    let mut sub = Part::new();
+    sub.add_instance(placed(&peg, at(0.0, 0.0, 1.0)), "p")
+        .unwrap();
+    let sub = component("sub.geop", sub);
+
+    let mut part = Part::new();
+    cube_solid(&mut part, "base", v(0.0, 0.0, -1.0), v(10.0, 10.0, 0.0)).unwrap();
+    part.add_instance(placed(&peg, at(2.0, 2.0, 0.0)), "a")
+        .unwrap();
+    // About `y` by a quarter turn: the peg's `z` onto `x`.
+    let half = std::f64::consts::FRAC_PI_4;
+    let turned = Pose::new(
+        v(9.0, 8.0, 0.5),
+        Quaternion::new(
+            S::from_f64(half.cos()),
+            S::ZERO,
+            S::from_f64(half.sin()),
+            S::ZERO,
+        ),
+    )
+    .unwrap();
+    part.add_instance(placed(&peg, turned), "b").unwrap();
+    part.add_instance(placed(&sub, at(8.0, 2.0, 0.0)), "s")
+        .unwrap();
+
+    let text = write_step(&part, "robot").unwrap();
+    // To check it in another CAD system: written where STEP_EXPORT_DIR says.
+    if let Some(dir) = std::env::var_os("STEP_EXPORT_DIR") {
+        std::fs::write(std::path::Path::new(&dir).join("robot.step"), &text).unwrap();
+    }
+    let count = |what: &str| text.matches(what).count();
+    assert_eq!(
+        count("=PRODUCT('"),
+        3,
+        "the assembly, the subassembly, the peg"
+    );
+    assert_eq!(count("NEXT_ASSEMBLY_USAGE_OCCURRENCE"), 4);
+    assert_eq!(count("ITEM_DEFINED_TRANSFORMATION"), 4);
+    assert_eq!(
+        count("MANIFOLD_SOLID_BREP"),
+        2,
+        "the base and the peg, once each"
+    );
+    assert!(text.contains("PRODUCT('peg','peg'"));
+
+    let back = import(&text);
+    let model = back.topology();
+    assert_eq!(model.solids.len(), 4, "the base and three pegs");
+    // The pegs reach z = 2 (a), 3 (in the subassembly) and x = 11 (b).
+    assert_bounds(model, [0.0, 0.0, -1.0], [11.0, 10.0, 3.0]);
+}
