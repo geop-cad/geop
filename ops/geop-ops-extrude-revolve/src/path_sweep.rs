@@ -27,6 +27,15 @@
 //! from the same frames, so it is consistent whatever they are exactly.
 //! They are worked out in plain numbers and taken as sharp, the way a
 //! subdivision point is.
+//!
+//! The profile can also change as it travels (see [`Control`]): twisted
+//! and scaled evenly along the path, or turned and scaled by guide rails so
+//! that its points on them follow them. No such sweep is a NURBS in general,
+//! so every span of it is sampled as a spline's is — the sections the
+//! carried frame with the profile mapped in it — except a line along which
+//! the map changes linearly, which stays exact. And it can keep facing the
+//! way it is drawn ([`Orientation::FixedNormal`]): then every point of it
+//! travels a copy of the path, and every span is exact.
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
@@ -40,7 +49,10 @@ use geop_core_topology::build::BuiltBody;
 use geop_ops::{Namer, Part};
 use serde::{Deserialize, Serialize};
 
-use crate::sweep::{Frame, Path, Span, SweepLoop, sweep};
+use crate::{
+    plain::{Plain, V, add, cross, dot, plain, scale, sub, unit},
+    sweep::{Frame, Path, Span, SweepLoop, sweep},
+};
 
 /// A path to sweep along: a chain of 3-D curves, each on `[0, 1]` and
 /// starting where the one before ends, named like a [`crate::common::Profile`]
@@ -104,11 +116,12 @@ pub enum Orientation {
     FixedNormal,
 }
 
-/// A guide rail: an open chain of curves starting on the profile's plane,
-/// which the profile's point there follows (see [`Control::rails`]), and
-/// what it is called in errors.
+/// A guide curve: an open chain of curves a point of the profile follows —
+/// a sweep's rail, starting on the profile's plane (see [`Control::rails`]),
+/// or a loft's guide, running from the first profile through every other
+/// (see [`crate::loft`]) — and what it is called in errors.
 #[derive(Clone, Debug)]
-pub struct Rail<S: Scalar> {
+pub struct Guide<S: Scalar> {
     pub name: String,
     pub chain: PathChain<S>,
 }
@@ -133,7 +146,7 @@ pub struct Control<S: Scalar> {
     pub orientation: Orientation,
     pub twist: f64,
     pub end_scale: f64,
-    pub rails: Vec<Rail<S>>,
+    pub rails: Vec<Guide<S>>,
 }
 
 impl<S: Scalar> Default for Control<S> {
@@ -592,80 +605,6 @@ fn carry<S: Scalar>(
 
 // ── along a spline, in plain numbers ────────────────────────────────────────
 
-type V = [f64; 3];
-
-fn add(a: V, b: V) -> V {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-fn sub(a: V, b: V) -> V {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-fn scale(a: V, k: f64) -> V {
-    [a[0] * k, a[1] * k, a[2] * k]
-}
-fn dot(a: V, b: V) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-fn cross(a: V, b: V) -> V {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-fn unit(a: V) -> V {
-    scale(a, 1.0 / dot(a, a).sqrt())
-}
-fn plain<S: Scalar>(v: &Vector3<S>) -> V {
-    [v[0].to_f64(), v[1].to_f64(), v[2].to_f64()]
-}
-
-/// A [`Frame`] in plain numbers, or a frame's derivative.
-#[derive(Clone, Copy, Debug)]
-struct Plain {
-    origin: V,
-    e1: V,
-    e2: V,
-}
-
-impl Plain {
-    fn of<S: Scalar>(frame: &Frame<S>) -> Self {
-        Plain {
-            origin: plain(&frame.origin),
-            e1: plain(&frame.e1),
-            e2: plain(&frame.e2),
-        }
-    }
-
-    /// The frame, taken as sharp (see the module docs).
-    fn frame<S: Scalar>(&self) -> Frame<S> {
-        let v = |a: V| Vector3::from_array(a.map(S::from_f64));
-        Frame {
-            origin: v(self.origin),
-            e1: v(self.e1),
-            e2: v(self.e2),
-        }
-    }
-
-    /// `self + h derivative`.
-    fn step(&self, derivative: &Plain, h: f64) -> Self {
-        Plain {
-            origin: add(self.origin, scale(derivative.origin, h)),
-            e1: add(self.e1, scale(derivative.e1, h)),
-            e2: add(self.e2, scale(derivative.e2, h)),
-        }
-    }
-
-    /// `self - other`: how far `other` is from `self`, as a derivative.
-    fn minus(&self, other: &Plain) -> Self {
-        Plain {
-            origin: sub(self.origin, other.origin),
-            e1: sub(self.e1, other.e1),
-            e2: sub(self.e2, other.e2),
-        }
-    }
-}
-
 /// A frame's sample along a span: the frame, its derivative along the
 /// span's parameter, and the point of the path it is at.
 #[derive(Clone, Copy, Debug)]
@@ -886,7 +825,7 @@ fn in_plane(frame: &Plain, x: V) -> [f64; 2] {
 /// A rail followed along the sweep: where along it the last section
 /// crossed it, as a parameter running `0..n` over its `n` curves.
 struct Tracked<'a, S: Scalar> {
-    rail: &'a Rail<S>,
+    rail: &'a Guide<S>,
     chain: PathChain<S>,
     tau: f64,
 }
@@ -894,7 +833,7 @@ struct Tracked<'a, S: Scalar> {
 impl<'a, S: Scalar> Tracked<'a, S> {
     /// `rail`, run from its end on the profile's `plane` — an error if
     /// neither end could be on it.
-    fn new(rail: &'a Rail<S>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
+    fn new(rail: &'a Guide<S>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
         let joints = rail.chain.joints()?;
         let on_plane = |p: &Vector3<S>| plane.to_uvw(p)[2].could_be_equal(S::ZERO);
         let chain = if rail.chain.is_closed() {
@@ -1773,14 +1712,14 @@ mod tests {
         part
     }
 
-    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Rail<S> {
-        Rail {
+    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Guide<S> {
+        Guide {
             name: name.into(),
             chain: chain(curves, false),
         }
     }
 
-    fn with_rails<S: Scalar>(rails: Vec<Rail<S>>) -> Control<S> {
+    fn with_rails<S: Scalar>(rails: Vec<Guide<S>>) -> Control<S> {
         Control {
             rails,
             ..Control::default()

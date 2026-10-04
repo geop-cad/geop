@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     common::embed_curve,
-    path_sweep::{Control, Orientation, PathChain, Rail, sweep_along},
+    path_sweep::{Control, Guide, Orientation, PathChain, sweep_along},
     sweep::SweepLoop,
 };
 
@@ -253,7 +253,7 @@ impl Operation for Sweep {
                 )))
                 .with_context(ctx);
             }
-            rails.push(Rail {
+            rails.push(Guide {
                 name: name.clone(),
                 chain: path_chain(&part, name).with_context(ctx)?,
             });
@@ -287,7 +287,7 @@ impl Operation for Sweep {
 /// The curves of the sketch `name` of `part` as a path or a rail: its one
 /// open chain, or its one loop, in space, named after the sketch's elements
 /// as a profile is (see [`sketch_profile`]).
-fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>> {
+pub(super) fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>> {
     let placed = part.sketch(part.sketch_id(name)?)?;
     let sketch = &placed.sketch;
     let geometry = sketch.enclose::<S>()?;
