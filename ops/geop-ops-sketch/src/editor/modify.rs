@@ -50,18 +50,6 @@ pub(super) fn offset_to(
 }
 
 impl<S: Scalar> Editing<'_, S> {
-    /// The curves selected, in the order they were.
-    pub(super) fn selected_curves(&self) -> Vec<CurveId> {
-        let (picks, _) = selected(self.sketch(), self.selection);
-        picks
-            .into_iter()
-            .filter_map(|p| match p {
-                Pick::Curve(c) => Some(c),
-                Pick::Point(_) => None,
-            })
-            .collect()
-    }
-
     /// `change` made to the sketch, and the sketch solved — or, refused,
     /// nothing changed, and the hint saying why.
     fn change<T>(&mut self, change: impl FnOnce(&mut Sketch) -> GeopResult<T>) -> Option<T> {
@@ -124,7 +112,7 @@ impl<S: Scalar> Editing<'_, S> {
             }
             return;
         }
-        let curves = self.selected_curves();
+        let curves = selected_curves(self.sketch(), self.selection);
         if curves.is_empty() {
             return;
         }
@@ -152,8 +140,7 @@ impl<S: Scalar> Editing<'_, S> {
                 self.s.error = Some(format!("{curve} is no line: mirror across a line"));
             }
             None => {
-                let curves: Vec<CurveId> = self
-                    .selected_curves()
+                let curves: Vec<CurveId> = selected_curves(self.sketch(), self.selection)
                     .into_iter()
                     .filter(|&c| c != curve)
                     .collect();
@@ -174,7 +161,7 @@ impl<S: Scalar> Editing<'_, S> {
             self.s.error = Some("click a line for the pattern's direction".into());
             return;
         };
-        let curves = self.selected_curves();
+        let curves = selected_curves(self.sketch(), self.selection);
         let CurveKind::Line { start, end } = self.sketch().curves[&line].kind else {
             return;
         };
@@ -202,7 +189,7 @@ impl<S: Scalar> Editing<'_, S> {
             self.s.error = Some("click the pattern's center: a point, or a circle".into());
             return;
         };
-        let curves = self.selected_curves();
+        let curves = selected_curves(self.sketch(), self.selection);
         let count = self.s.modify.count;
         let pitch = self.s.modify.pitch;
         let angle = pitch.unwrap_or(360.0 / count as f64).to_radians();
@@ -250,8 +237,7 @@ impl<S: Scalar> Editing<'_, S> {
     /// as it reaches, and half as far again.
     pub(super) fn default_spacing(&self) -> f64 {
         let sketch = self.sketch();
-        let points: Vec<P2> = self
-            .selected_curves()
+        let points: Vec<P2> = selected_curves(self.sketch(), self.selection)
             .iter()
             .flat_map(|&c| polyline(sketch, c))
             .collect();

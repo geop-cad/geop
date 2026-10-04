@@ -274,7 +274,7 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
             .group("Modify")
             .active(s.tool == Tool::Trim),
     );
-    let curves_selected = picks.iter().any(|p| matches!(p, Pick::Curve(_)));
+    let curves_selected = !selected_curves(sketch, keys).is_empty();
     for i in &ModifyTool::ALL {
         let active = s.tool == Tool::Modify(i.tool);
         let action = Action::new(i.name, i.label)

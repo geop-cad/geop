@@ -1318,7 +1318,12 @@ fn bounds(s: &Sketch, curves: &[CurveId]) -> [f64; 4] {
     for c in curves {
         for p in s.curves[c].points() {
             let q = xy(s, p);
-            b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+            b = [
+                b[0].min(q[0]),
+                b[1].min(q[1]),
+                b[2].max(q[0]),
+                b[3].max(q[1]),
+            ];
         }
     }
     b
@@ -1394,7 +1399,9 @@ fn offsets_follow_their_chain() {
     e.click(0.7, -0.05);
     assert_eq!(e.drawn_curves().len(), rectangle.len() + 8);
     assert_eq!(e.curves_of("arc").len(), 4, "a round corner each");
-    let offset = e.count(|c| matches!(c, Constraint::Offset { value, .. } if (value.to_f64() - 0.25).abs() < 1e-9));
+    let offset = e.count(
+        |c| matches!(c, Constraint::Offset { value, .. } if (value.to_f64() - 0.25).abs() < 1e-9),
+    );
     assert_eq!(offset, 1, "{:?}", e.sketch().constraints);
     assert!(e.presentation.prompt.is_some(), "the distance is asked for");
     e.dialog("prompt", Value::Text("0.1".into()));
@@ -1487,9 +1494,14 @@ fn mirrors_close_half_outlines() {
     assert!(e.report().converged);
     let s = e.sketch();
     assert!(
-        e.drawn_points().iter().any(|&p| close(xy(s, p), [-0.8, 0.3])),
+        e.drawn_points()
+            .iter()
+            .any(|&p| close(xy(s, p), [-0.8, 0.3])),
         "{:?}",
-        e.drawn_points().iter().map(|&p| xy(s, p)).collect::<Vec<_>>()
+        e.drawn_points()
+            .iter()
+            .map(|&p| xy(s, p))
+            .collect::<Vec<_>>()
     );
 
     // The line first, then what to mirror.
@@ -1500,7 +1512,10 @@ fn mirrors_close_half_outlines() {
     e.click(3.0, 0.0);
     e.click(2.2, 2.0);
     let centers = e.circle_centers();
-    assert!(centers.iter().any(|&c| close(c, [2.0, -2.0])), "{centers:?}");
+    assert!(
+        centers.iter().any(|&c| close(c, [2.0, -2.0])),
+        "{centers:?}"
+    );
     assert!(e.has(|c| matches!(c, Constraint::Equal { .. })));
     assert_eq!(
         e.session().tool,
@@ -1579,10 +1594,17 @@ fn circular_patterns_spread_round_the_circle() {
     assert!(report.converged, "{report:?}");
     // Wherever the solve turned the original to, the copies are an eighth
     // of a turn apart all round.
-    let mut angles: Vec<f64> = e.circle_centers().iter().map(|c| c[1].atan2(c[0])).collect();
+    let mut angles: Vec<f64> = e
+        .circle_centers()
+        .iter()
+        .map(|c| c[1].atan2(c[0]))
+        .collect();
     angles.sort_by(f64::total_cmp);
     for w in angles.windows(2) {
-        assert!((w[1] - w[0] - std::f64::consts::FRAC_PI_4).abs() < 1e-6, "{angles:?}");
+        assert!(
+            (w[1] - w[0] - std::f64::consts::FRAC_PI_4).abs() < 1e-6,
+            "{angles:?}"
+        );
     }
 }
 
@@ -1675,7 +1697,10 @@ fn chamfers_bevel_corners() {
             _ => None,
         })
         .expect("the bevel");
-    assert!((dist(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6, "{bevel:?}");
+    assert!(
+        (dist(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6,
+        "{bevel:?}"
+    );
     e.sketch().enclose::<S>().unwrap();
 }
 

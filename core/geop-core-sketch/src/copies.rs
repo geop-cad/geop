@@ -19,7 +19,7 @@
 //! Positions here are where the copies are placed before the sketch is
 //! solved: free choices, computed in plain numbers (see [`crate::plain`]).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -161,7 +161,9 @@ impl<S: Scalar> Sketch<S> {
             }
         }
         if out.is_empty() {
-            return Err(GeopError::new("nothing to copy: pick curves besides the one copied by"));
+            return Err(GeopError::new(
+                "nothing to copy: pick curves besides the one copied by",
+            ));
         }
         Ok(out)
     }
@@ -204,11 +206,10 @@ impl<S: Scalar> Sketch<S> {
                 continue;
             }
             for p in points {
-                let rep = class[&p];
-                if !image.contains_key(&rep) {
+                if let Entry::Vacant(slot) = image.entry(class[&p]) {
                     let q = self.new_point_at(reflect(xy(self, p), a, b));
                     self.constrain(Constraint::Symmetric { a: p, b: q, line });
-                    image.insert(rep, q);
+                    slot.insert(q);
                 }
             }
             let mapped = |p: PointId| image[&class[&p]];
@@ -224,7 +225,12 @@ impl<S: Scalar> Sketch<S> {
     /// The construction curve runs from a point of the original — for a
     /// circular pattern the one furthest from the center — to that point's
     /// first copy. A point at a circular pattern's center is its own copy.
-    pub fn pattern(&mut self, curves: &[CurveId], step: &Step<S>, count: usize) -> GeopResult<Made> {
+    pub fn pattern(
+        &mut self,
+        curves: &[CurveId],
+        step: &Step<S>,
+        count: usize,
+    ) -> GeopResult<Made> {
         if count < 2 {
             return Err(GeopError::new(format!(
                 "a pattern of {count} is no pattern: it takes 2 or more"
@@ -264,10 +270,8 @@ impl<S: Scalar> Sketch<S> {
                     direction
                 };
                 let anchor = sources[0];
-                let first = self.new_point_at(add(
-                    xy(self, anchor),
-                    scale(direction, spacing.to_f64()),
-                ));
+                let first =
+                    self.new_point_at(add(xy(self, anchor), scale(direction, spacing.to_f64())));
                 let by = self.add_line(anchor, first);
                 self.set_construction(by, true);
                 self.constrain(Constraint::Parallel { a: along, b: by });
@@ -296,7 +300,10 @@ impl<S: Scalar> Sketch<S> {
                 let first = self.new_point_at(at);
                 let by = self.add_arc(anchor, first, angle);
                 self.set_construction(by, true);
-                self.constrain(Constraint::Center { point: center, curve: by });
+                self.constrain(Constraint::Center {
+                    point: center,
+                    curve: by,
+                });
                 let radii = [anchor, first].map(|p| {
                     let r = self.add_line(center, p);
                     self.set_construction(r, true);
@@ -480,7 +487,8 @@ impl<S: Scalar> Sketch<S> {
                 !own.contains(id)
                     && points.iter().any(|p| last.contains_key(&class[p]))
                     && points.iter().all(|p| {
-                        last.contains_key(&class[p]) || center.is_some_and(|m| class[&m] == class[p])
+                        last.contains_key(&class[p])
+                            || center.is_some_and(|m| class[&m] == class[p])
                     })
             })
             .map(|(&id, _)| id)
@@ -556,15 +564,26 @@ mod tests {
     /// A unit square at `(x, y)`, its corner fixed and its sides
     /// dimensioned: fully constrained.
     fn square(s: &mut Sketch<T>, x: f64, y: f64) -> Vec<CurveId> {
-        let p = [[x, y], [x + 1.0, y], [x + 1.0, y + 1.0], [x, y + 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
+        let p = [[x, y], [x + 1.0, y], [x + 1.0, y + 1.0], [x, y + 1.0]]
+            .map(|q| s.add_point(n(q[0]), n(q[1])));
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
-        s.constrain(Constraint::Fix { point: p[0], x: n(x), y: n(y) });
+        s.constrain(Constraint::Fix {
+            point: p[0],
+            x: n(x),
+            y: n(y),
+        });
         s.constrain(Constraint::Horizontal { line: l[0] });
         s.constrain(Constraint::Vertical { line: l[1] });
         s.constrain(Constraint::Horizontal { line: l[2] });
         s.constrain(Constraint::Vertical { line: l[3] });
-        s.constrain(Constraint::Length { curve: l[0], value: n(1.0) });
-        s.constrain(Constraint::Length { curve: l[1], value: n(1.0) });
+        s.constrain(Constraint::Length {
+            curve: l[0],
+            value: n(1.0),
+        });
+        s.constrain(Constraint::Length {
+            curve: l[1],
+            value: n(1.0),
+        });
         l
     }
 
@@ -580,14 +599,21 @@ mod tests {
     fn a_mirrored_half_closes_on_the_line() {
         let mut s = Sketch::<T>::new();
         let axis = y_axis(&mut s);
-        let p = [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
+        let p =
+            [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
         let bottom = s.add_line(p[0], p[1]);
         let round = s.add_arc(p[1], p[2], n(PI));
         let top = s.add_line(p[2], p[3]);
         for q in [p[0], p[3]] {
-            s.constrain(Constraint::PointOnCurve { point: q, curve: axis });
+            s.constrain(Constraint::PointOnCurve {
+                point: q,
+                curve: axis,
+            });
         }
-        s.constrain(Constraint::Tangent { a: bottom, b: round });
+        s.constrain(Constraint::Tangent {
+            a: bottom,
+            b: round,
+        });
         s.constrain(Constraint::Tangent { a: round, b: top });
         let made = s.mirror(&[bottom, round, top, axis], axis).unwrap();
         assert_eq!(made.len(), 3);
@@ -597,17 +623,26 @@ mod tests {
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
         // The original's radius made 0.75: the image's follows.
-        s.constrain(Constraint::Radius { curve: round, value: n(0.75) });
+        s.constrain(Constraint::Radius {
+            curve: round,
+            value: n(0.75),
+        });
         assert!(s.solve().unwrap().converged);
         let image = made[1];
         let Some(Plain::Round { radius, center, .. }) = Plain::of(&s, image, false) else {
             panic!("an arc");
         };
-        let Some(Plain::Round { center: original, .. }) = Plain::of(&s, round, false) else {
+        let Some(Plain::Round {
+            center: original, ..
+        }) = Plain::of(&s, round, false)
+        else {
             panic!("an arc");
         };
         assert!((radius - 0.75).abs() < 1e-7, "{radius}");
-        assert!(close(center, [-original[0], original[1]]), "{center:?} {original:?}");
+        assert!(
+            close(center, [-original[0], original[1]]),
+            "{center:?} {original:?}"
+        );
         s.enclose::<T>().unwrap();
     }
 
@@ -624,14 +659,20 @@ mod tests {
         let arc = s.add_arc(a, b, n(-PI));
         let down = s.add_line(b, c);
         for (q, at) in [(a, [1.0, 0.0]), (b, [3.0, 0.0]), (c, [3.0, -1.0])] {
-            s.constrain(Constraint::Fix { point: q, x: n(at[0]), y: n(at[1]) });
+            s.constrain(Constraint::Fix {
+                point: q,
+                x: n(at[0]),
+                y: n(at[1]),
+            });
         }
         // Its end square to the line down: a half circle, by tangency.
         s.constrain(Constraint::Tangent { a: arc, b: down });
         let made = s.mirror(&[arc], axis).unwrap();
         let report = s.solve().unwrap();
         assert!(report.converged && report.dof == 0, "{report:?}");
-        assert!(matches!(s.curves[&made[0]].kind, CurveKind::Arc { sweep, .. } if (sweep.to_f64() + PI).abs() < 1e-9));
+        assert!(
+            matches!(s.curves[&made[0]].kind, CurveKind::Arc { sweep, .. } if (sweep.to_f64() + PI).abs() < 1e-9)
+        );
         s.enclose::<T>().unwrap();
     }
 
@@ -695,13 +736,31 @@ mod tests {
         let o = s.add_fixed_point(n(0.0), n(0.0));
         let c = s.add_point(n(2.0), n(0.0));
         let hole = s.add_circle(c, n(0.25));
-        s.constrain(Constraint::Fix { point: c, x: n(2.0), y: n(0.0) });
-        s.constrain(Constraint::Radius { curve: hole, value: n(0.25) });
+        s.constrain(Constraint::Fix {
+            point: c,
+            x: n(2.0),
+            y: n(0.0),
+        });
+        s.constrain(Constraint::Radius {
+            curve: hole,
+            value: n(0.25),
+        });
         let tip = s.add_point(n(1.0), n(0.5));
         let spoke = s.add_line(o, tip);
-        s.constrain(Constraint::Fix { point: tip, x: n(1.0), y: n(0.5) });
+        s.constrain(Constraint::Fix {
+            point: tip,
+            x: n(1.0),
+            y: n(0.5),
+        });
         let made = s
-            .pattern(&[hole, spoke], &Step::Round { center: o, angle: n(PI / 3.0) }, 6)
+            .pattern(
+                &[hole, spoke],
+                &Step::Round {
+                    center: o,
+                    angle: n(PI / 3.0),
+                },
+                6,
+            )
             .unwrap();
         assert_eq!(s.pattern_count(made.by), Some(6));
         let report = s.solve().unwrap();
@@ -717,13 +776,20 @@ mod tests {
         assert_eq!(centers.len(), 6);
         for k in 0..6 {
             let a = PI / 3.0 * k as f64;
-            assert!(centers.iter().any(|&q| close(q, [2.0 * a.cos(), 2.0 * a.sin()])), "{k}: {centers:?}");
+            assert!(
+                centers
+                    .iter()
+                    .any(|&q| close(q, [2.0 * a.cos(), 2.0 * a.sin()])),
+                "{k}: {centers:?}"
+            );
         }
         // Every spoke starts at the origin itself.
         let spokes = s
             .curves
             .values()
-            .filter(|k| !k.construction && matches!(k.kind, CurveKind::Line { start, .. } if start == o))
+            .filter(|k| {
+                !k.construction && matches!(k.kind, CurveKind::Line { start, .. } if start == o)
+            })
             .count();
         assert_eq!(spokes, 6);
         s.set_pattern_count(made.by, 8).unwrap();
@@ -740,11 +806,25 @@ mod tests {
         let e = s.mirror(&[circle], circle).unwrap_err();
         assert!(e.root_message().contains("no line"), "{e}");
         let e = s
-            .pattern(&[circle], &Step::Round { center: c, angle: n(1.0) }, 3)
+            .pattern(
+                &[circle],
+                &Step::Round {
+                    center: c,
+                    angle: n(1.0),
+                },
+                3,
+            )
             .unwrap_err();
         assert!(e.root_message().contains("at the center"), "{e}");
         let e = s
-            .pattern(&[circle], &Step::Round { center: c, angle: n(1.0) }, 1)
+            .pattern(
+                &[circle],
+                &Step::Round {
+                    center: c,
+                    angle: n(1.0),
+                },
+                1,
+            )
             .unwrap_err();
         assert!(e.root_message().contains("2 or more"), "{e}");
     }

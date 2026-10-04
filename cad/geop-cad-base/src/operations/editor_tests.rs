@@ -2194,9 +2194,8 @@ fn sketch_tools_draw_profiles_that_extrude() {
             },
         )
     };
-    let key = |editor: &mut Editor<S>, key: &str| {
-        event(editor, StepEditEvent::Key { key: key.into() })
-    };
+    let key =
+        |editor: &mut Editor<S>, key: &str| event(editor, StepEditEvent::Key { key: key.into() });
     let tool = |editor: &mut Editor<S>, name: &str| {
         editor.handle(dialog("tool", Value::Choice(name.into())))
     };

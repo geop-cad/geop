@@ -222,7 +222,10 @@ impl ModifyTool {
 
     /// Whether it starts from a selection made beforehand.
     fn needs_selection(self) -> bool {
-        matches!(self, ModifyTool::LinearPattern | ModifyTool::CircularPattern)
+        matches!(
+            self,
+            ModifyTool::LinearPattern | ModifyTool::CircularPattern
+        )
     }
 }
 
@@ -429,6 +432,19 @@ fn selected(sketch: &Sketch, keys: &[String]) -> (Vec<Pick>, Vec<ConstraintId>) 
         }
     }
     (picks, constraints)
+}
+
+/// The curves among the selection `keys` that `sketch` has, in the order
+/// they were picked.
+fn selected_curves(sketch: &Sketch, keys: &[String]) -> Vec<CurveId> {
+    selected(sketch, keys)
+        .0
+        .into_iter()
+        .filter_map(|p| match p {
+            Pick::Curve(c) => Some(c),
+            Pick::Point(_) => None,
+        })
+        .collect()
 }
 
 /// The key of the visual among `visuals` the pointer is over, trying the

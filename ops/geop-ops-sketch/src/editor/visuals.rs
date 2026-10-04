@@ -383,14 +383,7 @@ fn offset_preview(
     selection: &[String],
     cursor: P2,
 ) -> Vec<Vec<P2>> {
-    let (picks, _) = selected(&args.sketch, selection);
-    let curves: Vec<CurveId> = picks
-        .into_iter()
-        .filter_map(|p| match p {
-            Pick::Curve(c) => Some(c),
-            Pick::Point(_) => None,
-        })
-        .collect();
+    let curves = selected_curves(&args.sketch, selection);
     if curves.is_empty() {
         return Vec::new();
     }

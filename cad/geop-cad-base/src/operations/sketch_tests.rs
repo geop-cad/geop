@@ -1048,7 +1048,11 @@ mod tools {
         let part = extruded(sketch, 0.4);
         // The plate's six faces and a wall for each of the nine holes, at
         // least: none of them merged or lost.
-        assert!(part.topology().faces.len() >= 15, "{}", part.topology().faces.len());
+        assert!(
+            part.topology().faces.len() >= 15,
+            "{}",
+            part.topology().faces.len()
+        );
     }
 
     /// Half a slot right of the `y` axis, its ends on the axis, mirrored
@@ -1106,6 +1110,11 @@ mod tools {
                 .map(|v| v.point[k].to_f64())
                 .fold(f64::MIN, f64::max)
         };
-        assert!((z(0) - 1.7).abs() < 1e-9 && (z(1) - 1.2).abs() < 1e-9, "{} {}", z(0), z(1));
+        assert!(
+            (z(0) - 1.7).abs() < 1e-9 && (z(1) - 1.2).abs() < 1e-9,
+            "{} {}",
+            z(0),
+            z(1)
+        );
     }
 }

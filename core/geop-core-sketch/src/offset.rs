@@ -171,7 +171,12 @@ impl<S: Scalar> Sketch<S> {
     /// to its left, to its right if negative — its corners as `corners`
     /// says (see the module docs). Returns the curves made, and the
     /// dimension of the distance.
-    pub fn offset(&mut self, curves: &[CurveId], distance: S, corners: Corners) -> GeopResult<Offsetted> {
+    pub fn offset(
+        &mut self,
+        curves: &[CurveId],
+        distance: S,
+        corners: Corners,
+    ) -> GeopResult<Offsetted> {
         let chain = self.chain(curves)?;
         let pieces_of: Vec<(CurveId, bool)> =
             chain.edges.iter().map(|e| (e.curve, e.reversed)).collect();
@@ -195,7 +200,11 @@ impl<S: Scalar> Sketch<S> {
                 return Err(too_far(c));
             }
             let circle = self.add_circle(center, S::from_f64(r));
-            let distance = self.constrain(Constraint::Offset { a: c, b: circle, value });
+            let distance = self.constrain(Constraint::Offset {
+                a: c,
+                b: circle,
+                value,
+            });
             return Ok(Offsetted {
                 curves: vec![circle],
                 distance,
@@ -375,7 +384,10 @@ impl<S: Scalar> Sketch<S> {
             if let Some(Joint::Round { from, to, sweep }) = joint_of.get(i)
                 && let Some(arc) = Plain::arc(*from, *to, *sweep)
             {
-                path.push((arc, format!("the arc round the corner after {}", pieces_of[i].0)));
+                path.push((
+                    arc,
+                    format!("the arc round the corner after {}", pieces_of[i].0),
+                ));
             }
         }
         let m = path.len();
@@ -400,7 +412,9 @@ impl<S: Scalar> Sketch<S> {
         let mut shared: Vec<Option<PointId>> = Vec::new();
         for joint in &joint_of {
             shared.push(match joint {
-                Joint::Shared { at, .. } => Some(self.add_point(S::from_f64(at[0]), S::from_f64(at[1]))),
+                Joint::Shared { at, .. } => {
+                    Some(self.add_point(S::from_f64(at[0]), S::from_f64(at[1])))
+                }
                 Joint::Round { .. } => None,
             });
         }
@@ -429,9 +443,13 @@ impl<S: Scalar> Sketch<S> {
             let (s, e) = if reversed { (e, s) } else { (s, e) };
             let curve = match (self.curves[&source].kind.clone(), trimmed[i]) {
                 (CurveKind::Line { .. }, _) => self.add_line(s, e),
-                (CurveKind::Arc { .. }, Plain::Round { span: Some((_, sweep)), .. }) => {
-                    self.add_arc(s, e, S::from_f64(if reversed { -sweep } else { sweep }))
-                }
+                (
+                    CurveKind::Arc { .. },
+                    Plain::Round {
+                        span: Some((_, sweep)),
+                        ..
+                    },
+                ) => self.add_arc(s, e, S::from_f64(if reversed { -sweep } else { sweep })),
                 (kind, _) => unreachable!("chained and trimmed as a line or arc: {kind:?}"),
             };
             made.push(curve);
@@ -443,9 +461,15 @@ impl<S: Scalar> Sketch<S> {
                     value,
                 }));
             } else if let CurveKind::Line { .. } = self.curves[&source].kind {
-                self.constrain(Constraint::Parallel { a: source, b: curve });
+                self.constrain(Constraint::Parallel {
+                    a: source,
+                    b: curve,
+                });
             } else {
-                self.constrain(Constraint::Concentric { a: source, b: curve });
+                self.constrain(Constraint::Concentric {
+                    a: source,
+                    b: curve,
+                });
             }
         }
         for (i, joint) in joint_of.iter().enumerate() {
@@ -511,7 +535,10 @@ impl<S: Scalar> Sketch<S> {
             CurveKind::Line { .. } => {
                 let across = self.add_line(end, image);
                 self.set_construction(across, true);
-                self.constrain(Constraint::Perpendicular { a: source, b: across });
+                self.constrain(Constraint::Perpendicular {
+                    a: source,
+                    b: across,
+                });
             }
             _ => {
                 let Some(Plain::Round { center, .. }) = Plain::of(self, source, false) else {
@@ -576,7 +603,12 @@ mod tests {
         for c in curves {
             for p in s.curves[c].points() {
                 let q = xy(s, p);
-                b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+                b = [
+                    b[0].min(q[0]),
+                    b[1].min(q[1]),
+                    b[2].max(q[0]),
+                    b[3].max(q[1]),
+                ];
             }
         }
         b
@@ -673,7 +705,7 @@ mod tests {
                 bounds(&s, &made.curves)
             );
             // The rectangle and its offset nest: one ring between them.
-        assert_eq!(s.regions().unwrap().len(), 1);
+            assert_eq!(s.regions().unwrap().len(), 1);
             s.enclose::<T>().unwrap();
         }
     }
@@ -682,8 +714,8 @@ mod tests {
     #[test]
     fn a_slot_offsets_into_a_slot() {
         let mut s = Sketch::<T>::new();
-        let p = [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]
-            .map(|q| s.add_point(n(q[0]), n(q[1])));
+        let p =
+            [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
         let bottom = s.add_line(p[0], p[1]);
         let right = s.add_arc(p[1], p[2], n(PI));
         let top = s.add_line(p[2], p[3]);

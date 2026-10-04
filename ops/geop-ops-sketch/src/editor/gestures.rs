@@ -8,10 +8,9 @@ use geop_ops::{
 };
 
 use super::drawing::{Built, Hints, construct, curve_ending_at};
-use crate::geometry::{angle_between, wrap};
 use super::trim::Plan;
 use super::*;
-use crate::geometry::segments_cross;
+use crate::geometry::{angle_between, segments_cross, wrap};
 use crate::references::{Reference, Source};
 
 impl<S: Scalar> Editing<'_, S> {
@@ -512,13 +511,8 @@ impl<S: Scalar> Editing<'_, S> {
     /// are, profile geometry again; reference geometry stays as it is. With no curve selected, switches
     /// whether what is drawn next is construction geometry.
     pub(super) fn toggle_construction(&mut self) {
-        let (picks, _) = selected(self.sketch(), self.selection);
-        let curves: Vec<CurveId> = picks
-            .iter()
-            .filter_map(|&p| match p {
-                Pick::Curve(c) => Some(c),
-                _ => None,
-            })
+        let curves: Vec<CurveId> = selected_curves(self.sketch(), self.selection)
+            .into_iter()
             // Reference geometry is construction geometry, always.
             .filter(|&c| self.args.reference_of(Pick::Curve(c)).is_none())
             .collect();

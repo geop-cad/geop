@@ -12,9 +12,7 @@
 use std::f64::consts::{PI, TAU};
 
 use super::*;
-use crate::geometry::{
-    angle_between, cross, dot, perp, rotate, scale, sweep_through, unit, wrap,
-};
+use crate::geometry::{angle_between, cross, dot, perp, rotate, scale, sweep_through, unit, wrap};
 
 /// Lines drawn within this slope of horizontal or vertical get that
 /// constraint.
@@ -168,7 +166,8 @@ fn auto_tangent(sketch: &mut Sketch, curve: CurveId) {
     let Some((start, end)) = sketch.curves.get(&curve).and_then(|c| c.endpoints()) else {
         return;
     };
-    let is_line = |sketch: &Sketch, c: CurveId| matches!(sketch.curves[&c].kind, CurveKind::Line { .. });
+    let is_line =
+        |sketch: &Sketch, c: CurveId| matches!(sketch.curves[&c].kind, CurveKind::Line { .. });
     for p in [start, end] {
         let Some(on) = leaving_tangent(sketch, curve, p) else {
             continue;
