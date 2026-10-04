@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     MAX_NODES,
-    hidden_lines::{LineKind, ProjectedView, ViewOptions, project_view},
+    hidden_lines::{LineKind, ProjectedView, ViewOptions, point_seen, project_view},
     min_subdivision_size,
     section::{cut_faces, section_part},
     sheet::{Anchor, Layer, P, Shape, Sheet, lift, strokes_of},
@@ -377,11 +377,151 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
         draw_dimension(&mut sheet, part, &placed, dimension, index, scale)
             .map_err(|e| ctx(e.with_context(format!("dimension {}: {dimension:?}", index + 1))))?;
     }
-    // Cosmetic threads, once parts carry them, are drawn here: thin
-    // lines at the thread's minor (external) or major (internal)
-    // diameter in the views that see the threaded face.
+    draw_threads(&mut sheet, part, &faces, &placed, scale, &options).with_context(&ctx)?;
     draw_frame(&mut sheet, args, scale, date);
     Ok(sheet)
+}
+
+/// How a view sees a thread's axis.
+enum ThreadSeen {
+    /// Square to the axis: the thread from the side.
+    Side,
+    /// Along the axis: the thread end on.
+    End,
+}
+
+/// The part's cosmetic threads, as drafting draws them, in every
+/// orthographic view seeing their axis from the side or end on: from the
+/// side two thin lines along the thread, at its minor diameter on a shaft
+/// and at its major diameter in a hole; end on, three quarters of a thin
+/// circle at that diameter. Each on [`Layer::Hidden`] where the threaded
+/// face is hidden there, and labelled with its designation in the first
+/// view that draws it. A view seeing the axis obliquely, and the section
+/// view, draw no threads.
+fn draw_threads<S: Scalar>(
+    sheet: &mut Sheet,
+    part: &Part<S>,
+    faces: &[FaceId],
+    placed: &[Placed<S>],
+    scale: f64,
+    options: &ViewOptions,
+) -> GeopResult<()> {
+    let model = part.topology();
+    let mut threads: Vec<_> = part.threads().collect();
+    threads.sort_by_key(|(name, _)| *name);
+    for (name, thread) in threads {
+        let ctx = |e: GeopError| e.with_context(format!("the cosmetic thread {name}"));
+        let (start, along) = (thread.axis.point, thread.axis.direction);
+        let end = start.add(&along.prod_scalar(S::from_f64(thread.length)));
+        let drawn = if thread.internal {
+            thread.major_diameter
+        } else {
+            thread.minor_diameter
+        } / 2.0;
+        let mut labelled = false;
+        for p in placed
+            .iter()
+            .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso))
+        {
+            let frame = &p.view.frame;
+            let look = frame.direction.vector();
+            let seen = if look.prod_dot(&along).could_be_equal(S::ZERO) {
+                ThreadSeen::Side
+            } else if look
+                .prod_cross(&along)
+                .to_array()
+                .iter()
+                .all(|c| c.could_be_equal(S::ZERO))
+            {
+                ThreadSeen::End
+            } else {
+                continue;
+            };
+            let place = placer(p, scale);
+            let at = |q: &Vector3<S>| {
+                let v = frame.project_point(q);
+                place([v[0].to_f64(), v[1].to_f64()])
+            };
+            // Whether the threaded face is seen: from the side, at its
+            // point nearest the eye halfway along — on a shaft that is
+            // in front, in a hole behind the material round it; end on,
+            // where the thread is drawn at its end nearer the eye.
+            let (probe, label_at) = match seen {
+                ThreadSeen::Side => {
+                    let middle = start.add(&along.prod_scalar(S::from_f64(thread.length / 2.0)));
+                    (
+                        middle.add(&frame.toward_eye().prod_scalar(thread.radius)),
+                        at(&end),
+                    )
+                }
+                ThreadSeen::End => {
+                    let near = if frame
+                        .direction
+                        .dot(&start)
+                        .definitely_greater(frame.direction.dot(&end))
+                    {
+                        end
+                    } else {
+                        start
+                    };
+                    let frame_there =
+                        geop_ops::operation::frame_along(near, &along).with_context(&ctx)?;
+                    let side = *frame_there.u();
+                    let c = at(&near);
+                    let reach = scale * drawn * std::f64::consts::FRAC_1_SQRT_2;
+                    (
+                        near.add(&side.prod_scalar(S::from_f64(drawn))),
+                        [c[0] + reach, c[1] + reach],
+                    )
+                }
+            };
+            let visible = point_seen(model, faces, frame, probe).with_context(&ctx)?;
+            if !visible && !options.hidden_lines {
+                continue;
+            }
+            let layer = if visible {
+                Layer::Thread
+            } else {
+                Layer::Hidden
+            };
+            match seen {
+                ThreadSeen::Side => {
+                    let off = look
+                        .prod_cross(&along)
+                        .normalize()
+                        .with_context(&ctx)?
+                        .prod_scalar(S::from_f64(drawn));
+                    for off in [off, off.neg()] {
+                        sheet.stroke(layer, Shape::Line(at(&start.add(&off)), at(&end.add(&off))));
+                    }
+                }
+                ThreadSeen::End => {
+                    // Open in the quarter up and to the right, as drafting
+                    // leaves it, a little turned.
+                    sheet.stroke(
+                        layer,
+                        Shape::Arc {
+                            center: at(&start),
+                            radius: scale * drawn,
+                            start: 100f64.to_radians(),
+                            end: 10f64.to_radians(),
+                        },
+                    );
+                }
+            }
+            if !labelled {
+                sheet.label(
+                    Layer::Dimension,
+                    [label_at[0] + 1.5, label_at[1] + 1.5],
+                    TEXT,
+                    Anchor::Start,
+                    thread.designation.clone(),
+                );
+                labelled = true;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Makes `cells` hold `key` at least `size`.

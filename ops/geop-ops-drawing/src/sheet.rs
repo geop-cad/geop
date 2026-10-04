@@ -25,16 +25,19 @@ pub enum Layer {
     Dimension,
     Hatch,
     Border,
+    /// Thin continuous lines: a cosmetic thread seen.
+    Thread,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 6] = [
+    pub const ALL: [Layer; 7] = [
         Layer::Visible,
         Layer::Hidden,
         Layer::Center,
         Layer::Dimension,
         Layer::Hatch,
         Layer::Border,
+        Layer::Thread,
     ];
 
     /// Its name, as a DXF layer and an SVG class.
@@ -46,6 +49,7 @@ impl Layer {
             Layer::Dimension => "DIMENSIONS",
             Layer::Hatch => "HATCH",
             Layer::Border => "BORDER",
+            Layer::Thread => "THREAD",
         }
     }
 }

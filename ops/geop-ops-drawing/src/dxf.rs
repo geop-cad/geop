@@ -24,6 +24,7 @@ fn color(layer: Layer) -> u8 {
         Layer::Center => 1,
         Layer::Dimension => 3,
         Layer::Hatch => 9,
+        Layer::Thread => 4,
     }
 }
 

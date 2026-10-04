@@ -1124,7 +1124,8 @@ fn the_arm_is_dragged_up_to_its_limit() {
     // would be past its limit too.
     assert_eq!(
         report.at_limit,
-        ["add_part(fore,m1).angle", "add_part(hand,m1).angle"]
+        ["add_part(fore,m1).angle", "add_part(hand,m1).angle"],
+        "{report:?} {moved:?}"
     );
     assert_eq!(
         moved["add_part(hand,m1).angle"],

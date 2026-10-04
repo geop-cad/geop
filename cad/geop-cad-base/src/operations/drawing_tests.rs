@@ -149,6 +149,100 @@ fn section_through_a_blind_hole_is_hatched() {
     assert!(!dxf.contains("LINE\n8\nHIDDEN\n"), "no hidden lines");
 }
 
+/// The hole plate's tapped M6 hole, 8 deep into the 10 mm plate, drawn as
+/// drafting draws an internal thread: from above, end on, three quarters
+/// of a thin circle at the major diameter, labelled `M6x1`; from the front
+/// and the right, two hidden lines at the major diameter, 6 apart, as deep
+/// as the thread runs. Without hidden lines, those go.
+#[test]
+fn a_tapped_hole_draws_its_thread() {
+    use geop_ops_drawing::sheet::{Layer, Shape};
+    let part = build(&examples::hole_plate());
+    let args = DrawingArgs {
+        scale: Some(2.0),
+        ..Default::default()
+    };
+    let sheet = compose(&part, &args, "").unwrap();
+    let arcs: Vec<f64> = sheet
+        .strokes
+        .iter()
+        .filter_map(|s| match (&s.layer, &s.shape) {
+            (
+                Layer::Thread,
+                Shape::Arc {
+                    radius, start, end, ..
+                },
+            ) => {
+                let mut sweep = end - start;
+                while sweep <= 0.0 {
+                    sweep += std::f64::consts::TAU;
+                }
+                assert!((sweep.to_degrees() - 270.0).abs() < 1e-9, "{sweep}");
+                Some(*radius / 2.0)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1, "one view sees the hole end on: {arcs:?}");
+    assert!(
+        (arcs[0] - 3.0).abs() < 1e-9,
+        "at the major radius: {arcs:?}"
+    );
+    let hidden: Vec<(f64, f64)> = sheet
+        .strokes
+        .iter()
+        .filter_map(|s| match (&s.layer, &s.shape) {
+            (Layer::Hidden, Shape::Line(a, b)) if (a[0] - b[0]).abs() < 1e-9 => {
+                Some((a[0], (a[1] - b[1]).abs() / 2.0))
+            }
+            _ => None,
+        })
+        .filter(|(_, length)| (length - 8.0).abs() < 1e-9)
+        .collect();
+    // The front and right views: the hole's walls, 5 apart (its tap drill),
+    // and the thread's two lines each, 6 apart.
+    assert_eq!(hidden.len(), 8, "{hidden:?}");
+    let apart = |d: f64| {
+        let mut pairs = 0;
+        for (i, a) in hidden.iter().enumerate() {
+            for b in &hidden[i + 1..] {
+                if ((a.0 - b.0).abs() / 2.0 - d).abs() < 1e-9 {
+                    pairs += 1;
+                }
+            }
+        }
+        pairs
+    };
+    assert_eq!((apart(5.0), apart(6.0)), (2, 2), "{hidden:?}");
+    assert_eq!(
+        sheet.labels.iter().filter(|l| l.text == "M6x1").count(),
+        1,
+        "labelled once"
+    );
+    assert!(
+        !sheet
+            .strokes
+            .iter()
+            .any(|s| s.layer == Layer::Thread && matches!(s.shape, Shape::Line(..))),
+        "no view sees the thread from the side"
+    );
+
+    let without = DrawingArgs {
+        hidden_lines: false,
+        ..args
+    };
+    let sheet = compose(&part, &without, "").unwrap();
+    assert!(!sheet.strokes.iter().any(|s| s.layer == Layer::Hidden));
+    assert_eq!(
+        sheet
+            .strokes
+            .iter()
+            .filter(|s| s.layer == Layer::Thread)
+            .count(),
+        1
+    );
+}
+
 /// `error` with every edge and face id it mentions followed by its name.
 fn named(part: &Part<S>, error: &impl std::fmt::Display) -> String {
     let mut text = error.to_string();

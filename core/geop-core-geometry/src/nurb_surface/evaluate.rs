@@ -5,28 +5,36 @@ use geop_core_math::{
 };
 
 use super::NurbSurface;
-use crate::spline::{de_boor, find_span};
+use crate::spline::{centered, de_boor, find_span};
 
 // ── 3-D surface ──────────────────────────────────────────────────────────────
 
 impl<S: Scalar> NurbSurface<S, 4> {
     /// Evaluate the surface at `(u, v)`, returning a 3-D Cartesian point.
+    ///
+    /// Relative to one of the control points acting there ([`centered`]),
+    /// so an interval `(u, v)` gives a point as wide as the patch is, not as
+    /// far from the origin as it lies.
     pub fn evaluate(&self, u: S, v: S) -> GeopResult<Vector3<S>> {
-        let p = self.degree_u;
-        let q = self.degree_v;
-        let nu = self.num_u;
+        let (p, q) = (self.degree_u, self.degree_v);
         let nv = self.num_v;
-
-        let span_u = find_span(p, &self.knot_vector_u, nu - 1, u)?;
-
-        let mut col_pts: Vec<Vector<S, 4>> = Vec::with_capacity(nv);
-        for j in 0..nv {
-            let row: Vec<Vector<S, 4>> = (0..nu).map(|i| self.control_points[i * nv + j]).collect();
-            col_pts.push(de_boor(p, &self.knot_vector_u, &row, u, span_u));
-        }
-
+        let span_u = find_span(p, &self.knot_vector_u, self.num_u - 1, u)?;
         let span_v = find_span(q, &self.knot_vector_v, nv - 1, v)?;
-        let hw = de_boor(q, &self.knot_vector_v, &col_pts, v, span_v);
+
+        // The `(p + 1) × (q + 1)` control points acting on the span, `u`
+        // index major; each column is evaluated at `u`, then those at `v`.
+        let local: Vec<Vector<S, 4>> = (span_u - p..=span_u)
+            .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
+            .map(|k| self.control_points[k])
+            .collect();
+        let (local, origin) = centered(&local);
+        let cols: Vec<Vector<S, 4>> = (0..=q)
+            .map(|j| {
+                let col: Vec<Vector<S, 4>> = (0..=p).map(|i| local[i * (q + 1) + j]).collect();
+                de_boor(p, &self.knot_vector_u[span_u - p..], &col, u, p)
+            })
+            .collect();
+        let hw = de_boor(q, &self.knot_vector_v[span_v - q..], &cols, v, q);
 
         let w = hw[3];
         if w.could_be_equal(S::ZERO) {
@@ -35,7 +43,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let inv_w = S::ONE.div(w)?;
         let mut result = Vector3::zero();
         for c in 0..3 {
-            result[c] = hw[c].mul(inv_w);
+            result[c] = origin[c].add(hw[c].mul(inv_w));
         }
         Ok(result)
     }
@@ -186,6 +194,47 @@ mod tests {
     #[test]
     fn quadratic_u_midpoint() {
         for_all_scalars!(check_quadratic_u_midpoint);
+    }
+
+    /// A quarter of a cylinder's cap (radius 3, at height 50), evaluated
+    /// over a wide parameter box near its centre: every point of it is at
+    /// height 50, and so is the enclosure — as narrow as at the origin.
+    /// Evaluated as `A / W` in absolute coordinates it spanned `[38, 94]`
+    /// in fixed point, and a cylinder 50 up along its own axis was found
+    /// to overlap its own other cap.
+    fn check_a_cap_far_from_the_origin_stays_flat<S: Scalar>() {
+        let f = S::from_f64;
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let z = 50.0;
+        // u round the quarter circle, v from the centre out.
+        let corners = [(1.0, 0.0, 1.0), (1.0, 1.0, h), (0.0, 1.0, 1.0)];
+        let points = corners
+            .iter()
+            .flat_map(|&(x, y, w)| {
+                [
+                    pt(0.0, 0.0, z * w, w),
+                    pt(3.0 * x * w, 3.0 * y * w, z * w, w),
+                ]
+            })
+            .collect();
+        let s = NurbSurface::try_new(
+            2,
+            1,
+            points,
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let (u, v) = (f(0.33).union(f(0.83)), f(0.0005).union(f(0.0008)));
+        for (u, v) in [(u, v), (f(0.5), f(0.5))] {
+            let p = s.evaluate(u, v).unwrap();
+            assert!(p[2].could_be_equal(f(z)), "{p:?}");
+            assert!(p[2].width().to_f64() < 1e-6, "{p:?}");
+        }
+    }
+    #[test]
+    fn a_cap_far_from_the_origin_stays_flat() {
+        for_all_scalars!(check_a_cap_far_from_the_origin_stays_flat);
     }
 
     fn check_everything_matches_any_point<S: Scalar>() {

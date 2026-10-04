@@ -14,12 +14,18 @@ use geop_core_math::{
 /// `T(c + dt) R(w) T(-c) q0`, computed as the rotation and translation it
 /// is: `R(w) r0`, and `c + dt + R(w) (t0 - c)`.
 ///
-/// `R(w)` is the unit quaternion `(1, w / 2)` normalized: equal to turning
-/// by `|w|` radians about `w` to first order, smooth everywhere — no square
-/// root of `|w|`, as the exponential needs — and every rotation short of a
-/// half turn is one. Turning about the body's own center rather than the
-/// world's origin keeps a turn of a body far from the origin from also
-/// moving it.
+/// `R(w)` is the unit quaternion of the modified Rodrigues parameters
+/// `σ = w / 4`: `((1 − |σ|²), 2σ) / (1 + |σ|²)`, turning by `4 atan(|w| /
+/// 4)` about `w` — `|w|` radians to first order. It is rational, so smooth
+/// everywhere and a unit quaternion by construction — no square root of
+/// `|w|`, as the exponential needs — and every rotation short of a full turn
+/// is one, a half turn at `|w| = 4` with the turn still changing half as
+/// fast as `w`. The quaternion `(1, w / 2)` normalized, used before, reaches
+/// a half turn only as `|w|` goes to infinity: a body that had to turn
+/// nearly half way round in one drag ran its variables off to hundreds,
+/// every step of the minimizer turning it by less, and the solve ran out of
+/// steps. Turning about the body's own center rather than the world's
+/// origin keeps a turn of a body far from the origin from also moving it.
 #[derive(Clone, Debug)]
 pub struct Placed<T: Scalar> {
     rotation: Quaternion<T>,
@@ -38,9 +44,16 @@ impl<T: Scalar> Placed<T> {
         dt: Vector3<T>,
         w: Vector3<T>,
     ) -> GeopResult<Self> {
-        let u = w.prod_scalar(T::ONE.div(T::TWO)?);
-        let inv = T::ONE.div(T::ONE.add(u.prod_dot(&u)).sqrt()?)?;
-        let turn = Quaternion::new(inv, u[0].mul(inv), u[1].mul(inv), u[2].mul(inv));
+        let sigma = w.prod_scalar(T::ONE.div(T::from_i64(4))?);
+        let s2 = sigma.prod_dot(&sigma);
+        let inv = T::ONE.div(T::ONE.add(s2))?;
+        let twice = T::TWO.mul(inv);
+        let turn = Quaternion::new(
+            T::ONE.sub(s2).mul(inv),
+            sigma[0].mul(twice),
+            sigma[1].mul(twice),
+            sigma[2].mul(twice),
+        );
         let turned = turn.rotation_columns()?;
         let by_turn = |v: &Vector3<T>| {
             turned[0]

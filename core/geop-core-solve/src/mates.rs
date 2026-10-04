@@ -14,7 +14,7 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank};
+use crate::{Mobility, Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank};
 
 mod joints;
 
@@ -455,14 +455,31 @@ impl<S: Scalar> Mate<S> {
                     _ => out.push(gap(a, b).expect("a point and anything").sub(value)),
                 }
             }
+            // One condition, so one row: `d·e = cos θ`, divided by `sin θ`,
+            // its slope there, so that the row is a length per turn like
+            // every other. The length of a cross product, as a second row,
+            // has no slope at all where the directions are parallel, and
+            // the two rows together say one thing twice. At 0° or 180° the
+            // condition is two — the directions parallel — and `d·e` has
+            // no slope there either: those are held as parallel ones are.
             Kind::Angle { value } => {
                 let (d, e) = (
-                    &a.direction().expect("validated").along,
-                    &b.direction().expect("validated").along,
+                    a.direction().expect("validated"),
+                    b.direction().expect("validated"),
                 );
                 let radians = value.mul(S::PI.div(S::from_i64(180))?);
-                out.push(d.prod_dot(e).sub(Dual::cst(radians.cos())).mul(l));
-                out.push(d.prod_cross(e).norm().sub(Dual::cst(radians.sin())).mul(l));
+                let sin = radians.sin();
+                if sin.could_be_equal(S::ZERO) {
+                    parallel(d, e, out);
+                } else {
+                    out.push(
+                        d.along
+                            .prod_dot(&e.along)
+                            .sub(Dual::cst(radians.cos()))
+                            .mul(Dual::cst(S::ONE.div(sin)?))
+                            .mul(l),
+                    );
+                }
             }
         }
         Ok(())
@@ -608,13 +625,27 @@ impl<S: Scalar> Assembly<S> {
                 center: b.center,
             })
             .collect();
-        let mut free: Vec<bool> = self.bodies.iter().map(|b| b.free).collect();
+        let mut free: Vec<Mobility> = self
+            .bodies
+            .iter()
+            .map(|b| {
+                if b.free {
+                    Mobility::Held
+                } else {
+                    Mobility::Fixed
+                }
+            })
+            .collect();
         for (joint, coordinates) in self.joints.iter().zip(&residuals.coordinates) {
             for (k, motion) in Motion::ALL.into_iter().enumerate() {
                 if coordinates[k].is_some() {
                     let c = joint.coordinate(motion);
                     params.push(Param::Scalar(to_variable(motion, c.value, self.scale)?));
-                    free.push(!c.held);
+                    free.push(if c.held {
+                        Mobility::Fixed
+                    } else {
+                        Mobility::Follows
+                    });
                 }
             }
         }
