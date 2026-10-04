@@ -137,10 +137,10 @@ fn describe<S: Scalar>(part: &Part<S>, reference: &mut Reference) {
                 continue;
             }
         };
-        let in_scope = reference
-            .scope
-            .as_ref()
-            .is_none_or(|scope| picked.entity.lies_in(scope));
+        let in_scope = reference.scope.as_ref().is_none_or(|scope| {
+            let solid = crate::ui::view::solid_bounded_by(part, &picked.entity);
+            picked.entity.lies_in(scope, solid.as_deref())
+        });
         if fits.is_empty() || !in_scope {
             picked.tone = Tone::Error;
             let scope = match &reference.scope {

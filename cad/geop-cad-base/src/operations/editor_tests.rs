@@ -444,3 +444,39 @@ fn seeking_back_before_a_fillet() {
         );
     }
 }
+
+/// A new shell picks its solid, then the faces to open — faces of that
+/// solid, clicked on it.
+#[test]
+fn new_shell_picks_its_faces_on_the_solid() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "shell".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    // From above, onto the box's top beside the hole.
+    let above = |x: f64, y: f64| pointer([x, y, 10.0], [0.0, 0.0, -1.0]);
+    let update = editor.handle(click(above(0.3, 0.3)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("faces", Value::Press));
+    let update = editor.handle(click(above(0.3, 0.3)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the shell is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    match &program.steps.last().unwrap().operation {
+        PartOperation::Shell(args) => {
+            assert_eq!(args.faces, ["extrude(box,end)"], "{args:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}

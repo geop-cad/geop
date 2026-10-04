@@ -301,6 +301,28 @@ fn solid_of_edge<S: Scalar>(model: &Model<S>, edge: EdgeId) -> Option<SolidId> {
     solid_of_face(model, model.get_coedge(coedge).ok()?.face)
 }
 
+/// The name of the solid `entity` — a face, an edge or a vertex of `part` —
+/// bounds, if any: what [`EntityRef::lies_in`] needs to know of the part.
+pub(crate) fn solid_bounded_by<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> Option<String> {
+    let model = part.topology();
+    let solid = match entity {
+        EntityRef::Face { name } => solid_of_face(model, part.face_id(name).ok()?),
+        EntityRef::Edge { name } => solid_of_edge(model, part.edge_id(name).ok()?),
+        EntityRef::Vertex { name } => {
+            let crate::RefId::Vertex(v) = part.id_of(name)? else {
+                return None;
+            };
+            let (&edge, _) = model
+                .edges
+                .iter()
+                .find(|(_, e)| e.start_vertex == v || e.end_vertex == v)?;
+            solid_of_edge(model, edge)
+        }
+        _ => None,
+    }?;
+    part.name_of(solid).map(str::to_string)
+}
+
 impl<S: Scalar> PartView<S> {
     /// `part` as drawn.
     pub fn of(part: &Part<S>) -> GeopResult<Self> {
@@ -650,10 +672,23 @@ impl<S: Scalar> PartView<S> {
         scope: Option<&EntityRef>,
     ) -> Option<PartHit<S>> {
         let layers = self.layers(pointer).ok()?;
-        // What `layer` names `entity`, as the part drawn names it, can take.
+        // What `layer` names `entity`, as the part drawn names it, can take
+        // — `solid`, the name of the solid it bounds in `layer`, if any.
+        let accept_of =
+            |layer: &Layer<'_, S>, entity: &EntityRef, its: &[Role], solid: Option<&String>| {
+                its.iter().any(|r| roles.contains(r))
+                    && scope.is_none_or(|s| {
+                        let solid = solid.and_then(|name| {
+                            match layer.name(EntityRef::Solid { name: name.clone() }) {
+                                EntityRef::Solid { name } => Some(name),
+                                _ => None,
+                            }
+                        });
+                        layer.name(entity.clone()).lies_in(s, solid.as_deref())
+                    })
+            };
         let accept = |layer: &Layer<'_, S>, entity: &EntityRef, its: &[Role]| {
-            its.iter().any(|r| roles.contains(r))
-                && scope.is_none_or(|s| layer.name(entity.clone()).lies_in(s))
+            accept_of(layer, entity, its, None)
         };
         let nearest = |hits: Vec<PartHit<S>>| hits.into_iter().min_by(|a, b| nearer(a.t, b.t));
 
@@ -690,7 +725,7 @@ impl<S: Scalar> PartView<S> {
                 let entity = EntityRef::Vertex {
                     name: v.name.clone(),
                 };
-                (entity, v.at)
+                (entity, v.at, v.solid.as_ref())
             });
             let sketch_points = l.view.sketches.iter().flat_map(|sketch| {
                 sketch.points.iter().map(|p| {
@@ -698,11 +733,11 @@ impl<S: Scalar> PartView<S> {
                         sketch: sketch.name.clone(),
                         point: p.id,
                     };
-                    (entity, sketch.plane.uv_to_xyz(&p.at))
+                    (entity, sketch.plane.uv_to_xyz(&p.at), None)
                 })
             });
-            for (entity, at) in vertices.chain(sketch_points) {
-                if accept(l, &entity, &[Role::Point])
+            for (entity, at, solid) in vertices.chain(sketch_points) {
+                if accept_of(l, &entity, &[Role::Point], solid)
                     && let Some(t) = near(ray.distance_to_point(&at))
                 {
                     points.push(l.hit(PartHit {
@@ -740,7 +775,7 @@ impl<S: Scalar> PartView<S> {
                 let entity = EntityRef::Edge {
                     name: e.name.clone(),
                 };
-                if accept(l, &entity, &e.roles) {
+                if accept_of(l, &entity, &e.roles, e.solid.as_ref()) {
                     let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
                     polyline_hit(entity, &mut segments);
                 }
@@ -770,7 +805,7 @@ impl<S: Scalar> PartView<S> {
                 name: f.name.clone(),
             };
             let solid = f.solid.clone().map(|name| EntityRef::Solid { name });
-            let entity = if accept(l, &face, &f.roles) {
+            let entity = if accept_of(l, &face, &f.roles, f.solid.as_ref()) {
                 Some(face)
             } else {
                 solid.filter(|solid| accept(l, solid, &[Role::Solid]))

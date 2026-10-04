@@ -137,13 +137,19 @@ impl EntityRef {
         outer
     }
 
-    /// Whether it is `scope` or part of it: a curve or a point of a sketch.
-    pub fn lies_in(&self, scope: &EntityRef) -> bool {
+    /// Whether it is `scope` or part of it: a curve or a point of a sketch,
+    /// or a face, an edge or a vertex of a solid — `solid`, the name of the
+    /// solid it bounds, if any, which only the part knows.
+    pub fn lies_in(&self, scope: &EntityRef, solid: Option<&str>) -> bool {
         match (self, scope) {
             (
                 EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. },
                 EntityRef::Sketch { name },
             ) => sketch == name,
+            (
+                EntityRef::Face { .. } | EntityRef::Edge { .. } | EntityRef::Vertex { .. },
+                EntityRef::Solid { name },
+            ) => solid == Some(name.as_str()),
             _ => self == scope,
         }
     }
