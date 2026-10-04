@@ -252,7 +252,7 @@ export interface ListItem {
 }
 
 /** What an entity can be used as, and what a pick looks for — see `geop_ops::operation::Role`. */
-export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "solid" | "sheet" | "sketch";
+export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "face" | "solid" | "sheet" | "sketch";
 
 /** What a number measures. */
 export type Unit = "length" | "angle" | "fraction" | "count";

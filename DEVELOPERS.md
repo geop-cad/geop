@@ -41,6 +41,8 @@ ops/geop-ops-datums           the datum operation: reference points, axes,
                                planes and coordinate systems
 ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),
                                the boolean operation
+ops/geop-ops-edit             edits of existing bodies: delete a body,
+                               extract a face, project a sketch onto a face
 ops/geop-ops-extrude-revolve  extrude/revolve, the extrude and revolve
                                operations, and basic shapes for tests
 ops/geop-ops-assembly         the part operation: place another file's part,

@@ -1,6 +1,6 @@
 //! [`Aspects`]: what an entity a step builds on can be used as — a point, a
-//! line, a plane, an arc, something round, a curve, a solid, a sheet, a
-//! sketch, or several of these at once — and the [`Role`]s that lets it fill. Which of them an
+//! line, a plane, an arc, something round, a curve, a face, a solid, a
+//! sheet, a sketch, or several of these at once — and the [`Role`]s that lets it fill. Which of them an
 //! entity is decides what it can be picked for, and what can be built on
 //! it.
 
@@ -41,6 +41,8 @@ pub struct Aspects<S: Scalar> {
     pub curve: Option<NurbCurve3D<S>>,
     /// Its own axes, if it has any: a datum's frame.
     pub frame: Option<CoordinateSystem<S>>,
+    /// A face, whatever its shape and whatever body it is part of.
+    pub face: bool,
     /// A solid, as a whole.
     pub solid: bool,
     /// A face of a sheet, standing on its own: what a solid can be cut
@@ -84,6 +86,7 @@ impl<S: Scalar> Aspects<S> {
                 let surface = &part.topology().get_face(id).with_context(ctx)?.surface;
                 g.plane = entity.resolve_plane(part).ok();
                 g.round = surface.axis_of_revolution().with_context(ctx)?;
+                g.face = true;
                 g.sheet = matches!(
                     part.topology().body_of_face(id).with_context(ctx)?,
                     geop_core_topology::Body::Sheet(_)
@@ -163,6 +166,7 @@ impl<S: Scalar> Aspects<S> {
             round: self.round.map(axis),
             curve: self.curve.map(|c| c.place(placement)),
             frame: frame(self.frame)?,
+            face: self.face,
             solid: self.solid,
             sheet: self.sheet,
             sketch: self.sketch,
@@ -196,6 +200,8 @@ pub enum Role {
     /// Something that turns around an axis: a circular edge, a cylindrical,
     /// conical or spherical face, a sketch circle.
     Round,
+    /// Any face, of a solid or standing on its own.
+    Face,
     /// A solid, as a whole.
     Solid,
     /// A face standing on its own, part of no solid.
@@ -205,13 +211,14 @@ pub enum Role {
 }
 
 impl Role {
-    pub const ALL: [Role; 9] = [
+    pub const ALL: [Role; 10] = [
         Role::Point,
         Role::Line,
         Role::Plane,
         Role::Edge,
         Role::Circle,
         Role::Round,
+        Role::Face,
         Role::Solid,
         Role::Sheet,
         Role::Sketch,
@@ -225,6 +232,7 @@ impl Role {
             Role::Edge => aspects.curve.is_some(),
             Role::Circle => aspects.arc.is_some(),
             Role::Round => aspects.round.is_some(),
+            Role::Face => aspects.face,
             Role::Solid => aspects.solid,
             Role::Sheet => aspects.sheet,
             Role::Sketch => aspects.sketch,
@@ -240,6 +248,7 @@ impl Role {
             Role::Edge => "an edge",
             Role::Circle => "a circular edge",
             Role::Round => "a circular edge or a round face",
+            Role::Face => "a face",
             Role::Solid => "a solid",
             Role::Sheet => "a face on its own",
             Role::Sketch => "a sketch",
@@ -255,6 +264,7 @@ impl Role {
             Role::Edge => "edge",
             Role::Circle => "circle",
             Role::Round => "round",
+            Role::Face => "face",
             Role::Solid => "solid",
             Role::Sheet => "sheet",
             Role::Sketch => "sketch",

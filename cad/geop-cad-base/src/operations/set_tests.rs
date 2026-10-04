@@ -20,6 +20,9 @@ fn every_operation_is_offered() {
             "revolve",
             "boolean",
             "split",
+            "delete_body",
+            "extract_face",
+            "project_curve",
             "add_datum",
             "add_part"
         ]

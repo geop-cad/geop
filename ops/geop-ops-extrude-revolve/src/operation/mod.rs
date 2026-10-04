@@ -10,7 +10,7 @@
 mod extrude;
 mod revolve;
 
-pub use extrude::{Extrude, ExtrudeArgs};
+pub use extrude::{Extrude, ExtrudeArgs, shape_loops};
 pub use revolve::{Revolve, RevolveArgs};
 
 use std::collections::HashSet;

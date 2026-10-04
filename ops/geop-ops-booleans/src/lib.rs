@@ -6,6 +6,7 @@
 //! or difference. Both work on a `geop_ops::Part`, and `naming`
 //! describes the stable names they give to everything they create.
 //! `split` cuts a solid into pieces with a sheet, imprinting it the same way.
+//! `imprint` divides one face along the curves where sheets cross it.
 //! `operation` makes them the [`Boolean`] and [`Split`] operations of a
 //! program, and [`Combine`]s a solid another operation built with one the
 //! part has.
@@ -13,6 +14,7 @@
 //! both modules' tests.
 
 pub mod boolean;
+pub mod imprint;
 pub mod naming;
 pub mod operation;
 pub mod remesh;

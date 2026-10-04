@@ -18,7 +18,7 @@ use geop_core_math::{
     union_find::UnionFind,
 };
 use geop_core_topology::{Body, CoedgeGeometry, EdgeId, FaceId, ShellId, SolidId};
-use geop_ops::{BodyNames, Namer, Part, RefId};
+use geop_ops::{Namer, Part};
 
 use crate::{
     boolean::classify_face,
@@ -46,33 +46,16 @@ pub fn trim_up_to_next<S: Scalar>(
             namer.root()
         ))
     };
-    let name = |part: &Part<S>, id: RefId| -> GeopResult<String> {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new(format!("trim: {id} has no name")))
-    };
-
     // A copy of the target to imprint, so the target stays as it is.
     let mut target_faces = Vec::new();
     for &target in targets {
         target_faces.extend(part.topology().solid_faces(target).with_context(&ctx)?);
     }
-    let (spec, sources) = part
-        .topology()
-        .body_spec(&target_faces, true)
+    let copy = part
+        .copy_faces(&target_faces, Some(namer.name(&["copy"])), |name| {
+            namer.name(&["copy", name])
+        })
         .with_context(&ctx)?;
-    let copied = |ids: Vec<RefId>| -> GeopResult<Vec<String>> {
-        ids.into_iter()
-            .map(|id| Ok(namer.name(&["copy", &name(part, id)?])))
-            .collect()
-    };
-    let names = BodyNames {
-        vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
-        edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
-        faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
-        solid: Some(namer.name(&["copy"])),
-    };
-    let copy = part.build_body(spec, names).with_context(&ctx)?;
     let copy = copy.solid.expect("built as a solid");
 
     let origins = remesh(part, namer, Body::Sheet(sheet), copy, params).with_context(&ctx)?;

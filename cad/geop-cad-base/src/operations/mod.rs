@@ -3,7 +3,8 @@
 //!
 //! Every operation is defined by a crate of its own — placing sketches in
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
-//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, placed parts
+//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, edits of
+//! existing bodies in `geop_ops_edit`, placed parts
 //! in `geop_ops_assembly`. Which of them
 //! an editor offers is the editor's choice, made here.
 
@@ -11,6 +12,9 @@ use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
+use geop_ops_edit::{
+    DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
+};
 use geop_ops_extrude_revolve::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
@@ -19,6 +23,8 @@ use serde::{Deserialize, Serialize};
 mod assembly_tests;
 #[cfg(test)]
 mod datum_tests;
+#[cfg(test)]
+mod edit_tests;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
@@ -53,6 +59,15 @@ pub enum PartOperation {
     Boolean(BooleanArgs),
     /// Cut a solid into pieces with a face standing on its own.
     Split(SplitArgs),
+    /// Delete solids, and faces standing on their own.
+    #[operation(label = "Delete body")]
+    DeleteBody(DeleteBodyArgs),
+    /// Copy a face out of its body into a face standing on its own.
+    #[operation(label = "Extract face")]
+    ExtractFace(ExtractFaceArgs),
+    /// Project a sketch's curves onto a face, dividing the face along them.
+    #[operation(label = "Project curve")]
+    ProjectCurve(ProjectCurveArgs),
     /// Add reference geometry — a point, an axis, a plane or a coordinate
     /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]

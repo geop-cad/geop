@@ -12,6 +12,7 @@ geop-ops-sketch.workspace = true
 geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-booleans.workspace = true
+geop-ops-edit.workspace = true
 geop-ops-assembly.workspace = true
 geop-ops-rasterize.workspace = true
 serde.workspace = true

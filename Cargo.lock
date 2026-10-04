@@ -199,6 +199,7 @@ dependencies = [
  "geop-ops-assembly",
  "geop-ops-booleans",
  "geop-ops-datums",
+ "geop-ops-edit",
  "geop-ops-extrude-revolve",
  "geop-ops-rasterize",
  "geop-ops-sketch",
@@ -318,6 +319,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "geop-ops-edit"
+version = "0.1.0"
+dependencies = [
+ "geop-core-math",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-booleans",
+ "geop-ops-extrude-revolve",
+ "serde",
 ]
 
 [[package]]

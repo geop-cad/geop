@@ -172,6 +172,37 @@ impl<S: Scalar> Part<S> {
         Ok(built)
     }
 
+    /// Copies `faces`, with every edge and vertex they use, into a body of
+    /// their own that shares nothing with the originals (see
+    /// [`geop_core_topology::Model::body_spec`]): a solid named `solid`, if
+    /// given, or else a sheet. The copy of each entity named `X` is named
+    /// `rename(X)`.
+    pub fn copy_faces(
+        &mut self,
+        faces: &[FaceId],
+        solid: Option<String>,
+        rename: impl Fn(&str) -> String,
+    ) -> GeopResult<BuiltBody> {
+        let (spec, sources) = self.topology.body_spec(faces, solid.is_some())?;
+        let copied = |ids: Vec<super::RefId>| -> GeopResult<Vec<String>> {
+            ids.into_iter()
+                .map(|id| {
+                    let name = self.names.name_of(id).ok_or_else(|| {
+                        GeopError::new(format!("Part::copy_faces: {id} has no name"))
+                    })?;
+                    Ok(rename(name))
+                })
+                .collect()
+        };
+        let names = BodyNames {
+            vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
+            edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
+            faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
+            solid,
+        };
+        self.build_body(spec, names)
+    }
+
     /// Forwards to [`geop_core_topology::Model::assemble_solid`], naming the
     /// solid it creates (if any) and forgetting the names of everything it
     /// deletes.

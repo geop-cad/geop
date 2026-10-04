@@ -359,7 +359,7 @@ pub(crate) fn region_loops<S: Scalar>(
 
 /// The loops of `shape` to sweep into a sheet: the region's, or the one
 /// open chain.
-pub(crate) fn shape_loops<S: Scalar>(
+pub fn shape_loops<S: Scalar>(
     name: &str,
     sketch: &Sketch<Design>,
     geometry: &Enclosure<S>,

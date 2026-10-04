@@ -74,28 +74,9 @@ pub fn split<S: Scalar>(
         .topology()
         .body_faces(Body::Sheet(sheet))
         .with_context(&ctx)?;
-    let (spec, sources) = part
-        .topology()
-        .body_spec(&sheet_faces, false)
+    let cutter = part
+        .copy_faces(&sheet_faces, None, |name| namer.name(&[name]))
         .with_context(&ctx)?;
-    let copied = |ids: &[RefId]| -> GeopResult<Vec<String>> {
-        ids.iter()
-            .map(|&id| Ok(namer.name(&[&name(part, id)?])))
-            .collect()
-    };
-    let names = BodyNames {
-        vertices: copied(
-            &sources
-                .vertices
-                .iter()
-                .map(|&v| v.into())
-                .collect::<Vec<_>>(),
-        )?,
-        edges: copied(&sources.edges.iter().map(|&e| e.into()).collect::<Vec<_>>())?,
-        faces: copied(&sources.faces.iter().map(|&f| f.into()).collect::<Vec<_>>())?,
-        solid: None,
-    };
-    let cutter = part.build_body(spec, names).with_context(&ctx)?;
     let cutter = Body::Sheet(cutter.shells[0]);
 
     remesh(part, namer, solid, cutter, params).with_context(&ctx)?;
