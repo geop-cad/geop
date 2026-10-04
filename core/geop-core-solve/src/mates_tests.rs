@@ -624,6 +624,73 @@ fn a_folded_chain_is_dragged_in_few_steps() {
     assert!(report.iterations < 20, "{report:?}");
 }
 
+/// A 6-axis arm built from mates — each link's axis concentric with the
+/// one before's and its origin on that one's end face — its tip dragged to
+/// `targets` random points one after the other. Returns, per drag, the
+/// report.
+fn drag_mated_arm(targets: usize) -> Vec<SolveReport<S>> {
+    let axes = [
+        Z,
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+    ];
+    let mut constraints = Vec::new();
+    for (i, &axis) in axes.iter().enumerate() {
+        let before = |geometry: Geometry<S>| Feature {
+            body: i.checked_sub(1),
+            geometry,
+        };
+        let top = if i == 0 { [0.0; 3] } else { [0.0, 0.0, 1.0] };
+        constraints.push(Constraint {
+            kind: Kind::Concentric,
+            a: on(i, line([0.0; 3], axis)),
+            b: before(line(top, axis)),
+        });
+        constraints.push(Constraint {
+            kind: Kind::Coincident,
+            a: on(i, point([0.0; 3])),
+            b: before(plane(top, axis)),
+        });
+    }
+    let mut assembly = Assembly::new(
+        (0..6)
+            .map(|i| Body {
+                center: v([0.0, 0.0, 0.5]),
+                ..body([0.0, 0.0, i as f64])
+            })
+            .collect(),
+        constraints,
+        n(6.0),
+    );
+    let mut seed: u64 = 12345;
+    let mut random = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+    };
+    (0..targets)
+        .map(|_| {
+            let target = [random() * 2.0, random() * 2.0, 1.0 + random() * 2.0];
+            assembly.solve(&[drag(5, [0.0, 0.0, 1.0], target)]).unwrap()
+        })
+        .collect()
+}
+
+/// A mated 6-axis arm follows its tip dragged about: every drag ends with
+/// every mate holding. Concentric axes hold by two rows of constant rank;
+/// as a cross product, three rows that lose one as the axes close, the
+/// first drag already failed.
+#[test]
+fn a_mated_arm_follows_its_tip() {
+    for (k, report) in drag_mated_arm(5).iter().enumerate() {
+        assert!(report.converged, "drag {k}: {report:?}");
+    }
+}
+
 #[path = "joints_tests.rs"]
 mod joints;
 

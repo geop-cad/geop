@@ -528,7 +528,8 @@ button.inline {
 /* ── projection toggle ─────────────────────────────────────────────────── */
 
 /* Always there, while working in a plane too: it is the view's, not a mode's. */
-.projection-toggle {
+.projection-toggle,
+.fit-view {
   position: absolute;
   right: 0.75rem;
   bottom: 0.75rem;
@@ -537,6 +538,10 @@ button.inline {
   padding: 0.3rem 0.7rem;
   background: #1e1e1eee;
   border: 1px solid #3a3a3a;
+}
+
+.fit-view {
+  right: 7.5rem;
 }
 
 /* ── mobile layout ──────────────────────────────────────────────────────

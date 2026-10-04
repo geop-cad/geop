@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, type CameraPose, type Projection } from "./camera";
+import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, type CameraPose, type Projection } from "./camera";
 import { DatumLayer } from "./datums3d";
 import {
   sameEntity,
@@ -80,6 +80,12 @@ interface Props {
   projection: Projection;
   /** A pose to glide to; set it to move the camera, `null` to leave it alone. */
   focus?: CameraPose | null;
+  /**
+   * Changed to frame the whole drawing — the part and the parts placed in
+   * it — from the direction the camera looks now: a glide like
+   * [[Props.focus]]'s.
+   */
+  fit?: number;
   /** Fired when a [[Props.focus]] move finishes, with the pose reached. */
   onFocusReached?: (pose: CameraPose) => void;
   /** Fired whenever the user finishes moving the camera, so a caller can come back to it later. */
@@ -150,6 +156,7 @@ export function SceneViewer({
   onPromptCancel,
   projection,
   focus,
+  fit,
   onFocusReached,
   onPose,
   section,
@@ -564,6 +571,14 @@ export function SceneViewer({
         controls.mouseButtons.LEFT = inPlane ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
         controls.update();
       }
+      // Near and far follow the distance to the target and the drawing's
+      // size, so that neither a large assembly nor a close look is clipped.
+      const reach = camera.position.distanceTo(controls.target) + partRef.current.extent.size;
+      perspective.near = reach / 10000;
+      perspective.far = reach * 10;
+      perspective.updateProjectionMatrix();
+      orthographic.near = -reach * 10;
+      orthographic.far = reach * 10;
       if (camera === orthographic) fitOrthographic();
       const height = container.clientHeight;
 
@@ -640,21 +655,39 @@ export function SceneViewer({
     };
   }, []);
 
-  // Start gliding whenever a new focus arrives.
-  useEffect(() => {
+  /** Glide from where the camera is to `to`. */
+  const glideTo = (to: CameraPose) => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
-    if (!focus || !camera || !controls) return;
+    if (!camera || !controls) return;
     controls.enabled = false;
     const from: CameraPose = { position: arr(camera.position), target: arr(controls.target), up: arr(camera.up) };
     moveRef.current = {
       from,
-      to: focus,
+      to,
       fromQuat: cameraOrientation(from),
-      toQuat: cameraOrientation(focus),
+      toQuat: cameraOrientation(to),
       start: performance.now(),
     };
+  };
+
+  // Start gliding whenever a new focus arrives.
+  useEffect(() => {
+    if (focus) glideTo(focus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
+
+  // Frame the drawing whenever asked to.
+  useEffect(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const container = containerRef.current;
+    if (fit == null || !camera || !controls || !container) return;
+    const now: CameraPose = { position: arr(camera.position), target: arr(controls.target), up: arr(camera.up) };
+    const aspect = container.clientWidth / Math.max(container.clientHeight, 1);
+    glideTo(fitPose(partRef.current.extent, now, aspect));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fit]);
 
   // Swap in the current part's geometry, leaving camera and controls alone.
   // A solid hidden is not built at all: what is hidden is part of it.

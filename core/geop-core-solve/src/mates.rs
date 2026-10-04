@@ -37,6 +37,27 @@ fn cst<S: Scalar>(v: &Vector3<S>) -> V<S> {
     v.map(Dual::cst)
 }
 
+/// Two unit directions square to the unit vector `axis` and to each other:
+/// of the axes `x`, `y`, `z`, the one that runs least along `axis`, made
+/// square to it — a free choice, and the well-conditioned one — and `axis`
+/// crossed with that.
+pub(crate) fn across<S: Scalar>(axis: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
+    let size = |k: usize| axis[k].abs().sharpen();
+    let least = (1..3).fold(0, |best, k| {
+        if size(k).definitely_less(size(best)) {
+            k
+        } else {
+            best
+        }
+    });
+    let reference = Vector3::axis(least);
+    let first = reference
+        .sub(&axis.prod_scalar(axis.prod_dot(&reference)))
+        .normalize()
+        .map_err(|e| e.with_context(format!("a direction square to {axis:?}")))?;
+    Ok([first, axis.prod_cross(&first)])
+}
+
 /// A piece of geometry a constraint holds, in the frame of the body it is
 /// attached to.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -240,16 +261,23 @@ pub struct Assembly<S: Scalar> {
     pub scale: S,
 }
 
+/// A line's direction or a plane's normal, where it is during a solve, and
+/// two directions square to it and to each other.
+struct Direction<S: Scalar> {
+    along: V<S>,
+    across: [V<S>; 2],
+}
+
 /// A feature, where it is during a solve.
 enum World<S: Scalar> {
     Point(V<S>),
-    Line(V<S>, V<S>),
-    Plane(V<S>, V<S>),
+    Line(V<S>, Direction<S>),
+    Plane(V<S>, Direction<S>),
 }
 
 impl<S: Scalar> World<S> {
     /// Its direction: a line's, a plane's normal.
-    fn direction(&self) -> Option<&V<S>> {
+    fn direction(&self) -> Option<&Direction<S>> {
         match self {
             World::Point(_) => None,
             World::Line(_, d) | World::Plane(_, d) => Some(d),
@@ -304,12 +332,19 @@ impl<S: Scalar> Mate<S> {
                 None => cst(at),
             }
         };
-        let direction = |d: &Vector3<S>| -> GeopResult<V<S>> {
-            let d = match placed {
+        let rotate = |d: &Vector3<S>| -> V<S> {
+            match placed {
                 Some(p) => p.direction(&cst(d)),
                 None => cst(d),
-            };
-            d.normalize()
+            }
+        };
+        // The directions square to it are chosen in the body's frame — a
+        // free choice — and turn with the body.
+        let direction = |d: &Vector3<S>| -> GeopResult<Direction<S>> {
+            Ok(Direction {
+                along: rotate(d).normalize()?,
+                across: across(&d.normalize()?)?.map(|v| rotate(&v)),
+            })
         };
         Ok(match &feature.geometry {
             Geometry::Point { at } => World::Point(point(at)),
@@ -335,33 +370,45 @@ impl<S: Scalar> Mate<S> {
     ) -> GeopResult<()> {
         use World::*;
         let l = Dual::cst(self.scale);
-        let vector = |v: V<S>, out: &mut Vec<Dual<S>>| out.extend(v.to_array());
-        let parallel = |d: &V<S>, e: &V<S>, out: &mut Vec<Dual<S>>| {
-            vector(d.prod_cross(e).prod_scalar(l), out)
+        // Lines and planes run parallel — facing either way — where the
+        // one's direction has no part across the other's: two rows, of rank
+        // two wherever they nearly are. A cross product, three rows, has
+        // rank three while they are not quite parallel and two once they
+        // are, and a row whose slope fades as the mate closes is one the
+        // minimizer can neither drop nor resolve (a mated arm stalled on
+        // it).
+        let parallel = |d: &Direction<S>, e: &Direction<S>, out: &mut Vec<Dual<S>>| {
+            out.extend(d.across.map(|x| x.prod_dot(&e.along).mul(l)))
         };
-        // How far `p` is off the line through `q` along `d`, as a vector.
-        let off_line = |p: &V<S>, q: &V<S>, d: &V<S>| p.sub(q).prod_cross(d);
-        let along = |p: &V<S>, q: &V<S>, n: &V<S>| n.prod_dot(&p.sub(q));
-        // A point-to-thing distance, as a residual and as a value.
+        // How far `p` is off the line through `q` along `d`: as two rows
+        // across it, for the same reason, and as a distance.
+        let off_line = |p: &V<S>, q: &V<S>, d: &Direction<S>, out: &mut Vec<Dual<S>>| {
+            out.extend(d.across.map(|x| x.prod_dot(&p.sub(q))))
+        };
+        let distance_off_line =
+            |p: &V<S>, q: &V<S>, d: &Direction<S>| p.sub(q).prod_cross(&d.along).norm();
+        let along = |p: &V<S>, q: &V<S>, n: &Direction<S>| n.along.prod_dot(&p.sub(q));
+        let dot = |d: &Direction<S>, e: &Direction<S>| d.along.prod_dot(&e.along).mul(l);
+        // A point-to-thing distance.
         let gap = |a: &World<S>, b: &World<S>| -> Option<Dual<S>> {
             Some(match (a, b) {
                 (Point(p), Point(q)) => p.sub(q).norm(),
-                (Point(p), Line(q, d)) | (Line(q, d), Point(p)) => off_line(p, q, d).norm(),
+                (Point(p), Line(q, d)) | (Line(q, d), Point(p)) => distance_off_line(p, q, d),
                 (Point(p), Plane(q, n)) | (Plane(q, n), Point(p)) => along(p, q, n).abs(),
                 _ => return None,
             })
         };
         match kind {
             Kind::Coincident => match (a, b) {
-                (Point(p), Point(q)) => vector(p.sub(q), out),
-                (Point(p), Line(q, d)) | (Line(q, d), Point(p)) => vector(off_line(p, q, d), out),
+                (Point(p), Point(q)) => out.extend(p.sub(q).to_array()),
+                (Point(p), Line(q, d)) | (Line(q, d), Point(p)) => off_line(p, q, d, out),
                 (Point(p), Plane(q, n)) | (Plane(q, n), Point(p)) => out.push(along(p, q, n)),
                 (Line(p, d), Line(q, e)) => {
                     parallel(d, e, out);
-                    vector(off_line(q, p, d), out);
+                    off_line(q, p, d, out);
                 }
                 (Line(p, d), Plane(q, n)) | (Plane(q, n), Line(p, d)) => {
-                    out.push(d.prod_dot(n).mul(l));
+                    out.push(dot(d, n));
                     out.push(along(p, q, n));
                 }
                 (Plane(p, n), Plane(q, m)) => {
@@ -372,7 +419,7 @@ impl<S: Scalar> Mate<S> {
             Kind::Concentric => match (a, b) {
                 (Line(p, d), Line(q, e)) => {
                     parallel(d, e, out);
-                    vector(off_line(q, p, d), out);
+                    off_line(q, p, d, out);
                 }
                 _ => unreachable!("validated"),
             },
@@ -387,7 +434,7 @@ impl<S: Scalar> Mate<S> {
                 if matches!(kind, Kind::Parallel) != mixed {
                     parallel(d, e, out);
                 } else {
-                    out.push(d.prod_dot(e).mul(l));
+                    out.push(dot(d, e));
                 }
             }
             Kind::Distance { value } => {
@@ -395,10 +442,10 @@ impl<S: Scalar> Mate<S> {
                 match (a, b) {
                     (Line(p, d), Line(q, e)) => {
                         parallel(d, e, out);
-                        out.push(off_line(q, p, d).norm().sub(value));
+                        out.push(distance_off_line(q, p, d).sub(value));
                     }
                     (Line(p, d), Plane(q, n)) | (Plane(q, n), Line(p, d)) => {
-                        out.push(d.prod_dot(n).mul(l));
+                        out.push(dot(d, n));
                         out.push(along(p, q, n).abs().sub(value));
                     }
                     (Plane(p, n), Plane(q, m)) => {
@@ -410,8 +457,8 @@ impl<S: Scalar> Mate<S> {
             }
             Kind::Angle { value } => {
                 let (d, e) = (
-                    a.direction().expect("validated"),
-                    b.direction().expect("validated"),
+                    &a.direction().expect("validated").along,
+                    &b.direction().expect("validated").along,
                 );
                 let radians = value.mul(S::PI.div(S::from_i64(180))?);
                 out.push(d.prod_dot(e).sub(Dual::cst(radians.cos())).mul(l));
@@ -439,6 +486,16 @@ impl<S: Scalar> Residual<S, MATE_VARS> for Mate<S> {
 /// (see [`Assembly::drive`]): how hard a solve tries, never what its answer
 /// means.
 const TURN_STEP: f64 = 30.0;
+
+/// Free bodies and joints no mate ties to any others (see
+/// [`Assembly::independent`]), and the mates that move them — by index.
+#[derive(Default)]
+struct Group {
+    bodies: Vec<usize>,
+    constraints: Vec<usize>,
+    joints: Vec<usize>,
+    couplings: Vec<usize>,
+}
 
 /// The residuals of an assembly, kept alive for a [`System`] borrowing
 /// them, and where each joint's coordinates are among its parameters.
@@ -588,13 +645,17 @@ impl<S: Scalar> Assembly<S> {
         })
     }
 
-    /// The free bodies in groups no constraint ties together, each with the
-    /// constraints that move one of its bodies — by index. A constraint
-    /// none of whose bodies is free moves nothing, and is in no group.
-    fn independent(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
-        // Union-find over the bodies: each points towards the root of its
-        // group.
-        let mut root: Vec<usize> = (0..self.bodies.len()).collect();
+    /// The free bodies, and the joints with a free coordinate, in groups no
+    /// mate ties together — each with the mates that move one of its bodies
+    /// or coordinates, by index. A joint ties its free bodies, and a
+    /// coupling its two joints, so their bodies too. A mate that moves
+    /// nothing — none of its bodies free, no coordinate of it free — is in
+    /// no group.
+    fn independent(&self) -> Vec<Group> {
+        let nb = self.bodies.len();
+        // Union-find over the bodies, then the joints: each points towards
+        // the root of its group.
+        let mut root: Vec<usize> = (0..nb + self.joints.len()).collect();
         fn find(root: &mut [usize], mut b: usize) -> usize {
             while root[b] != b {
                 root[b] = root[root[b]];
@@ -602,49 +663,87 @@ impl<S: Scalar> Assembly<S> {
             }
             b
         }
-        let free = |c: &Constraint<S>| {
-            [c.a.body, c.b.body]
+        fn unite(root: &mut [usize], a: usize, b: usize) {
+            let (a, b) = (find(root, a), find(root, b));
+            root[a] = b;
+        }
+        let free = |bodies: [Option<usize>; 2]| {
+            bodies
                 .into_iter()
                 .flatten()
                 .filter(|&b| self.bodies[b].free)
         };
         for c in &self.constraints {
-            let mut bodies = free(c);
+            let mut bodies = free([c.a.body, c.b.body]);
             if let (Some(a), Some(b)) = (bodies.next(), bodies.next()) {
-                let (a, b) = (find(&mut root, a), find(&mut root, b));
-                root[a] = b;
+                unite(&mut root, a, b);
             }
         }
-        let mut group_of = std::collections::HashMap::new();
-        let mut groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
+        for (j, joint) in self.joints.iter().enumerate() {
+            for b in free([joint.a.body, joint.b.body]) {
+                unite(&mut root, nb + j, b);
+            }
+        }
+        for c in &self.couplings {
+            unite(&mut root, nb + c.a, nb + c.b);
+        }
+        // The group of each root that has a free body or coordinate.
+        let mut group_of: Vec<Option<usize>> = vec![None; root.len()];
+        let mut groups: Vec<Group> = Vec::new();
+        let mut open = |node: usize, root: &mut [usize], groups: &mut Vec<Group>| {
+            let r = find(root, node);
+            *group_of[r].get_or_insert_with(|| {
+                groups.push(Group::default());
+                groups.len() - 1
+            })
+        };
         for (b, body) in self.bodies.iter().enumerate() {
             if body.free {
-                let r = find(&mut root, b);
-                let g = *group_of.entry(r).or_insert_with(|| {
-                    groups.push((Vec::new(), Vec::new()));
-                    groups.len() - 1
-                });
-                groups[g].0.push(b);
+                let g = open(b, &mut root, &mut groups);
+                groups[g].bodies.push(b);
             }
         }
+        for (j, joint) in self.joints.iter().enumerate() {
+            let moves = joint
+                .kind
+                .motions()
+                .into_iter()
+                .any(|m| !joint.coordinate(m).held);
+            if moves {
+                open(nb + j, &mut root, &mut groups);
+            }
+        }
+        // Every mate in the group of what it moves, if that is one.
         for (i, c) in self.constraints.iter().enumerate() {
-            if let Some(b) = free(c).next() {
-                groups[group_of[&find(&mut root, b)]].1.push(i);
+            if let Some(b) = free([c.a.body, c.b.body]).next()
+                && let Some(g) = group_of[find(&mut root, b)]
+            {
+                groups[g].constraints.push(i);
+            }
+        }
+        for j in 0..self.joints.len() {
+            if let Some(g) = group_of[find(&mut root, nb + j)] {
+                groups[g].joints.push(j);
+            }
+        }
+        for (i, c) in self.couplings.iter().enumerate() {
+            if let Some(g) = group_of[find(&mut root, nb + c.a)] {
+                groups[g].couplings.push(i);
             }
         }
         groups
     }
 
-    /// The assembly of the free bodies `free` and the constraints
-    /// `constraints` alone — the bodies those hold that are not free, held
-    /// as they are — and, by index here, the body each of its bodies is.
-    fn restricted(&self, free: &[usize], constraints: &[usize]) -> (Assembly<S>, Vec<usize>) {
-        let mut bodies: Vec<usize> = free.to_vec();
+    /// The assembly of `group` alone — the bodies its mates hold that are
+    /// not free, held as they are — and, by index here, the body each of
+    /// its bodies is.
+    fn restricted(&self, group: &Group) -> (Assembly<S>, Vec<usize>) {
+        let mut bodies: Vec<usize> = group.bodies.clone();
         let mut local = std::collections::HashMap::new();
         for (l, &b) in bodies.iter().enumerate() {
             local.insert(b, l);
         }
-        let mut at = |b: Option<usize>, bodies: &mut Vec<usize>| {
+        let mut at = |b: Option<usize>| {
             b.map(|b| {
                 *local.entry(b).or_insert_with(|| {
                     bodies.push(b);
@@ -652,19 +751,57 @@ impl<S: Scalar> Assembly<S> {
                 })
             })
         };
-        let constraints = constraints
+        let constraints = group
+            .constraints
             .iter()
             .map(|&i| {
                 let c = self.constraints[i];
                 Constraint {
                     a: Feature {
-                        body: at(c.a.body, &mut bodies),
+                        body: at(c.a.body),
                         ..c.a
                     },
                     b: Feature {
-                        body: at(c.b.body, &mut bodies),
+                        body: at(c.b.body),
                         ..c.b
                     },
+                    ..c
+                }
+            })
+            .collect();
+        let joints = group
+            .joints
+            .iter()
+            .map(|&j| {
+                let joint = self.joints[j];
+                Joint {
+                    a: JointEnd {
+                        body: at(joint.a.body),
+                        ..joint.a
+                    },
+                    b: JointEnd {
+                        body: at(joint.b.body),
+                        ..joint.b
+                    },
+                    ..joint
+                }
+            })
+            .collect();
+        let joint_at = |j: usize| {
+            group
+                .joints
+                .iter()
+                .position(|&k| k == j)
+                .expect("a coupling's joints are in its group")
+        };
+        let couplings = group
+            .couplings
+            .iter()
+            .map(|&i| {
+                let c = self.couplings[i];
+                Coupling {
+                    a: joint_at(c.a),
+                    b: joint_at(c.b),
                     ..c
                 }
             })
@@ -672,8 +809,8 @@ impl<S: Scalar> Assembly<S> {
         let assembly = Assembly {
             bodies: bodies.iter().map(|&b| self.bodies[b]).collect(),
             constraints,
-            joints: Vec::new(),
-            couplings: Vec::new(),
+            joints,
+            couplings,
             scale: self.scale,
         };
         (assembly, bodies)
@@ -692,20 +829,20 @@ impl<S: Scalar> Assembly<S> {
     /// coordinate held at a limit stays held for the rest of the solve; the
     /// next solve starts with it free again.
     ///
-    /// Bodies no constraint ties together move independently, so each
-    /// group of them is solved on its own ([`Assembly::independent`]): a
+    /// Bodies no mate ties together move independently, so each group of
+    /// them is solved on its own ([`Assembly::independent`]): a
     /// plate with hundreds of screws mated to it is hundreds of small
     /// solves, not one of hundreds of bodies. That changes nothing about
     /// the solution — what a solve minimizes is a sum over the groups, and
-    /// the constraints of one never involve another's bodies. A group that
-    /// nothing pulls and whose constraints hold already is where its solve
-    /// would leave it, and is not solved at all.
+    /// the mates of one never involve another's bodies or coordinates. A
+    /// group that nothing pulls and whose mates hold already is where its
+    /// solve would leave it, and is not solved at all.
     ///
     /// The bodies are moved even if the solve does not converge, to the
     /// closest configuration found — the report says which mates could not
-    /// be met. Without joints, its steps and phases are those of
-    /// the groups solved side by side (see [`Assembly::independent`]): the
-    /// most steps any took, and per phase, the worst.
+    /// be met. Its steps and phases are those of the groups solved side by
+    /// side (see [`Assembly::independent`]): the most steps any took, and
+    /// per phase, the worst.
     pub fn solve(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
         self.validate()?;
         self.seed()?;
@@ -836,19 +973,15 @@ impl<S: Scalar> Assembly<S> {
         beyond
     }
 
-    /// One solve, limits left out (see [`Assembly::solve`]). Without
-    /// joints, the bodies no constraint ties together are solved group by
-    /// group; joints and couplings tie bodies too, and are not grouped yet,
-    /// so with any the whole assembly is one system.
+    /// One solve, limits left out (see [`Assembly::solve`]): the groups no
+    /// mate ties together (see [`Assembly::independent`]) one by one.
     fn solve_once(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
-        if !self.joints.is_empty() {
-            return self.solve_together(pulls);
-        }
         let mut phases: Vec<crate::Phase<S>> = Vec::new();
         let mut iterations = 0;
         let mut moved = Vec::new();
-        for (free, constraints) in self.independent() {
-            let (mut part, bodies) = self.restricted(&free, &constraints);
+        for group in self.independent() {
+            let (mut part, bodies) = self.restricted(&group);
+            let free = &group.bodies;
             let pulls: Vec<Pull<S>> = pulls
                 .iter()
                 .filter_map(|p| {
@@ -877,7 +1010,11 @@ impl<S: Scalar> Assembly<S> {
             for (&b, body) in bodies.iter().zip(&part.bodies) {
                 self.bodies[b].pose = body.pose;
             }
-            moved.extend(&free);
+            for (&j, joint) in group.joints.iter().zip(&part.joints) {
+                self.joints[j].angle = joint.angle;
+                self.joints[j].distance = joint.distance;
+            }
+            moved.extend(free);
             iterations = iterations.max(report.iterations);
             for (k, phase) in report.phases.into_iter().enumerate() {
                 match phases.get_mut(k) {

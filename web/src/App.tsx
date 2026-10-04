@@ -131,6 +131,9 @@ function App() {
   }, [workspace]);
 
   const [focus, setFocus] = useState<CameraPose | null>(null);
+  /** Bumped to frame the whole drawing (see `SceneViewer`'s `fit`): on opening another file or an example, on F, by the button. */
+  const [fit, setFit] = useState(0);
+  const fitView = () => setFit((f) => f + 1);
   const [projection, setProjection] = useState<Projection>("perspective");
   const poseRef = useRef<CameraPose>(DEFAULT_POSE);
   /** Where the camera was before it turned to face the plane being worked in, to come back to. */
@@ -188,12 +191,13 @@ function App() {
       .then(async () => {
         if (host) {
           await dispatch({ command: "show" });
+          fitView();
         } else {
           // Every file, then the one edited — as it was left.
           const { files, active } = workspaceRef.current;
           await dispatch({ command: "files", files });
           editingFile.current = true;
-          await dispatch({ command: "load", program: parseProgram(files[active]), path: active });
+          await openFile(active, files[active]);
         }
         setWasmReady(true);
       })
@@ -254,13 +258,13 @@ function App() {
   }
 
   // Keys go to the step being edited — tools, Escape, Delete — unless
-  // typed into a field.
+  // typed into a field. With none edited, F frames the drawing.
   const editing = step != null;
   useEffect(() => {
-    if (!editing) return;
     const onKey = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
-      event({ type: "key", key: e.key });
+      if (editing) event({ type: "key", key: e.key });
+      else if (e.key === "f" || e.key === "F") fitView();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -278,9 +282,11 @@ function App() {
 
   // ── the files (in the browser) ─────────────────────────────────────────
 
-  /** Edit the file `path`, whose program is `text`. */
-  function openFile(path: string, text = workspaceRef.current.files[path]) {
-    return dispatch({ command: "load", program: parseProgram(text), path });
+  /** Edit the file `path`, whose program is `text` — framed in the view, unless `keepView`. */
+  async function openFile(path: string, text = workspaceRef.current.files[path], keepView = false) {
+    const update = await dispatch({ command: "load", program: parseProgram(text), path });
+    if (!keepView) fitView();
+    return update;
   }
 
   /** Tell the kernel that the files `files` changed — `null` for one gone — and keep them. */
@@ -306,7 +312,7 @@ function App() {
 
   async function renameFile(from: string, to: string) {
     const text = workspaceRef.current.files[from];
-    if (from === workspaceRef.current.active) await openFile(to, text);
+    if (from === workspaceRef.current.active) await openFile(to, text, true);
     await changeFiles({ [from]: null, [to]: text });
   }
 
@@ -368,6 +374,7 @@ function App() {
     // replacing the one edited.
     if (!host) await createFile(freePath(workspaceRef.current.files, `${name}.geop`));
     if ((await dispatch({ command: "load_example", name }))?.error == null) trackExample(name);
+    fitView();
   }
 
   async function loadWorkspaceExample(name: string) {
@@ -375,6 +382,7 @@ function App() {
       ? `examples/${name} ${Date.now()}`
       : `examples/${name}`;
     if ((await dispatch({ command: "load_workspace_example", name, folder }))?.error == null) trackExample(name);
+    fitView();
   }
 
   // A shared link — app.geop-cad.dev/?example=<name> — opens that example
@@ -628,6 +636,7 @@ function App() {
                 }}
                 projection={projection}
                 focus={focus}
+                fit={fit}
                 onFocusReached={(pose) => {
                   poseRef.current = pose;
                   setFocus(null);
@@ -635,6 +644,9 @@ function App() {
                 onPose={(pose) => (poseRef.current = pose)}
               />
             )}
+            <button className="fit-view" title="Frame the whole part in the view (F)" onClick={fitView}>
+              Fit
+            </button>
             <button
               className="projection-toggle"
               title="Switch between a perspective and an orthographic view"
