@@ -1,16 +1,21 @@
-//! 2-D constraint sketches: points, lines, arcs, circles and splines, the
-//! typical CAD constraints between them, a solver, and conversion of the
-//! solved sketch into closed profiles for extrude and revolve.
+//! Constraint sketches: 2-D ones — points, lines, arcs, circles and
+//! splines, the typical CAD constraints between them, a solver, and
+//! conversion of the solved sketch into closed profiles for extrude and
+//! revolve — and 3-D ones, the paths and rails sweeps run along.
 //!
 //! - [`sketch`]: the entities and constraints: design data, in any scalar.
 //! - [`solve`]: [`Sketch::solve`] / [`Sketch::solve_with_drag`], and
 //!   [`Sketch::enclose`]: the solution as the kernel builds on it.
 //! - [`profile`]: [`Sketch::regions`] and [`ProfileLoop::to_nurbs`].
+//! - [`space`]: 3-D sketches — points, lines, arcs and splines in space,
+//!   solved the same way, joined into chains of NURBS curves: paths and
+//!   rails.
 
 pub mod geometry;
 pub mod profile;
 pub mod sketch;
 pub mod solve;
+pub mod space;
 
 pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region, Shape};
 pub use sketch::{
