@@ -185,9 +185,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
                         let fractions = true_point_fractions(i, intervals);
                         let mut inside = Vec::with_capacity(fractions.len());
                         for &(num, den) in fractions {
-                            let frac =
-                                S::from_ratio(i as i64 * den + num, intervals as i64 * den)
-                                    .with_context(&ctx)?;
+                            let frac = S::from_ratio(i as i64 * den + num, intervals as i64 * den)
+                                .with_context(&ctx)?;
                             inside.push(project_at(&mut seed, (a, b), frac).with_context(&ctx)?);
                         }
                         between.push(inside);
@@ -210,9 +209,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
                     .iter()
                     .chain(between.iter().flatten())
                     .fold(S::ZERO, |w, p| w.max(p[0].width()).max(p[1].width()));
-                let fitted_width = fitted.control_points.iter().fold(S::ZERO, |w, cp| {
-                    w.max(cp[0].width()).max(cp[1].width())
-                });
+                let fitted_width = fitted
+                    .control_points
+                    .iter()
+                    .fold(S::ZERO, |w, cp| w.max(cp[0].width()).max(cp[1].width()));
                 let drifting = fitted_width.definitely_greater(target)
                     && fitted_width.definitely_greater(sampled.add(sampled));
                 if !drifting || intervals * 2 > MAX_PIECE_SAMPLES {
