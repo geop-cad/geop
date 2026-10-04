@@ -18,7 +18,7 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{sheet::Sheet, thicken::thicken};
+use crate::{cutting::cutting_sheet, sheet::Sheet, thicken::thicken};
 
 /// Unfolds the sheet-metal body named `solid` into its flat pattern, for
 /// the operation `P`: every bend laid flat as a strip as wide as its
@@ -69,11 +69,13 @@ pub struct BendLine {
 }
 
 /// What a flat pattern records on its body, for drawings and cutting:
-/// the sheet's thickness and the bends.
+/// the sheet's thickness, the bends, and the pattern laid out for cutting
+/// (see [`cutting_sheet`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatPatternData {
     pub thickness: f64,
     pub bends: Vec<BendLine>,
+    pub pattern: geop_ops_drawing::sheet::Sheet,
 }
 
 impl Operation for FlatPattern {
@@ -187,23 +189,10 @@ fn bend_lines<S: Scalar>(
     namer: &Namer,
     sheet: &Sheet<S>,
 ) -> GeopResult<FlatPatternData> {
-    let shifts = sheet.flat_shifts()?;
     let place = &sheet.flats[0].place;
     let mut sketch = Sketch::<Design>::new();
     let mut bends = Vec::new();
-    for bend in &sheet.bends {
-        let (f, k) = sheet
-            .outer_edge(&bend.parent_edge)
-            .expect("a bend's parent edge is on its flat");
-        let [a, b] = sheet.flats[f].outer[k]
-            .line()
-            .expect("a bend starts at a straight edge")?;
-        // Halfway across the strip, which reaches out of the parent.
-        let tau = b.sub(&a).normalize()?;
-        let out = Vector2::from_array([tau[1], tau[0].neg()]);
-        let half = out.prod_scalar(sheet.developed_length(bend).div(S::TWO)?);
-        let shift = shifts[bend.parent].add(&half);
-        let (a, b) = (a.add(&shift), b.add(&shift));
+    for (bend, [a, b]) in sheet.bends.iter().zip(sheet.bend_lines()?) {
         let design = |x: S| Design::from_f64(x.to_f64());
         let p = sketch.add_point(design(a[0]), design(a[1]));
         let q = sketch.add_point(design(b[0]), design(b[1]));
@@ -228,5 +217,6 @@ fn bend_lines<S: Scalar>(
     Ok(FlatPatternData {
         thickness: sheet.rules.thickness,
         bends,
+        pattern: cutting_sheet(sheet)?,
     })
 }

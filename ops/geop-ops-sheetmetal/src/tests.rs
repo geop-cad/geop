@@ -17,7 +17,7 @@ use geop_ops_rasterize::rasterize;
 use crate::{
     BaseFlange, BaseFlangeArgs, Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, FlatPattern,
     FlatPatternArgs, FlatPatternData, Hem, HemArgs, HemKind, LengthReference, Relief, Sheet,
-    SheetCut, SheetCutArgs, SheetMetalRules,
+    SheetCut, SheetCutArgs, SheetMetalRules, flat_pattern_dxf,
 };
 
 fn d(x: f64) -> Design {
@@ -876,4 +876,90 @@ fn a_closed_corner_reaches_to_the_flange_beside_it() {
     });
     assert!(reach, "the second flange's flat does not reach the first");
     assert_valid(&unfold(part, "edge_flange(f2)"));
+}
+
+/// A DXF file read back: every entity of its `ENTITIES` section as its
+/// type, layer and text, and the layers its table declares.
+fn read_dxf(dxf: &str) -> (Vec<(String, String, String)>, Vec<String>) {
+    let lines: Vec<&str> = dxf.lines().collect();
+    assert!(lines.len() % 2 == 0, "a DXF file is pairs of lines");
+    let pairs: Vec<(i32, &str)> = lines
+        .chunks(2)
+        .map(|p| (p[0].trim().parse().unwrap(), p[1]))
+        .collect();
+    assert_eq!(pairs.last().unwrap(), &(0, "EOF"));
+    let mut layers = Vec::new();
+    let mut in_layer = false;
+    let mut entities: Vec<(String, String, String)> = Vec::new();
+    let mut in_entities = false;
+    for &(code, value) in &pairs {
+        match (code, value) {
+            (2, "ENTITIES") => in_entities = true,
+            (0, "ENDSEC") => in_entities = false,
+            (0, "LAYER") => in_layer = true,
+            (2, name) if in_layer => {
+                layers.push(name.to_string());
+                in_layer = false;
+            }
+            (0, kind) if in_entities => {
+                entities.push((kind.to_string(), String::new(), String::new()))
+            }
+            (8, layer) if in_entities => entities.last_mut().unwrap().1 = layer.to_string(),
+            (1, text) if in_entities => entities.last_mut().unwrap().2 = text.to_string(),
+            _ => {}
+        }
+    }
+    (entities, layers)
+}
+
+/// The bracket with a hole cut through its plate and one through its back
+/// flange, laid out for laser cutting as DXF: its outline and both holes on
+/// the CUT layer — lines and circles, nothing approximated — its two bend
+/// lines on the BEND layer, each with how it is bent; and only those two
+/// layers declared. The flat pattern step records the same file.
+#[test]
+fn flat_pattern_dxf_reads_back_by_layer() {
+    let t = 0.08;
+    let part = with_sketch(
+        flanged_bracket(),
+        "h",
+        plane([0.0, 0.0, t], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        circles(&[[0.5, 0.6]], 0.15),
+    );
+    let part = cut(part, "c1", "h", "").unwrap();
+    let part = with_sketch(
+        part,
+        "f",
+        plane([0.0, 1.2, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        circles(&[[-1.0, 0.3]], 0.05),
+    );
+    let part = cut(part, "c2", "f", "edge_flange(back,flange,a)").unwrap();
+    let (body, dxf) = flat_pattern_dxf(&part, None).unwrap();
+    assert_eq!(body, "sheet_cut(c2)");
+    let (entities, layers) = read_dxf(&dxf);
+    assert_eq!(layers, ["CUT", "BEND"]);
+    let count = |kind: &str, layer: &str| {
+        entities
+            .iter()
+            .filter(|(k, l, _)| k == kind && l == layer)
+            .count()
+    };
+    assert_eq!(count("CIRCLE", "CUT"), 2, "{entities:?}");
+    // The outline, each side one line where plate, bend and flange run on
+    // in one: left, right and the back flange's end; along the front, the
+    // plate either side, the reliefs' three sides each — their outer sides
+    // running on into the front flange's — and the front flange's end.
+    assert_eq!(count("LINE", "CUT"), 12, "{entities:?}");
+    assert_eq!(count("LINE", "BEND"), 2, "{entities:?}");
+    let notes: Vec<&str> = entities
+        .iter()
+        .filter(|(k, l, _)| k == "TEXT" && l == "BEND")
+        .map(|(_, _, t)| t.as_str())
+        .collect();
+    assert_eq!(notes, ["UP 90%%d R0.08", "UP 90%%d R0.08"]);
+    assert_eq!(entities.len(), 18, "{entities:?}");
+
+    let flat = unfold(part, "sheet_cut(c2)");
+    let (_, recorded) = flat_pattern_dxf(&flat, Some("flat_pattern(fp)")).unwrap();
+    assert_eq!(recorded, dxf);
 }

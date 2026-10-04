@@ -12,6 +12,8 @@ geop-ops.workspace = true
 # For its line and arc constructors, and the profiles a sketch's area
 # becomes (`shape_loops`).
 geop-ops-extrude-revolve.workspace = true
+# Its sheets and DXF writer, for flat patterns laid out for cutting.
+geop-ops-drawing.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

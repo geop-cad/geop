@@ -456,6 +456,26 @@ impl<S: Scalar> Sheet<S> {
         bend.angle.mul(neutral)
     }
 
+    /// Where each bend lies in the flat pattern, in the order the bends
+    /// were made: the line down the middle of its strip, from where its
+    /// parent edge starts to where it ends, in the first flat's sheet
+    /// coordinates.
+    pub fn bend_lines(&self) -> GeopResult<Vec<[Vector2<S>; 2]>> {
+        let shifts = self.flat_shifts()?;
+        self.bends
+            .iter()
+            .map(|bend| {
+                let [a, b] = self.parent_line(bend)?;
+                // Halfway across the strip, which reaches out of the parent.
+                let tau = b.sub(&a).normalize()?;
+                let out = Vector2::from_array([tau[1], tau[0].neg()]);
+                let half = out.prod_scalar(self.developed_length(bend).div(S::TWO)?);
+                let shift = shifts[bend.parent].add(&half);
+                Ok([a.add(&shift), b.add(&shift)])
+            })
+            .collect()
+    }
+
     /// Where every flat lies in the flat pattern, in sheet coordinates:
     /// the first where it is, each child moved away from its parent, out
     /// across the bend's first edge, by the bend's developed length.
