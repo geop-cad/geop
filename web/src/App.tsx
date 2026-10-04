@@ -413,7 +413,12 @@ function App() {
         return;
       }
       void dispatch({ command: "load", program: loaded, path }).then((update) => {
-        if (update && !update.error) documentLoaded.current = true;
+        if (update && !update.error) {
+          // Framed when it opens; the host sends it again on every outside
+          // edit, which keeps the view.
+          if (!documentLoaded.current) fitView();
+          documentLoaded.current = true;
+        }
       });
     });
     host.onFiles((files) => void dispatch({ command: "files", files }));
