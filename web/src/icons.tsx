@@ -509,6 +509,13 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M9 16 L9 8 L11 8 L11 16" />
     </>
   ),
+  import_step: (
+    <>
+      <path d="M4 3 L12 3 L16 7 L16 17 L4 17 Z" />
+      <path d="M12 3 L12 7 L16 7" strokeWidth="1" />
+      <path d="M10 8 L10 14 M7.5 11.5 L10 14 L12.5 11.5" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

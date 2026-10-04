@@ -10,7 +10,7 @@
 //! wire harness routes in `geop_ops_harness`,
 //! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
 //! 3-D sketches in `geop_ops_sketch3d`, ribs, lips, grooves and drafts in
-//! `geop_ops_plastic`.
+//! `geop_ops_plastic`, STEP import in `geop_ops_step`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -39,6 +39,7 @@ use geop_ops_surface::{
     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
 };
 use serde::{Deserialize, Serialize};
+use geop_ops_step::{ImportStep, ImportStepArgs};
 
 #[cfg(test)]
 mod assembly_scale_tests;
@@ -82,6 +83,8 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod step_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.
@@ -189,6 +192,9 @@ pub enum PartOperation {
     /// Route a bundle of wires from a connector through clips to another
     /// connector, its bends checked and every wire's cut length reported.
     Route(RouteArgs),
+    /// Add the solids and sheets of a STEP file next to the program.
+    #[operation(label = "Import STEP")]
+    ImportStep(ImportStepArgs),
 }
 
 /// A program of the editor's operations.

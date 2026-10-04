@@ -9,5 +9,5 @@ pub mod examples;
 pub mod operations;
 pub mod stdlib;
 
-pub use editor::{Command, Editor, Update};
+pub use editor::{Command, Editor, Export, Update};
 pub use operations::{PartOperation, Program, ProgramRunner, Step, Workspace};

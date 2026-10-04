@@ -48,7 +48,8 @@ fn every_operation_is_offered() {
             "project_curve",
             "add_part",
             "part_pattern",
-            "route"
+            "route",
+            "import_step"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

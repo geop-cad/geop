@@ -134,6 +134,17 @@ pub enum Command<S: Scalar> {
         parameter: String,
         value: f64,
     },
+    /// Write the part shown — up to where the program runs, the parts it
+    /// places included — as a STEP file: the update's [`Update::export`].
+    ExportStep,
+}
+
+/// A file the editor wrote for the front end to save.
+#[derive(Clone, Debug, Serialize)]
+pub struct Export {
+    /// Its name: the program's file name with the format's extension.
+    pub name: String,
+    pub text: String,
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -286,6 +297,8 @@ pub struct Update<S: Scalar> {
     /// What the drag tool shows, while it is in hand and no step is
     /// edited: the part it would drag lit, and whether a press grabs it.
     pub tool: Option<Presentation<S>>,
+    /// The file the command wrote ([`Command::ExportStep`]).
+    pub export: Option<Export>,
 }
 
 /// The drag tool, in hand: the placed part the pointer is over, and the one
@@ -377,6 +390,8 @@ pub struct Editor<S: Scalar> {
     dragged: Option<geop_ops::assembly::MateReport>,
     /// The files the last command added, for the update to say.
     added: Option<Vec<File>>,
+    /// The file the last command wrote, for the update to carry.
+    exported: Option<Export>,
     /// The placed parts the viewer was sent, by name: the key of the
     /// component each is drawn from, and where it is, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
@@ -418,6 +433,7 @@ impl<S: Scalar> Editor<S> {
                 .collect(),
             dragged: None,
             added: None,
+            exported: None,
             placed: None,
             drag_tool: None,
             drawn: None,
@@ -541,6 +557,7 @@ impl<S: Scalar> Editor<S> {
             tool: self.tool_presentation(step.is_none()),
             step,
             files: self.added.take(),
+            export: self.exported.take(),
         }
     }
 
@@ -913,6 +930,22 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Visibility { name, visible } => {
                 self.visibility.insert(name, visible);
+                Changed::Nothing
+            }
+            Command::ExportStep => {
+                let stem = self
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.rsplit('/').next())
+                    .map(|n| n.strip_suffix(".geop").unwrap_or(n))
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or("part")
+                    .to_string();
+                let text = geop_ops_step::write_step(self.runner.part(), &stem)?;
+                self.exported = Some(Export {
+                    name: format!("{stem}.step"),
+                    text,
+                });
                 Changed::Nothing
             }
             Command::DragTool { on } => {

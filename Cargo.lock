@@ -210,6 +210,7 @@ dependencies = [
  "geop-ops-shell",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
+ "geop-ops-step",
  "geop-ops-surface",
  "serde",
  "serde_json",

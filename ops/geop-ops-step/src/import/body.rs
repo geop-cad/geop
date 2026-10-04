@@ -949,6 +949,7 @@ impl<S: Scalar> Builder<'_, S> {
             ..
         } = self;
         let mut vertices = vertices;
+        let mut edges = edges;
         // Which edges and vertices are left, renumbered.
         let mut edge_map = vec![usize::MAX; edges.len()];
         let mut used_vertex = vec![false; vertices.len()];
@@ -1012,6 +1013,23 @@ impl<S: Scalar> Builder<'_, S> {
             face_shells[face.shell].push(face_specs.len());
             face_specs.push((surface, outer_loop, loops));
             face_names.push(face.name.clone());
+        }
+
+        // Every place the file says each edge is, united: its curve, and
+        // where its pcurves put it on its faces' surfaces.
+        let mut gaps = vec![[0.0f64; 3]; edges.len()];
+        for (surface, outer, holes) in &face_specs {
+            for (on, pcurve) in outer.iter().chain(holes.iter().flatten()) {
+                if let CoedgeOnLocal::Edge(e, forward) = *on {
+                    let gap = edge_gap(&edges[e].curve, forward, surface, pcurve)?;
+                    for c in 0..3 {
+                        gaps[e][c] = gaps[e][c].max(gap[c]);
+                    }
+                }
+            }
+        }
+        for (edge, gap) in edges.iter_mut().zip(&gaps) {
+            edge.curve = widened(&edge.curve, *gap)?;
         }
 
         let mut edge_specs = Vec::new();
@@ -1571,6 +1589,82 @@ fn fit_loop<S: Scalar>(
         }
     }
     Ok(joined)
+}
+
+/// Samples along an edge's pcurve, at fractions of its domain: those the
+/// kernel's validation samples at among them.
+const GAP_SAMPLES: usize = 64;
+
+/// How far, per coordinate, the points a pcurve puts on its surface lie
+/// from the edge's curve — sampled, each against the curve's nearest point,
+/// the widths of both counted.
+fn edge_gap<S: Scalar>(
+    curve: &NurbCurve3D<S>,
+    forward: bool,
+    surface: &NurbSurface3D<S>,
+    pcurve: &NurbCurve2D<S>,
+) -> GeopResult<[f64; 3]> {
+    let (t0, t1) = pcurve.domain();
+    let (c0, c1) = curve.domain();
+    let mut gap = [0.0f64; 3];
+    // Each sample's nearest curve point: the nearest of a table of the
+    // curve's points, polished by Newton.
+    let (c0f, c1f) = (c0.to_f64(), c1.to_f64());
+    let rows = 8 * curve.control_points.len() + 32;
+    let table: Vec<(f64, P3)> = (0..=rows)
+        .map(|k| {
+            let t = c0f + (c1f - c0f) * k as f64 / rows as f64;
+            Ok((t, super::geometry::point_at(curve, t)?))
+        })
+        .collect::<GeopResult<_>>()?;
+    let step = (c1f - c0f) / rows as f64;
+    let _ = forward;
+    for i in 0..=GAP_SAMPLES {
+        let f = S::from_ratio(i as i64, GAP_SAMPLES as i64)?;
+        let t = match i {
+            0 => t0,
+            GAP_SAMPLES => t1,
+            _ => t0.add(t1.sub(t0).mul(f)).sharpen(),
+        };
+        let uv = pcurve.evaluate(t)?;
+        let point = surface.evaluate(uv[0], uv[1])?;
+        let target = to_p3(&point);
+        let &(seed, _) = table
+            .iter()
+            .min_by(|a, b| distance(a.1, target).total_cmp(&distance(b.1, target)))
+            .expect("a table of points");
+        let window = S::from_f64((seed - step).max(c0f)).union(S::from_f64((seed + step).min(c1f)));
+        let s = curve.refine_parameter_at_point(window, &point)?.sharpen();
+        let s = if s.definitely_less(c0) { c0 } else if s.definitely_greater(c1) { c1 } else { s };
+        let near = curve.evaluate(s)?;
+        let d = point.sub(&near);
+        for c in 0..3 {
+            gap[c] = gap[c].max(d[c].lower().to_f64().abs()).max(d[c].upper().to_f64().abs());
+        }
+    }
+    Ok(gap)
+}
+
+/// `curve` with every control point widened by `gap` in each coordinate:
+/// a curve whose every point may be up to `gap` off where it was.
+fn widened<S: Scalar>(curve: &NurbCurve3D<S>, gap: [f64; 3]) -> GeopResult<NurbCurve3D<S>> {
+    if gap == [0.0; 3] {
+        return Ok(curve.clone());
+    }
+    let control_points = curve
+        .control_points
+        .iter()
+        .map(|cp| {
+            let w = cp[3];
+            let mut out = *cp;
+            for c in 0..3 {
+                let spread = S::from_f64(-gap[c]).union(S::from_f64(gap[c]));
+                out[c] = cp[c].add(w.mul(spread));
+            }
+            out
+        })
+        .collect();
+    NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
 }
 
 /// The signed area a loop of pcurves encloses in the patch: positive
