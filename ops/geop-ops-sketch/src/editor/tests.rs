@@ -1730,3 +1730,26 @@ fn a_plate_of_several_tools_is_proven() {
     assert_eq!(e.sketch().regions().unwrap().len(), 1);
     e.sketch().enclose::<S>().unwrap();
 }
+
+/// A mirrored arc cut back by trimming turns less than its original: it
+/// keeps its ends' symmetry where they are left, but not its sweep.
+#[test]
+fn trimming_a_mirror_image_frees_its_sweep() {
+    let mut e = drawing();
+    e.act("tool", "arc");
+    e.click(0.5, 0.5);
+    e.click(1.5, 0.5);
+    e.click(1.0, 1.0);
+    e.key("Escape");
+    e.act("tool", "mirror");
+    e.click(0.0, 2.0);
+    e.click(1.0, 1.0);
+    assert!(e.has(|c| matches!(c, Constraint::EqualSweep { .. })));
+    e.key("Escape");
+    e.lines(&[[-1.0, 0.2], [-1.0, 1.5]]);
+    e.key("m");
+    e.click(-0.646, 0.854);
+    assert!(!e.has(|c| matches!(c, Constraint::EqualSweep { .. })));
+    assert_eq!(e.curves_of("arc").len(), 2, "{:?}", e.sketch());
+    assert!(e.report().converged, "{:?}", e.report());
+}
