@@ -440,6 +440,16 @@ impl<S: Scalar> Residual<S, MATE_VARS> for Mate<S> {
 /// means.
 const TURN_STEP: f64 = 30.0;
 
+/// Free bodies and joints no mate ties to any others (see
+/// [`Assembly::independent`]), and the mates that move them — by index.
+#[derive(Default)]
+struct Group {
+    bodies: Vec<usize>,
+    constraints: Vec<usize>,
+    joints: Vec<usize>,
+    couplings: Vec<usize>,
+}
+
 /// The residuals of an assembly, kept alive for a [`System`] borrowing
 /// them, and where each joint's coordinates are among its parameters.
 struct Residuals<S: Scalar> {
@@ -588,13 +598,17 @@ impl<S: Scalar> Assembly<S> {
         })
     }
 
-    /// The free bodies in groups no constraint ties together, each with the
-    /// constraints that move one of its bodies — by index. A constraint
-    /// none of whose bodies is free moves nothing, and is in no group.
-    fn independent(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
-        // Union-find over the bodies: each points towards the root of its
-        // group.
-        let mut root: Vec<usize> = (0..self.bodies.len()).collect();
+    /// The free bodies, and the joints with a free coordinate, in groups no
+    /// mate ties together — each with the mates that move one of its bodies
+    /// or coordinates, by index. A joint ties its free bodies, and a
+    /// coupling its two joints, so their bodies too. A mate that moves
+    /// nothing — none of its bodies free, no coordinate of it free — is in
+    /// no group.
+    fn independent(&self) -> Vec<Group> {
+        let nb = self.bodies.len();
+        // Union-find over the bodies, then the joints: each points towards
+        // the root of its group.
+        let mut root: Vec<usize> = (0..nb + self.joints.len()).collect();
         fn find(root: &mut [usize], mut b: usize) -> usize {
             while root[b] != b {
                 root[b] = root[root[b]];
@@ -602,49 +616,87 @@ impl<S: Scalar> Assembly<S> {
             }
             b
         }
-        let free = |c: &Constraint<S>| {
-            [c.a.body, c.b.body]
+        fn unite(root: &mut [usize], a: usize, b: usize) {
+            let (a, b) = (find(root, a), find(root, b));
+            root[a] = b;
+        }
+        let free = |bodies: [Option<usize>; 2]| {
+            bodies
                 .into_iter()
                 .flatten()
                 .filter(|&b| self.bodies[b].free)
         };
         for c in &self.constraints {
-            let mut bodies = free(c);
+            let mut bodies = free([c.a.body, c.b.body]);
             if let (Some(a), Some(b)) = (bodies.next(), bodies.next()) {
-                let (a, b) = (find(&mut root, a), find(&mut root, b));
-                root[a] = b;
+                unite(&mut root, a, b);
             }
         }
-        let mut group_of = std::collections::HashMap::new();
-        let mut groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
+        for (j, joint) in self.joints.iter().enumerate() {
+            for b in free([joint.a.body, joint.b.body]) {
+                unite(&mut root, nb + j, b);
+            }
+        }
+        for c in &self.couplings {
+            unite(&mut root, nb + c.a, nb + c.b);
+        }
+        // The group of each root that has a free body or coordinate.
+        let mut group_of: Vec<Option<usize>> = vec![None; root.len()];
+        let mut groups: Vec<Group> = Vec::new();
+        let mut open = |node: usize, root: &mut [usize], groups: &mut Vec<Group>| {
+            let r = find(root, node);
+            *group_of[r].get_or_insert_with(|| {
+                groups.push(Group::default());
+                groups.len() - 1
+            })
+        };
         for (b, body) in self.bodies.iter().enumerate() {
             if body.free {
-                let r = find(&mut root, b);
-                let g = *group_of.entry(r).or_insert_with(|| {
-                    groups.push((Vec::new(), Vec::new()));
-                    groups.len() - 1
-                });
-                groups[g].0.push(b);
+                let g = open(b, &mut root, &mut groups);
+                groups[g].bodies.push(b);
             }
         }
+        for (j, joint) in self.joints.iter().enumerate() {
+            let moves = joint
+                .kind
+                .motions()
+                .into_iter()
+                .any(|m| !joint.coordinate(m).held);
+            if moves {
+                open(nb + j, &mut root, &mut groups);
+            }
+        }
+        // Every mate in the group of what it moves, if that is one.
         for (i, c) in self.constraints.iter().enumerate() {
-            if let Some(b) = free(c).next() {
-                groups[group_of[&find(&mut root, b)]].1.push(i);
+            if let Some(b) = free([c.a.body, c.b.body]).next()
+                && let Some(g) = group_of[find(&mut root, b)]
+            {
+                groups[g].constraints.push(i);
+            }
+        }
+        for j in 0..self.joints.len() {
+            if let Some(g) = group_of[find(&mut root, nb + j)] {
+                groups[g].joints.push(j);
+            }
+        }
+        for (i, c) in self.couplings.iter().enumerate() {
+            if let Some(g) = group_of[find(&mut root, nb + c.a)] {
+                groups[g].couplings.push(i);
             }
         }
         groups
     }
 
-    /// The assembly of the free bodies `free` and the constraints
-    /// `constraints` alone — the bodies those hold that are not free, held
-    /// as they are — and, by index here, the body each of its bodies is.
-    fn restricted(&self, free: &[usize], constraints: &[usize]) -> (Assembly<S>, Vec<usize>) {
-        let mut bodies: Vec<usize> = free.to_vec();
+    /// The assembly of `group` alone — the bodies its mates hold that are
+    /// not free, held as they are — and, by index here, the body each of
+    /// its bodies is.
+    fn restricted(&self, group: &Group) -> (Assembly<S>, Vec<usize>) {
+        let mut bodies: Vec<usize> = group.bodies.clone();
         let mut local = std::collections::HashMap::new();
         for (l, &b) in bodies.iter().enumerate() {
             local.insert(b, l);
         }
-        let mut at = |b: Option<usize>, bodies: &mut Vec<usize>| {
+        let mut at = |b: Option<usize>| {
             b.map(|b| {
                 *local.entry(b).or_insert_with(|| {
                     bodies.push(b);
@@ -652,19 +704,57 @@ impl<S: Scalar> Assembly<S> {
                 })
             })
         };
-        let constraints = constraints
+        let constraints = group
+            .constraints
             .iter()
             .map(|&i| {
                 let c = self.constraints[i];
                 Constraint {
                     a: Feature {
-                        body: at(c.a.body, &mut bodies),
+                        body: at(c.a.body),
                         ..c.a
                     },
                     b: Feature {
-                        body: at(c.b.body, &mut bodies),
+                        body: at(c.b.body),
                         ..c.b
                     },
+                    ..c
+                }
+            })
+            .collect();
+        let joints = group
+            .joints
+            .iter()
+            .map(|&j| {
+                let joint = self.joints[j];
+                Joint {
+                    a: JointEnd {
+                        body: at(joint.a.body),
+                        ..joint.a
+                    },
+                    b: JointEnd {
+                        body: at(joint.b.body),
+                        ..joint.b
+                    },
+                    ..joint
+                }
+            })
+            .collect();
+        let joint_at = |j: usize| {
+            group
+                .joints
+                .iter()
+                .position(|&k| k == j)
+                .expect("a coupling's joints are in its group")
+        };
+        let couplings = group
+            .couplings
+            .iter()
+            .map(|&i| {
+                let c = self.couplings[i];
+                Coupling {
+                    a: joint_at(c.a),
+                    b: joint_at(c.b),
                     ..c
                 }
             })
@@ -672,8 +762,8 @@ impl<S: Scalar> Assembly<S> {
         let assembly = Assembly {
             bodies: bodies.iter().map(|&b| self.bodies[b]).collect(),
             constraints,
-            joints: Vec::new(),
-            couplings: Vec::new(),
+            joints,
+            couplings,
             scale: self.scale,
         };
         (assembly, bodies)
@@ -692,20 +782,20 @@ impl<S: Scalar> Assembly<S> {
     /// coordinate held at a limit stays held for the rest of the solve; the
     /// next solve starts with it free again.
     ///
-    /// Bodies no constraint ties together move independently, so each
-    /// group of them is solved on its own ([`Assembly::independent`]): a
+    /// Bodies no mate ties together move independently, so each group of
+    /// them is solved on its own ([`Assembly::independent`]): a
     /// plate with hundreds of screws mated to it is hundreds of small
     /// solves, not one of hundreds of bodies. That changes nothing about
     /// the solution — what a solve minimizes is a sum over the groups, and
-    /// the constraints of one never involve another's bodies. A group that
-    /// nothing pulls and whose constraints hold already is where its solve
-    /// would leave it, and is not solved at all.
+    /// the mates of one never involve another's bodies or coordinates. A
+    /// group that nothing pulls and whose mates hold already is where its
+    /// solve would leave it, and is not solved at all.
     ///
     /// The bodies are moved even if the solve does not converge, to the
     /// closest configuration found — the report says which mates could not
-    /// be met. Without joints, its steps and phases are those of
-    /// the groups solved side by side (see [`Assembly::independent`]): the
-    /// most steps any took, and per phase, the worst.
+    /// be met. Its steps and phases are those of the groups solved side by
+    /// side (see [`Assembly::independent`]): the most steps any took, and
+    /// per phase, the worst.
     pub fn solve(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
         self.validate()?;
         self.seed()?;
@@ -836,19 +926,15 @@ impl<S: Scalar> Assembly<S> {
         beyond
     }
 
-    /// One solve, limits left out (see [`Assembly::solve`]). Without
-    /// joints, the bodies no constraint ties together are solved group by
-    /// group; joints and couplings tie bodies too, and are not grouped yet,
-    /// so with any the whole assembly is one system.
+    /// One solve, limits left out (see [`Assembly::solve`]): the groups no
+    /// mate ties together (see [`Assembly::independent`]) one by one.
     fn solve_once(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
-        if !self.joints.is_empty() {
-            return self.solve_together(pulls);
-        }
         let mut phases: Vec<crate::Phase<S>> = Vec::new();
         let mut iterations = 0;
         let mut moved = Vec::new();
-        for (free, constraints) in self.independent() {
-            let (mut part, bodies) = self.restricted(&free, &constraints);
+        for group in self.independent() {
+            let (mut part, bodies) = self.restricted(&group);
+            let free = &group.bodies;
             let pulls: Vec<Pull<S>> = pulls
                 .iter()
                 .filter_map(|p| {
@@ -877,7 +963,11 @@ impl<S: Scalar> Assembly<S> {
             for (&b, body) in bodies.iter().zip(&part.bodies) {
                 self.bodies[b].pose = body.pose;
             }
-            moved.extend(&free);
+            for (&j, joint) in group.joints.iter().zip(&part.joints) {
+                self.joints[j].angle = joint.angle;
+                self.joints[j].distance = joint.distance;
+            }
+            moved.extend(free);
             iterations = iterations.max(report.iterations);
             for (k, phase) in report.phases.into_iter().enumerate() {
                 match phases.get_mut(k) {

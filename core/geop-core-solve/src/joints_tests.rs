@@ -333,6 +333,112 @@ fn joints_that_hold_nothing_are_refused() {
     assert!(err.contains("needs joint 0 to turn"), "{err}");
 }
 
+/// A robot cell: ten 3-axis arms on the ground, the bases of the first two
+/// geared together, a gripper fastened to each arm's tip, and a fixed plate
+/// with a hundred screws on it, half of them lifted off. Every arm is set to
+/// a pose but the second's base, which follows the first's through the
+/// gear. Joints and couplings tie bodies as constraints do, so the cell
+/// falls apart into groups of one arm (two for the geared pair) and of one
+/// screw, each solved on its own: every joint holds at its angle, the
+/// lifted screws come down, and the screws already on the plate are not
+/// moved at all.
+#[test]
+fn a_robot_cell_is_solved_arm_by_arm() {
+    let (arms, screws) = (10, 100);
+    let y = [0.0, 1.0, 0.0];
+    let mut bodies = Vec::new();
+    let mut joints = Vec::new();
+    for arm in 0..arms {
+        let base = [3.0 * arm as f64, 0.0, 0.0];
+        let first = bodies.len();
+        for link in 0..3 {
+            bodies.push(body([base[0], 0.0, link as f64]));
+            let (a, at) = match link {
+                0 => (None, base),
+                _ => (Some(first + link - 1), [0.0, 0.0, 1.0]),
+            };
+            let axis = if link == 0 { Z } else { y };
+            joints.push(Joint {
+                kind: revolute(Some(-170.0), Some(170.0)),
+                a: end(a, at, axis),
+                b: end(Some(first + link), [0.0; 3], axis),
+                angle: Coordinate {
+                    value: n([30.0, 20.0, -40.0][link] + arm as f64),
+                    held: !(arm == 1 && link == 0),
+                },
+                distance: Coordinate::free(n(0.0)),
+            });
+        }
+        bodies.push(body([base[0], 0.0, 3.0]));
+        joints.push(Joint {
+            kind: JointKind::Fastened,
+            a: end(Some(first + 2), [0.0, 0.0, 1.0], Z),
+            b: end(Some(first + 3), [0.0; 3], Z),
+            angle: Coordinate::free(n(0.0)),
+            distance: Coordinate::free(n(0.0)),
+        });
+    }
+    let plate = bodies.len();
+    bodies.push(Body {
+        free: false,
+        ..body([0.0, 10.0, 0.0])
+    });
+    let mut constraints = Vec::new();
+    for i in 0..screws {
+        let lifted = if i % 2 == 0 { 0.3 } else { 0.0 };
+        bodies.push(body([i as f64, 10.0, 1.0 + lifted]));
+        constraints.push(Constraint {
+            kind: Kind::Coincident,
+            a: on(plate + 1 + i, plane([0.0; 3], Z)),
+            b: on(plate, plane([0.0, 0.0, 1.0], Z)),
+        });
+    }
+    // Arm 0's base joint is joint 0, arm 1's joint 4.
+    let couplings = vec![Coupling {
+        kind: CouplingKind::Gear {
+            ratio: n(1.0),
+            reverse: true,
+        },
+        a: 0,
+        b: 4,
+    }];
+    let mut assembly = Assembly {
+        bodies: bodies.clone(),
+        constraints,
+        joints,
+        couplings,
+        scale: n(10.0),
+    };
+    let groups = assembly.independent();
+    assert_eq!(groups.len(), arms - 1 + screws);
+    let largest = groups.iter().map(|g| g.bodies.len()).max().unwrap();
+    assert_eq!(largest, 8, "the geared pair of arms, grippers included");
+    let report = assembly.solve(&[]).unwrap();
+    assert!(report.converged, "{report:?}");
+    assert!(report.iterations < 30, "{report:?}");
+    for (j, joint) in assembly.joints.iter().enumerate() {
+        if joint.kind.moves(Motion::Turn) {
+            let [measured, _] =
+                joint.measure(|b| b.map_or(Pose::identity(), |b| assembly.bodies[b].pose));
+            let off = measured - joint.angle.value.to_f64();
+            assert!(off.abs() < 1e-6, "joint {j}: {off}");
+        }
+    }
+    let (driver, follower) = (
+        assembly.joints[0].angle.value.to_f64(),
+        assembly.joints[4].angle.value.to_f64(),
+    );
+    assert!((follower + driver).abs() < 1e-6, "{driver} drives {follower}");
+    for i in 0..screws {
+        let (before, after) = (&bodies[plate + 1 + i].pose, &assembly.bodies[plate + 1 + i].pose);
+        if i % 2 == 1 {
+            assert_eq!(before, after, "screw {i} was on the plate already");
+        } else {
+            assert!(close(position(after), [i as f64, 10.0, 1.0], 1e-9), "{i}");
+        }
+    }
+}
+
 /// A 6-axis robot arm: six links in a chain on revolute joints about `z`,
 /// `y`, `y`, `x`, `y`, `x`, each link 1 long, set to 100 random poses, one
 /// after the other: at every one, every joint holds, at the angle it was
