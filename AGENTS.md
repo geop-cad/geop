@@ -283,6 +283,21 @@ overlap an edge. A curve either fully duplicates one or does not touch it.
 Where an invariant like that holds, reach for the exact test it enables
 instead of sampling geometry to rediscover it.
 
+The invariant has one more condition: a trace must stop at every vertex on
+its curve. `trace_one_side` chose its first direction by a trial step, and
+when the half step towards a near vertex was rejected (the curve ran along a
+boundary up to it), the full step landed past that vertex and was accepted.
+The trace jumped the vertex and spliced a curve that *partially* duplicated
+an existing edge, which the invariant says cannot happen. A step must never
+decide a direction past a vertex known to lie on the curve.
+
+The viewport's pick had the same shape of bug. An edge counted as hidden
+when it lay more than one pointer reach behind the face hit, measured along
+the ray. At a glancing look, an edge of that very face lies further along
+the ray than that, so it could not be hovered. "Is this edge in front of
+the face?" was standing in for "does this edge bound the face?", which the
+topology answers exactly (`ViewEdge::faces`).
+
 ### Validate the value you are about to use, not a wider one
 
 A specific trap this rule keeps producing. `Model::split_edge_at_vertex`
@@ -311,6 +326,20 @@ from a `min_subdivision_size`-bounded containment search — it pinned a
 control point to a box so wide the pcurve had no usable tangent left
 ("Cannot normalize zero"), and took the sweep from 0/175 failing scenes to
 12/175. Fix the parameter, not the geometry.
+
+### Check an iterative answer against every condition it was asked to meet
+
+An iteration that stops is not an iteration that converged. The shell's
+`offset_vertex` moves a vertex onto the offsets of its faces by Gauss-Newton.
+It returned a hemisphere's pole at `(0, 0.9, 0.1)`, on the offset plane but
+off the offset sphere, and the failure surfaced two steps later as "not on
+the circle". Two silent causes: a dropped condition, and a projection that
+never moved (see "Degenerate parametrizations" below). Checking the returned
+point against every surface it was asked to lie on turned that into an error
+at the source, naming the surface it missed, with the numbers. Make that
+check part of the function. It costs one projection per condition, and it is
+what makes the next bug of the same kind take minutes instead of an
+afternoon.
 
 ### Ask a question about a box only where its answer holds for a box
 
@@ -468,3 +497,120 @@ it. This is the one sanctioned exception to "no throwaway debugging code"
 of throwaway. Over time the suite accumulates one test per real defect,
 which is what makes the kernel get harder to break rather than merely
 differently broken.
+
+## Degenerate parametrizations: the surface is fine, the coordinates are not
+
+At a pole, where a row of control points collapses to one point (the apex of
+a revolved face, a sphere's poles), the parametrization is singular. The
+surface itself is perfectly smooth there. Three bugs came from treating the
+coordinates as if they were the geometry:
+
+- **A seed on the pole never leaves it.** `NurbSurface::project` skipped any
+  Newton step whose Jacobian could be singular. From a seed on the pole every
+  step is singular, so it returned the pole for every target. Only the
+  collapsed parameter stops moving the point; the other one still moves it.
+  So step along that one, down a meridian. Which meridian is a free choice,
+  since at the pole the collapsed parameter says nothing: take the one that
+  heads most towards the target and leads into the domain (`off_pole`). A
+  pole can sit at either end of the domain, so do not assume the step is
+  positive.
+- **Decide tangency where the geometry is, not at moving foot points.** Two
+  quarters of one sphere meet at its pole: one smooth surface, so one
+  condition. `offset_vertex` compared normals at foot points that each patch
+  clamps to its own domain. Those normals differed a little, the two quarters
+  counted as two nearly equal conditions, and the system went singular.
+  Group surfaces by tangency once, at the vertex, and measure each group from
+  its nearest foot point, which is the foot point on the union of the
+  pieces.
+- **Straight in `(u, v)` is not preserved by offsetting.** The shell kept an
+  inner trim curve straight whenever the original was straight. That holds
+  on a plane (affine coordinates) and along an iso-line. It fails for a
+  sphere's meridian cut by a plane: the inner copy is a small circle.
+
+## A free choice still has to be a good one
+
+"Any value that cannot be zero" makes a pivot *valid*, not *good*. The
+sketch solver's elimination went column by column, taking the first column
+with an entry that cannot be zero. Rounding leaves entries of `1e-16` that,
+as intervals, cannot be zero. One of them became a pivot and determined a
+coordinate the constraints barely touch. That left a half circle tangent to
+two parallel sides with its sweep free and two tangencies over the same
+coordinate, which could not be enclosed. Nothing was wrong with the
+constraints. Complete pivoting (largest entry over all remaining rows and
+columns) fixed it.
+
+The same holds for every free choice the rules above allow: subdivision
+points, Newton seeds, which meridian to leave a pole along, where to split a
+curve at a matched point. Validity is the minimum. When a choice is free,
+choose the well-conditioned one.
+
+## Refuse what you do not support: early, by name, and say why
+
+An operation that only handles some configurations must recognise the rest
+before it starts building. Otherwise the unsupported case shows up deep in a
+boolean as a degenerate splice, or worse, as an invalid model nobody notices.
+The shell assumed a removed face's inner copy lies inside the face, which is
+false where that face meets a kept face at an inward corner (a pocket's
+floor, a step, the face under a boss). It failed in five different ways
+before `inward_corner` refused those cases up front, naming the faces and
+the edge. A refusal names the entities and the condition, and says what is
+supported, so the user can change the model and the next session can extend
+the code.
+
+When adding an end condition or a special case, decide it where the
+geometry actually differs. For blends, each end of an edge is decided on its
+own: run out where the edge leaves the solid, stop flush at a wall, mitre
+where two blended edges meet at an inward corner. One rule for the whole
+edge was wrong for one of the cases in each combination.
+
+## Test what the user does, not only what the arguments say
+
+Four bugs passed every operation test because the tests built the arguments
+directly:
+
+- The shell's faces could never be picked: `EntityRef::lies_in` fell back to
+  `self == scope` for every case it did not list, and a face never equals
+  its solid. The shell tests set the face names directly.
+- An offset plane's handle worked when the step was opened, and not while it
+  was being created. The selection field was still waiting for picks, and a
+  waiting field swallowed every pointer event, drags included.
+- Seeking back on the timeline kept showing the last step's part, because
+  `settle` ran the whole program after `rerun` and left the runner there.
+- Fillet tool ends were tested per edge, and broke only when two blended
+  edges met at a corner.
+
+For anything a user reaches through the editor, write at least one test in
+`editor_tests.rs` that drives it the way the front end does: `New`, `Click`,
+`Hover`, `Drag`, `Seek`. Assert on what the editor sends back (the
+presentation's `grab`, the scene's solids, the dialog's values). Be wary of
+catch-all `_ =>` arms that answer a question: they give confident answers
+for cases nobody thought about.
+
+## Sweep the space, but keep the everyday suite fast
+
+`stress_tests.rs` blends every edge, and shells every face, of boxes,
+cylinders and spheres: whole, drilled, pocketed, stepped, cut off and with a
+boss. Its first run found five shell bugs that no hand-written test had
+reached. Sweeps like this tell a refusal apart from a failure, and require
+that whatever is built is valid.
+
+They are also slow. Bodies with circular edges take up to a minute each,
+and the user noticed the suite slowing down. Keep a fast representative
+subset in the default run. Mark the rest
+``#[ignore = "slow: … — run with `cargo test -- --ignored`"]``, like the
+boolean render sweep. Run the ignored set before changing blends, shells,
+booleans or the solver. When a regression test needs a slow setup, split
+it: a fast test of the actual defect, and an ignored test of the
+combinations.
+
+## Working in parallel worktrees
+
+Features developed side by side in separate worktrees (one agent each)
+conflicted only in the shared lists every feature appends to:
+`PartOperation` and its imports, the workspace and `geop-cad-base`
+`Cargo.toml`, `set_tests.rs`'s list of operations, `web/src/icons.tsx` and
+`DEVELOPERS.md`. Keep both sides, then read the merged result: a doc comment
+listing crates, or a JSX entry cut mid-element, needs a hand edit. The merge
+is not done until the full workspace suite and the web build pass on the
+merged branch. Each branch passing its own tests says nothing about the
+combination, or about paths that only the editor exercises (see above).
