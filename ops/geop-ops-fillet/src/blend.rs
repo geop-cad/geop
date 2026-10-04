@@ -967,10 +967,45 @@ pub(crate) fn straight_tool<S: Scalar>(
                 });
                 continue;
             }
-            End::Mitre { .. } => {
-                return Err(GeopError::new(
-                    "a tool joined to a corner is not mitred at its other end",
-                ));
+            End::Mitre { at, keep } => {
+                // The section at the corner slid along the edge onto the
+                // plane halving the corner — an affine map, so the arc
+                // stays one, of the same weight — capped there, facing
+                // away from the side kept.
+                let keep = keep.normalize()?;
+                let slide = |p: Vector3<S>| -> GeopResult<Vector3<S>> {
+                    let t = at.sub(&p).prod_dot(&keep).div(along.prod_dot(&keep))?;
+                    Ok(p.add(&along.prod_scalar(t)))
+                };
+                let basis = keep.orthonormal_complement()?;
+                let (mut a1, mut a2) = (basis[0], basis[1]);
+                if a1
+                    .prod_cross(&a2)
+                    .prod_dot(&keep)
+                    .definitely_greater(S::ZERO)
+                {
+                    std::mem::swap(&mut a1, &mut a2);
+                }
+                let plane = [*at, a1, a2];
+                let in_plane = |p: Vector3<S>| -> GeopResult<[S; 2]> {
+                    let d = slide(p)?.sub(at);
+                    Ok([d.prod_dot(&a1), d.prod_dot(&a2)])
+                };
+                let one = |p: &Vector2<S>| -> GeopResult<Vector3<S>> {
+                    let [x, y] = in_plane(from.add(&space(p)))?;
+                    Ok(Vector3::from_array([x, y, S::ONE]))
+                };
+                let [x, y] = in_plane(*from)?;
+                let middle = Vector3::from_array([x.mul(w), y.mul(w), w]);
+                let flat = [one(&first)?, middle, one(&second)?, one(&q)?];
+                let points = flat.map(|p| embed(&p, &plane));
+                stations.push(ToolStation {
+                    points,
+                    vertices: [points[0], points[2], points[3]].map(|p| p.head::<3>()),
+                    name,
+                    cap: Some(Cap { plane, flat }),
+                });
+                continue;
             }
         };
         // The cap, `e1 x e2` out of the tool: the section's own axes, or
@@ -1307,6 +1342,9 @@ pub fn blend<S: Scalar>(
     let groups = mitre(part.topology(), &mut plans)?;
     refuse_rolled_corners(&plans, &rolled)?;
     let corners = corner::plan_corners(part, namer, &mut plans, &rolled, &covered, shape)?;
+    // The tools joined at corners are built whole, each such component of
+    // them one solid; mitred ones are joined by a union.
+    let components = join_at_corners((0..plans.len()).map(|i| vec![i]).collect(), &corners);
     let groups = join_at_corners(groups, &corners);
     let mut target = solid.expect("at least one edge");
     for (edge, r) in &rolled {
@@ -1320,23 +1358,20 @@ pub fn blend<S: Scalar>(
         let (first, _) = &plans[group[0]];
         let ctx = with_context!("blending edge {:?}", first.edge);
         let scope = namer.scoped(&first.edge);
-        let at: Vec<&Corner<S>> = corners
-            .iter()
-            .filter(|c| c.ends.iter().any(|e| group.contains(&e.tool)))
-            .collect();
-        if !at.is_empty() {
-            let tool = tools_with_corners(part, namer, &plans, &group, &at).with_context(ctx)?;
-            target =
-                apply_tool(part, &scope, target, tool, first.section.bend).with_context(ctx)?;
-            continue;
-        }
-        // The group's tools, joined: mitred tools are applied as one.
         let mut tool: Option<SolidId> = None;
-        for &i in &group {
-            let (plan, profile) = &plans[i];
+        for component in components.iter().filter(|c| group.contains(&c[0])) {
+            let (plan, profile) = &plans[component[0]];
             let own = namer.scoped(&plan.edge);
-            let built = sweep_tool(part, &own, &plan.section, profile)
-                .with_context(with_context!("the tool of edge {:?}", plan.edge))?;
+            let at: Vec<&Corner<S>> = corners
+                .iter()
+                .filter(|c| c.ends.iter().any(|e| component.contains(&e.tool)))
+                .collect();
+            let built = if at.is_empty() {
+                sweep_tool(part, &own, &plan.section, profile)
+            } else {
+                tools_with_corners(part, namer, &plans, component, &at)
+            }
+            .with_context(with_context!("the tool of edge {:?}", plan.edge))?;
             tool = Some(match tool {
                 None => built,
                 Some(joined) => boolean(

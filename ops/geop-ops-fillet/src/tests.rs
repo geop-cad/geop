@@ -6,6 +6,10 @@ use geop_core_math::{
 };
 use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::{Namer, Part};
+use geop_ops_booleans::{
+    boolean::{BooleanOp, boolean},
+    remesh::remesh::RemeshParams,
+};
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
 
 use crate::blend::{BlendShape, blend};
@@ -311,4 +315,103 @@ fn cube_fillet_all_edges() {
         }
     }
     assert_corner_balls(&part, r, &centers);
+}
+
+/// A block of 2 x 2 x 1 with a pocket of 1 x 1, 0.4 deep, in its top.
+fn pocketed() -> Part<S> {
+    let mut part = Part::new();
+    let block = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
+    let pocket = cube_solid(&mut part, "p", v(0.5, 0.5, 0.6), v(1.5, 1.5, 1.5)).unwrap();
+    let namer = Namer::new("pocket", "P").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        block,
+        pocket,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part
+}
+
+/// The names of the edges of `part` whose middle `keep` accepts, as plain
+/// numbers.
+fn edges_where(part: &Part<S>, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
+    let model = part.topology();
+    let mut names: Vec<String> = model
+        .edges
+        .iter()
+        .filter(|(_, e)| {
+            let (t0, t1) = e.curve.domain();
+            let p = e
+                .curve
+                .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+                .unwrap();
+            keep([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
+        })
+        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The pocket's floor and upright edges rounded: concave, so the fillets
+/// fill material in, and so does the ball's piece in each of the floor's
+/// corners.
+#[test]
+fn pocket_floor_fillet() {
+    let part = pocketed();
+    let inside = |p: [f64; 3]| (0.4..=1.6).contains(&p[0]) && (0.4..=1.6).contains(&p[1]);
+    let edges = edges_where(&part, |p| inside(p) && p[2] < 0.99);
+    assert_eq!(edges.len(), 8, "{edges:?}");
+    let edges: Vec<&str> = edges.iter().map(String::as_str).collect();
+    let r = 0.1;
+    let part = blended(part, &edges, BlendShape::round(r));
+    let mut centers = Vec::new();
+    for x in [0.5 + r, 1.5 - r] {
+        for y in [0.5 + r, 1.5 - r] {
+            centers.push([x, y, 0.6 + r]);
+        }
+    }
+    assert_corner_balls(&part, r, &centers);
+}
+
+/// Every edge of the pocketed block rounded is refused: at the rim's
+/// corners the rim is cut away and the upright edge filled in.
+#[test]
+fn pocketed_block_fillet_every_edge_is_refused() {
+    let part = pocketed();
+    let edges = all_edges(&part);
+    let edges: Vec<&str> = edges.iter().map(String::as_str).collect();
+    let why = refusal(part, &edges, BlendShape::round(0.1));
+    assert!(why.contains("bend the same way"), "{why}");
+}
+
+/// Every edge of the pocketed block but the pocket's upright ones rounded:
+/// the block's corners by a ball's piece, the pocket's rim by mitred
+/// fillets, its floor by fillets filling in up to the walls.
+#[test]
+#[ignore = "slow: twenty edges blended — run with `cargo test -- --ignored`"]
+fn pocketed_block_fillet_all_but_upright_edges() {
+    let part = pocketed();
+    let upright = |p: [f64; 3]| {
+        let on = |x: f64| (x - 0.5).abs() < 1e-9 || (x - 1.5).abs() < 1e-9;
+        on(p[0]) && on(p[1])
+    };
+    let edges = edges_where(&part, |p| !upright(p));
+    assert_eq!(edges.len(), all_edges(&part).len() - 4);
+    let edges: Vec<&str> = edges.iter().map(String::as_str).collect();
+    let r = 0.1;
+    let built = blended(part, &edges, BlendShape::round(r));
+    let mut centers = Vec::new();
+    for x in [r, 2.0 - r] {
+        for y in [r, 2.0 - r] {
+            for z in [r, 1.0 - r] {
+                centers.push([x, y, z]);
+            }
+        }
+    }
+    assert_corner_balls(&built, r, &centers);
 }

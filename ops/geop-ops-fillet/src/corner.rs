@@ -23,10 +23,11 @@
 //! Only corners of three planes with straight edges are rounded: there the
 //! fillets are swept, and their sections square to the edges are the ball's
 //! great arcs exactly. A corner where every edge is filleted but some edge
-//! is not straight, or more faces meet, is refused by name rather than left
-//! with the fillets crossing in a point. A corner where the edges bend
-//! different ways — a pocket's rim — and every chamfered corner are left as
-//! they were: their blends cross or are mitred.
+//! is not straight, or more faces meet, or the edges bend different ways —
+//! a pocket's rim, its upright edge filled in where the rim is cut away —
+//! is refused by name rather than left with the fillets crossing in a point
+//! or overlapping. A chamfered corner is left to its chamfers, which cross
+//! in a point.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -107,8 +108,11 @@ pub(crate) fn plan_corners<S: Scalar>(
                 }
             }
         }
-        if bends.len() == incident.len() && bends.iter().any(|b| *b != bends[0]) {
-            continue;
+        if bends.iter().any(|b| *b != bends[0]) {
+            return Err(GeopError::new(
+                "every edge at the corner is filleted, but some are convex and some concave: a corner is only rounded where all its edges bend the same way",
+            ))
+            .with_context(ctx);
         }
         if let Some(edge) = unsupported {
             return Err(GeopError::new(format!(

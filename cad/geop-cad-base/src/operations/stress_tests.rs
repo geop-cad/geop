@@ -16,6 +16,7 @@
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::ScalInF64 as S;
+use geop_core_topology::EdgeId;
 use geop_ops::operation::Operation;
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
@@ -301,9 +302,128 @@ fn stress(program: Program, size: f64) {
     );
 }
 
+/// The edges of `part` around each of its vertices blended together — the
+/// corner rounded where every edge there is filleted — and every edge at
+/// once, by fillet and by chamfer; panics listing every case gone wrong.
+/// `size` is the fillet's radius and the chamfer's distance.
+fn stress_corners(program: Program, size: f64) {
+    let (part, _) = build(&program);
+    let model = part.topology();
+    let name = |id: EdgeId| part.name_of(id).unwrap().to_string();
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (&vertex, _) in &model.vertices {
+        let mut edges: Vec<String> = model
+            .edges
+            .iter()
+            .filter(|(_, e)| e.start_vertex == vertex || e.end_vertex == vertex)
+            .map(|(&id, _)| name(id))
+            .collect();
+        edges.sort();
+        let at = format!("at vertex {}", part.name_of(vertex).unwrap());
+        groups.push((at, edges));
+    }
+    groups.sort();
+    let mut all: Vec<String> = model.edges.keys().map(|&id| name(id)).collect();
+    all.sort();
+    groups.push(("every edge".to_string(), all));
+
+    let mut wrong = Vec::new();
+    let mut tally = [0usize; 2];
+    let mut record = |case: String, outcome: Outcome| match outcome {
+        Outcome::Built => tally[0] += 1,
+        Outcome::Refused => tally[1] += 1,
+        Outcome::Wrong(why) => wrong.push(format!("{case}: {why}")),
+    };
+    for (what, edges) in groups {
+        let args = FilletArgs::constant(edges.clone(), size);
+        record(format!("fillet {what}"), outcome(&part, Fillet, &args));
+        let args = ChamferArgs {
+            edges,
+            distance: size.into(),
+            distance2: None,
+        };
+        record(format!("chamfer {what}"), outcome(&part, Chamfer, &args));
+    }
+    let [built, refused] = tally;
+    assert!(
+        wrong.is_empty(),
+        "{} of {} cases went wrong ({built} built, {refused} refused):\n\n{}",
+        wrong.len(),
+        wrong.len() + built + refused,
+        wrong.join("\n\n")
+    );
+}
+
 #[test]
 fn stress_block() {
     stress(block(), 0.1);
+}
+
+#[test]
+fn stress_block_corners() {
+    stress_corners(block(), 0.1);
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_block_corner_cut_off_corners() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "corner",
+        plane(FrameAxis::Z),
+        polygon(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]]),
+        Extents::blind(1.0),
+        cut_from("extrude(body)"),
+    );
+    stress_corners(program, 0.1);
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_block_pocketed_corners() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "pocket",
+        Some(EntityRef::Face {
+            name: "extrude(body,end)".into(),
+        }),
+        rectangle(0.5, 0.5, 1.5, 1.5),
+        Extents::blind(-0.4),
+        cut_from("extrude(body)"),
+    );
+    stress_corners(program, 0.1);
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_block_stepped_corners() {
+    let mut program = block();
+    extrude(
+        &mut program,
+        "step",
+        plane(FrameAxis::Z),
+        rectangle(-0.5, 1.5, 1.0, 2.5),
+        Extents::blind(0.5),
+        cut_from("extrude(body)"),
+    );
+    stress_corners(program, 0.1);
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_cylinder_with_flat_corners() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "flat",
+        plane(FrameAxis::Z),
+        rectangle(0.6, -2.0, 2.0, 2.0),
+        Extents::blind(1.5),
+        cut_from("extrude(body)"),
+    );
+    stress_corners(program, 0.1);
 }
 
 #[test]
