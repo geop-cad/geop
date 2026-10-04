@@ -202,6 +202,7 @@ dependencies = [
  "geop-ops-edit",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
+ "geop-ops-inspect",
  "geop-ops-rasterize",
  "geop-ops-shell",
  "geop-ops-sketch",
@@ -351,6 +352,19 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-fillet"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-booleans",
+ "geop-ops-extrude-revolve",
+ "serde",
+]
+
+[[package]]
+name = "geop-ops-inspect"
 version = "0.1.0"
 dependencies = [
  "geop-core-geometry",

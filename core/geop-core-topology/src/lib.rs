@@ -4,6 +4,7 @@ pub mod boundary;
 pub mod build;
 pub mod coedge;
 pub mod contains;
+pub mod distance;
 pub mod edge;
 pub mod edit;
 pub mod euler;

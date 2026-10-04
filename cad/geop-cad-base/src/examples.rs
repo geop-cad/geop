@@ -15,7 +15,7 @@ use geop_core_sketch::{CurveId, PointId};
 use geop_ops::{
     Design, EntityRef, ORIGIN,
     assembly::{Mate, MateKind},
-    parameters::{Parameter, ParameterKind, Parameters, Row},
+    parameters::{Material, Parameter, ParameterKind, Parameters, Row},
     part::{ParamValue, State, pose_parameter},
 };
 use geop_ops_assembly::AddPartArgs;
@@ -1047,6 +1047,10 @@ pub fn parametric_plate() -> Program {
     let mut program = Program::new();
     program.parameters = Parameters {
         color: Some("#d0893e".into()),
+        material: Some(Material {
+            name: "Aluminium 6061".into(),
+            density: 2700.0,
+        }),
         values: vec![
             number_parameter("width", "4", 1.0, 10.0),
             number_parameter("depth", "width / 2", 0.5, 10.0),

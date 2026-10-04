@@ -2,6 +2,7 @@ mod closest;
 mod compatible;
 mod evaluate;
 mod interpolate;
+mod length;
 mod refine;
 pub use interpolate::true_point_fractions;
 pub use refine::ParameterRefinable;

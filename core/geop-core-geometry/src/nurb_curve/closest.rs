@@ -18,6 +18,10 @@ const NEWTON_STEPS: usize = 30;
 /// of the distance are told apart by refining more than one.
 const SEEDS: usize = 3;
 
+/// How often a step that does not bring the point nearer is halved before
+/// the search stops.
+const HALVINGS: usize = 10;
+
 impl<S: Scalar> NurbCurve<S, 4> {
     /// The point of the curve nearest `target`, with its parameter.
     ///
@@ -60,25 +64,47 @@ impl<S: Scalar> NurbCurve<S, 4> {
         Ok((t, p))
     }
 
-    /// Newton on `f(t) = (C(t) - target) · C'(t)` from `t`, clamped into
-    /// `(t0, t1)`; stops where a step can no longer be taken (a singular
-    /// `f'`) or no longer moves the sharpened iterate.
+    /// Damped Newton on `f(t) = (C(t) - target) · C'(t)` from `t`: the full
+    /// derivative `f'` where it is definitely positive — near the nearest
+    /// point — and `|C'|²` where not (Gauss–Newton, a descent direction
+    /// wherever the curve is regular). A step that does not bring the point
+    /// nearer is halved, and the search stops once halving does not help.
+    /// Every iterate is clamped into `(t0, t1)`.
     fn refine_closest(&self, target: &Vector3<S>, mut t: S, (t0, t1): (S, S)) -> GeopResult<S> {
         let clamp = |x: S| crate::nurb_surface::clamp(x, t0, t1);
+        let distance = |t: S| -> GeopResult<f64> {
+            Ok(self.evaluate(t)?.sub(target).norm_sq().to_f64())
+        };
+        let mut current = distance(t)?;
         for _ in 0..NEWTON_STEPS {
             let r = self.evaluate(t)?.sub(target);
             let d1 = self.tangent(t)?;
             let d2 = self.second_derivative(t)?;
             let f = r.prod_dot(&d1);
-            let df = d1.prod_dot(&d1).add(r.prod_dot(&d2));
-            let Ok(step) = f.div(df) else {
+            let speed = d1.prod_dot(&d1);
+            let full = speed.add(r.prod_dot(&d2));
+            let slope = if full.definitely_greater(S::ZERO) {
+                full
+            } else if speed.definitely_greater(S::ZERO) {
+                speed
+            } else {
                 break;
             };
-            let next = clamp(t.sub(step).sharpen());
-            if next.is_subset_of(t) && t.is_subset_of(next) {
+            let step = f.div(slope)?;
+            let mut scale = S::ONE;
+            let mut moved = false;
+            for _ in 0..HALVINGS {
+                let next = clamp(t.sub(step.mul(scale)).sharpen());
+                let d = distance(next)?;
+                if d < current {
+                    (t, current, moved) = (next, d, true);
+                    break;
+                }
+                scale = scale.div(S::TWO)?;
+            }
+            if !moved {
                 break;
             }
-            t = next;
         }
         Ok(t)
     }

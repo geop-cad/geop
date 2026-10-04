@@ -1,6 +1,6 @@
 //! [`Parameters`]: the named values a program's design is given by —
-//! numbers, tables of variants and the part's colour — and [`evaluate`],
-//! the formulas that read them.
+//! numbers, tables of variants, the part's colour and what it is made of —
+//! and [`evaluate`], the formulas that read them.
 //!
 //! A parameter is defined once, in the program, and read by name wherever
 //! a value is typed: a sketch dimension of `width / 2`, a number parameter
@@ -27,6 +27,31 @@ use crate::{Design, part::ParamValue, part::State};
 
 /// The name the part's colour is read by.
 pub const COLOR: &str = "color";
+
+/// What a part is made of: a name, and its density in kg/m³ — what its
+/// mass and inertia are computed with (see `geop-ops-inspect`). Lengths are
+/// millimetres, so a part of `V` mm³ weighs `density · V · 1e-9` kg.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Material {
+    pub name: String,
+    pub density: f64,
+}
+
+/// Materials an engineer reaches for, by name, with their densities in
+/// kg/m³ — what a material is picked from; any other is given by its
+/// density.
+pub const MATERIALS: [(&str, f64); 10] = [
+    ("Aluminium 6061", 2700.0),
+    ("Steel", 7850.0),
+    ("Stainless steel 304", 8000.0),
+    ("Brass", 8500.0),
+    ("Titanium Ti-6Al-4V", 4430.0),
+    ("PLA", 1240.0),
+    ("ABS", 1050.0),
+    ("PETG", 1270.0),
+    ("Nylon PA12", 1010.0),
+    ("Acetal (POM)", 1410.0),
+];
 
 /// One row of a [`ParameterKind::Table`]: a variant, by name, with a value
 /// per column.
@@ -68,13 +93,17 @@ pub struct Parameter {
     pub kind: ParameterKind,
 }
 
-/// A program's parameters: the part's colour, and the values it is
-/// designed with, in order — each may read those before it.
+/// A program's parameters: the part's colour and material, and the values
+/// it is designed with, in order — each may read those before it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Parameters {
     /// The part's colour, `#rrggbb`; none for the viewer's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// What the part is made of; none for a part whose material is not
+    /// given — weighed as water, 1000 kg/m³, and said so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<Material>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<Parameter>,
 }
@@ -120,7 +149,7 @@ pub fn validate_color(color: &str) -> GeopResult<()> {
 
 impl Parameters {
     pub fn is_empty(&self) -> bool {
-        self.color.is_none() && self.values.is_empty()
+        self.color.is_none() && self.material.is_none() && self.values.is_empty()
     }
 
     /// The parameter `name`.
@@ -134,6 +163,13 @@ impl Parameters {
     pub fn validate(&self) -> GeopResult<()> {
         if let Some(color) = &self.color {
             validate_color(color)?;
+        }
+        if let Some(Material { name, density }) = &self.material
+            && !(density.is_finite() && *density > 0.0)
+        {
+            return Err(GeopError::new(format!(
+                "the material {name:?} has a density of {density} kg/m³: it must be a positive number"
+            )));
         }
         for (i, p) in self.values.iter().enumerate() {
             validate_name(&p.name)?;
@@ -536,6 +572,7 @@ mod tests {
     fn parameters_resolve_in_order_with_overrides() {
         let parameters = Parameters {
             color: Some("#ff8800".into()),
+            material: None,
             values: vec![
                 Parameter {
                     name: "screw".into(),

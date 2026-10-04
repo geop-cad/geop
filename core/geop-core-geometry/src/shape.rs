@@ -458,8 +458,39 @@ impl<S: Scalar> NurbSurface3D<S> {
         Ok(None)
     }
 
+    /// The axis and radius of the surface, if it is a cylinder: a surface
+    /// of revolution (see [`NurbSurface3D::axis_of_revolution`]) whose
+    /// every row of control points is an arc of one radius. Those rows'
+    /// control points then all lie at that distance from the axis, in one
+    /// half-plane through it each — on a line parallel to the axis — so the
+    /// profile blending them is that line, turned: a cylinder.
+    pub fn as_cylinder(&self) -> GeopResult<Option<(Axis<S>, S)>> {
+        for along_u in [true, false] {
+            if let Some((axis, radii)) = self.revolution_rows(along_u)? {
+                let Some(Some(first)) = radii.first() else {
+                    continue;
+                };
+                let one = radii
+                    .iter()
+                    .all(|r| r.is_some_and(|r| r.could_be_equal(*first)));
+                if one {
+                    let radius = radii.iter().flatten().fold(*first, |a, &r| a.union(r));
+                    return Ok(Some((axis, radius)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// [`NurbSurface3D::axis_of_revolution`], for rows along `u` or along `v`.
     pub(crate) fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis<S>>> {
+        Ok(self.revolution_rows(along_u)?.map(|(axis, _)| axis))
+    }
+
+    /// [`NurbSurface3D::revolution_along`], with each row's radius — `None`
+    /// for a row that is a single point on the axis, a pole.
+    #[allow(clippy::type_complexity)]
+    fn revolution_rows(&self, along_u: bool) -> GeopResult<Option<(Axis<S>, Vec<Option<S>>)>> {
         let (rows, len, degree, knots) = if along_u {
             (self.num_v, self.num_u, self.degree_u, &self.knot_vector_u)
         } else {
@@ -481,6 +512,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         // starts at, and the weights every row is proportional to.
         let mut reference: Option<(Arc<S>, Vec<S>)> = None;
         let mut poles = Vec::new();
+        let mut radii = Vec::new();
         for j in 0..rows {
             let cps = row(j);
             let weights: Vec<S> = cps.iter().map(|p| p[3]).collect();
@@ -497,11 +529,13 @@ impl<S: Scalar> NurbSurface3D<S> {
             let points = dehomogenize::<S, 4, 3>(&cps);
             if points.iter().all(|p| p.could_be_equal(&points[0])) {
                 poles.push(points[0]);
+                radii.push(None);
                 continue;
             }
             let Some(arc) = NurbCurve::try_new(degree, cps, knots.clone())?.as_arc()? else {
                 return Ok(None);
             };
+            radii.push(Some(arc.circle.radius));
             match &reference {
                 None => reference = Some((arc, weights)),
                 Some((first, _)) => {
@@ -524,7 +558,10 @@ impl<S: Scalar> NurbSurface3D<S> {
             return Ok(None);
         };
         let axis = first.circle.axis();
-        Ok(poles.iter().all(|p| axis.could_contain(p)).then_some(axis))
+        Ok(poles
+            .iter()
+            .all(|p| axis.could_contain(p))
+            .then_some((axis, radii)))
     }
 }
 

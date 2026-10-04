@@ -19,6 +19,7 @@ geop-ops-shell.workspace = true
 geop-ops-rasterize.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+geop-ops-inspect.workspace = true
 
 [dev-dependencies]
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }
