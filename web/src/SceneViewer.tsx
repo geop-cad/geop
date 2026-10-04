@@ -313,7 +313,7 @@ export function SceneViewer({
         cap.scale.setScalar(extent.size * 3);
       }
       cap.visible = cut != null;
-      const groups = [groupRef.current, ...[...placedRef.current.values()].map((p) => p.group)];
+      const groups = [groupRef.current, placedRef.current?.group];
       for (const group of groups) {
         group?.traverse((o) => {
           if (o.userData.stencil) o.visible = cut != null;
