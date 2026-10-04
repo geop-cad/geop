@@ -21,6 +21,22 @@ use crate::{
     part::State,
 };
 
+/// What an operation has in hand while a step is edited (see
+/// [`Form::tool`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InHand {
+    /// Nothing: a click selects, and a draggable visual is dragged.
+    #[default]
+    Nothing,
+    /// A tool that clicks — drawing a line, say: clicks go to it rather
+    /// than select, and draggable visuals are not dragged.
+    Clicks,
+    /// A tool that also strokes — trimming, say: besides its clicks, a
+    /// press anywhere grabs, and the drag goes to it as a
+    /// [`super::CanvasEvent::Stroke`].
+    Strokes,
+}
+
 /// What a setter edits: the step's arguments, its session, the keys of the
 /// visuals selected, and the program's state — the parameters its steps
 /// read, which an edit may set: where a placed part is put.
@@ -44,9 +60,9 @@ pub struct Form<'a, S: Scalar, A = (), T = ()> {
     /// stops orbiting, and draws a grid on it. Draggable visuals are
     /// dragged in it.
     pub focus: Option<CoordinateSystem<S>>,
-    /// Whether the operation has a tool in hand — drawing a line, say — so
-    /// that clicks go to it rather than select.
-    pub tool: bool,
+    /// What the operation has in hand: clicks — and, for a tool that
+    /// strokes, drags — go to it rather than select.
+    pub tool: InHand,
     /// The placed parts the step is dragging, by the parameters their poses
     /// are: the editor solves the program with them pulled.
     pub drags: Vec<Drag<S>>,
@@ -61,7 +77,7 @@ impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
             dialog: Dialog::new(),
             visuals: Vec::new(),
             focus: None,
-            tool: false,
+            tool: InHand::Nothing,
             drags: Vec::new(),
             prompt: None,
             setters: Vec::new(),

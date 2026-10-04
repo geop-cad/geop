@@ -23,6 +23,7 @@ const COLORS: Record<Style, number> = {
   guide: 0x777777,
   handle: 0xffa040,
   snap: 0x58e07a,
+  removed: 0xff4f9a,
 };
 
 /** Drawn dashed: what is not part of the result. */

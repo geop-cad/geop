@@ -2,12 +2,13 @@
 
 use super::drawing::{Hints, construct};
 use super::snap::curve_mid;
+use super::trim::Plan;
 use super::*;
 use crate::references::{Source, X_AXIS, Y_AXIS};
 
 /// The far ends of the sketch's own axes: only there to give the axes a
 /// direction, so never drawn.
-fn axis_ends(args: &AddSketchArgs) -> Vec<PointId> {
+pub(super) fn axis_ends(args: &AddSketchArgs) -> Vec<PointId> {
     args.references
         .iter()
         .filter(|r| r.source == Source::Frame)
@@ -50,8 +51,9 @@ pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<P2> {
 /// is being drawn in `s`: its points and curves selectable — and, unless
 /// given from outside, draggable — its constraints' glyphs selectable and
 /// dimensions' values draggable, where the pointer snaps to, and a
-/// dimension being placed with `selection`.  What is selected or hovered the editor
-/// draws so.
+/// dimension being placed with `selection`, and what the trim tool would
+/// remove, along the way it was dragged. What is selected or hovered the
+/// editor draws so.
 pub(super) fn visuals<S: Scalar>(
     args: &AddSketchArgs,
     s: &SketchSession,
@@ -139,6 +141,27 @@ pub(super) fn visuals<S: Scalar>(
                 Style::Guide,
             ));
         }
+    }
+    if s.tool == Tool::Trim && !s.stroke.met.is_empty() {
+        let plan = Plan::new(sketch, &hidden);
+        for (i, (curve, piece)) in plan.pieces(&s.stroke.met).into_iter().enumerate() {
+            out.push(Visual::new(
+                format!("trim{i}"),
+                Shape::Polyline {
+                    points: plan.polyline(curve, piece).into_iter().map(world).collect(),
+                },
+                Style::Removed,
+            ));
+        }
+    }
+    if s.tool == Tool::Trim && s.stroke.path.len() >= 2 {
+        out.push(Visual::new(
+            "stroke",
+            Shape::Polyline {
+                points: s.stroke.path.iter().copied().map(world).collect(),
+            },
+            Style::Draft,
+        ));
     }
     if let Some(cursor) = s.cursor {
         for (i, points) in draft_preview(args, s, cursor).into_iter().enumerate() {

@@ -99,6 +99,8 @@ pub enum Style {
     Handle,
     /// Where what is drawn or dragged would snap to.
     Snap,
+    /// What the tool in hand would remove.
+    Removed,
 }
 
 /// A value asked for in place, at `at` in the viewport: a field of the

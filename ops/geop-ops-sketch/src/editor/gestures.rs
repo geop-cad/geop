@@ -8,7 +8,9 @@ use geop_ops::{
 };
 
 use super::drawing::{Built, Hints, angle_between, construct, curve_ending_at, wrap};
+use super::trim::Plan;
 use super::*;
+use crate::geometry::segments_cross;
 use crate::references::{Reference, Source};
 
 impl<S: Scalar> Editing<'_, S> {
@@ -42,6 +44,12 @@ impl<S: Scalar> Editing<'_, S> {
         let Tool::Draw(tool) = self.s.tool else {
             self.s.cursor = Some(p);
             self.s.snap = None;
+            if self.s.tool == Tool::Trim {
+                self.s.stroke = Stroke {
+                    path: Vec::new(),
+                    met: self.meets(pointer).into_iter().collect(),
+                };
+            }
             return;
         };
         let placed = self.placed(pointer, p, shift);
@@ -415,9 +423,76 @@ impl<S: Scalar> Editing<'_, S> {
         self.commit(next);
     }
 
+    /// The curve the trim tool, at `pointer`, is over — one it can trim —
+    /// and where in the plane.
+    fn meets(&self, pointer: &Pointer<S>) -> Option<(CurveId, P2)> {
+        let (p, _) = self.in_plane(pointer)?;
+        let sketch = self.sketch();
+        let trimmable = |key: &str| {
+            curve_key(key).is_some_and(|c| sketch.curves.get(&c).is_some_and(|c| !c.fixed))
+        };
+        let visuals = visuals(self.args, self.s, self.selection, &self.frame);
+        let curve = hit_key(&visuals, pointer, &[&trimmable])
+            .as_deref()
+            .and_then(curve_key)?;
+        Some((curve, p))
+    }
+
+    /// The trim tool dragged from `from` to `to`, released if `done`: what
+    /// it meets along the way — under the pointer, and every curve the way
+    /// it went crosses — is removed when it is let go.
+    fn stroke(&mut self, from: &Pointer<S>, to: &Pointer<S>, done: bool) {
+        if self.s.stroke.path.is_empty() {
+            let Some((start, _)) = self.in_plane(from) else {
+                return;
+            };
+            self.s.stroke = Stroke {
+                path: vec![start],
+                met: self.meets(from).into_iter().collect(),
+            };
+        }
+        if let Some((p, _)) = self.in_plane(to) {
+            let last = *self.s.stroke.path.last().expect("started above");
+            let mut met: Vec<(CurveId, P2)> = self.meets(to).into_iter().collect();
+            for (&id, curve) in &self.sketch().curves {
+                if curve.fixed {
+                    continue;
+                }
+                let drawn = visuals::drawn(self.args, id);
+                met.extend(
+                    drawn
+                        .windows(2)
+                        .filter_map(|w| segments_cross(last, p, w[0], w[1]))
+                        .map(|q| (id, q)),
+                );
+            }
+            self.s.stroke.met.extend(met);
+            self.s.stroke.path.push(p);
+            self.s.cursor = Some(p);
+        }
+        if done {
+            let stroke = std::mem::take(&mut self.s.stroke);
+            self.trim(&stroke.met);
+        }
+    }
+
+    /// Removes the pieces of curves the points `met` are on, up to where
+    /// the sketch meets them (see [`super::trim`]).
+    fn trim(&mut self, met: &[(CurveId, P2)]) {
+        let axes = visuals::axis_ends(self.args);
+        let plan = Plan::new(self.sketch(), &axes);
+        let removed = plan.pieces(met);
+        if removed.is_empty() {
+            return;
+        }
+        let next = plan.apply(&removed);
+        self.commit(next);
+    }
+
     /// Puts down what is being drawn, and takes up `tool`.
     pub(super) fn take(&mut self, tool: Tool) {
         self.finish_draft();
+        self.s.stroke = Stroke::default();
         self.s.tool = if self.s.tool == tool {
             Tool::Select
         } else {
@@ -557,6 +632,7 @@ impl<S: Scalar> Editing<'_, S> {
                     self.finish_draft();
                 } else {
                     self.s.tool = Tool::Select;
+                    self.s.stroke = Stroke::default();
                 }
             }
             "Enter" => match self.s.tool {
@@ -573,7 +649,9 @@ impl<S: Scalar> Editing<'_, S> {
             other => {
                 let other = other.to_lowercase();
                 let shortcut = |s: Option<&str>| s == Some(other.as_str());
-                if let Some(info) = DrawTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
+                if shortcut(Some(TRIM_SHORTCUT)) {
+                    self.take(Tool::Trim);
+                } else if let Some(info) = DrawTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
                     self.take(Tool::Draw(info.tool));
                 } else if let Some(info) = ConstraintTool::ALL.iter().find(|i| shortcut(i.shortcut))
                 {
@@ -608,6 +686,9 @@ impl<S: Scalar> Editing<'_, S> {
             CanvasEvent::Leave => {
                 self.s.cursor = None;
                 self.s.snap = None;
+                if self.s.stroke.path.is_empty() {
+                    self.s.stroke = Stroke::default();
+                }
             }
             CanvasEvent::Click {
                 pointer,
@@ -619,6 +700,12 @@ impl<S: Scalar> Editing<'_, S> {
                 (Button::Primary, Tool::Select) if *double => self.double_click(pointer),
                 (Button::Primary, Tool::Select) => {}
                 (Button::Primary, Tool::Constrain(tool)) => self.pick_for(tool, pointer),
+                (Button::Primary, Tool::Trim) => {
+                    let met: Vec<_> = self.meets(pointer).into_iter().collect();
+                    self.trim(&met);
+                    // What is under the pointer now.
+                    self.hover(pointer, *shift);
+                }
                 (Button::Primary, Tool::Draw(tool)) => {
                     if *double {
                         self.finish_draft();
@@ -637,6 +724,11 @@ impl<S: Scalar> Editing<'_, S> {
             } => {
                 let (from, to) = (self.to_sketch(from), self.to_sketch(to));
                 self.drag(key, from, to, pointer, *done, *shift);
+            }
+            CanvasEvent::Stroke { from, to, done, .. } => {
+                if self.s.tool == Tool::Trim {
+                    self.stroke(from, to, *done);
+                }
             }
         }
     }
