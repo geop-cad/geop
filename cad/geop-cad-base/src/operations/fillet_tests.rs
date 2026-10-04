@@ -759,3 +759,88 @@ fn fillet_lofted_bottom_edge_is_refused() {
         "{error}"
     );
 }
+
+/// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined
+/// by straight sides — a rim of lines and arcs running on into each other
+/// tangentially, between the flat top and walls flat and round by turns.
+fn slot() -> Program {
+    let mut s = Sketch::new();
+    let p = [
+        s.add_point(n(-1.0), n(-0.5)),
+        s.add_point(n(1.0), n(-0.5)),
+        s.add_point(n(1.0), n(0.5)),
+        s.add_point(n(-1.0), n(0.5)),
+    ];
+    s.add_line(p[0], p[1]);
+    s.add_arc(p[1], p[2], n(std::f64::consts::PI));
+    s.add_line(p[2], p[3]);
+    s.add_arc(p[3], p[0], n(std::f64::consts::PI));
+    let mut program = Program::new();
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: s,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "slot",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(1.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
+/// The slot's top rim rounded: picking one straight side rounds the whole
+/// rim, its tangent chain, the ball rolling from the flat walls onto the
+/// round ones and back. The round meets the top 0.1 inside the rim and the
+/// walls 0.1 below it.
+#[test]
+fn fillet_slot_rim_as_one_chain() {
+    let mut program = slot();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
+    assert_eq!(side.len(), 1, "{side:?}");
+    program.push("round", FilletArgs::constant(side, 0.1));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["fillet(round)"]);
+    let near = |p: [f64; 3]| {
+        part.topology().vertices.values().any(|v| {
+            (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-6)
+        })
+    };
+    // Where the rim's sides meet its half circles, now 0.1 in and down.
+    for p in [[1.0, -0.4, 1.0], [1.0, -0.5, 0.9], [-1.0, 0.4, 1.0], [-1.0, 0.5, 0.9]] {
+        assert!(near(p), "no vertex at {p:?}");
+    }
+    assert!(!near([1.0, -0.5, 1.0]));
+}
+
+/// The top rim of a square lofted into a circle: the ruled walls meet at
+/// creases, tangent only at the rim itself, so the ball rolling round would
+/// have to roll over them — refused, naming the faces and the edge.
+#[test]
+fn fillet_rim_over_creases_is_refused() {
+    let mut program = square_to_circle();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let rim = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e.curve.evaluate(S::interpolate(t0, t1, S::from_f64(0.5))).unwrap();
+        p[2].could_be_equal(S::from_f64(2.0))
+    });
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("rounding the rim over the creases is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("meet at a crease"), "{error}");
+}
