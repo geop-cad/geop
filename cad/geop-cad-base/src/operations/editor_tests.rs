@@ -1864,3 +1864,62 @@ fn variable_fillet_set_up_in_the_dialog() {
         part.solid_names()
     );
 }
+
+/// The bill of materials, asked for the way the inspect panel asks — the
+/// command and the update as JSON: the bolted plate's three parts, the
+/// screw and nut designated by their norms. Of the part shown: seeking
+/// back before the nut drops it. Exported as CSV, indented, named after
+/// the file.
+#[test]
+fn the_bill_of_materials_is_asked_for_and_exported() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "bolted_plate".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let ask = r#"{"command": "inspect", "query": {"bom": {"structure": "flat"}}}"#;
+    let json = editor.handle_json(ask).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    let bom = &update["inspection"];
+    assert_eq!(bom["kind"], "bom");
+    assert_eq!(bom["structure"], "flat");
+    let designations: Vec<&str> = bom["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["designation"].as_str().unwrap_or("-"))
+        .collect();
+    assert_eq!(designations, ["-", "ISO 4762 M4x12", "ISO 4032 M4"]);
+    let screw = &bom["lines"][1];
+    assert_eq!(
+        (&screw["kind"], &screw["quantity"]),
+        (&"part".into(), &1.into())
+    );
+    assert_eq!(screw["material"], "Steel");
+    assert!(screw["unit_mass"]["value"].as_f64().unwrap() > 0.0);
+    assert!(bom["total_mass"]["value"].as_f64().unwrap() > 0.0);
+
+    // Up to the screw: no nut yet.
+    editor.handle(Command::Seek { marker: Some(2) });
+    let json = editor.handle_json(ask).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(update["inspection"]["lines"].as_array().unwrap().len(), 2);
+    editor.handle(Command::Seek { marker: None });
+
+    let json = editor
+        .handle_json(r#"{"command": "export_bom", "structure": "indented"}"#)
+        .unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    assert_eq!(update["export"]["name"], "bolted_plate_bom.csv");
+    let csv = update["export"]["text"].as_str().unwrap();
+    let rows: Vec<&str> = csv.lines().collect();
+    assert_eq!(rows.len(), 1 + 3 + 1, "{csv}");
+    assert!(
+        rows[2].starts_with("2,1,1,ISO 4762 socket head cap screw,ISO 4762 M4x12,"),
+        "{csv}"
+    );
+    assert!(rows[4].contains("Total"), "{csv}");
+}

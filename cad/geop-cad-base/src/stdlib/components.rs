@@ -71,6 +71,7 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:ball_bearing.geop",
         title: "Deep-groove ball bearing",
+        designation: "Ball bearing",
         base: "side",
         program,
         threaded: Vec::new(),
@@ -98,7 +99,12 @@ const SLOT: [[i32; 2]; 10] = [
 /// along `y`, `length` long up `z` — its length the parameter `length` —
 /// with a slot down the middle of every 20 of its sides and a 4.2 bore,
 /// for an M5 thread, down every cell.
-fn tslot(cells: i32, file: &'static str, title: &'static str) -> GeopResult<StandardPart> {
+fn tslot(
+    cells: i32,
+    file: &'static str,
+    title: &'static str,
+    designation: &'static str,
+) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: Some(Material {
@@ -183,6 +189,7 @@ fn tslot(cells: i32, file: &'static str, title: &'static str) -> GeopResult<Stan
     Ok(StandardPart {
         file,
         title,
+        designation,
         base: "end",
         program,
         threaded: Vec::new(),
@@ -194,6 +201,7 @@ pub fn tslot_2020() -> GeopResult<StandardPart> {
         1,
         "std:tslot_2020.geop",
         "T-slot aluminium extrusion 20x20, B-type slot 6",
+        "T-slot 2020",
     )
 }
 
@@ -202,6 +210,7 @@ pub fn tslot_2040() -> GeopResult<StandardPart> {
         2,
         "std:tslot_2040.geop",
         "T-slot aluminium extrusion 20x40, B-type slot 6",
+        "T-slot 2040",
     )
 }
 
@@ -294,6 +303,7 @@ pub fn nema17() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:nema17_stepper.geop",
         title: "NEMA 17 stepper motor",
+        designation: "NEMA 17 stepper",
         base: "face",
         program,
         threaded: Vec::new(),

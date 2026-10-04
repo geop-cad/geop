@@ -38,8 +38,15 @@ use std::{
     sync::OnceLock,
 };
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops::{Files, FilesMut};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+};
+use geop_ops::{
+    Files, FilesMut,
+    parameters::ParameterKind,
+    part::{ParamValue, State},
+};
 
 use crate::Program;
 
@@ -53,6 +60,9 @@ pub struct StandardPart {
     pub file: &'static str,
     /// What it is, in words: the norm and the name.
     pub title: &'static str,
+    /// What a size of it is ordered as, before the size: the norm —
+    /// `ISO 4762`, for `ISO 4762 M4x12` — or the catalogue name.
+    pub designation: &'static str,
     pub program: Program,
     /// The datum plane through the face it sits on — `seat`, `base`, ...
     /// — which a coincident mate picks; its datum `axis` the concentric
@@ -61,6 +71,39 @@ pub struct StandardPart {
     /// The faces a thread goes on or in — a screw's shank, a nut's or a
     /// standoff's bore — by name; none for a part without one.
     pub threaded: Vec<String>,
+}
+
+impl StandardPart {
+    /// The designation of the part built with the parameter values
+    /// `values`: [`StandardPart::designation`] and then each parameter of
+    /// the family, in order — a table's row by its name, a number after
+    /// its own: `ISO 4762 M4x12`, `T-slot 2020 length 500`.
+    pub fn designate(&self, values: &State) -> String {
+        let mut words = vec![self.designation.to_string()];
+        for parameter in &self.program.parameters.values {
+            match (&parameter.kind, values.get(&parameter.name)) {
+                (ParameterKind::Table { .. }, Some(ParamValue::Text(row))) => {
+                    words.push(row.clone())
+                }
+                (ParameterKind::Number { .. }, Some(ParamValue::Number(n))) => {
+                    words.push(format!("{} {}", parameter.name, n.to_f64()))
+                }
+                _ => {}
+            }
+        }
+        words.join(" ")
+    }
+}
+
+/// What the standard part placed from `file` is, built with the
+/// parameter values `values`, as a bill of materials lists it — `None`
+/// for a file that is no standard part.
+pub fn standard(file: &str, values: &State) -> Option<geop_ops_bom::Standard> {
+    let family = part(file).ok()?;
+    Some(geop_ops_bom::Standard {
+        title: family.title.to_string(),
+        designation: family.designate(values),
+    })
 }
 
 /// A built family, and its program as the text a file holds.

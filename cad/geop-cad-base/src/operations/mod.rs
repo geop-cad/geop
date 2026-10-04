@@ -53,6 +53,8 @@ mod assembly_scale_tests;
 #[cfg(test)]
 mod assembly_tests;
 #[cfg(test)]
+mod bom_tests;
+#[cfg(test)]
 mod datum_tests;
 #[cfg(test)]
 mod drawing_tests;
