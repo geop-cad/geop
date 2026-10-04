@@ -2,12 +2,13 @@
 
 > Brief overview only — full documentation is coming later.
 
-Extrude and revolve operations, plus basic shapes (cube, sphere,
-cylinder, ...) for tests to be written against.
+Extrude, revolve, sweep and loft operations, plus basic shapes (cube,
+sphere, cylinder, ...) for tests to be written against.
 
-Both are *sweeps* (`sweep`): a planar profile carried along a `Path` —
-straight for an extrude, around an axis for a revolve — into a solid, or,
-without one, into a sheet of faces standing on their own. A sweep is
+All are *sweeps* (`sweep`): a planar profile carried along a `Path` —
+straight for an extrude, around an axis for a revolve, along a chain of
+curves for a sweep — or a loft's several profiles skinned together, into a
+solid, or, without one, into a sheet of faces standing on their own. A sweep is
 described whole, as a `BodySpec` of vertices, edges and faces, and built in
 one go by `Part::build_body` (see [geop-core-topology](../core/geop-core-topology.md)),
 which checks it is consistent first and names every entity it builds.
@@ -35,7 +36,14 @@ sweeps a *wall* through every span. A solid swept along an open path is
 closed by two flat caps, `N(start)` and `N(end)`, spanning the profile's
 bounding box; along a closed path — a full turn — it needs none. A wall is
 the tensor product of its span (`u`: degree 1 for a line, a rational
-quadratic for an arc) and its curve (`v`).
+quadratic for an arc, a cubic B-spline through approximating sections for
+any other curve) and its curve (`v`).
+
+`skin` is the same grid with a section of its own at every station — what
+a loft passes through: the `i`-th curves of all sections compatible (one
+degree, one knot vector, see `NurbCurve::compatible`), a wall running from
+one section's curve to the next one's, everything named after the first
+section.
 
 A revolve's axis makes two things degenerate: a pole is a single vertex at
 every station, the walls next to it closing over it with a degenerate
@@ -73,6 +81,32 @@ first — so that `a1` lies a quarter turn on from `a0`. `revolve_at_oriented`
 revolves a "top-down" profile a full turn the way the basic shapes are
 built: an open chain from pole to pole, or a ring clear of the axis.
 
+## Sweep along a path
+
+`path_sweep::sweep_along` carries a profile, from where it is drawn, along a
+`PathChain` of 3-D curves by the rigid motion that keeps it square to the
+path — a rotation-minimizing frame, which for a planar path keeps the
+path's plane normal fixed. Every joint of the path is a station, every curve
+a span: a line moves the profile straight on and an arc turns it about the
+arc's axis, both exactly; any other curve is approximated by sections at
+samples along it — frames carried by the double reflection method —
+skinned by cubic Hermite interpolation of the frames. Where two lines meet
+at an angle the profile is mitred, projected onto the plane bisecting the
+corner; any other corner is refused. Stations are named after the path's
+joints, spans after its curves.
+
+## Loft
+
+`loft::loft` skins two or more `Section`s — profiles in planes of their
+own — with ruled walls between consecutive ones. The sections are made to
+correspond first: each turned to wind the same way seen along the loft
+(mirroring its frame where its plane faces the other way), a section of
+fewer curves has its longest ones halved, a closed section starts at the
+joint lining it up best with the one before, and the curves are made
+compatible. Closed loops loft into a solid capped by the first and last
+sections; open chains into sheets — between two curves, the ruled surface
+joining them.
+
 ## Basic shapes
 
 The `shapes` module builds basic solids directly. It is only compiled for
@@ -88,6 +122,12 @@ feature, which their dev-dependencies turn on.
 | `figure8_profile`                 | a dumbbell outline with two holes, extruded              |
 
 ## The operations
+
+`Sweep` sweeps one sketch's area along another sketch's one chain or loop
+of curves, starting at the end (or joint) of the path nearest the profile;
+`Loft` lofts through several sketches' single loops, in order. Both keep a
+new body or take a `Combine`, and as a `face` build faces standing on
+their own.
 
 `Extrude` and `Revolve` are the operations a program uses (see
 [geop-ops](./geop-ops.md#operations)): they sweep a sketch of the part into

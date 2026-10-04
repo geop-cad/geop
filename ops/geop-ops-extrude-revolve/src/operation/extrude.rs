@@ -125,7 +125,7 @@ impl Operation for Extrude {
     ) -> Form<'a, S, ExtrudeArgs> {
         let before = context.before;
         let mut f = Form::<S, ExtrudeArgs>::new();
-        sketch_field(&mut f, before, &args.sketch, |args, sketch| {
+        sketch_field(&mut f, before, "sketch", &args.sketch, |args, sketch| {
             args.sketch = sketch
         });
         args.extent.show(

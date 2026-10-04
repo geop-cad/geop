@@ -27,8 +27,8 @@ ops/geop-ops-datums          the datum operation: reference points, axes,
                               planes and coordinate systems
 ops/geop-ops-booleans        3-D boolean operations (union/intersection/diff),
                               the boolean operation
-ops/geop-ops-extrude-revolve extrude/revolve, the extrude and revolve
-                              operations, and basic shapes for tests
+ops/geop-ops-extrude-revolve extrude/revolve, sweeps along paths, lofts;
+                              their operations, and basic shapes for tests
 ops/geop-ops-rasterize       turns a Model into a triangle mesh, writes it
                               as STL, and renders it for debugging
 cad/geop-cad-base            the operations the editor offers, the editor engine,

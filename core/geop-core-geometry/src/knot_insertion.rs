@@ -54,6 +54,19 @@ fn find_insertion_span<S: Scalar>(knots: &[S], n: usize, degree: usize, t_bar: S
     degree
 }
 
+/// Insert `t` once into every row, in place: Boehm insertion into the span
+/// `t` falls in — after every knot `t` could equal, so inserting an
+/// existing knot raises its multiplicity.
+pub(crate) fn insert<S: Scalar, const D: usize>(
+    knots: &mut Vec<S>,
+    rows: &mut [Vec<Vector<S, D>>],
+    degree: usize,
+    t: S,
+) {
+    let span = find_insertion_span(knots, rows[0].len() - 1, degree, t);
+    insert_once(knots, rows, degree, span, t);
+}
+
 /// True if `knots` (for `num_points` control points of `degree`) is a single
 /// Bézier span `[a; p+1] ++ [b; p+1]`. "Same knot" means identical
 /// enclosures (`is_subset_of` both ways), stricter than the

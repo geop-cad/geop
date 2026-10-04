@@ -467,14 +467,14 @@ impl ProfileLoop {
             };
             out = vec![
                 ProfilePiece {
-                    curve: rescale_to_unit(a)?,
+                    curve: a.with_unit_domain()?,
                     source: only.source,
                     index: first,
                     start: only.start,
                     end: middle,
                 },
                 ProfilePiece {
-                    curve: rescale_to_unit(b)?,
+                    curve: b.with_unit_domain()?,
                     source: only.source,
                     index: second,
                     start: middle,
@@ -715,21 +715,9 @@ fn edge_pieces<D: Scalar, S: Scalar>(
                     .collect(),
                 shape.knots.iter().map(|k| k.cast()).collect(),
             )?;
-            Ok(vec![rescale_to_unit(curve)?])
+            Ok(vec![curve.with_unit_domain()?])
         }
     }
-}
-
-/// `curve` reparametrized from its domain onto `[0, 1]`.
-fn rescale_to_unit<S: Scalar>(curve: NurbCurve2D<S>) -> GeopResult<NurbCurve2D<S>> {
-    let (t0, t1) = curve.domain();
-    let span = t1.sub(t0);
-    let knots = curve
-        .knot_vector
-        .iter()
-        .map(|&k| k.sub(t0).div(span))
-        .collect::<GeopResult<Vec<S>>>()?;
-    NurbCurve::try_new(curve.degree, curve.control_points, knots)
 }
 
 // ── containment, on the curves themselves ───────────────────────────────────

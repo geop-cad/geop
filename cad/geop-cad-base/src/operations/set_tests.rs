@@ -18,6 +18,8 @@ fn every_operation_is_offered() {
             "add_sketch",
             "extrude",
             "revolve",
+            "sweep",
+            "loft",
             "boolean",
             "split",
             "add_datum",

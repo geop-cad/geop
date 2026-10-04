@@ -9,8 +9,8 @@ them, and example programs.
 
 `PartOperation` is the set of operations the editor offers (see
 [operation sets](../ops/geop-ops.md#operation-sets)): `AddSketch`,
-`Extrude`, `Revolve`, `Boolean` and `AddDatum`, each defined by the crate
-that builds it. `Program`, `ProgramRunner` and `Step` here are the program
+`Extrude`, `Revolve`, `Sweep`, `Loft`, `Boolean` and `AddDatum`, each defined
+by the crate that builds it. `Program`, `ProgramRunner` and `Step` here are the program
 types of [geop-ops](../ops/geop-ops.md#programs) over that set — what the
 web editor edits and the command-line tool compiles.
 
