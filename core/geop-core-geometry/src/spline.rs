@@ -11,7 +11,11 @@ use geop_core_math::{
 /// The distinct knots strictly inside the domain of a curve of `degree`
 /// with `num_points` control points, each with its multiplicity — knots
 /// that could be equal counted as one, their enclosures united.
-pub(crate) fn interior_knots<S: Scalar>(knots: &[S], degree: usize, num_points: usize) -> Vec<(S, usize)> {
+pub(crate) fn interior_knots<S: Scalar>(
+    knots: &[S],
+    degree: usize,
+    num_points: usize,
+) -> Vec<(S, usize)> {
     let (start, end) = (knots[degree], knots[num_points]);
     let mut out: Vec<(S, usize)> = Vec::new();
     for &k in &knots[degree + 1..num_points] {
@@ -35,7 +39,11 @@ pub(crate) fn interior_knots<S: Scalar>(knots: &[S], degree: usize, num_points: 
 /// start its panels at.
 pub(crate) fn breakpoints<S: Scalar>(knots: &[S], degree: usize, num_points: usize) -> Vec<S> {
     let mut out = vec![knots[degree]];
-    out.extend(interior_knots(knots, degree, num_points).into_iter().map(|(k, _)| k));
+    out.extend(
+        interior_knots(knots, degree, num_points)
+            .into_iter()
+            .map(|(k, _)| k),
+    );
     out.push(knots[num_points]);
     out
 }

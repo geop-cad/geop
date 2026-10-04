@@ -507,12 +507,16 @@ impl<S: Scalar> Editor<S> {
             Some(query) => inspect::answer(query, shown_part)
                 .map_err(|e| error = Some(e.to_string()))
                 .ok(),
-            None => self.measure_tool.as_mut().filter(|_| step.is_none()).map(|tool| {
-                if !matches!(result, Ok(Changed::Nothing)) {
-                    tool.remeasure(shown_part);
-                }
-                Inspection::Measure(tool.measurement().clone())
-            }),
+            None => self
+                .measure_tool
+                .as_mut()
+                .filter(|_| step.is_none())
+                .map(|tool| {
+                    if !matches!(result, Ok(Changed::Nothing)) {
+                        tool.remeasure(shown_part);
+                    }
+                    Inspection::Measure(tool.measurement().clone())
+                }),
         };
         Update {
             error,

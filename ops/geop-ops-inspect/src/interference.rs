@@ -133,7 +133,9 @@ fn check_pair<S: Scalar>(
             .volume;
         return Ok(Some((Contact::Overlap, Some(Bounded::of(volume)))));
     }
-    Ok(touch(a, b).with_context(&ctx)?.then_some((Contact::Touch, None)))
+    Ok(touch(a, b)
+        .with_context(&ctx)?
+        .then_some((Contact::Touch, None)))
 }
 
 /// Whether some face of `a` could be at distance zero from some face of
@@ -227,4 +229,3 @@ fn copy_solid<S: Scalar>(
         .solid
         .ok_or_else(|| GeopError::new(format!("the copy of {} is no solid", solid.name)))
 }
-

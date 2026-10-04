@@ -58,4 +58,7 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
+ops/geop-ops-inspect          inspecting a part without changing it: mass
+                               properties of its solids and placed parts,
+                               measurements of picked entities, interference
 ```

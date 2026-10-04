@@ -220,9 +220,8 @@ pub fn integrate<S: Scalar>(
         // rules smaller than their own enclosures' widths is rounding, not
         // truncation, and no halving reduces it.
         let width = total(&panels, |p| &p.width);
-        let done = (0..components).all(|c| {
-            error[c] <= quadrature.relative_tolerance * scale[c] || error[c] <= width[c]
-        });
+        let done = (0..components)
+            .all(|c| error[c] <= quadrature.relative_tolerance * scale[c] || error[c] <= width[c]);
         if done {
             break true;
         }
@@ -251,9 +250,7 @@ pub fn integrate<S: Scalar>(
     let error = total(&panels, |p| &p.error);
     let value = (0..components)
         .map(|c| {
-            let sum = panels
-                .iter()
-                .fold(S::ZERO, |acc, p| acc.add(p.kronrod[c]));
+            let sum = panels.iter().fold(S::ZERO, |acc, p| acc.add(p.kronrod[c]));
             sum.add(S::from_f64(-error[c]).union(S::from_f64(error[c])))
         })
         .collect();
@@ -270,13 +267,30 @@ mod tests {
 
     fn check_polynomials_are_exact<S: Scalar>() {
         // x^5 - 2x^2 + 1 on [0, 2]: 64/6 - 16/3 + 2 = 22/3.
-        let f = |x: S| Ok(vec![x.mul(x).mul(x).mul(x).mul(x).sub(S::TWO.mul(x).mul(x)).add(S::ONE)]);
+        let f = |x: S| {
+            Ok(vec![
+                x.mul(x)
+                    .mul(x)
+                    .mul(x)
+                    .mul(x)
+                    .sub(S::TWO.mul(x).mul(x))
+                    .add(S::ONE),
+            ])
+        };
         let integral = integrate(f, &[S::ZERO, S::TWO], 1, &Quadrature::default()).unwrap();
         assert!(integral.converged);
         let exact = S::from_ratio(22, 3).unwrap();
-        assert!(integral.value[0].could_be_equal(exact), "{:?}", integral.value[0]);
+        assert!(
+            integral.value[0].could_be_equal(exact),
+            "{:?}",
+            integral.value[0]
+        );
         // `ScalInFPA64` is fixed point, at 2^-32, rounding every product.
-        assert!(integral.value[0].width().to_f64() < 1e-6, "{:?}", integral.value[0]);
+        assert!(
+            integral.value[0].width().to_f64() < 1e-6,
+            "{:?}",
+            integral.value[0]
+        );
     }
     #[test]
     fn polynomials_are_exact() {
@@ -298,7 +312,11 @@ mod tests {
         let f = |x: S| Ok(vec![x.sqrt()?]);
         let integral = integrate(f, &[S::ZERO, S::ONE], 1, &Quadrature::default()).unwrap();
         assert!(integral.value[0].could_be_equal(S::from_ratio(2, 3).unwrap()));
-        assert!(integral.value[0].width().to_f64() < 1e-6, "{:?}", integral.value[0]);
+        assert!(
+            integral.value[0].width().to_f64() < 1e-6,
+            "{:?}",
+            integral.value[0]
+        );
     }
 
     /// A budget too small leaves the result wider, and says so.

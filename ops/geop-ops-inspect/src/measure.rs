@@ -78,7 +78,11 @@ pub fn measure<S: Scalar>(part: &Part<S>, entities: &[EntityRef]) -> Measurement
 /// One entity alone: a point's coordinates, an edge's length — and radius,
 /// if it is circular — a face's area — and radius, if it is a cylinder —
 /// a solid's volume, area and mass.
-fn alone<S: Scalar>(part: &Part<S>, entity: &EntityRef, out: &mut Measurement<S>) -> GeopResult<()> {
+fn alone<S: Scalar>(
+    part: &Part<S>,
+    entity: &EntityRef,
+    out: &mut Measurement<S>,
+) -> GeopResult<()> {
     let ctx = |e: GeopError| e.with_context(format!("measuring {entity}"));
     let aspects = Aspects::of(entity, part).with_context(&ctx)?;
     let (owner, local, _) = resolve(part, entity).with_context(&ctx)?;
@@ -86,8 +90,11 @@ fn alone<S: Scalar>(part: &Part<S>, entity: &EntityRef, out: &mut Measurement<S>
     match &local {
         EntityRef::Edge { name } => {
             let curve = &owner.topology().get_edge(owner.edge_id(name)?)?.curve;
-            out.values
-                .push(measured("Length", curve.length().with_context(&ctx)?.0, "mm"));
+            out.values.push(measured(
+                "Length",
+                curve.length().with_context(&ctx)?.0,
+                "mm",
+            ));
         }
         EntityRef::Face { name } => {
             let face = owner.face_id(name)?;
@@ -144,7 +151,8 @@ fn together<S: Scalar>(
     match (fa, fb) {
         (Ok(fa), Ok(fb)) => {
             let closest = closest_points(&fa, &fb).with_context(&ctx)?;
-            out.values.push(measured("Distance", closest.distance, "mm"));
+            out.values
+                .push(measured("Distance", closest.distance, "mm"));
             let delta = closest.b.sub(&closest.a);
             for (k, axis) in ["dX", "dY", "dZ"].into_iter().enumerate() {
                 out.values.push(measured(axis, delta[k].abs(), "mm"));

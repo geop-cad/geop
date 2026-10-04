@@ -5,7 +5,7 @@
 
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_core_math::vector::Vector3;
-use geop_ops::{NoFiles, Namer, Part};
+use geop_ops::{Namer, NoFiles, Part};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,

@@ -350,7 +350,11 @@ mod tests {
         let mass = model.mass_properties(solid, S::TWO).unwrap();
         assert!(mass.converged);
         assert!(mass.volume.could_be_equal(S::ONE), "{:?}", mass.volume);
-        assert!(mass.area.could_be_equal(S::from_f64(6.0)), "{:?}", mass.area);
+        assert!(
+            mass.area.could_be_equal(S::from_f64(6.0)),
+            "{:?}",
+            mass.area
+        );
         assert!(mass.mass.could_be_equal(S::TWO));
         let half = S::from_f64(0.5);
         for k in 0..3 {
@@ -361,7 +365,11 @@ mod tests {
                 } else {
                     S::ZERO
                 };
-                assert!(mass.inertia[k][j].could_be_equal(want), "{:?}", mass.inertia);
+                assert!(
+                    mass.inertia[k][j].could_be_equal(want),
+                    "{:?}",
+                    mass.inertia
+                );
             }
         }
         let (area, converged) = model

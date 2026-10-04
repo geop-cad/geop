@@ -9,7 +9,9 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops::{EntityRef, Part, parameters::Material, parameters::Parameters};
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid};
+use geop_ops_extrude_revolve::shapes::{
+    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid,
+};
 
 use crate::{
     Bounded, interference::Contact, interference_report, mass::MassSummary, mass_report, measure,
@@ -33,7 +35,10 @@ fn steel() -> Part<S> {
 /// `bounded` contains `exact`, and is no wider than `relative` of it.
 #[track_caller]
 fn assert_near(what: &str, bounded: Bounded, exact: f64, relative: f64) {
-    assert!(bounded.contains(exact), "{what}: {bounded:?} does not contain {exact}");
+    assert!(
+        bounded.contains(exact),
+        "{what}: {bounded:?} does not contain {exact}"
+    );
     assert!(
         bounded.error <= relative * exact.abs().max(1.0),
         "{what}: {bounded:?} is wider than {relative} of {exact}"
@@ -58,7 +63,10 @@ fn assert_diagonal(summary: &MassSummary, diagonal: [f64; 3], relative: f64) {
             let want = if a == b { diagonal[a] } else { 0.0 };
             let got = summary.inertia[a][b];
             assert!(got.contains(want), "I[{a}][{b}] = {got:?}, want {want}");
-            assert!(got.error <= relative * scale, "I[{a}][{b}] = {got:?} is too wide");
+            assert!(
+                got.error <= relative * scale,
+                "I[{a}][{b}] = {got:?} is too wide"
+            );
         }
     }
 }
@@ -94,7 +102,14 @@ fn box_mass_properties() {
 fn cylinder_mass_properties() {
     let mut part = steel();
     let (r, h) = (1.5, 4.0);
-    revolved_cylinder(&mut part, "c", v(1.0, -1.0, 2.0), S::from_f64(r), S::from_f64(h)).unwrap();
+    revolved_cylinder(
+        &mut part,
+        "c",
+        v(1.0, -1.0, 2.0),
+        S::from_f64(r),
+        S::from_f64(h),
+    )
+    .unwrap();
     let summary = only(&part);
     let volume = PI * r * r * h;
     let mass = volume * 7850.0e-9;
@@ -142,7 +157,11 @@ fn two_boxes_combine() {
     // one, about y and z.
     let own = m / 6.0;
     let off = m * 1.5 * 1.5;
-    assert_diagonal(&total, [2.0 * own, 2.0 * (own + off), 2.0 * (own + off)], 1e-9);
+    assert_diagonal(
+        &total,
+        [2.0 * own, 2.0 * (own + off), 2.0 * (own + off)],
+        1e-9,
+    );
 }
 
 /// A vertex above a cylinder's side is as far from it as from its axis,
@@ -151,7 +170,14 @@ fn two_boxes_combine() {
 #[test]
 fn distance_from_a_vertex_to_a_cylinder() {
     let mut part = Part::<S>::new();
-    revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::from_f64(1.0), S::from_f64(2.0)).unwrap();
+    revolved_cylinder(
+        &mut part,
+        "c",
+        v(0.0, 0.0, 0.0),
+        S::from_f64(1.0),
+        S::from_f64(2.0),
+    )
+    .unwrap();
     cube_solid(&mut part, "b", v(2.0, 0.5, 0.5), v(3.0, 1.5, 1.5)).unwrap();
     let vertex = EntityRef::Vertex {
         name: "cube(b,p0,end)".into(),
@@ -162,7 +188,12 @@ fn distance_from_a_vertex_to_a_cylinder() {
     };
     let measured = measure(&part, &[vertex, side]);
     assert!(measured.error.is_none(), "{measured:?}");
-    let distance = &measured.values.iter().find(|m| m.label == "Distance").unwrap().value;
+    let distance = &measured
+        .values
+        .iter()
+        .find(|m| m.label == "Distance")
+        .unwrap()
+        .value;
     // The corner (2, 0.5, 0.5): sqrt(4.25) from the axis.
     assert_near("distance", *distance, 4.25f64.sqrt() - 1.0, 1e-9);
     let [_, on_face] = measured.witness.unwrap();
@@ -176,7 +207,14 @@ fn distance_from_a_vertex_to_a_cylinder() {
 #[test]
 fn single_entities() {
     let mut part = Part::<S>::new();
-    revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::from_f64(1.5), S::from_f64(2.0)).unwrap();
+    revolved_cylinder(
+        &mut part,
+        "c",
+        v(0.0, 0.0, 0.0),
+        S::from_f64(1.5),
+        S::from_f64(2.0),
+    )
+    .unwrap();
     let value = |entity: EntityRef, label: &str| {
         let measured = measure(&part, &[entity]);
         assert!(measured.error.is_none(), "{measured:?}");
@@ -195,7 +233,12 @@ fn single_entities() {
     let side = || EntityRef::Face {
         name: "cylinder(c,c1,q1)".into(),
     };
-    assert_near("side", value(side(), "Area"), 2.0 * PI * 1.5 * 2.0 / 4.0, 1e-8);
+    assert_near(
+        "side",
+        value(side(), "Area"),
+        2.0 * PI * 1.5 * 2.0 / 4.0,
+        1e-8,
+    );
     assert_near("side radius", value(side(), "Radius"), 1.5, 1e-9);
     let top = EntityRef::Face {
         name: "cylinder(c,c0,q2)".into(),
@@ -217,7 +260,10 @@ fn overlapping_and_touching_boxes() {
     assert_eq!(report.solids, 4);
     assert_eq!(report.found.len(), 2, "{report:?}");
     let overlap = &report.found[0];
-    assert_eq!((overlap.a.as_str(), overlap.b.as_str()), ("cube(a)", "cube(b)"));
+    assert_eq!(
+        (overlap.a.as_str(), overlap.b.as_str()),
+        ("cube(a)", "cube(b)")
+    );
     assert_eq!(overlap.contact, Contact::Overlap);
     assert_near("overlap", overlap.volume.unwrap(), 1.0, 1e-9);
     let touch = &report.found[1];
@@ -258,5 +304,10 @@ fn long_bars_overlap() {
     let report = interference_report(&part).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.found.len(), 1, "{report:?}");
-    assert_near("overlap", report.found[0].volume.unwrap(), 40.0 * 5.0 * 5.0, 1e-9);
+    assert_near(
+        "overlap",
+        report.found[0].volume.unwrap(),
+        40.0 * 5.0 * 5.0,
+        1e-9,
+    );
 }

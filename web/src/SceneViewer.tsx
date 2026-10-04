@@ -20,6 +20,7 @@ import {
   type ViewInstance,
   type Visual,
 } from "./geop";
+import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 
@@ -183,6 +184,8 @@ interface Props {
   onFocusReached?: (pose: CameraPose) => void;
   /** Fired whenever the user finishes moving the camera, so a caller can come back to it later. */
   onPose?: (pose: CameraPose) => void;
+  /** A section view: what lies on the side the normal points to is not drawn, and cut solids are capped. */
+  section?: SectionPlane | null;
 }
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
@@ -203,6 +206,42 @@ const ease = (t: number) => t * t * (3 - 2 * t);
 function cameraOrientation(pose: CameraPose): THREE.Quaternion {
   const m = new THREE.Matrix4().lookAt(vec(pose.position), vec(pose.target), vec(pose.up));
   return new THREE.Quaternion().setFromRotationMatrix(m);
+}
+
+/** The colour a section view caps cut solids with. */
+const CAP_COLOR = 0xc86464;
+
+/**
+ * Two copies of a solid's triangles that draw nothing but count, in the
+ * stencil buffer, how often the eye's ray through each pixel enters and
+ * leaves the solid — back faces up, front faces down — so that where a
+ * section has cut the solid open, the count is not zero and the cap is drawn
+ * (see the cap in [[SceneViewer]]). Hidden until a section is on.
+ */
+function stencilCounters(geometry: THREE.BufferGeometry): THREE.Mesh[] {
+  return (
+    [
+      [THREE.BackSide, THREE.IncrementWrapStencilOp],
+      [THREE.FrontSide, THREE.DecrementWrapStencilOp],
+    ] as const
+  ).map(([side, op]) => {
+    const material = new THREE.MeshBasicMaterial({
+      side,
+      colorWrite: false,
+      depthWrite: false,
+      depthTest: false,
+      stencilWrite: true,
+      stencilFunc: THREE.AlwaysStencilFunc,
+      stencilFail: op,
+      stencilZFail: op,
+      stencilZPass: op,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 1;
+    mesh.visible = false;
+    mesh.userData.stencil = true;
+    return mesh;
+  });
 }
 
 /** The color a highlighted entity is drawn in. */
@@ -249,6 +288,7 @@ function buildSceneGroup(scene: Scene): THREE.Group {
     });
     const mesh = new THREE.Mesh(geometry, material);
     group.add(mesh);
+    group.add(...stencilCounters(geometry));
     group.userData.triangles = {
       mesh,
       base: colors.slice(),
@@ -470,7 +510,10 @@ export function SceneViewer({
   focus,
   onFocusReached,
   onPose,
+  section,
 }: Props) {
+  const sectionRef = useRef(section ?? null);
+  sectionRef.current = section ?? null;
   const containerRef = useRef<HTMLDivElement>(null);
   // Read inside the effects via refs so a prop change doesn't tear down
   // anything.
@@ -529,7 +572,8 @@ export function SceneViewer({
     if (!container) return;
     const placed = placedRef.current;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+    renderer.localClippingEnabled = true;
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
     // Labels are HTML over the canvas: crisp text, and they never catch
@@ -587,6 +631,51 @@ export function SceneViewer({
     threeScene.add(visualLayer.group);
     const grid = new PlaneGrid();
     threeScene.add(grid.group);
+
+    // A section view: the model's materials clipped by one plane, and a cap
+    // drawn on it wherever the stencil counters say a solid was cut open —
+    // resetting the count as it goes, so each pixel is capped once.
+    const clipPlane = new THREE.Plane();
+    const clipping = [clipPlane];
+    const cap = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshStandardMaterial({
+        color: CAP_COLOR,
+        side: THREE.DoubleSide,
+        roughness: 0.8,
+        stencilWrite: true,
+        stencilRef: 0,
+        stencilFunc: THREE.NotEqualStencilFunc,
+        stencilFail: THREE.ReplaceStencilOp,
+        stencilZFail: THREE.ReplaceStencilOp,
+        stencilZPass: THREE.ReplaceStencilOp,
+      }),
+    );
+    cap.renderOrder = 2;
+    cap.visible = false;
+    threeScene.add(cap);
+    /** Clip every material of the part, and of the parts placed in it, by the section — or by nothing. */
+    const applySection = () => {
+      const cut = sectionRef.current;
+      if (cut) {
+        const normal = vec(cut.normal).normalize();
+        clipPlane.setFromNormalAndCoplanarPoint(normal.clone().negate(), vec(cut.origin));
+        const { extent } = partRef.current;
+        const center = vec(extent.center);
+        cap.position.copy(clipPlane.projectPoint(center, new THREE.Vector3()));
+        cap.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+        cap.scale.setScalar(extent.size * 3);
+      }
+      cap.visible = cut != null;
+      const groups = [groupRef.current, ...[...placedRef.current.values()].map((p) => p.group)];
+      for (const group of groups) {
+        group?.traverse((o) => {
+          if (o.userData.stencil) o.visible = cut != null;
+          const material = (o as THREE.Mesh).material as THREE.Material | undefined;
+          if (material && !Array.isArray(material)) material.clippingPlanes = cut ? clipping : null;
+        });
+      }
+    };
 
     const resize = () => {
       const { clientWidth, clientHeight } = container;
@@ -875,6 +964,7 @@ export function SceneViewer({
         promptEl.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
       }
 
+      applySection();
       renderer.render(threeScene, camera);
       labelRenderer.render(threeScene, camera);
       frame = requestAnimationFrame(animate);

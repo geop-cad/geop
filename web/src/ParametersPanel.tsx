@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ColorInput } from "./controls";
-import type { Parameter, ParameterRow, Parameters, ParamValue } from "./geop";
+import type { Material, Parameter, ParameterRow, Parameters, ParamValue } from "./geop";
 import { Icon } from "./icons";
 
 interface Props {
@@ -10,6 +10,75 @@ interface Props {
   enabled: boolean;
   /** The parameters are now these; settled once the part is built with them. */
   onChange: (parameters: Parameters) => Promise<unknown> | void;
+  /** The materials the part's can be picked from; any other is given by its density. */
+  materials: Material[];
+}
+
+/**
+ * The part's material: one of `materials`, or any other by its density in
+ * kg/m³ — what its mass and inertia are computed with. None given, the part
+ * is weighed as water.
+ */
+function MaterialRow({
+  material,
+  materials,
+  enabled,
+  onChange,
+}: {
+  material: Material | null | undefined;
+  materials: Material[];
+  enabled: boolean;
+  onChange: (material: Material | null) => void;
+}) {
+  const known = material && materials.find((m) => m.name === material.name && m.density === material.density);
+  const choice = !material ? "" : known ? material.name : "custom";
+  return (
+    <div className="parameter-row" title="What the part is made of: its mass and inertia are computed with its density">
+      <span className="parameter-kind">
+        <Icon name="mass" />
+      </span>
+      <span className="parameter-name">material</span>
+      <select
+        className="parameter-formula"
+        value={choice}
+        disabled={!enabled}
+        aria-label="The part's material"
+        onChange={(e) => {
+          const name = e.target.value;
+          if (name === "") onChange(null);
+          else if (name === "custom") onChange({ name: "Custom", density: material?.density ?? 1000 });
+          else onChange(materials.find((m) => m.name === name) ?? null);
+        }}
+      >
+        <option value="">none (water)</option>
+        {materials.map((m) => (
+          <option key={m.name} value={m.name}>
+            {m.name} — {m.density} kg/m³
+          </option>
+        ))}
+        <option value="custom">custom density…</option>
+      </select>
+      {choice === "custom" && material && (
+        <input
+          key={material.density}
+          className="parameter-value"
+          type="number"
+          min={0}
+          defaultValue={material.density}
+          title="Density, kg/m³"
+          aria-label="Density in kg/m³"
+          disabled={!enabled}
+          onBlur={(e) => {
+            const density = Number(e.target.value);
+            if (density > 0 && density !== material.density) onChange({ ...material, density });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -291,7 +360,7 @@ function ParameterDialog({
  * dimensions read them by name; a program placing the part gives them other
  * values. One compact row each; the details open in a popup.
  */
-export function ParametersPanel({ parameters, resolved, enabled, onChange }: Props) {
+export function ParametersPanel({ parameters, resolved, enabled, onChange, materials }: Props) {
   const values = parameters.values ?? [];
   const [editing, setEditing] = useState<number | null>(null);
   const set = (index: number, parameter: Parameter) =>
@@ -325,6 +394,12 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange }: Pro
           </button>
         )}
       </div>
+      <MaterialRow
+        material={parameters.material}
+        materials={materials}
+        enabled={enabled}
+        onChange={(material) => onChange({ ...parameters, material })}
+      />
       {values.map((p, index) => {
         const error = resolved.errors[p.name];
         return (

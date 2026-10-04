@@ -380,6 +380,32 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M10 16 A7 7 0 0 0 7.8 10.8" />
     </>
   ),
+  // ── inspecting ──────────────────────────────────────────────────────
+  measure: (
+    <>
+      <path d="M2.5 13 L13 2.5 L17.5 7 L7 17.5 Z" />
+      <path d="M6 9.5 L7.5 11 M8.5 7 L10.5 9 M11 4.5 L12.5 6" strokeWidth="1" />
+    </>
+  ),
+  mass: (
+    <>
+      <path d="M5 8 L15 8 L17 17 L3 17 Z" />
+      <circle cx="10" cy="5" r="2.2" />
+    </>
+  ),
+  interference: (
+    <>
+      <rect x="3" y="3" width="9" height="9" />
+      <rect x="8" y="8" width="9" height="9" />
+      <path d="M8 12 L12 8" strokeWidth="1" />
+    </>
+  ),
+  section: (
+    <>
+      <path d="M4 7 L10 4 L16 7 L16 13 L10 16 L4 13 Z" />
+      <path d="M2 11 L18 9" strokeDasharray="2 1.5" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

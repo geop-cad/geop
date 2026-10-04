@@ -51,9 +51,7 @@ impl<'m, S: Scalar> PlacedFace<'m, S> {
     pub fn new(model: &'m Model<S>, face: FaceId, pose: Option<Pose<S>>) -> GeopResult<Self> {
         let ctx = |e: GeopError| e.with_context(format!("PlacedFace::new(face={face})"));
         let surface = &model.get_face(face).with_context(&ctx)?.surface;
-        let seeds = surface
-            .sample_parameters(FACE_SAMPLES)
-            .with_context(&ctx)?;
+        let seeds = surface.sample_parameters(FACE_SAMPLES).with_context(&ctx)?;
         let mut inside = Vec::new();
         for &(u, v) in &seeds {
             if contains(model, face, u, v).with_context(&ctx)? {
@@ -125,7 +123,11 @@ impl<S: Scalar> Feature<'_, S> {
             Feature::Face(face) => {
                 let mut points = face.inside.clone();
                 for edge in &face.edges {
-                    points.extend(curve_samples(edge)?.into_iter().map(|p| place(&face.pose, p)));
+                    points.extend(
+                        curve_samples(edge)?
+                            .into_iter()
+                            .map(|p| place(&face.pose, p)),
+                    );
                 }
                 points
             }
@@ -264,7 +266,10 @@ mod tests {
         assert!(front.distance.could_be_equal(S::ONE), "{front:?}");
         assert!(front.b.could_be_equal(&v(1.0, 0.3, 0.6)), "{front:?}");
         let corner = least(v(2.0, 2.0, 2.0), None);
-        assert!(corner.distance.could_be_equal(S::from_f64(3f64.sqrt())), "{corner:?}");
+        assert!(
+            corner.distance.could_be_equal(S::from_f64(3f64.sqrt())),
+            "{corner:?}"
+        );
         // The cube moved up by 5: the same point is now 4.4 below its bottom.
         let up = Pose::identity().with_position(v(0.0, 0.0, 5.0));
         let below = least(v(0.5, 0.5, 0.6), Some(up));

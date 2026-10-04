@@ -127,7 +127,12 @@ impl<S: Scalar> MeasureTool<S> {
             for (key, at) in [("from", a), ("to", b)] {
                 visuals.push(Visual::new(key, Shape::Point { at }, Style::Selected));
             }
-            if let Some(distance) = self.measurement.values.iter().find(|m| m.label == "Distance") {
+            if let Some(distance) = self
+                .measurement
+                .values
+                .iter()
+                .find(|m| m.label == "Distance")
+            {
                 let middle = a.add(&b).prod_scalar(S::from_f64(0.5));
                 visuals.push(Visual::new(
                     "distance-label",
@@ -141,7 +146,12 @@ impl<S: Scalar> MeasureTool<S> {
             }
         }
         let mut highlights = self.picked.clone();
-        highlights.extend(self.hover.iter().filter(|h| !self.picked.contains(h)).cloned());
+        highlights.extend(
+            self.hover
+                .iter()
+                .filter(|h| !self.picked.contains(h))
+                .cloned(),
+        );
         Presentation {
             dialog: Dialog::new(),
             visuals,
