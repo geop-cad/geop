@@ -346,24 +346,6 @@ impl<S: Scalar> NurbCurve3D<S> {
             end: self.evaluate(t1)?,
         }))
     }
-
-    /// The curve cut at every interior knot: its polynomial (or rational)
-    /// pieces, in order.
-    fn bezier_pieces(&self) -> GeopResult<Vec<Self>> {
-        let end = self.domain().1;
-        let interior = &self.knot_vector[self.degree + 1..self.control_points.len()];
-        let mut rest = self.clone();
-        let mut pieces = Vec::new();
-        for &k in interior {
-            if k.definitely_greater(rest.domain().0) && k.definitely_less(end) {
-                let (left, right) = rest.split(k)?;
-                pieces.push(left);
-                rest = right;
-            }
-        }
-        pieces.push(rest);
-        Ok(pieces)
-    }
 }
 
 /// The circle a rational quadratic Bézier piece traces, if it is an exact

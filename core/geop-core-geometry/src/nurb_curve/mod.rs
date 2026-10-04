@@ -1,4 +1,5 @@
 mod compatible;
+mod extrema;
 mod evaluate;
 mod interpolate;
 mod refine;

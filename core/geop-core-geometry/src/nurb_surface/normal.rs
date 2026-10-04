@@ -63,7 +63,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// direction ([`rational_derivatives`]); the mixed one by differentiating
     /// `A = w S` once along each: `A_uv = w_uv S + w_u S_v + w_v S_u + w
     /// S_uv`.
-    pub(crate) fn second_derivatives(&self, u: S, v: S) -> GeopResult<[Vector3<S>; 3]> {
+    pub fn second_derivatives(&self, u: S, v: S) -> GeopResult<[Vector3<S>; 3]> {
         let (du, dv, a_uv) = self.homogeneous_partials(u, v, 2)?;
         let (cu, cv) = (rational_derivatives(&du)?, rational_derivatives(&dv)?);
         let (w, w_u, w_v, w_uv) = (du[0][3], du[1][3], dv[1][3], a_uv[3]);
