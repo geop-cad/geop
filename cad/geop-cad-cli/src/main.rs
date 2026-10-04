@@ -59,6 +59,10 @@ enum Command {
     /// Build a program and write a 2-D drawing of its part — views with
     /// hidden lines, dimensions, a title block — as SVG or DXF.
     Drawing(DrawingCliArgs),
+    /// Build an assembly and write it as a URDF robot — links, joints,
+    /// inertia and meshes — for simulators: a directory of `robot.urdf`
+    /// and `meshes/*.stl`, or one `.zip` of them.
+    Urdf(UrdfArgs),
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
@@ -137,6 +141,20 @@ struct DrawingCliArgs {
     /// What the part is made of, for the title block.
     #[arg(long)]
     material: Option<String>,
+}
+
+#[derive(clap::Args)]
+struct UrdfArgs {
+    /// The assembly to export, e.g. `robot.geop`.
+    program: PathBuf,
+    /// Where to write it: a directory — made if missing — or a `.zip`
+    /// file. Defaults to the program's path with `.geop` replaced by
+    /// `_urdf`, a directory.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// How finely curved faces are meshed: higher is smoother, and bigger.
+    #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
+    quality: u16,
 }
 
 /// Today's date, `YYYY-MM-DD` (UTC), for a title block.
@@ -364,26 +382,67 @@ fn solids(
     Ok(())
 }
 
-fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
-    let io_err = |what: &str, path: &Path| {
-        let what = what.to_string();
-        let path = path.display().to_string();
-        move |e: std::io::Error| GeopError::new(format!("{what} {path}: {e}"))
-    };
-    let path = args.program.to_string_lossy();
-    // A standard part — `std:iso4032_hex_nut.geop` — compiles too.
+/// The program at `path`, built, its parts where its mates hold them, and
+/// the mates the program's state did not hold. A stale state — a file it
+/// places changed since it was saved — is solved for here, not in the
+/// file: that is the editor's to write.
+fn build(path: &Path) -> GeopResult<(Program, Part<S>, Vec<String>)> {
+    let path = path.to_string_lossy();
+    // A standard part — `std:iso4032_hex_nut.geop` — builds too.
     let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
     let library = workspace.scope(&path);
     let mut part = program.build(&library)?;
-    // State stale — a file it places changed since it was saved — are
-    // solved for here, not in the file: that is the editor's to write.
     let report = part.check_mates(|_| true)?;
     if !report.converged {
         let (moved, _) = part.solve_mates(None, &[], &[])?;
         program.state.extend(moved);
         part = program.build(&library)?;
     }
+    Ok((program, part, report.failed))
+}
+
+/// Writes the robot `args` ask for; returns where, and how many links and
+/// joints it has.
+fn urdf(args: &UrdfArgs) -> GeopResult<(PathBuf, usize, usize)> {
+    let (_, part, _) = build(&args.program)?;
+    let name = args
+        .program
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "robot".into());
+    let robot = geop_ops_urdf::export(&part, &name, usize::from(args.quality))?;
+    let output = args.output.clone().unwrap_or_else(|| {
+        let mut dir = args.program.with_extension("").into_os_string();
+        dir.push("_urdf");
+        dir.into()
+    });
+    let write = |path: &Path, bytes: &[u8]| {
+        std::fs::write(path, bytes)
+            .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))
+    };
+    if output.extension().is_some_and(|e| e == "zip") {
+        write(&output, &robot.zip()?)?;
+    } else {
+        for (file, bytes) in robot.files() {
+            let path = output.join(&file);
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| GeopError::new(format!("creating {}: {e}", dir.display())))?;
+            }
+            write(&path, &bytes)?;
+        }
+    }
+    Ok((output, robot.robot.links.len(), robot.robot.joints.len()))
+}
+
+fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
+    let io_err = |what: &str, path: &Path| {
+        let what = what.to_string();
+        let path = path.display().to_string();
+        move |e: std::io::Error| GeopError::new(format!("{what} {path}: {e}"))
+    };
+    let (program, part, solved_for) = build(&args.program)?;
 
     // The solids to write, in name order so the file does not depend on
     // how the part stores them.
@@ -441,7 +500,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         steps: program.steps.len(),
         solids: chosen.len(),
         triangles: triangles.len(),
-        solved_for: report.failed,
+        solved_for,
     })
 }
 
@@ -570,6 +629,9 @@ fn main() -> ExitCode {
         Command::Drawing(args) => drawing(&args).map(|output| {
             eprintln!("drawing -> {}", output.display());
         }),
+        Command::Urdf(args) => urdf(&args).map(|(output, links, joints)| {
+            eprintln!("{links} links, {joints} joints -> {}", output.display());
+        }),
         Command::Examples(args) => export_examples(&args).map(|compiled| {
             for c in &compiled {
                 eprintln!("{} triangles -> {}", c.triangles, c.output.display());
@@ -682,6 +744,43 @@ mod tests {
             }
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
+    }
+
+    /// The arm, exported as a URDF robot: by default into a directory
+    /// beside it — `robot.urdf` and the mesh of its link — and as one ZIP
+    /// archive of the same files when asked for a `.zip`.
+    #[test]
+    fn exports_the_arm_as_urdf() {
+        let dir = scratch("urdf");
+        let (_, files) = examples::workspaces()
+            .into_iter()
+            .find(|(name, _)| *name == "arm")
+            .unwrap();
+        for (file, program) in &files {
+            std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+        }
+        let args = UrdfArgs {
+            program: dir.join("arm.geop"),
+            output: None,
+            quality: 8,
+        };
+        let (output, links, joints) = urdf(&args).unwrap();
+        assert_eq!(output, dir.join("arm_urdf"));
+        assert_eq!((links, joints), (3, 2));
+        let text = std::fs::read_to_string(output.join("robot.urdf")).unwrap();
+        assert!(text.contains(r#"<robot name="arm">"#), "{text}");
+        assert!(output.join("meshes/link.stl").is_file());
+
+        let zip = dir.join("arm.zip");
+        urdf(&UrdfArgs {
+            output: Some(zip.clone()),
+            ..args
+        })
+        .unwrap();
+        let bytes = std::fs::read(zip).unwrap();
+        assert!(bytes.starts_with(b"PK\x03\x04"));
+        let urdf_at = bytes.windows(10).position(|w| w == b"robot.urdf");
+        assert!(urdf_at.is_some());
     }
 
     /// An assembly compiles with the parts it places, each where it is

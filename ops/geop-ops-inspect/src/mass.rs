@@ -75,7 +75,7 @@ pub struct MassReport {
 
 /// The material `part` is made of, its density in kg/m³, and whether it
 /// was assumed.
-fn material_of<S: Scalar>(part: &Part<S>) -> (String, f64, bool) {
+pub fn material_of<S: Scalar>(part: &Part<S>) -> (String, f64, bool) {
     match part.material() {
         Some(Material { name, density }) => (name.clone(), *density, false),
         None => ("Water (no material given)".into(), UNGIVEN_DENSITY, true),
@@ -92,15 +92,8 @@ pub fn mass_report<S: Scalar>(part: &Part<S>) -> GeopResult<MassReport> {
     let mut complete = true;
     for placed in placed_solids(part)? {
         let (material, density, assumed) = material_of(placed.part);
-        let per_mm3 = S::from_f64(density).div(S::from_f64(1e9))?;
         let computed = placed
-            .part
-            .topology()
-            .mass_properties(placed.solid, per_mm3)
-            .and_then(|p| match &placed.pose {
-                Some(pose) => p.placed(pose),
-                None => Ok(p),
-            })
+            .mass_properties()
             .and_then(|p| Ok((MassSummary::of(&p)?, p)));
         let (properties, error) = match computed {
             Ok((summary, p)) => {

@@ -140,6 +140,87 @@ impl<T: Scalar> Quaternion<T> {
         Ok(qz.mul(&qy.mul(&qx)))
     }
 
+    /// The rotation whose matrix has the columns `columns` — where `x`, `y`
+    /// and `z` turn to, orthonormal and right-handed: the inverse of
+    /// [`Quaternion::rotation_columns`], up to sign. Of the four ways to
+    /// read it off the matrix (Shepperd's), the one dividing by the largest
+    /// of the trace and the diagonal: a free choice, and the
+    /// well-conditioned one.
+    pub fn from_rotation_columns(columns: [Vector3<T>; 3]) -> GeopResult<Self> {
+        let m = |r: usize, c: usize| columns[c][r];
+        let one = T::ONE;
+        let trace = m(0, 0).add(m(1, 1)).add(m(2, 2));
+        let size = |v: T| v.to_f64();
+        let candidates = [trace, m(0, 0), m(1, 1), m(2, 2)];
+        let largest = (1..4).fold(0, |best, k| {
+            if size(candidates[k]) > size(candidates[best]) {
+                k
+            } else {
+                best
+            }
+        });
+        let quarter = T::ONE.div(T::from_i64(4))?;
+        let q = match largest {
+            0 => {
+                let s = one.add(trace).sqrt()?.mul(T::TWO);
+                let inv = one.div(s)?;
+                Self::new(
+                    s.mul(quarter),
+                    m(2, 1).sub(m(1, 2)).mul(inv),
+                    m(0, 2).sub(m(2, 0)).mul(inv),
+                    m(1, 0).sub(m(0, 1)).mul(inv),
+                )
+            }
+            1 => {
+                let s = one
+                    .add(m(0, 0))
+                    .sub(m(1, 1))
+                    .sub(m(2, 2))
+                    .sqrt()?
+                    .mul(T::TWO);
+                let inv = one.div(s)?;
+                Self::new(
+                    m(2, 1).sub(m(1, 2)).mul(inv),
+                    s.mul(quarter),
+                    m(0, 1).add(m(1, 0)).mul(inv),
+                    m(0, 2).add(m(2, 0)).mul(inv),
+                )
+            }
+            2 => {
+                let s = one
+                    .add(m(1, 1))
+                    .sub(m(0, 0))
+                    .sub(m(2, 2))
+                    .sqrt()?
+                    .mul(T::TWO);
+                let inv = one.div(s)?;
+                Self::new(
+                    m(0, 2).sub(m(2, 0)).mul(inv),
+                    m(0, 1).add(m(1, 0)).mul(inv),
+                    s.mul(quarter),
+                    m(1, 2).add(m(2, 1)).mul(inv),
+                )
+            }
+            _ => {
+                let s = one
+                    .add(m(2, 2))
+                    .sub(m(0, 0))
+                    .sub(m(1, 1))
+                    .sqrt()?
+                    .mul(T::TWO);
+                let inv = one.div(s)?;
+                Self::new(
+                    m(1, 0).sub(m(0, 1)).mul(inv),
+                    m(0, 2).add(m(2, 0)).mul(inv),
+                    m(1, 2).add(m(2, 1)).mul(inv),
+                    s.mul(quarter),
+                )
+            }
+        };
+        q.normalized()
+            .map_err(|e| e.with_context(format!("from_rotation_columns({columns:?})")))
+    }
+
     /// The rotation it stands for, as a matrix's columns — where `x`, `y`
     /// and `z` turn to. It need not be unit: dividing by its norm squared
     /// makes the rotation of any non-zero quaternion, smoothly.
@@ -562,6 +643,29 @@ mod tests {
 
     fn close(a: &Vector3<S>, b: &Vector3<S>) -> bool {
         (0..3).all(|k| (a[k].to_f64() - b[k].to_f64()).abs() < 1e-12)
+    }
+
+    /// A rotation read back from its matrix is the same rotation, whichever
+    /// of the trace and the diagonal is largest: no turn, half turns about
+    /// each axis, and turns in between.
+    #[test]
+    fn rotations_are_read_back_from_their_matrices() {
+        for degrees in [
+            [0.0, 0.0, 0.0],
+            [180.0, 0.0, 0.0],
+            [0.0, 180.0, 0.0],
+            [0.0, 0.0, 180.0],
+            [30.0, -70.0, 125.0],
+            [170.0, 10.0, -175.0],
+        ] {
+            let rotation = pose([0.0; 3], degrees).rotation();
+            let columns = rotation.rotation_columns().unwrap();
+            let back = Quaternion::from_rotation_columns(columns).unwrap();
+            let again = back.rotation_columns().unwrap();
+            for k in 0..3 {
+                assert!(close(&columns[k], &again[k]), "{degrees:?}");
+            }
+        }
     }
 
     /// The angles turn about `x`, then `y`, then `z`: a quarter turn about

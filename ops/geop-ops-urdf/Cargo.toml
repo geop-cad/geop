@@ -1,0 +1,14 @@
+[package]
+name = "geop-ops-urdf"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-solve.workspace = true
+geop-core-topology.workspace = true
+geop-ops.workspace = true
+# Each link's mass, centre of mass and inertia.
+geop-ops-inspect.workspace = true
+# Each link's meshes.
+geop-ops-rasterize.workspace = true
