@@ -172,10 +172,15 @@ pub fn loops_contain<S: Scalar>(
                 // counted. Dropping every hit within `epsilon` of the query,
                 // as this once did, turned a point 6e-5 outside a face into
                 // one inside it.
-                let (t, mid) = if t.definitely_greater(S::ZERO) {
-                    (t, mid)
+                let (t, mid, refined) = if t.definitely_greater(S::ZERO) {
+                    (t, mid, false)
                 } else {
-                    refine_curve_curve_crossing(&ray, pcurve, t, mid)
+                    let (rt, rmid) = refine_curve_curve_crossing(&ray, pcurve, t, mid);
+                    // Refinement returns the box unchanged where it fails;
+                    // where it converges, the box is far below the search's
+                    // resolution.
+                    let same = rt.is_subset_of(t) && t.is_subset_of(rt);
+                    (rt, rmid, !same && rt.width().definitely_less(epsilon))
                 };
                 if !t.definitely_greater(S::ZERO) {
                     // Still not beyond it. Either the query is on this
@@ -184,8 +189,12 @@ pub fn loops_contain<S: Scalar>(
                     // 6e-16 off the boundary passes it — or the search met
                     // the pcurve only at its own resolution, near the query
                     // but not on it, and this ray is as ambiguous as a
-                    // vertex graze.
-                    if pcurve.evaluate(mid)?.could_be_equal(&query) {
+                    // vertex graze. A crossing Newton has isolated is the
+                    // first: the ray meets the pcurve where it starts, as
+                    // far as rounding can tell. A point 4e-16 inside a face
+                    // met its boundary so along every ray, and was never
+                    // classified.
+                    if refined || pcurve.evaluate(mid)?.could_be_equal(&query) {
                         return Ok(PointClassification::OnCoedge);
                     }
                     last_rejection = format!(

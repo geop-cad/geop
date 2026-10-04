@@ -45,7 +45,9 @@ fn drilled_plate_shows_its_hole_hidden() {
     let front = view(&part, ViewKind::Front);
     let hidden: Vec<_> = front.lines.iter().filter(|l| !l.visible).collect();
     assert_eq!(hidden.len(), 2, "{} lines", front.lines.len());
-    let mut xs: Vec<f64> = hidden
+    // The lines' own enclosures, not their midpoints: a midpoint is an
+    // answer sharpened, a rounding off the edge it was drawn from.
+    let mut xs: Vec<S> = hidden
         .iter()
         .map(|l| {
             assert_eq!(l.kind, LineKind::Silhouette);
@@ -53,18 +55,12 @@ fn drilled_plate_shows_its_hole_hidden() {
             let (p, q) = (l.curve.evaluate(a).unwrap(), l.curve.evaluate(b).unwrap());
             assert!(p[0].could_be_equal(q[0]), "a vertical line");
             assert!(p[1].sub(q[1]).abs().could_be_equal(S::from_f64(10.0)));
-            p[0].to_f64()
+            p[0]
         })
         .collect();
-    xs.sort_by(f64::total_cmp);
-    assert!(
-        S::from_f64(xs[0]).could_be_equal(S::from_f64(17.0)),
-        "{xs:?}"
-    );
-    assert!(
-        S::from_f64(xs[1]).could_be_equal(S::from_f64(23.0)),
-        "{xs:?}"
-    );
+    xs.sort_by(|a, b| a.to_f64().total_cmp(&b.to_f64()));
+    assert!(xs[0].could_be_equal(S::from_f64(17.0)), "{xs:?}");
+    assert!(xs[1].could_be_equal(S::from_f64(23.0)), "{xs:?}");
     assert_eq!(front.lines.iter().filter(|l| l.visible).count(), 4);
 
     let top = view(&part, ViewKind::Top);
