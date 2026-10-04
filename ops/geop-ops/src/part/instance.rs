@@ -14,6 +14,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
     scalars::Scalar,
+    vector::Vector3,
 };
 
 use super::Part;
@@ -36,6 +37,7 @@ pub struct Component<S: Scalar> {
     /// Which build of `file` it is: unique among every component made.
     build: u64,
     view: OnceLock<PartView<S>>,
+    bounds: OnceLock<Option<[Vector3<S>; 2]>>,
 }
 
 /// The build number the next component gets.
@@ -49,7 +51,17 @@ impl<S: Scalar> Component<S> {
             files,
             build: NEXT_BUILD.fetch_add(1, Ordering::Relaxed),
             view: OnceLock::new(),
+            bounds: OnceLock::new(),
         }
+    }
+
+    /// The box around every vertex of the part and of the parts placed in
+    /// it, as placed — `None` for a part with none: found once, and kept
+    /// for as long as the component is (see [`crate::assembly`]).
+    pub fn bounds(&self) -> Option<[Vector3<S>; 2]> {
+        *self
+            .bounds
+            .get_or_init(|| crate::assembly::bounds(&self.part))
     }
 
     /// What tells it apart from every other component, a rebuild of the

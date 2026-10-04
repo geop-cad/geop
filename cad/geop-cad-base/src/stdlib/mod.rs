@@ -39,7 +39,7 @@ use std::{
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops::Files;
+use geop_ops::{Files, FilesMut};
 
 use crate::Program;
 
@@ -168,5 +168,15 @@ impl<F: Files> Files for WithStandardParts<F> {
             files.extend(entries.iter().map(|e| e.part.file.to_string()));
         }
         files
+    }
+}
+
+/// Writes go to `F`, but never over a standard part: those are read-only,
+/// so a write to a [`PREFIX`]`…` name changes nothing.
+impl<F: FilesMut> FilesMut for WithStandardParts<F> {
+    fn write(&mut self, path: &str, text: Option<String>) {
+        if !path.starts_with(PREFIX) {
+            self.0.write(path, text);
+        }
     }
 }

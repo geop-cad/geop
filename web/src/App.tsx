@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
+  applyScene,
   loadGeop,
   send,
   type Command,
   type EditEvent,
+  type Placed,
   type OperationInfo,
   type PartView,
   type Presentation,
@@ -76,8 +78,15 @@ function App() {
 
   const [program, setProgram] = useState<ProgramState | null>(null);
   const [scene, setScene] = useState<SceneState | null>(null);
-  /** Every component view the kernel sent, by key: it sends each once. */
-  const [components, setComponents] = useState<Record<string, PartView>>({});
+  /**
+   * The placed parts drawn, and the views of their components: the kernel
+   * sends what changed (see [[applyScene]]). Kept in a ref too, so that
+   * updates answered one after another each apply to the one before.
+   */
+  const [placed, setPlaced] = useState<Placed>({ instances: new Map(), components: {} });
+  const placedRef = useRef(placed);
+  const instances = useMemo(() => [...placed.instances.values()], [placed]);
+  const components = placed.components;
   const [step, setStep] = useState<StepState | null>(null);
   /** What the drag tool shows, while it is in hand and no step is edited. */
   const [tool, setTool] = useState<Presentation | null>(null);
@@ -135,8 +144,8 @@ function App() {
       }
       if (update.scene) {
         setScene(update.scene);
-        const sent = update.scene.components;
-        if (Object.keys(sent).length > 0) setComponents((known) => ({ ...known, ...sent }));
+        placedRef.current = applyScene(placedRef.current, update.scene);
+        setPlaced(placedRef.current);
       }
       setStep(update.step);
       setTool(update.tool);
@@ -379,7 +388,7 @@ function App() {
   const triangles = (view: PartView | undefined) => view?.faces.reduce((n, f) => n + f.triangles.length, 0) ?? 0;
   const triangleCount =
     triangles(scene?.part) +
-    (scene?.part.instances ?? []).reduce((n, i) => n + triangles(components[i.component]), 0);
+    instances.reduce((n, i) => n + triangles(components[i.component]), 0);
   const timelineSteps: TimelineStep[] = steps.map((s) => ({
     id: s.id,
     title: `${s.label}: ${s.summary}`,
@@ -540,6 +549,7 @@ function App() {
             {wasmReady && scene && (
               <SceneViewer
                 part={scene.part}
+                instances={instances}
                 components={components}
                 visuals={presentation?.visuals}
                 highlights={presentation?.highlights}

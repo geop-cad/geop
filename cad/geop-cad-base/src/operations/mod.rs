@@ -41,6 +41,8 @@ use geop_ops_surface::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
+mod assembly_scale_tests;
+#[cfg(test)]
 mod assembly_tests;
 #[cfg(test)]
 mod datum_tests;

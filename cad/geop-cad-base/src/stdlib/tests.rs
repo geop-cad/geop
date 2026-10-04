@@ -211,7 +211,7 @@ fn the_bolted_plate_holds_together() {
     let part = examples::bolted_plate()
         .build(&workspace.scope("bolted_plate.geop"))
         .unwrap();
-    assert!(part.check_mates().unwrap().converged);
+    assert!(part.check_mates(|_| true).unwrap().converged);
     let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
     for (instance, local, want) in [
         ("screw", [0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),

@@ -16,7 +16,7 @@
 //! program it leaves as that file's. What each step shows and does is the operation's; see
 //! [`geop_ops::ui::StepEditor`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use geop_core_math::vector::Vector3;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
@@ -26,7 +26,11 @@ use geop_ops::{
     operation::Role,
     parameters::{Parameters, Resolved},
     part::{ParamValue, State},
-    ui::{Dialog, PartView, Presentation, Shape, StepEditEvent, StepEditor, Style, Visual},
+    program::library::resolve,
+    ui::{
+        Dialog, PartView, Presentation, Shape, StepEditEvent, StepEditor, Style, ViewInstance,
+        Visual,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -181,17 +185,33 @@ pub struct ProgramState {
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.
+///
+/// The parts placed in it — however many, however deep — are sent as what
+/// changed since the last scene: a viewer keeps them by name, and the
+/// views of their components by key, each sent once. So moving one placed
+/// part sends where that one is, and placing a screw a hundred times sends
+/// what a screw looks like once.
 #[derive(Clone, Debug, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct SceneState<S: Scalar> {
+    /// The part, without the parts placed in it: those are `instances`.
     pub part: PartView<S>,
     /// The sketches and datums the steps shown have used: what was made
     /// from them shows them now. None of a kind while it is being picked.
     pub hidden: Vec<String>,
-    /// The views of the components the part's instances are drawn from,
-    /// by key (see [`geop_ops::Component::key`]) — those not sent before:
-    /// a viewer keeps them, so moving a placed part sends where it is, not
-    /// what it looks like.
+    /// The parts placed in the part drawn, however deep, that are new or
+    /// moved or drawn from another component since the last scene — every
+    /// one, if `all`.
+    pub instances: Vec<ViewInstance<S>>,
+    /// Whether `instances` are all there are: a viewer forgets any others.
+    pub all: bool,
+    /// The names of the placed parts drawn last time and gone now.
+    pub removed: Vec<String>,
+    /// The views of the components the placed parts are drawn from, by key
+    /// (see [`geop_ops::Component::key`]), that the last scene's did not
+    /// use. A viewer keeps those the placed parts drawn use, and forgets
+    /// the others: a component no placed part uses any more is sent again
+    /// once one does.
     pub components: BTreeMap<String, PartView<S>>,
     /// What the part has beyond its faces, to list and show or hide.
     pub structure: Vec<StructureItem>,
@@ -357,9 +377,10 @@ pub struct Editor<S: Scalar> {
     dragged: Option<geop_ops::assembly::MateReport>,
     /// The files the last command added, for the update to say.
     added: Option<Vec<File>>,
-    /// The keys of the components whose views were sent: the viewer has
-    /// them.
-    sent: std::collections::HashSet<String>,
+    /// The placed parts the viewer was sent, by name: the key of the
+    /// component each is drawn from, and where it is, as sent — `None`
+    /// when the viewer may have none (see [`SceneState`]).
+    placed: Option<HashMap<String, (String, [f64; 12])>>,
     /// The drag tool, while in hand.
     drag_tool: Option<DragTool<S>>,
     /// The part as last drawn: what the drag tool picks from.
@@ -397,7 +418,7 @@ impl<S: Scalar> Editor<S> {
                 .collect(),
             dragged: None,
             added: None,
-            sent: std::collections::HashSet::new(),
+            placed: None,
             drag_tool: None,
             drawn: None,
             visibility: BTreeMap::new(),
@@ -468,19 +489,47 @@ impl<S: Scalar> Editor<S> {
         let scene = (self.shown.as_ref() != Some(&shown)).then(|| {
             self.shown = Some(shown.clone());
             let part = self.view_of(shown.steps);
+            let before = self.placed.take();
+            let all = before.is_none();
+            let before = before.unwrap_or_default();
+            let mut placed = HashMap::new();
+            let mut instances = Vec::new();
             let mut components = BTreeMap::new();
+            let used: HashSet<&String> = before.values().map(|(key, _)| key).collect();
             for instance in &part.instances {
-                if self.sent.insert(instance.component.clone())
+                let f = &instance.frame;
+                let frame =
+                    [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
+                let drawn = (
+                    instance.component.clone(),
+                    frame.concat().try_into().expect("12 numbers"),
+                );
+                if before.get(&instance.name) != Some(&drawn) {
+                    instances.push(instance.clone());
+                }
+                if !used.contains(&instance.component)
+                    && !components.contains_key(&instance.component)
                     && let Ok(view) = instance.component().view()
                 {
                     components.insert(instance.component.clone(), view.clone());
                 }
+                placed.insert(instance.name.clone(), drawn);
             }
+            let mut removed: Vec<String> = before
+                .keys()
+                .filter(|name| !placed.contains_key(*name))
+                .cloned()
+                .collect();
+            removed.sort();
+            self.placed = Some(placed);
             self.drawn = Some(part.clone());
             SceneState {
                 part,
                 structure: self.structure(shown.steps, &shown.hidden),
                 hidden: shown.hidden,
+                instances,
+                all,
+                removed,
                 components,
             }
         });
@@ -602,7 +651,7 @@ impl<S: Scalar> Editor<S> {
             Command::Show => {
                 // All of it: the viewer may have started afresh.
                 self.shown = None;
-                self.sent.clear();
+                self.placed = None;
                 Changed::Run
             }
             Command::New { kind } => {
@@ -782,7 +831,7 @@ impl<S: Scalar> Editor<S> {
                     // elsewhere.
                     if let Some(left) = self.path.replace(path) {
                         let text = self.program.to_json()?;
-                        self.workspace.files_mut().insert(left, text);
+                        self.workspace.write(&left, Some(text));
                     }
                     self.undo.clear();
                     self.redo.clear();
@@ -794,14 +843,20 @@ impl<S: Scalar> Editor<S> {
                 Changed::Program
             }
             Command::Files { files } => {
-                let known = self.workspace.files_mut();
-                for (path, text) in files {
-                    match text {
-                        Some(text) => known.insert(path, text),
-                        None => known.remove(&path),
-                    };
+                // Only what was built from a file that changed is built
+                // again; a file saved as it was changes nothing.
+                let changed: BTreeSet<String> = files
+                    .into_iter()
+                    .filter_map(|(path, text)| {
+                        self.workspace
+                            .write(&path, text)
+                            .then(|| resolve("", &path))
+                    })
+                    .collect();
+                if changed.is_empty() {
+                    return Ok(Changed::Nothing);
                 }
-                self.runner.reset();
+                self.runner.forget(&changed);
                 // What the step being edited is built on may have changed.
                 if let Some(open) = &self.open {
                     let library = library(&self.workspace, self.path.as_deref());
@@ -843,7 +898,9 @@ impl<S: Scalar> Editor<S> {
                     .iter()
                     .map(|f| Ok((f.path.clone(), f.program.to_json()?)))
                     .collect::<GeopResult<Vec<_>>>()?;
-                self.workspace.files_mut().extend(texts);
+                for (path, text) in texts {
+                    self.workspace.write(&path, Some(text));
+                }
                 let first = files.first().expect("an example has files");
                 self.program = first.program.clone();
                 self.path = Some(first.path.clone());
@@ -953,7 +1010,10 @@ impl<S: Scalar> Editor<S> {
             }
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        let hold = || part.check_mates().is_ok_and(|report| report.converged);
+        let hold = || {
+            part.check_mates(|_| true)
+                .is_ok_and(|report| report.converged)
+        };
         let solved = if !drags.is_empty() {
             part.solve_mates(None, &holds, &drags)
                 .ok()

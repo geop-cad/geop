@@ -249,13 +249,26 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
         })
     }
 
-    /// Every parameter at the increments `x` (see [`System::value`]) — each
-    /// computed once, however many residuals depend on it.
-    fn locals(&self, x: &[S]) -> Vec<GeopResult<Value<Dual<S, POSE_VARS>>>> {
-        let offsets = self.offsets();
-        (0..self.params.len())
-            .map(|p| self.value(p, x, offsets[p]))
-            .collect()
+    /// Every parameter a residual or one of `pulls` depends on, at the
+    /// increments `x` (see [`System::value`]) — each computed once, however
+    /// many depend on it; those nothing depends on are not computed at all.
+    fn locals(
+        &self,
+        x: &[S],
+        pulls: &[(Pull<S>, S)],
+        offsets: &[Option<usize>],
+    ) -> Vec<Option<GeopResult<Value<Dual<S, POSE_VARS>>>>> {
+        let mut locals: Vec<_> = self.params.iter().map(|_| None).collect();
+        let needed = self
+            .residuals
+            .iter()
+            .flat_map(|r| r.params().iter().copied());
+        for p in needed.chain(pulls.iter().map(|(pull, _)| pull.param())) {
+            if locals[p].is_none() {
+                locals[p] = Some(self.value(p, x, offsets[p]));
+            }
+        }
+        locals
     }
 
     /// The values of `params` among `locals`, their variables seeded one
@@ -263,7 +276,7 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
     fn values(
         &self,
         params: &[usize],
-        locals: &[GeopResult<Value<Dual<S, POSE_VARS>>>],
+        locals: &[Option<GeopResult<Value<Dual<S, POSE_VARS>>>>],
         offsets: &[Option<usize>],
     ) -> GeopResult<(Vec<Value<Dual<S, N>>>, Seeded)> {
         let mut seeded = Vec::new();
@@ -288,6 +301,8 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
             values.push(
                 match locals[p]
                     .as_ref()
+                    .expect("computed for every parameter something depends on")
+                    .as_ref()
                     .map_err(|e| GeopError::new(format!("{e}")))?
                 {
                     Value::Scalar(v) => Value::Scalar(embed(*v)),
@@ -302,7 +317,7 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
     /// each pull weighted by its weight.
     fn groups(&self, x: &[S], pulls: &[(Pull<S>, S)]) -> Vec<GeopResult<Group<S, N>>> {
         let offsets = self.offsets();
-        let locals = self.locals(x);
+        let locals = self.locals(x, pulls, &offsets);
         let mut groups = Vec::new();
         for r in &self.residuals {
             groups.push((|| {

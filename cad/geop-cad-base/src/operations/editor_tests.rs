@@ -1370,7 +1370,7 @@ fn a_standard_screw_is_placed_in_a_plate() {
         args.parameters.get("size"),
         Some(&ParamValue::Text("M4x12".into()))
     );
-    assert!(editor.part().check_mates().unwrap().converged);
+    assert!(editor.part().check_mates(|_| true).unwrap().converged);
     let Some(ParamValue::Pose(pose)) = program.state.get(&pose_parameter("part2")) else {
         panic!("the screw has a pose");
     };
@@ -1387,4 +1387,44 @@ fn a_standard_screw_is_placed_in_a_plate() {
             "{local:?} is at {got:?}, not {want:?}"
         );
     }
+}
+
+/// A robot of two boards and 20 screws, driven as the front end does: the
+/// drag tool takes the screw under the pointer, and dragging it sends where
+/// that screw went — not the hundred other placed parts, which stay where
+/// they are, nor any part's looks again.
+#[test]
+fn dragging_one_of_many_placed_parts_sends_only_it() {
+    use super::assembly_scale_tests::{down_onto, robot_editor};
+    let (mut editor, _) = robot_editor(2, 20);
+    let before = editor.program().state.clone();
+    editor.handle(Command::DragTool { on: true });
+    // The screws stand in a row along x at y = 0.25, from x = 0.25 on.
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: down_onto(5.25, 0.25),
+            shift: false,
+        },
+    });
+    let tool = update.tool.expect("the drag tool is in hand");
+    assert!(tool.grab, "a press over a screw grabs it");
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Drag {
+            from: down_onto(5.25, 0.25),
+            to: down_onto(5.35, 0.3),
+            done: true,
+            shift: false,
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let scene = update.scene.expect("the screw moved");
+    assert!(scene.components.is_empty() && scene.removed.is_empty() && !scene.all);
+    let after = &editor.program().state;
+    let moved: Vec<&String> = after
+        .keys()
+        .filter(|name| before.get(*name) != after.get(*name))
+        .collect();
+    assert_eq!(moved, ["screw10.pose"]);
+    let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(sent, ["screw10"]);
 }

@@ -71,6 +71,12 @@ pub trait Files {
     fn list(&self) -> Vec<String>;
 }
 
+/// [`Files`] a [`Workspace`] can change ([`Workspace::write`]).
+pub trait FilesMut: Files {
+    /// Sets the file `path` to `text`, or — `None` — removes it.
+    fn write(&mut self, path: &str, text: Option<String>);
+}
+
 /// Files held in memory, by path: what an editor is sent by its front end.
 impl Files for BTreeMap<String, String> {
     fn read(&self, path: &str) -> GeopResult<String> {
@@ -84,6 +90,15 @@ impl Files for BTreeMap<String, String> {
     }
 }
 
+impl FilesMut for BTreeMap<String, String> {
+    fn write(&mut self, path: &str, text: Option<String>) {
+        match text {
+            Some(text) => self.insert(path.to_string(), text),
+            None => self.remove(path),
+        };
+    }
+}
+
 /// A build of a file with state overridden: which overrides, as their
 /// JSON, and what it built.
 type Variant<S> = (String, Arc<Component<S>>);
@@ -93,12 +108,18 @@ type Variant<S> = (String, Arc<Component<S>>);
 /// them is built with.
 ///
 /// Every file it builds is kept, and placed again as it is for as long as
-/// the files stay as they are — however many steps or rebuilds place it.
-/// A file built with state of its own overridden — placed flexibly —
-/// is built incrementally, by a runner of its own: moving one of its parts
-/// runs again only the steps that read where it is, which for a file that
-/// only places parts is placing them. Changing the files
-/// ([`Workspace::files_mut`]) forgets them all.
+/// the files it was built from stay as they are — however many steps or
+/// rebuilds place it. A file built with state of its own overridden —
+/// placed flexibly — is built incrementally, by a runner of its own:
+/// moving one of its parts runs again only the steps that read where it
+/// is, which for a file that only places parts is placing them.
+///
+/// Changing a file ([`Workspace::write`]) forgets only what was built from
+/// it: the file itself, and every file placing it, however deep — each
+/// component knows the files it was built from ([`Component::files`]). A
+/// runner forgets only the steps from the first that placed it (see
+/// [`ProgramRunner::forget`]). A file written as it already was changes
+/// nothing.
 pub struct Workspace<O, S: Scalar, F = BTreeMap<String, String>> {
     files: F,
     built: RefCell<BTreeMap<String, Arc<Component<S>>>>,
@@ -123,12 +144,17 @@ impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
         &self.files
     }
 
-    /// The files, to change — which forgets every part built from them.
-    pub fn files_mut(&mut self) -> &mut F {
-        self.built.get_mut().clear();
-        self.variants.get_mut().clear();
-        self.runners.get_mut().clear();
-        &mut self.files
+    /// Forgets what was built from any of the files `changed` — paths as
+    /// [`resolve`] gives them: the parts that read one, and the steps of
+    /// every runner from the first that read one (see
+    /// [`ProgramRunner::forget`]).
+    fn forget(&mut self, changed: &BTreeSet<String>) {
+        let reads = |component: &Component<S>| !component.files.is_disjoint(changed);
+        self.built.get_mut().retain(|_, c| !reads(c));
+        self.variants.get_mut().retain(|_, (_, c)| !reads(c));
+        for runner in self.runners.get_mut().values_mut() {
+            runner.forget(changed);
+        }
     }
 
     /// The library the program of the file `file` is built with.
@@ -140,6 +166,20 @@ impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
             file,
             placed: RefCell::new(BTreeSet::new()),
         }
+    }
+}
+
+impl<O: Operations, S: Scalar, F: FilesMut> Workspace<O, S, F> {
+    /// Sets the file `path` to `text`, or — `None` — removes it, and
+    /// forgets what was built from it (see [`Workspace`]). Says whether it
+    /// changed anything: written as it was, nothing is forgotten.
+    pub fn write(&mut self, path: &str, text: Option<String>) -> bool {
+        if self.files.read(path).ok() == text {
+            return false;
+        }
+        self.files.write(path, text);
+        self.forget(&BTreeSet::from([resolve("", path)]));
+        true
     }
 }
 

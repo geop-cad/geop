@@ -626,3 +626,52 @@ fn a_folded_chain_is_dragged_in_few_steps() {
 
 #[path = "joints_tests.rs"]
 mod joints;
+
+/// Bodies no constraint ties together are solved group by group: a fixed
+/// plate with 300 screws on it, half of them lifted off, and the last
+/// screw standing on the one before it. Each lifted one comes down onto
+/// the plate where it is, those already on it are not moved at all, and
+/// the solve takes as many steps as one screw's — a dense solve of every
+/// screw at once took tens of seconds for a few hundred.
+#[test]
+fn independent_bodies_are_solved_apart() {
+    let screws = 300;
+    let mut bodies = vec![Body {
+        free: false,
+        ..body([0.0; 3])
+    }];
+    let mut constraints = Vec::new();
+    for i in 0..screws {
+        let lifted = if i % 2 == 0 { 0.3 } else { 0.0 };
+        bodies.push(body([i as f64, 0.0, 1.0 + lifted]));
+        // The last on the one before: its bottom on that one's top.
+        let below = match i + 1 == screws {
+            false => on(0, plane([0.0, 0.0, 1.0], Z)),
+            true => on(i, plane([0.0, 0.0, 1.0], Z)),
+        };
+        constraints.push(Constraint {
+            kind: Kind::Coincident,
+            a: on(i + 1, plane([0.0; 3], Z)),
+            b: below,
+        });
+    }
+    let mut assembly = Assembly {
+        bodies: bodies.clone(),
+        constraints,
+        joints: Vec::new(),
+        couplings: Vec::new(),
+        scale: n(10.0),
+    };
+    let report = assembly.solve(&[]).unwrap();
+    assert!(report.converged, "{report:?}");
+    assert!(report.iterations < 20, "{report:?}");
+    for i in 0..screws {
+        let (before, after) = (&bodies[i + 1].pose, &assembly.bodies[i + 1].pose);
+        let z = if i + 1 == screws { 2.0 } else { 1.0 };
+        if i % 2 == 1 && i + 2 < screws {
+            assert_eq!(before, after, "screw {i} was on the plate already");
+        } else {
+            assert!(close(position(after), [i as f64, 0.0, z], 1e-9), "{i}");
+        }
+    }
+}

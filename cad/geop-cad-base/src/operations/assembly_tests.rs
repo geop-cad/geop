@@ -56,7 +56,7 @@ fn the_pin_is_mated_into_the_plate() {
     let program = examples::pin_in_plate_assembly();
     let part = program.build(&workspace.scope("assembly.geop")).unwrap();
     part.check_names().unwrap();
-    assert!(part.check_mates().unwrap().converged);
+    assert!(part.check_mates(|_| true).unwrap().converged);
     let origin = |instance: &str| EntityRef::datum(format!("{instance}/origin"));
     assert_close(point(&part, &origin("plate")), [0.0; 3], 1e-12);
     assert_close(point(&part, &origin("pin")), [1.0, 1.0, 0.5], 1e-7);
@@ -379,7 +379,7 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
         .program()
         .build(&workspace.scope("assembly.geop"))
         .unwrap();
-    assert!(part.check_mates().unwrap().converged);
+    assert!(part.check_mates(|_| true).unwrap().converged);
     assert_close(
         point(&part, &EntityRef::datum("mark")),
         position(&plate),
@@ -643,7 +643,7 @@ fn a_rigid_sub_assembly_moves_as_one() {
         .program()
         .build(&workspace.scope("top.geop"))
         .unwrap();
-    assert!(!part.check_mates().unwrap().converged);
+    assert!(!part.check_mates(|_| true).unwrap().converged);
 }
 
 /// With the drag tool in hand and no step edited, any placed part is
@@ -795,7 +795,7 @@ fn drive_chain(
             .program()
             .build(&library)
             .unwrap()
-            .check_mates()
+            .check_mates(|_| true)
             .unwrap();
         assert!(check.converged, "event {i} (to {to:?}): {check:?}");
         let now = poses(editor.program());
@@ -897,7 +897,11 @@ fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
             };
             let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
             program.state.extend(moved);
-            let check = program.build(&library).unwrap().check_mates().unwrap();
+            let check = program
+                .build(&library)
+                .unwrap()
+                .check_mates(|_| true)
+                .unwrap();
             assert!(
                 check.converged,
                 "after {to:?}: {check:?}, solved: {report:?}"
@@ -1023,7 +1027,7 @@ fn linkage_examples_are_stacked_and_hold() {
         let part = program
             .build(&Workspace::<S>::new(WithStandardParts(files)).scope(&format!("{name}.geop")))
             .unwrap();
-        let report = part.check_mates().unwrap();
+        let report = part.check_mates(|_| true).unwrap();
         assert!(report.converged, "{name}: {report:?}");
         for (instance, z) in layers {
             let at = position(&pose_of(&program, instance));
@@ -1054,7 +1058,11 @@ fn the_four_bar_crank_turns_all_the_way_round() {
         let tip = pose_of(&program, "crank").apply(&v([1.5, 0.0, 0.0]));
         let tip = [0, 1, 2].map(|k| tip[k].to_f64());
         assert_close(tip, [1.5 * angle.cos(), 1.5 * angle.sin(), 0.2], 1e-3);
-        let check = program.build(&library).unwrap().check_mates().unwrap();
+        let check = program
+            .build(&library)
+            .unwrap()
+            .check_mates(|_| true)
+            .unwrap();
         assert!(check.converged, "step {step}: {check:?}");
     }
 }
@@ -1130,7 +1138,11 @@ fn the_arm_is_dragged_up_to_its_limit() {
     let fore = pose_of(&program, "fore");
     assert!((fore.euler_degrees()[2] - 150.0).abs() < 1e-9, "{fore:?}");
     assert_close(position(&fore), [3.0, 0.0, 0.2], 1e-9);
-    let check = program.build(&library).unwrap().check_mates().unwrap();
+    let check = program
+        .build(&library)
+        .unwrap()
+        .check_mates(|_| true)
+        .unwrap();
     assert!(check.converged, "{check:?}");
 }
 
@@ -1296,7 +1308,7 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
         program
             .build(&library)
             .unwrap()
-            .check_mates()
+            .check_mates(|_| true)
             .unwrap()
             .converged
     );

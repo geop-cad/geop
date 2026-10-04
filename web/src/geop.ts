@@ -119,8 +119,6 @@ export interface PartView {
   threads: { name: string; designation: string; polyline: Vec3[] }[];
   /** The part's solids, oldest first. */
   solids: string[];
-  /** The parts placed in it, drawn by reference. */
-  instances: ViewInstance[];
   extent: Extent;
   /** The part's colour, `#rrggbb`; none for the viewer's own. */
   color: string | null;
@@ -470,14 +468,50 @@ export interface StructureItem {
   visible: boolean | null;
 }
 
+/**
+ * What is drawn. The parts placed in the part come as what changed since
+ * the last scene ([[applyScene]] keeps them), and the views of their
+ * components once each.
+ */
 export interface SceneState {
+  /** The part, without the parts placed in it. */
   part: PartView;
   /** What the part has beyond its faces, to list and show or hide. */
   structure: StructureItem[];
   /** Sketches and datums, by name, not to draw. */
   hidden: string[];
-  /** The views of components not sent before, by key: keep them, they are not sent again. */
+  /** The placed parts new, moved or drawn from another component since the last scene — every one, if `all`. */
+  instances: ViewInstance[];
+  /** Whether `instances` are all there are: forget any others. */
+  all: boolean;
+  /** The names of the placed parts gone since the last scene. */
+  removed: string[];
+  /** The views of the components the last scene's placed parts did not use, by key. */
   components: Record<string, PartView>;
+}
+
+/** The placed parts drawn, by name, and the views of the components they are drawn from, by key. */
+export interface Placed {
+  instances: Map<string, ViewInstance>;
+  components: Record<string, PartView>;
+}
+
+/**
+ * `placed` with `scene`'s changes: its placed parts added, moved and
+ * removed, and the components they use — those no placed part uses any
+ * more forgotten, as the kernel forgets having sent them.
+ */
+export function applyScene(placed: Placed, scene: SceneState): Placed {
+  const instances = scene.all ? new Map<string, ViewInstance>() : new Map(placed.instances);
+  for (const name of scene.removed) instances.delete(name);
+  for (const instance of scene.instances) instances.set(instance.name, instance);
+  const known = { ...placed.components, ...scene.components };
+  const components: Record<string, PartView> = {};
+  for (const instance of instances.values()) {
+    const view = known[instance.component];
+    if (view) components[instance.component] = view;
+  }
+  return { instances, components };
 }
 
 export interface StepState {

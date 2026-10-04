@@ -270,10 +270,10 @@ pub struct MateFreedom {
 /// The box around every vertex of `part` and of the parts placed in it, as
 /// placed — what a body turns about and how large a solve is are free
 /// choices made from it, so its corners are sharp.
-fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
+pub(crate) fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
     let own = part.topology().vertices.values().map(|v| v.point.sharpen());
     let placed = part.instances().flat_map(|(_, instance)| {
-        let corners = bounds(instance.part()).map(|[lo, hi]| {
+        let corners = instance.component.bounds().map(|[lo, hi]| {
             (0..8).map(move |i| {
                 let corner = Vector3::from_array(
                     [0, 1, 2].map(|k| if i >> k & 1 == 0 { lo[k] } else { hi[k] }),
@@ -395,14 +395,20 @@ impl<S: Scalar> Part<S> {
     /// of a pattern, or, with `only`, other than the one whose pose is that
     /// parameter. A joint's coordinates are the state's, held if `held`
     /// names them, or measured where the state has none. Mates still
-    /// missing an entity hold nothing, and are left out.
-    fn assembly(&self, only: Option<&str>, held: &[String]) -> GeopResult<Solvable<'_, S>> {
+    /// missing an entity hold nothing, and are left out, and so are those
+    /// `named` does not pick — with a coupling of a joint it does not.
+    fn assembly(
+        &self,
+        only: Option<&str>,
+        held: &[String],
+        named: &dyn Fn(&str) -> bool,
+    ) -> GeopResult<Solvable<'_, S>> {
         let mut bodies_of = Vec::new();
         placed(self, "", None, &Pose::identity(), &mut bodies_of);
         let mut scale = S::ONE;
         let mut bodies = Vec::new();
         for body in &bodies_of {
-            let center = match bounds(body.instance.part()) {
+            let center = match body.instance.component.bounds() {
                 Some([lo, hi]) => {
                     let diagonal = hi.sub(&lo).norm().sharpen();
                     if diagonal.definitely_greater(scale) {
@@ -427,8 +433,13 @@ impl<S: Scalar> Part<S> {
         let (mut constraint_names, mut joint_names, mut coupling_names) =
             (Vec::new(), Vec::new(), Vec::new());
         let mut couplings = Vec::new();
+        let body_named: std::collections::HashMap<&str, usize> = bodies_of
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.name.as_str(), i))
+            .collect();
         for (name, mate) in &mates {
-            if !mate.is_complete() {
+            if !mate.is_complete() || !named(name) {
                 continue;
             }
             let ctx = with_context!("mate {name:?}");
@@ -442,7 +453,7 @@ impl<S: Scalar> Part<S> {
                         Some(b) => format!("{}{INSTANCE_SEPARATOR}{instance}", bodies_of[b].name),
                         None => instance,
                     };
-                    let Some(found) = bodies_of.iter().position(|p| p.name == name) else {
+                    let Some(&found) = body_named.get(name.as_str()) else {
                         break;
                     };
                     body = Some(found);
@@ -524,6 +535,9 @@ impl<S: Scalar> Part<S> {
             }
         }
         for (name, kind, joints) in couplings {
+            if !joints.iter().all(|j| named(j)) {
+                continue;
+            }
             let ctx = with_context!("mate {name:?}");
             let index = |joint: &String| {
                 joint_names
@@ -560,7 +574,7 @@ impl<S: Scalar> Part<S> {
     /// whose pose is the parameter `only`, if given, and never a fixed one —
     /// and where their joints are, every coordinate within its limits and
     /// those `held` names kept where the state has them: the new values of
-    /// the parameters their poses are, each relative to the part it is
+    /// the parameters the poses of those it moved are, each relative to the part it is
     /// placed in, and of the joints' coordinates, and which mates hold
     /// there. Fails for a mate that cannot hold between its entities at
     /// all.
@@ -570,7 +584,7 @@ impl<S: Scalar> Part<S> {
         held: &[String],
         drags: &[Drag<S>],
     ) -> GeopResult<(State, MateReport)> {
-        let mut solvable = self.assembly(only, held)?;
+        let mut solvable = self.assembly(only, held, &|_| true)?;
         let pulls = drags
             .iter()
             .map(|drag| {
@@ -590,9 +604,15 @@ impl<S: Scalar> Part<S> {
             .collect::<GeopResult<Vec<_>>>()?;
         let report = solvable.assembly.solve(&pulls)?;
         let assembly = &solvable.assembly;
+        // Only those the solve may have moved: the others are where the
+        // state has them already, and written back they would only pick
+        // up the rounding of composing their poses.
         let mut moved = State::new();
-        for (placed, body) in solvable.bodies.iter().zip(&assembly.bodies) {
-            if let (true, Some(parameter)) = (body.free, &placed.parameter) {
+        for (b, (placed, body)) in solvable.bodies.iter().zip(&assembly.bodies).enumerate() {
+            if let (true, Some(parameter)) = (
+                body.free && report.moved.binary_search(&b).is_ok(),
+                &placed.parameter,
+            ) {
                 let pose = match placed.parent {
                     Some(parent) => assembly.bodies[parent].pose.inverse().compose(&body.pose),
                     None => body.pose,
@@ -657,9 +677,11 @@ impl<S: Scalar> Part<S> {
         self.solve_mates(None, set, &[])
     }
 
-    /// Which mates hold where the instances are now.
-    pub fn check_mates(&self) -> GeopResult<MateReport> {
-        let solvable = self.assembly(None, &[])?;
+    /// Which of the mates `named` picks — by name — hold where the
+    /// instances are now: `|_| true` for all of them. Checking only some
+    /// costs only theirs.
+    pub fn check_mates(&self, named: impl Fn(&str) -> bool) -> GeopResult<MateReport> {
+        let solvable = self.assembly(None, &[], &named)?;
         let report = solvable.assembly.report()?;
         Ok(MateReport {
             converged: report.converged,
@@ -677,7 +699,7 @@ impl<S: Scalar> Part<S> {
     /// Every joint of the part and of the parts placed flexibly in it, with
     /// where its coordinates are and their limits.
     pub fn joints(&self) -> GeopResult<Vec<JointInfo>> {
-        let solvable = self.assembly(None, &[])?;
+        let solvable = self.assembly(None, &[], &|_| true)?;
         Ok(solvable
             .assembly
             .joints
@@ -714,7 +736,7 @@ impl<S: Scalar> Part<S> {
     /// `geop_core_solve::mates::Assembly::conflicting`): as many solves as
     /// there are mates, so for a dialog to show, not for every drag.
     pub fn mate_freedom(&self) -> GeopResult<MateFreedom> {
-        let solvable = self.assembly(None, &[])?;
+        let solvable = self.assembly(None, &[], &|_| true)?;
         let freedom = solvable.assembly.freedom()?;
         let conflicting = if solvable.assembly.report()?.converged {
             Vec::new()

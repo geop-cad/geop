@@ -63,7 +63,7 @@ fn polygon(sketch: &mut Sketch, corners: &[P2]) -> (Vec<PointId>, Vec<CurveId>) 
 }
 
 /// Solves `sketch`, which the examples all constrain fully.
-fn solved(mut sketch: Sketch) -> Sketch {
+pub(crate) fn solved(mut sketch: Sketch) -> Sketch {
     let report = sketch.solve().expect("example sketches are valid");
     assert!(
         report.converged,
@@ -74,7 +74,7 @@ fn solved(mut sketch: Sketch) -> Sketch {
 
 /// A `width` x `depth` rectangle with its first corner at `origin`, drawn
 /// roughly and fully constrained.
-fn rectangle(sketch: &mut Sketch, origin: P2, width: f64, depth: f64) -> Vec<CurveId> {
+pub(crate) fn rectangle(sketch: &mut Sketch, origin: P2, width: f64, depth: f64) -> Vec<CurveId> {
     let [x, y] = origin;
     // Deliberately a little off: the constraints decide the shape.
     let (p, l) = polygon(
@@ -107,7 +107,7 @@ fn rectangle(sketch: &mut Sketch, origin: P2, width: f64, depth: f64) -> Vec<Cur
 }
 
 /// A circle of `radius` around `center`, fully constrained.
-fn circle(sketch: &mut Sketch, center: P2, radius: f64) -> CurveId {
+pub(crate) fn circle(sketch: &mut Sketch, center: P2, radius: f64) -> CurveId {
     let c = sketch.add_point(n(center[0]), n(center[1]));
     let circle = sketch.add_circle(c, n(radius * 1.1));
     sketch.constrain(Constraint::Fix {

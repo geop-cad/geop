@@ -113,7 +113,9 @@ pub use part::{
 };
 
 pub use operation::{Context, EntityRef, Operation, OperationInfo, Operations};
-pub use program::{Files, Library, NoFiles, Program, ProgramRunner, Step, StepResult, Workspace};
+pub use program::{
+    Files, FilesMut, Library, NoFiles, Program, ProgramRunner, Step, StepResult, Workspace,
+};
 
 #[doc(hidden)]
 /// What `#[derive(Operations)]` writes refers to, so a crate using it needs
