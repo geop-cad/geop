@@ -224,3 +224,91 @@ fn refuses_what_it_cannot_blend() {
     let wide = refusal(cylinder(), &["cylinder(c,p1,q0)"], round(0.6));
     assert!(wide.contains("too large"), "{wide}");
 }
+
+/// The names of every edge of `part`, sorted.
+fn all_edges(part: &Part<S>) -> Vec<String> {
+    let mut edges: Vec<String> = part
+        .topology()
+        .edges
+        .keys()
+        .map(|&id| part.name_of(id).unwrap().to_string())
+        .collect();
+    edges.sort();
+    edges
+}
+
+/// Checks the faces of `part` whose names end in `corner)` are pieces of
+/// spheres of `radius`, one around each of `centers`, sampled over them.
+fn assert_corner_balls(part: &Part<S>, radius: f64, centers: &[[f64; 3]]) {
+    let mut found = vec![0; centers.len()];
+    for (&id, face) in &part.topology().faces {
+        let name = part.name_of(id).unwrap();
+        if !name.ends_with(",corner)") {
+            continue;
+        }
+        let surface = &face.surface;
+        let at = |i: usize, j: usize| {
+            let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
+            let u = S::interpolate(u0, u1, S::from_f64(i as f64 / 4.0));
+            let w = S::interpolate(v0, v1, S::from_f64(j as f64 / 4.0));
+            surface.evaluate(u, w).unwrap()
+        };
+        let near = at(1, 1);
+        let distance = |c: [f64; 3]| near.sub(&v(c[0], c[1], c[2])).norm().to_f64();
+        let k = (0..centers.len())
+            .min_by(|&a, &b| distance(centers[a]).total_cmp(&distance(centers[b])))
+            .unwrap();
+        found[k] += 1;
+        let c = v::<S>(centers[k][0], centers[k][1], centers[k][2]);
+        for i in 0..=4 {
+            for j in 0..=4 {
+                let r = at(i, j).sub(&c).norm();
+                assert!(
+                    r.could_be_equal(S::from_f64(radius)),
+                    "{name} at ({i}, {j}) is {r:?} from {c:?}"
+                );
+            }
+        }
+    }
+    assert!(
+        found.iter().all(|&n| n == 1),
+        "corner faces by center: {found:?}"
+    );
+}
+
+/// The three edges at the cube's corner `(0, 0, 1)` rounded: their fillets
+/// end where the ball of their radius touches all three faces, and its
+/// piece between them rounds the corner.
+#[test]
+fn cube_fillet_one_corner() {
+    let part = blended(
+        unit_cube(),
+        &["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"],
+        BlendShape::round(0.2),
+    );
+    assert_eq!(part.topology().faces.len(), 10);
+    assert_corner_balls(&part, 0.2, &[[0.2, 0.2, 0.8]]);
+    for p in [[0.0, 0.2, 0.8], [0.2, 0.0, 0.8], [0.2, 0.2, 1.0]] {
+        assert!(has_vertex(&part, p), "no vertex at {p:?}");
+    }
+}
+
+/// All twelve edges of the cube rounded: a ball's octant at every corner.
+#[test]
+fn cube_fillet_all_edges() {
+    let part = unit_cube();
+    let edges = all_edges(&part);
+    let edges: Vec<&str> = edges.iter().map(String::as_str).collect();
+    let r = 0.2;
+    let part = blended(part, &edges, BlendShape::round(r));
+    assert_eq!(part.topology().faces.len(), 26);
+    let mut centers = Vec::new();
+    for x in [r, 1.0 - r] {
+        for y in [r, 1.0 - r] {
+            for z in [r, 1.0 - r] {
+                centers.push([x, y, z]);
+            }
+        }
+    }
+    assert_corner_balls(&part, r, &centers);
+}

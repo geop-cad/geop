@@ -95,7 +95,9 @@ use geop_ops_extrude_revolve::{
     sweep::SweepLoop,
 };
 
+use crate::corner;
 use crate::rolling::{self, Radii, Rolled, tangent_chain};
+use crate::tool::{self, Cap, Corner, Tool, ToolSpan, ToolStation, embed};
 
 /// What a blend replaces an edge's corner with (see the module docs).
 #[derive(Clone, Debug, PartialEq)]
@@ -129,7 +131,7 @@ impl BlendShape {
 
 /// How an edge's cross-section is swept into a tool.
 #[derive(Clone, Debug)]
-enum Sweep<S: Scalar> {
+pub(crate) enum Sweep<S: Scalar> {
     /// Along the straight edge from `start` to `end`, the section's `(x,
     /// y)` at `start + x e1 + y e2`.
     Straight {
@@ -171,6 +173,11 @@ pub(crate) enum End<S: Scalar> {
     /// halving the corner, keeping the side `keep` points to: the end of a
     /// tool mitred with another's.
     Mitre { at: Vector3<S>, keep: Vector3<S> },
+    /// Cut off square to the edge `setback` along it from its start, at
+    /// the plane through the center of the ball rounding a corner every
+    /// edge of which is filleted: where the tool is joined to the corner's
+    /// (see [`crate::corner`]).
+    Corner { setback: S },
 }
 
 /// Which way an edge bends: whether its blend cuts material away or adds it.
@@ -207,10 +214,10 @@ impl Bend {
 /// and right (`[1]`) the face, the direction running into it and the one
 /// facing out of the solid.
 #[derive(Clone, Debug)]
-struct Section<S: Scalar> {
-    sweep: Sweep<S>,
-    bend: Bend,
-    faces: [FaceId; 2],
+pub(crate) struct Section<S: Scalar> {
+    pub(crate) sweep: Sweep<S>,
+    pub(crate) bend: Bend,
+    pub(crate) faces: [FaceId; 2],
     corner: Vector2<S>,
     into: [Vector2<S>; 2],
     out: [Vector2<S>; 2],
@@ -592,19 +599,22 @@ fn same_corner<S: Scalar>(a: &Section<S>, b: &Section<S>) -> bool {
 }
 
 /// The closed cross-section of a tool, counter-clockwise, the control
-/// polygon it lies in, and where its blend meets the face on the edge's
-/// left and right.
-struct ToolProfile<S: Scalar> {
+/// polygon it lies in — for a fillet the arc's three control points and the
+/// apex — and where its blend meets the face on the edge's left and right.
+pub(crate) struct ToolProfile<S: Scalar> {
     profile: Profile<S>,
     control: Vec<Vector2<S>>,
     touches: [Vector2<S>; 2],
+    /// The weight of the arc's middle control point, `control[1]`: one
+    /// for a chamfer's chord.
+    weight: S,
 }
 
 /// The cross-section of the tool that blends `section`'s corner into
 /// `shape` (see the module docs).
 fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResult<ToolProfile<S>> {
     let e = section.corner;
-    let (curves, control, touches) = match shape {
+    let (curves, control, touches, weight) = match shape {
         BlendShape::Fillet { radii } => {
             radii.check()?;
             let r = S::from_f64(radii.radius);
@@ -628,6 +638,7 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
                 ],
                 vec![tangent_a, e, tangent_b, apex],
                 [tangent_a, tangent_b],
+                weight,
             )
         }
         BlendShape::Chamfer { distances } => {
@@ -653,6 +664,7 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
                 ],
                 vec![a_out, b_out, apex],
                 [a, b],
+                S::ONE,
             )
         }
     };
@@ -671,12 +683,14 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
             profile,
             control,
             touches,
+            weight,
         })
     } else if area.definitely_less(S::ZERO) {
         Ok(ToolProfile {
             profile: profile.reversed(),
             control,
             touches,
+            weight,
         })
     } else {
         Err(GeopError::new(format!(
@@ -690,44 +704,48 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
 const SEED: u64 = 0xB1E2_D000_0000_0001;
 
 /// Checks the blend of `section` by `tool` meets each face where the face
-/// is: inside it, halfway along the edge. A blend too large for a face runs
-/// past its boundary, and one ending exactly on another of its edges asks
-/// the boolean to cut along that edge.
+/// is: inside it, halfway along the edge (see [`check_touch`]).
 fn check_touches<S: Scalar>(
     model: &Model<S>,
     section: &Section<S>,
     tool: &ToolProfile<S>,
 ) -> GeopResult<()> {
-    let params = RemeshParams::<S>::default();
-    let (max_nodes, size) = (params.max_nodes, params.min_subdivision_size);
     for (face, touch) in section.faces.iter().zip(&tool.touches) {
         let p = section.point(touch)?;
         let ctx = with_context!("where the blend meets face {face}, at {p:?}");
-        let surface = &model.get_face(*face)?.surface;
-        let Some((u, v)) = surface_could_contain(surface, &p, max_nodes, size).with_context(ctx)?
-        else {
-            return Err(GeopError::new(format!(
-                "the blend is too large for face {face}: it would meet the face's surface beyond its end"
-            )))
-            .with_context(ctx);
-        };
-        match face_contains(model, *face, u, v, max_nodes, size, SEED).with_context(ctx)? {
-            PointClassification::Inside => {}
-            PointClassification::Outside => {
-                return Err(GeopError::new(format!(
-                    "the blend is too large for face {face}: it would run past the face's boundary"
-                )))
-                .with_context(ctx);
-            }
-            PointClassification::OnCoedge | PointClassification::OnVertex => {
-                return Err(GeopError::new(format!(
-                    "the blend would end exactly on another edge of face {face}: make it a little smaller or larger"
-                )))
-                .with_context(ctx);
-            }
-        }
+        check_touch(model, *face, &p).with_context(ctx)?;
     }
     Ok(())
+}
+
+/// Checks a blend touching `face` at `p` touches it where the face is:
+/// inside it. A blend too large for a face runs past its boundary, and one
+/// ending exactly on another of its edges asks the boolean to cut along
+/// that edge.
+pub(crate) fn check_touch<S: Scalar>(
+    model: &Model<S>,
+    face: FaceId,
+    p: &Vector3<S>,
+) -> GeopResult<()> {
+    let params = RemeshParams::<S>::default();
+    let (max_nodes, size) = (params.max_nodes, params.min_subdivision_size);
+    let surface = &model.get_face(face)?.surface;
+    let Some((u, v)) = surface_could_contain(surface, p, max_nodes, size)? else {
+        return Err(GeopError::new(format!(
+            "the blend is too large for face {face}: it would meet the face's surface beyond its end"
+        )));
+    };
+    match face_contains(model, face, u, v, max_nodes, size, SEED)? {
+        PointClassification::Inside => Ok(()),
+        PointClassification::Outside => Err(GeopError::new(format!(
+            "the blend is too large for face {face}: it would run past the face's boundary"
+        ))),
+        PointClassification::OnCoedge | PointClassification::OnVertex => {
+            Err(GeopError::new(format!(
+                "the blend would end exactly on another edge of face {face}: make it a little smaller or larger"
+            )))
+        }
+    }
 }
 
 /// The largest distance of a point of `control` from `from`, as a plain
@@ -813,8 +831,13 @@ fn sweep_tool<S: Scalar>(
                     let squareness = along.prod_dot(keep).abs();
                     Some(S::from_f64(2.0 * width / squareness.lower().to_f64()))
                 }
-                End::Flush | End::Wall => None,
+                End::Flush | End::Wall | End::Corner { .. } => None,
             };
+            if ends.iter().any(|e| matches!(e, End::Corner { .. })) {
+                return Err(GeopError::new(
+                    "a tool joined to a corner is built whole, not swept",
+                ));
+            }
             let from = run_out(&ends[0]).map_or(S::ZERO, |r| r.neg());
             let to = run_out(&ends[1]).map_or(length, |r| length.add(r));
             let built = extrude(part, namer, Some(&root), &plane, from, to, &loops)?;
@@ -863,10 +886,132 @@ fn sweep_tool<S: Scalar>(
         .ok_or_else(|| GeopError::new("the blend's tool came out as no solid"))
 }
 
+/// The tool of the straight edge of `section`, cross-section `tool`, as a
+/// [`Tool`] to build whole — what a tool joined to a corner is: one span
+/// along the edge between a station at each end, capped square to the edge
+/// where it ends on its own — run out as far as [`sweep_tool`] runs it, or
+/// flush at the end — and open where it is joined to a corner. Also whether
+/// its section runs from the contact on the face on the edge's right to the
+/// left's — the other way round from `section` — which it does where that
+/// is what makes the blend face out of the tool.
+pub(crate) fn straight_tool<S: Scalar>(
+    section: &Section<S>,
+    tool: &ToolProfile<S>,
+) -> GeopResult<(Tool<S>, bool)> {
+    let Sweep::Straight {
+        start,
+        end,
+        e1,
+        e2,
+        ends,
+        ..
+    } = &section.sweep
+    else {
+        return Err(GeopError::new(
+            "only the tool of a straight edge is built whole",
+        ));
+    };
+    let [ta, e, tb, q] = tool.control[..] else {
+        return Err(GeopError::new("only a fillet's tool is built whole"));
+    };
+    let along = end.sub(start).normalize()?;
+    let width = reach(&tool.control, &section.corner);
+    let space = |v: &Vector2<S>| e1.prod_scalar(v[0]).add(&e2.prod_scalar(v[1]));
+    // The blend faces out of the tool, towards its ball, away from the apex.
+    let facing = along
+        .prod_cross(&space(&tb.sub(&ta)))
+        .prod_dot(&space(&e.sub(&q)));
+    let swapped = if facing.definitely_greater(S::ZERO) {
+        false
+    } else if facing.definitely_less(S::ZERO) {
+        true
+    } else {
+        return Err(GeopError::new(format!(
+            "cannot tell which way the blend faces ({facing:?})"
+        )));
+    };
+    let (first, second) = if swapped { (tb, ta) } else { (ta, tb) };
+    let w = tool.weight;
+    let flat = [
+        Vector3::from_array([first[0], first[1], S::ONE]),
+        Vector3::from_array([e[0].mul(w), e[1].mul(w), w]),
+        Vector3::from_array([second[0], second[1], S::ONE]),
+        Vector3::from_array([q[0], q[1], S::ONE]),
+    ];
+    let mut stations = Vec::new();
+    for (k, out) in [(0, along.neg()), (1, along)] {
+        let name = format!("st{k}");
+        let from = if k == 0 { start } else { end };
+        // As far again as the tool is wide, over how squarely the edge
+        // crosses the face it is run out past.
+        let run_out = |squareness: &S| S::from_f64(2.0 * width / squareness.lower().to_f64());
+        let base = match &ends[k] {
+            End::Flush | End::Wall => *from,
+            End::RunOut { squareness } => from.add(&out.prod_scalar(run_out(squareness))),
+            End::Corner { setback } => {
+                // The section's corner is the edge's own point.
+                let base = start.add(&along.prod_scalar(*setback));
+                let at = |p: &Vector2<S>| base.add(&space(p));
+                let h = |p: Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
+                let (a, b, apex) = (at(&first), at(&second), at(&q));
+                stations.push(ToolStation {
+                    points: [
+                        h(a),
+                        Vector4::from_array([base[0].mul(w), base[1].mul(w), base[2].mul(w), w]),
+                        h(b),
+                        h(apex),
+                    ],
+                    vertices: [a, b, apex],
+                    name,
+                    cap: None,
+                });
+                continue;
+            }
+            End::Mitre { .. } => {
+                return Err(GeopError::new(
+                    "a tool joined to a corner is not mitred at its other end",
+                ));
+            }
+        };
+        // The cap, `e1 x e2` out of the tool: the section's own axes, or
+        // swapped — and the section's coordinates with them.
+        let (plane, flat) = if e1.prod_cross(e2).prod_dot(&out).definitely_greater(S::ZERO) {
+            ([base, *e1, *e2], flat)
+        } else {
+            (
+                [base, *e2, *e1],
+                flat.map(|p| Vector3::from_array([p[1], p[0], p[2]])),
+            )
+        };
+        let points = flat.map(|p| embed(&p, &plane));
+        stations.push(ToolStation {
+            points,
+            vertices: [points[0], points[2], points[3]].map(|p| p.head::<3>()),
+            name,
+            cap: Some(Cap { plane, flat }),
+        });
+    }
+    let span = ToolSpan {
+        degree: 1,
+        knots: vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+        rows: vec![stations[0].points, stations[1].points],
+        name: None,
+    };
+    Ok((
+        Tool {
+            stations,
+            spans: vec![span],
+            closed: false,
+            sides: if swapped { ["b", "a"] } else { ["a", "b"] },
+        },
+        swapped,
+    ))
+}
+
 /// One tool to sweep: the section of the edge it was built for, by name.
-struct Plan<S: Scalar> {
-    edge: String,
-    section: Section<S>,
+pub(crate) struct Plan<S: Scalar> {
+    pub(crate) edge: String,
+    pub(crate) section: Section<S>,
 }
 
 /// How an edge is blended, and with it every other edge the same tool
@@ -1161,11 +1306,13 @@ pub fn blend<S: Scalar>(
     }
     let groups = mitre(part.topology(), &mut plans)?;
     refuse_rolled_corners(&plans, &rolled)?;
+    let corners = corner::plan_corners(part, namer, &mut plans, &rolled, &covered, shape)?;
+    let groups = join_at_corners(groups, &corners);
     let mut target = solid.expect("at least one edge");
     for (edge, r) in &rolled {
         let ctx = with_context!("blending edge {edge:?}");
         let scope = namer.scoped(edge);
-        let tool = rolling::build_tool(part, &scope, &r.tool)
+        let tool = tool::build_tool(part, &scope, &r.tool)
             .with_context(with_context!("the tool of edge {edge:?}"))?;
         target = apply_tool(part, &scope, target, tool, r.bend).with_context(ctx)?;
     }
@@ -1173,6 +1320,16 @@ pub fn blend<S: Scalar>(
         let (first, _) = &plans[group[0]];
         let ctx = with_context!("blending edge {:?}", first.edge);
         let scope = namer.scoped(&first.edge);
+        let at: Vec<&Corner<S>> = corners
+            .iter()
+            .filter(|c| c.ends.iter().any(|e| group.contains(&e.tool)))
+            .collect();
+        if !at.is_empty() {
+            let tool = tools_with_corners(part, namer, &plans, &group, &at).with_context(ctx)?;
+            target =
+                apply_tool(part, &scope, target, tool, first.section.bend).with_context(ctx)?;
+            continue;
+        }
         // The group's tools, joined: mitred tools are applied as one.
         let mut tool: Option<SolidId> = None;
         for &i in &group {
@@ -1201,6 +1358,70 @@ pub fn blend<S: Scalar>(
         target = apply_tool(part, &scope, target, tool, first.section.bend).with_context(ctx)?;
     }
     part.rename(target, namer.root())
+}
+
+/// `groups` of plans to apply as one tool, joined further wherever
+/// `corners` join their tools.
+fn join_at_corners<S: Scalar>(groups: Vec<Vec<usize>>, corners: &[Corner<S>]) -> Vec<Vec<usize>> {
+    let mut groups = groups;
+    for corner in corners {
+        let mut joined: Vec<usize> = Vec::new();
+        groups.retain(|g| {
+            if corner.ends.iter().any(|e| g.contains(&e.tool)) {
+                joined.extend(g);
+                false
+            } else {
+                true
+            }
+        });
+        joined.sort();
+        groups.push(joined);
+    }
+    groups
+}
+
+/// The tools of the straight edges `group` of `plans` and the `corners`
+/// their tools meet at, built whole into one solid (see
+/// [`tool::build_tools`]), named after the first edge's tool.
+fn tools_with_corners<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    plans: &[(Plan<S>, ToolProfile<S>)],
+    group: &[usize],
+    corners: &[&Corner<S>],
+) -> GeopResult<SolidId> {
+    let namers: Vec<Namer> = group
+        .iter()
+        .map(|&i| namer.scoped(&plans[i].0.edge))
+        .collect();
+    let mut tools = Vec::new();
+    let mut swapped = Vec::new();
+    for &i in group {
+        let (plan, profile) = &plans[i];
+        let (tool, swap) = straight_tool(&plan.section, profile)
+            .with_context(with_context!("the tool of edge {:?}", plan.edge))?;
+        tools.push(tool);
+        swapped.push(swap);
+    }
+    // The corners' ends, by tool of the group, contacts in the order the
+    // tools' sections run.
+    let mut joined = Vec::new();
+    for &corner in corners {
+        let mut corner = corner.clone();
+        for end in &mut corner.ends {
+            let t = group
+                .iter()
+                .position(|&i| i == end.tool)
+                .ok_or_else(|| GeopError::new("a corner joins a tool of another group"))?;
+            if swapped[t] {
+                end.contacts.reverse();
+            }
+            end.tool = t;
+        }
+        joined.push(corner);
+    }
+    let refs: Vec<(&Namer, &Tool<S>)> = namers.iter().zip(&tools).collect();
+    tool::build_tools(part, &refs, &joined, namers[0].name(&["tool"]))
 }
 
 /// Cuts `tool` away from `target`, or fills it in, as `bend` says — named

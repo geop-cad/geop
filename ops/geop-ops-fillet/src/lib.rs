@@ -10,8 +10,10 @@
 //! operations of a program.
 
 pub mod blend;
+mod corner;
 pub mod operation;
 pub mod rolling;
+mod tool;
 
 pub use blend::BlendShape;
 pub use operation::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};

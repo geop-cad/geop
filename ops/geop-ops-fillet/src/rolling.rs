@@ -70,26 +70,25 @@
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
-    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, true_point_fractions},
-    nurb_surface::{NurbSurface, NurbSurface3D, clamp},
+    nurb_curve::{NurbCurve, NurbCurve3D, true_point_fractions},
+    nurb_surface::{NurbSurface3D, clamp},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::{Matrix, solve_linear_system},
     scalars::Scalar,
-    vector::{Vector, Vector2, Vector3, Vector4},
+    vector::{Vector3, Vector4},
     with_context,
 };
 use geop_core_topology::{
-    EdgeId, FaceId, Model, Sense, SolidId, VertexId,
-    build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops::{BodyNames, Namer, Part};
+use geop_ops::Part;
 use geop_ops_booleans::remesh::remesh::RemeshParams;
-use geop_ops_extrude_revolve::common::{bilinear, embed_point, line2};
 
 use crate::blend::{Bend, End, bend, faces, tool_end};
+use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 
 /// Stations per edge of a chain to start with.
 const FIRST_STATIONS: usize = 8;
@@ -1259,50 +1258,6 @@ fn roll_chain<S: Scalar>(
     })
 }
 
-/// One span of a tool: its control rows along it — each the four section
-/// control points (see [`section_points`]) — of `degree` on `knots`, and
-/// what its faces are called after, if anything.
-#[derive(Clone, Debug)]
-struct ToolSpan<S: Scalar> {
-    degree: usize,
-    knots: Vec<S>,
-    rows: Vec<[Vector4<S>; 4]>,
-    name: Option<String>,
-}
-
-/// A flat cap of a tool: the plane it lies in, `(origin, e1, e2)` with
-/// `e1 x e2` out of the tool, and the section's control points in it,
-/// homogeneous — what both the cap's pcurves and the section's edges in
-/// space are made of, so that they agree exactly.
-#[derive(Clone, Debug)]
-struct Cap<S: Scalar> {
-    plane: [Vector3<S>; 3],
-    flat: [Vector3<S>; 4],
-}
-
-/// Where a tool's section lies at one of its stations: the section's
-/// control points, its vertices — the two contacts and the apex — what it
-/// is called, and its cap, if it is capped there.
-#[derive(Clone, Debug)]
-struct ToolStation<S: Scalar> {
-    points: [Vector4<S>; 4],
-    vertices: [Vector3<S>; 3],
-    name: String,
-    cap: Option<Cap<S>>,
-}
-
-/// A blend's tool, ready to build: its stations and the spans between
-/// them, around to the first again if `closed` — else capped at both ends.
-#[derive(Clone, Debug)]
-pub(crate) struct Tool<S: Scalar> {
-    stations: Vec<ToolStation<S>>,
-    spans: Vec<ToolSpan<S>>,
-    closed: bool,
-    /// What the walls rising from the first and the second contact are
-    /// called: `a` and `b` after the faces on the edge's left and right.
-    sides: [&'static str; 2],
-}
-
 /// Everything a rolling-ball blend of one chain needs: the chain, which way
 /// it bends, its tool, and the contact points to check against the faces
 /// (see [`check_touches`]).
@@ -1441,28 +1396,6 @@ fn span_of<S: Scalar>(curves: &[NurbCurve3D<S>; 4], name: Option<String>) -> Too
     }
 }
 
-/// The wall section curve `c` (see [`CURVE_POINTS`]) sweeps through
-/// `span`: `u` along the span, `v` along the curve.
-fn wall_surface<S: Scalar>(span: &ToolSpan<S>, c: usize) -> GeopResult<NurbSurface3D<S>> {
-    let control_points = span
-        .rows
-        .iter()
-        .flat_map(|row| CURVE_POINTS[c].iter().map(move |&k| row[k]))
-        .collect();
-    let (degree_v, knots_v) = if c == 0 {
-        (2, vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE])
-    } else {
-        (1, vec![S::ZERO, S::ZERO, S::ONE, S::ONE])
-    };
-    NurbSurface::try_new(
-        span.degree,
-        degree_v,
-        control_points,
-        span.knots.clone(),
-        knots_v,
-    )
-}
-
 /// The contact checks of the span `span`: every station's contact point at
 /// its parameter, and every ball between, for the contact row `k` (0 or 2).
 fn contact_checks<S: Scalar>(
@@ -1595,24 +1528,6 @@ pub(crate) fn plan_rolled<S: Scalar>(
         before = deviation;
         n *= 2;
     }
-}
-
-/// The homogeneous point `h`'s coordinates in the plane `(origin, e1, e2)`,
-/// homogeneous: `(w x, w y, w)`.
-fn flatten<S: Scalar>(h: &Vector4<S>, [o, e1, e2]: &[Vector3<S>; 3]) -> Vector3<S> {
-    let w = h[3];
-    let d = Vector3::from_array([h[0], h[1], h[2]]).sub(&o.prod_scalar(w));
-    Vector3::from_array([d.prod_dot(e1), d.prod_dot(e2), w])
-}
-
-/// The point `v`'s coordinates in the plane `plane`, homogeneous.
-fn flatten_point<S: Scalar>(v: &Vector3<S>, plane: &[Vector3<S>; 3]) -> Vector3<S> {
-    flatten(&Vector4::from_array([v[0], v[1], v[2], S::ONE]), plane)
-}
-
-/// The homogeneous plane coordinates `p` in space, on `plane`.
-fn embed<S: Scalar>(p: &Vector3<S>, [o, e1, e2]: &[Vector3<S>; 3]) -> Vector4<S> {
-    embed_point(p, o, e1, e2)
 }
 
 /// Checks the ball's section at the end `station` of an open chain lies in
@@ -1790,9 +1705,11 @@ fn assemble<S: Scalar>(
                         stations.insert(0, far);
                     }
                 }
-                End::Mitre { .. } => {
-                    return Err(GeopError::new("a rolling-ball blend is not mitred"))
-                        .with_context(ctx);
+                End::Mitre { .. } | End::Corner { .. } => {
+                    return Err(GeopError::new(
+                        "a rolling-ball blend is neither mitred nor joined to a corner",
+                    ))
+                    .with_context(ctx);
                 }
             }
             decided.push((vertex, kind));
@@ -1873,233 +1790,4 @@ pub(crate) fn check_touches<S: Scalar>(model: &Model<S>, rolled: &Rolled<S>) -> 
         }
     }
     Ok(())
-}
-
-/// The joints a section curve runs between, by curve: the arc from the
-/// first contact to the second, the line on to the apex, the line back.
-const CURVE_JOINTS: [(usize, usize); 3] = [(0, 1), (1, 2), (2, 0)];
-/// The section control points (see [`section_points`]) each curve is made
-/// of.
-const CURVE_POINTS: [&[usize]; 3] = [&[0, 1, 2], &[2, 3], &[3, 0]];
-/// The section control point each joint is.
-const JOINT_POINT: [usize; 3] = [0, 2, 3];
-
-/// The section's curve `c` (see [`CURVE_POINTS`]) of control points
-/// `points`: rational quadratic for the arc, lines else.
-fn section_curve<S: Scalar, const D: usize>(
-    points: &[Vector<S, D>; 4],
-    c: usize,
-) -> GeopResult<NurbCurve<S, D>> {
-    let control_points = CURVE_POINTS[c].iter().map(|&k| points[k]).collect();
-    let knots = if c == 0 {
-        vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE]
-    } else {
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE]
-    };
-    NurbCurve::try_new(if c == 0 { 2 } else { 1 }, control_points, knots)
-}
-
-/// A wall's sides in its own parameters: the curve at the span's first
-/// station, run backwards along `u = 0`; the path of its start along
-/// `v = 0`; the curve at the last station along `u = 1`; the path of its
-/// end, backwards along `v = 1`.
-fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
-    let p = |u: f64, v: f64| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
-    Ok([
-        line2(p(0.0, 1.0), p(0.0, 0.0))?,
-        line2(p(0.0, 0.0), p(1.0, 0.0))?,
-        line2(p(1.0, 0.0), p(1.0, 1.0))?,
-        line2(p(1.0, 1.0), p(0.0, 1.0))?,
-    ])
-}
-
-/// The flat cap on `cap`'s plane holding its section: the box around the
-/// section in the plane, as a bilinear patch facing out of the tool, and
-/// the section's curves in its parameters.
-fn cap_face<S: Scalar>(cap: &Cap<S>) -> GeopResult<(NurbSurface3D<S>, [NurbCurve2D<S>; 3])> {
-    let mut lo = [f64::INFINITY; 2];
-    let mut hi = [f64::NEG_INFINITY; 2];
-    for p in &cap.flat {
-        for k in 0..2 {
-            let x = p[k].div(p[2])?;
-            lo[k] = lo[k].min(x.lower().to_f64());
-            hi[k] = hi[k].max(x.upper().to_f64());
-        }
-    }
-    // The cap spans exactly this box, which encloses the section: a NURBS
-    // curve stays within the convex hull of its control points.
-    let lo = [S::from_f64(lo[0]), S::from_f64(lo[1])];
-    let size = [
-        S::from_f64(hi[0]).sub(lo[0]).upper(),
-        S::from_f64(hi[1]).sub(lo[1]).upper(),
-    ];
-    let [o, e1, e2] = &cap.plane;
-    let corner = |i: usize, j: usize| {
-        let x = if i == 1 { lo[0].add(size[0]) } else { lo[0] };
-        let y = if j == 1 { lo[1].add(size[1]) } else { lo[1] };
-        o.add(&e1.prod_scalar(x)).add(&e2.prod_scalar(y))
-    };
-    let surface = bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))?;
-    let mut uv = [Vector3::zero(); 4];
-    for (k, p) in cap.flat.iter().enumerate() {
-        uv[k] = Vector3::from_array([
-            p[0].sub(p[2].mul(lo[0])).div(size[0])?,
-            p[1].sub(p[2].mul(lo[1])).div(size[1])?,
-            p[2],
-        ]);
-    }
-    Ok((
-        surface,
-        [
-            section_curve(&uv, 0)?,
-            section_curve(&uv, 1)?,
-            section_curve(&uv, 2)?,
-        ],
-    ))
-}
-
-/// Builds `tool` into a solid named `N(tool)`, `namer` the blended edge's
-/// (see [`crate::blend::blend`]): a vertex at each joint of every station,
-/// `N(ta,st0)`, `N(tb,st0)`, `N(q,st0)`, ...; the section's curves at every
-/// station, `N(fillet,st0)`, `N(b,st0)`, `N(a,st0)`; each joint's path
-/// through every span, `N(ta,s0)`, ...; the walls each curve sweeps through
-/// every span, the blend `N(fillet,s0)` — the span left out of a tool of
-/// one, and the run-out spans `start` and `end` — and the caps of an open
-/// one, `N(start)` and `N(end)`.
-pub(crate) fn build_tool<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
-    tool: &Tool<S>,
-) -> GeopResult<SolidId> {
-    let joint_names = [
-        format!("t{}", tool.sides[0]),
-        format!("t{}", tool.sides[1]),
-        "q".to_string(),
-    ];
-    let curve_names = ["fillet", tool.sides[1], tool.sides[0]];
-    let count = tool.stations.len();
-    let next = |j: usize| (j + 1) % count;
-    let mut spec = BodySpec {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        faces: Vec::new(),
-        shells: Vec::new(),
-        solid: true,
-    };
-    let mut names = BodyNames {
-        solid: Some(namer.name(&["tool"])),
-        ..BodyNames::default()
-    };
-    let qualified = |name: &str, span: &Option<String>| match span {
-        Some(s) => namer.name(&[name, s]),
-        None => namer.name(&[name]),
-    };
-
-    let mut vertex = Vec::new();
-    for station in &tool.stations {
-        let mut ids = [0; 3];
-        for k in 0..3 {
-            spec.vertices.push(station.vertices[k]);
-            names
-                .vertices
-                .push(namer.name(&[&joint_names[k], &station.name]));
-            ids[k] = spec.vertices.len() - 1;
-        }
-        vertex.push(ids);
-    }
-    let mut station_edge = Vec::new();
-    for (s, station) in tool.stations.iter().enumerate() {
-        let mut ids = [0; 3];
-        for c in 0..3 {
-            let (a, b) = CURVE_JOINTS[c];
-            spec.edges.push(EdgeSpec {
-                curve: section_curve(&station.points, c)?,
-                start: vertex[s][a],
-                end: vertex[s][b],
-            });
-            names
-                .edges
-                .push(namer.name(&[curve_names[c], &station.name]));
-            ids[c] = spec.edges.len() - 1;
-        }
-        station_edge.push(ids);
-    }
-    let mut lateral = Vec::new();
-    for (j, span) in tool.spans.iter().enumerate() {
-        let mut ids = [0; 3];
-        for k in 0..3 {
-            spec.edges.push(EdgeSpec {
-                curve: NurbCurve::try_new(
-                    span.degree,
-                    span.rows.iter().map(|r| r[JOINT_POINT[k]]).collect(),
-                    span.knots.clone(),
-                )?,
-                start: vertex[j][k],
-                end: vertex[next(j)][k],
-            });
-            names.edges.push(qualified(&joint_names[k], &span.name));
-            ids[k] = spec.edges.len() - 1;
-        }
-        lateral.push(ids);
-    }
-
-    let [first_back, start_side, last_forward, end_side] = wall_pcurves::<S>()?;
-    for (j, span) in tool.spans.iter().enumerate() {
-        for c in 0..3 {
-            let (a, b) = CURVE_JOINTS[c];
-            let surface = wall_surface(span, c)?;
-            let on = |edge: usize, sense: Sense, pcurve: &NurbCurve2D<S>| CoedgeSpec {
-                on: CoedgeOn::Edge(edge, sense),
-                pcurve: pcurve.clone(),
-            };
-            spec.faces.push(FaceSpec {
-                surface,
-                outer: vec![
-                    on(station_edge[j][c], Sense::Reversed, &first_back),
-                    on(lateral[j][a], Sense::Forward, &start_side),
-                    on(station_edge[next(j)][c], Sense::Forward, &last_forward),
-                    on(lateral[j][b], Sense::Reversed, &end_side),
-                ],
-                holes: Vec::new(),
-            });
-            names.faces.push(qualified(curve_names[c], &span.name));
-        }
-    }
-
-    if !tool.closed {
-        for (s, forward, name) in [(0, true, "start"), (count - 1, false, "end")] {
-            let Some(cap) = &tool.stations[s].cap else {
-                return Err(GeopError::new(format!("the tool's {name} has no cap")));
-            };
-            let (surface, pcurves) = cap_face(cap)?;
-            let mut outer: Vec<CoedgeSpec<S>> = (0..3)
-                .map(|c| {
-                    if forward {
-                        CoedgeSpec {
-                            on: CoedgeOn::Edge(station_edge[s][c], Sense::Forward),
-                            pcurve: pcurves[c].clone(),
-                        }
-                    } else {
-                        CoedgeSpec {
-                            on: CoedgeOn::Edge(station_edge[s][c], Sense::Reversed),
-                            pcurve: pcurves[c].reverse(),
-                        }
-                    }
-                })
-                .collect();
-            if !forward {
-                outer.reverse();
-            }
-            spec.faces.push(FaceSpec {
-                surface,
-                outer,
-                holes: Vec::new(),
-            });
-            names.faces.push(namer.name(&[name]));
-        }
-    }
-    spec.shells = vec![(0..spec.faces.len()).collect()];
-    part.build_body(spec, names)?
-        .solid
-        .ok_or_else(|| GeopError::new("the blend's tool came out as no solid"))
 }
