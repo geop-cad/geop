@@ -22,7 +22,8 @@ use geop_core_math::vector::Vector3;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
     Context, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
-    assembly::Drag,
+    Design,
+    assembly::{Drag, JointInfo, MateFreedom},
     operation::Role,
     parameters::{Parameters, Resolved},
     part::{ParamValue, State},
@@ -121,6 +122,13 @@ pub enum Command<S: Scalar> {
     DragTool {
         on: bool,
     },
+    /// Set the joint coordinate `parameter` — an angle in degrees, or a
+    /// distance — to `value`: the parts move to it, everything else that
+    /// is free giving way (see [`ProgramState::joints`]).
+    Joint {
+        parameter: String,
+        value: f64,
+    },
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -163,6 +171,12 @@ pub struct ProgramState {
     /// The names of the examples of several files
     /// [`Command::LoadWorkspaceExample`] loads.
     pub workspace_examples: Vec<&'static str>,
+    /// The joints of the part shown, with where their coordinates are:
+    /// what [`Command::Joint`] sets.
+    pub joints: Vec<JointInfo>,
+    /// How free each of its placed parts is, and which of its mates
+    /// conflict — if it has placed parts.
+    pub freedom: Option<MateFreedom>,
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.
@@ -698,6 +712,30 @@ impl<S: Scalar> Editor<S> {
                 self.preview = preview;
                 Changed::Nothing
             }
+            Command::Joint { parameter, value } => {
+                idle(self)?;
+                let library = library(&self.workspace, self.path.as_deref());
+                let mut state = self.program.state.clone();
+                state.insert(
+                    parameter.clone(),
+                    ParamValue::Number(Design::from_f64(value)),
+                );
+                let program = Program {
+                    state,
+                    ..self.program.clone()
+                };
+                self.runner.run(&program, None, &library);
+                let part = self.runner.part();
+                if !part.solved_parameters().contains(&parameter) {
+                    return Err(GeopError::new(format!(
+                        "{parameter:?} is no joint coordinate of this program"
+                    )));
+                }
+                let (moved, _) = part.solve_joints(std::slice::from_ref(&parameter))?;
+                self.program.state = program.state;
+                self.program.state.extend(moved);
+                Changed::Program
+            }
             Command::Parameters { parameters } => {
                 parameters.validate()?;
                 self.program.parameters = parameters;
@@ -922,6 +960,8 @@ impl<S: Scalar> Editor<S> {
                 .map(|(moved, _)| moved)
         } else if hold() {
             None
+        } else if !holds.is_empty() {
+            part.solve_joints(&holds).ok().map(|(moved, _)| moved)
         } else {
             let own_first = own
                 .first()
@@ -1243,6 +1283,10 @@ impl<S: Scalar> Editor<S> {
             operations: PartOperation::infos(),
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),
+            joints: self.runner.part().joints().unwrap_or_default(),
+            freedom: (self.runner.part().instances().next().is_some())
+                .then(|| self.runner.part().mate_freedom().ok())
+                .flatten(),
         }
     }
 }

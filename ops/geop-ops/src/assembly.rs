@@ -630,6 +630,27 @@ impl<S: Scalar> Part<S> {
         ))
     }
 
+    /// Solves the mates with the joint coordinates `set` held where the
+    /// state has them: the parts move to them as a mechanism's joints would
+    /// move them — every other joint keeping its coordinates, if the mates
+    /// let it, as they do along a serial chain; where they do not, round a
+    /// closed loop, the other joints give way.
+    pub fn solve_joints(&self, set: &[String]) -> GeopResult<(State, MateReport)> {
+        let mut bodies = Vec::new();
+        placed(self, "", None, &Pose::identity(), &mut bodies);
+        let mut every: Vec<String> = Vec::new();
+        for (name, mate) in self.all_mates(&bodies) {
+            if let MateKind::Joint(kind) = mate.kind {
+                every.extend(kind.motions().into_iter().map(|m| joint_parameter(&name, m)));
+            }
+        }
+        let (moved, report) = self.solve_mates(None, &every, &[])?;
+        if report.converged {
+            return Ok((moved, report));
+        }
+        self.solve_mates(None, set, &[])
+    }
+
     /// Which mates hold where the instances are now.
     pub fn check_mates(&self) -> GeopResult<MateReport> {
         let solvable = self.assembly(None, &[])?;
