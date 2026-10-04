@@ -1169,7 +1169,8 @@ impl<S: Scalar> Editor<S> {
                 let library = library(&self.workspace, self.path.as_deref());
                 self.runner.run(&self.program, Some(index), &library);
                 let part = self.runner.part_at(index);
-                let text = geop_ops_drawing::render(part, &args, &date, format)?;
+                let parts = inspect::parts_list(part, &self.file(), &args)?;
+                let text = geop_ops_drawing::render(part, &args, &date, &parts, format)?;
                 let base = stem.unwrap_or_else(|| "drawing".to_string());
                 self.exported = Some(Export {
                     name: format!("{base}.{}", format.extension()),

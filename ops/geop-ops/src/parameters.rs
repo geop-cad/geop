@@ -93,8 +93,9 @@ pub struct Parameter {
     pub kind: ParameterKind,
 }
 
-/// A program's parameters: the part's colour and material, and the values
-/// it is designed with, in order — each may read those before it.
+/// A program's parameters: the part's colour and material, what it is
+/// called when it is ordered, and the values it is designed with, in order
+/// — each may read those before it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Parameters {
     /// The part's colour, `#rrggbb`; none for the viewer's own.
@@ -104,6 +105,17 @@ pub struct Parameters {
     /// given — weighed as water, 1000 kg/m³, and said so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<Material>,
+    /// What the part is, in words — `ISO 4762 socket head cap screw` —
+    /// where it is listed: a bill of materials, a drawing's. None for a
+    /// part known by its file's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// What the part is ordered as, before the values it is built with
+    /// (see [`Parameters::designate`]): a norm — `ISO 4762`, for `ISO 4762
+    /// M4x12` — or a catalogue or part number. None for a part that is
+    /// made rather than bought.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designation: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<Parameter>,
 }
@@ -149,7 +161,32 @@ pub fn validate_color(color: &str) -> GeopResult<()> {
 
 impl Parameters {
     pub fn is_empty(&self) -> bool {
-        self.color.is_none() && self.material.is_none() && self.values.is_empty()
+        self.color.is_none()
+            && self.material.is_none()
+            && self.title.is_none()
+            && self.designation.is_none()
+            && self.values.is_empty()
+    }
+
+    /// What the part built with the parameter values `values` is ordered
+    /// as: its [`Parameters::designation`], then each parameter in order —
+    /// a table's row by its name, a number after its own — `ISO 4762
+    /// M4x12`, `T-slot 2020 length 500`. None for a part with no
+    /// designation.
+    pub fn designate(&self, values: &State) -> Option<String> {
+        let mut words = vec![self.designation.clone()?];
+        for parameter in &self.values {
+            match (&parameter.kind, values.get(&parameter.name)) {
+                (ParameterKind::Table { .. }, Some(ParamValue::Text(row))) => {
+                    words.push(row.clone())
+                }
+                (ParameterKind::Number { .. }, Some(ParamValue::Number(n))) => {
+                    words.push(format!("{} {}", parameter.name, n.to_f64()))
+                }
+                _ => {}
+            }
+        }
+        Some(words.join(" "))
     }
 
     /// The parameter `name`.
@@ -753,6 +790,8 @@ mod tests {
     #[test]
     fn parameters_resolve_in_order_with_overrides() {
         let parameters = Parameters {
+            title: None,
+            designation: None,
             color: Some("#ff8800".into()),
             material: None,
             values: vec![

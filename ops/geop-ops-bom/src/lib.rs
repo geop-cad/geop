@@ -17,7 +17,7 @@
 //!
 //! **Columns.** Per part its name — a standard part's title, else its
 //! file's — the file, the parameter values it is built with, a standard
-//! part's designation (`ISO 4762 M4x12`, see [`Standard`]), its material,
+//! part's designation (`ISO 4762 M4x12`, see [`Part::designation`]), its material,
 //! the thickness of its sheet-metal bodies, and its mass: per piece and
 //! for the quantity, from the exact geometry of its bodies and its own
 //! material (see [`geop_ops_inspect::mass`]). A part of no given material
@@ -37,11 +37,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_ops::{
-    Part,
-    parameters::ParameterKind,
-    part::{ParamValue, State},
-};
+use geop_ops::{Part, part::ParamValue};
 use geop_ops_inspect::{Bounded, bodies::PlacedSolid, mass::material_of};
 use geop_ops_sheetmetal::{FlatPatternData, Sheet};
 use serde::{Deserialize, Serialize};
@@ -60,15 +56,6 @@ pub enum Structure {
     /// The tree of sub-assemblies, each part counted per one of the
     /// assembly it is placed in.
     Indented,
-}
-
-/// What a standard part is, as ordered: the family's title (`ISO 4762
-/// socket head cap screw`) and the designation of the size built
-/// (`ISO 4762 M4x12`).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Standard {
-    pub title: String,
-    pub designation: String,
 }
 
 /// What a line of a bill of materials is.
@@ -165,23 +152,6 @@ fn parameters<S: Scalar>(part: &Part<S>) -> String {
         .join(", ")
 }
 
-/// The values of the parameters `part` defines, by name, as built — what
-/// a standard part's designation is made of.
-fn defined<S: Scalar>(part: &Part<S>) -> State {
-    let inputs = part.inputs();
-    part.parameters()
-        .values
-        .iter()
-        .filter(|p| {
-            matches!(
-                p.kind,
-                ParameterKind::Number { .. } | ParameterKind::Table { .. }
-            )
-        })
-        .filter_map(|p| Some((p.name.clone(), inputs.get(&p.name)?.clone())))
-        .collect()
-}
-
 /// What a bill needs of one part, worked out once however often it is
 /// placed.
 struct Info<S: Scalar> {
@@ -227,16 +197,14 @@ fn groups<S: Scalar>(part: &Part<S>) -> Vec<Group<'_, S>> {
 }
 
 /// Builds a bill of materials, remembering what it worked out of each part.
-struct Builder<'f, S: Scalar> {
-    /// The standard part placed from a file, built with these values.
-    standard: &'f dyn Fn(&str, &State) -> Option<Standard>,
+struct Builder<S: Scalar> {
     infos: HashMap<String, Info<S>>,
     /// The mass of all of a part — its own bodies and those of the parts
     /// placed in it — by key.
     whole: HashMap<String, Result<S, String>>,
 }
 
-impl<S: Scalar> Builder<'_, S> {
+impl<S: Scalar> Builder<S> {
     fn info(&mut self, key: &str, file: &str, part: &Part<S>) -> GeopResult<&Info<S>> {
         if !self.infos.contains_key(key) {
             let info = self.work_out(file, part).with_context(&|e: GeopError| {
@@ -253,7 +221,6 @@ impl<S: Scalar> Builder<'_, S> {
             .next()
             .unwrap_or(file)
             .trim_end_matches(".geop");
-        let standard = (self.standard)(file, &defined(part));
         let (material, _, assumed) = material_of(part);
         // Its own bodies: every solid but a harness' bundle.
         let bodies: Vec<String> = part
@@ -288,12 +255,10 @@ impl<S: Scalar> Builder<'_, S> {
             });
         }
         Ok(Info {
-            name: standard
-                .as_ref()
-                .map_or_else(|| stem.to_string(), |s| s.title.clone()),
+            name: part.title().unwrap_or(stem).to_string(),
             file: file.to_string(),
             parameters: parameters(part),
-            designation: standard.map(|s| s.designation),
+            designation: part.designation(),
             material,
             assumed,
             thickness,
@@ -500,20 +465,14 @@ fn wire_lines<S: Scalar>(part: &Part<S>, level: usize, quantity: u64) -> Vec<(St
 }
 
 /// The bill of materials of `part`, the program `file` builds, laid out as
-/// `structure` says. `standard` says which files are standard parts, and
-/// how one built with the given parameter values is designated.
+/// `structure` says. A part placed is listed by its own title and
+/// designation, if it has them (see [`Part::designation`]).
 ///
 /// The part's own bodies — those it is modelled with besides what it
 /// places — are a line of their own, named after `file`: for a part that
 /// places nothing, that line is the whole bill.
-pub fn bom<S: Scalar>(
-    part: &Part<S>,
-    file: &str,
-    structure: Structure,
-    standard: &dyn Fn(&str, &State) -> Option<Standard>,
-) -> GeopResult<Bom> {
+pub fn bom<S: Scalar>(part: &Part<S>, file: &str, structure: Structure) -> GeopResult<Bom> {
     let mut builder = Builder {
-        standard,
         infos: HashMap::new(),
         whole: HashMap::new(),
     };

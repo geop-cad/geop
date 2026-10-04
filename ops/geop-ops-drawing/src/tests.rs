@@ -168,7 +168,7 @@ fn a_threaded_shaft_draws_its_thread() {
         scale: Some(1.0),
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "").unwrap();
+    let sheet = compose(&part, &args, "", &[]).unwrap();
     let thread = |s: &&Stroke| s.layer == Layer::Thread;
     let lines: Vec<(f64, f64)> = sheet
         .strokes

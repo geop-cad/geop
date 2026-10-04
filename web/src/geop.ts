@@ -167,6 +167,10 @@ export interface Parameters {
   color?: string | null;
   /** What the part is made of — its density in kg/m³ — none for one not given (weighed as water). */
   material?: Material | null;
+  /** What the part is, in words, where it is listed: `ISO 4762 socket head cap screw`. */
+  title?: string | null;
+  /** What it is ordered as, before the values it is built with: `ISO 4762`, for `ISO 4762 M4x12`. */
+  designation?: string | null;
   values?: Parameter[];
 }
 

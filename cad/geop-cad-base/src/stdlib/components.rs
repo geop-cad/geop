@@ -13,7 +13,7 @@ use super::{
     StandardPart,
     drawing::Drawing,
     steps::{Around, axis_datum, col, extrude, outline_plane, plane_datum, revolve, size},
-    tables,
+    tables, titled,
 };
 use crate::Program;
 
@@ -30,6 +30,7 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
         }),
         color: Some("#b8bcc4".into()),
         values: vec![size(tables::ball_bearings())],
+        ..Parameters::default()
     };
     let (d, big, b, r) = (col("d"), col("D"), col("B"), col("r"));
     let bore = format!("{d} / 2");
@@ -70,10 +71,8 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
     plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
         file: "std:ball_bearing.geop",
-        title: "Deep-groove ball bearing",
-        designation: "Ball bearing",
         base: "side",
-        program,
+        program: titled(program, "Deep-groove ball bearing", "Ball bearing"),
         threaded: Vec::new(),
     })
 }
@@ -120,6 +119,7 @@ fn tslot(
                 max: Some(1000.0),
             },
         }],
+        ..Parameters::default()
     };
     let (half_w, half_h) = (100, 100 * cells);
     // Round the outline clockwise, from its top left corner; each side
@@ -170,10 +170,8 @@ fn tslot(
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
         file,
-        title,
-        designation,
         base: "end",
-        program,
+        program: titled(program, title, designation),
         threaded: Vec::new(),
     })
 }
@@ -210,6 +208,7 @@ pub fn nema17() -> GeopResult<StandardPart> {
         }),
         color: Some("#3a3d42".into()),
         values: vec![size(tables::nema17())],
+        ..Parameters::default()
     };
     let mut outline = Drawing::new(&program.parameters)?;
     let (side, cut) = ("21.15", "17.15");
@@ -287,10 +286,8 @@ pub fn nema17() -> GeopResult<StandardPart> {
     plane_datum(&mut program, "face", "0");
     Ok(StandardPart {
         file: "std:nema17_stepper.geop",
-        title: "NEMA 17 stepper motor",
-        designation: "NEMA 17 stepper",
         base: "face",
-        program,
+        program: titled(program, "NEMA 17 stepper motor", "NEMA 17 stepper"),
         threaded: Vec::new(),
     })
 }

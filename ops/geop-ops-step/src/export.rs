@@ -79,8 +79,9 @@ pub fn write_step<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<String> {
     .write())
 }
 
-/// The product a component is called: its program's file name, without
-/// folders and extension.
+/// The product a component is called, unless it has a designation (`ISO
+/// 4762 M4x12`, see [`Part::designation`]): its program's file name,
+/// without folders and extension.
 fn component_name(file: &str) -> &str {
     let base = file.rsplit(['/', '\\']).next().unwrap_or(file);
     base.rsplit_once('.').map_or(base, |(stem, _)| stem)
@@ -332,12 +333,11 @@ impl Writer {
             let child = match written.get(&key) {
                 Some(&child) => child,
                 None => {
-                    let child = self.assembly(
-                        instance.part(),
-                        component_name(&instance.component.file),
-                        context,
-                        written,
-                    )?;
+                    let name = instance.part().designation();
+                    let name = name
+                        .as_deref()
+                        .unwrap_or_else(|| component_name(&instance.component.file));
+                    let child = self.assembly(instance.part(), name, context, written)?;
                     written.insert(key, child);
                     child
                 }

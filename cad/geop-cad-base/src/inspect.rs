@@ -55,13 +55,42 @@ pub fn answer<S: Scalar>(query: Query, part: &Part<S>, file: &str) -> GeopResult
 }
 
 /// The bill of materials of `part`, which the program `file` builds, its
-/// standard parts designated by their norms (see [`crate::stdlib`]).
+/// standard parts designated by their norms (see [`crate::stdlib`], which
+/// writes them into their programs).
 pub fn bill_of_materials<S: Scalar>(
     part: &Part<S>,
     file: &str,
     structure: Structure,
 ) -> GeopResult<Bom> {
-    bom(part, file, structure, &crate::stdlib::standard)
+    bom(part, file, structure)
+}
+
+/// The bill of materials of `part`, which the program `file` builds, as a
+/// drawing lists it (see [`geop_ops_drawing::PartsListLine`]): flat, each
+/// part and wire once with its count. Empty if `args` asks for none.
+pub fn parts_list<S: Scalar>(
+    part: &Part<S>,
+    file: &str,
+    args: &geop_ops_drawing::DrawingArgs,
+) -> GeopResult<Vec<geop_ops_drawing::PartsListLine>> {
+    if !args.bom {
+        return Ok(Vec::new());
+    }
+    let bom = bill_of_materials(part, file, Structure::Flat)?;
+    Ok(bom
+        .lines
+        .into_iter()
+        .map(|line| geop_ops_drawing::PartsListLine {
+            item: line.item,
+            quantity: line.quantity,
+            name: line.name,
+            designation: line.designation.unwrap_or_default(),
+            material: match line.kind {
+                geop_ops_bom::LineKind::Part { material, .. } => material,
+                geop_ops_bom::LineKind::Wire { colour, .. } => format!("wire, {colour}"),
+            },
+        })
+        .collect())
 }
 
 /// What the measure tool picks: points, edges, faces — and datums, by their

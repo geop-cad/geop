@@ -2298,3 +2298,61 @@ fn renaming_a_parameter_renames_what_reads_it() {
     assert!(editor.program().parameters.get("thickness").is_some());
     assert!(editor.program().parameters.get("t").is_none());
 }
+
+/// The bolted plate's drawing with its bill of materials, as the front end
+/// makes it: a new drawing step, "Bill of materials" ticked, committed and
+/// exported. The assembly places all it has, so the sheet is its bill
+/// alone: the plate, and the standard screw and nut by the titles and
+/// designations their own programs carry — which name their products in
+/// a STEP file too.
+#[test]
+fn an_assembly_drawing_lists_its_parts() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "bolted_plate".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    let step = update.step.expect("a drawing is edited");
+    assert!(matches!(
+        step.presentation.dialog.get("bom"),
+        Some(Control::Checkbox { value: false, .. })
+    ));
+    editor.handle(dialog("bom", Value::Bool(true)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let exported = editor.handle(Command::ExportDrawing {
+        id: None,
+        format: geop_ops_drawing::Format::Svg,
+        date: "2026-10-04".into(),
+    });
+    assert!(exported.error.is_none(), "{:?}", exported.error);
+    let svg = exported.export.unwrap().text().unwrap().to_string();
+    for text in [
+        ">ITEM<",
+        ">DESIGNATION<",
+        ">ISO 4762 M4x12<",
+        ">ISO 4032 M4<",
+        ">plate<",
+        ">Steel<",
+    ] {
+        assert!(svg.contains(text), "{text} is not on the sheet");
+    }
+    // A STEP file names them so too: one product per size.
+    let step = editor.handle(Command::ExportStep);
+    let text = step
+        .export
+        .expect("a STEP file")
+        .text()
+        .unwrap()
+        .to_string();
+    assert!(
+        text.contains("PRODUCT('ISO 4762 M4x12'"),
+        "the screw's product"
+    );
+    assert!(text.contains("PRODUCT('plate'"), "the plate's product");
+}

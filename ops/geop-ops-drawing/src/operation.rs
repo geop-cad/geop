@@ -169,6 +169,9 @@ impl Operation for Drawing {
                 args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
             },
         );
+        f.checkbox("bom", "Bill of materials", args.bom, |args, on| {
+            args.bom = on
+        });
         let mut title = Vec::new();
         for (key, caption, value) in [
             ("title:name", "Part name", &args.name),
