@@ -428,9 +428,15 @@ fn a_robot_cell_is_solved_arm_by_arm() {
         assembly.joints[0].angle.value.to_f64(),
         assembly.joints[4].angle.value.to_f64(),
     );
-    assert!((follower + driver).abs() < 1e-6, "{driver} drives {follower}");
+    assert!(
+        (follower + driver).abs() < 1e-6,
+        "{driver} drives {follower}"
+    );
     for i in 0..screws {
-        let (before, after) = (&bodies[plate + 1 + i].pose, &assembly.bodies[plate + 1 + i].pose);
+        let (before, after) = (
+            &bodies[plate + 1 + i].pose,
+            &assembly.bodies[plate + 1 + i].pose,
+        );
         if i % 2 == 1 {
             assert_eq!(before, after, "screw {i} was on the plate already");
         } else {

@@ -48,23 +48,17 @@ impl<S: Scalar> Connector<S> {
         let axis = axis
             .normalize()
             .map_err(|e| e.with_context(format!("the axis {axis:?} of a joint")))?;
-        let reference = reference.unwrap_or_else(|| {
-            let size = |k: usize| axis[k].abs().sharpen();
-            let least = (1..3).fold(0, |best, k| {
-                if size(k).definitely_less(size(best)) {
-                    k
-                } else {
-                    best
-                }
-            });
-            Vector3::axis(least)
-        });
-        let square = reference.sub(&axis.prod_scalar(axis.prod_dot(&reference)));
-        let reference = square.normalize().map_err(|e| {
-            e.with_context(format!(
-                "the reference {reference:?} of a joint runs along its axis {axis:?}"
-            ))
-        })?;
+        let reference = match reference {
+            None => super::across(&axis)?[0],
+            Some(reference) => {
+                let square = reference.sub(&axis.prod_scalar(axis.prod_dot(&reference)));
+                square.normalize().map_err(|e| {
+                    e.with_context(format!(
+                        "the reference {reference:?} of a joint runs along its axis {axis:?}"
+                    ))
+                })?
+            }
+        };
         Ok(Connector {
             origin,
             axis,

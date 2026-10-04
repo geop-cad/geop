@@ -492,6 +492,11 @@ fn step<S: Scalar>(
         .zip(h_times(&kept))
         .map(|(&a, b)| choose(a.add(b).neg()))
         .collect();
+    // A curvature positive by so little that the step it solves for, or
+    // the force along it, is no finite number is as good as not positive.
+    if !kept.iter().chain(&pull).all(|v| v.is_finite()) {
+        return Ok(None);
+    }
     let mut lambda_rows = vec![S::ZERO; r];
     for t in (0..r).rev() {
         let known = (t + 1..r).fold(dot(&q[t], &pull), |sum, s| {
