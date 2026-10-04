@@ -37,10 +37,12 @@ fn step_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// What kind of failure an error is: its root message with the numbers
 /// and entity ids taken out, so alike failures count together.
 fn cause(message: &str) -> String {
-    let root = message
-        .lines()
-        .find_map(|l| l.strip_prefix("RootError: "))
-        .unwrap_or(message);
+    // Of a model found invalid, the first problem found.
+    let mut roots = message.lines().filter_map(|l| l.strip_prefix("RootError: "));
+    let first = roots.next().unwrap_or(message);
+    let invalid = first.starts_with("the file's bodies are not valid");
+    let root = if invalid { roots.next().unwrap_or(first) } else { first };
+    let root = &if invalid { format!("invalid: {root}") } else { root.to_string() };
     let mut out = String::new();
     let mut last_digit = false;
     for c in root.chars().take(140) {

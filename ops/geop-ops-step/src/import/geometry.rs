@@ -190,6 +190,19 @@ pub enum CurveDef {
     },
     Nurbs(NurbsCurve),
     Polyline(Vec<P3>),
+    /// A hyperbola or a parabola, in the plane of `frame`.
+    Conic {
+        frame: Frame,
+        kind: ConicKind,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ConicKind {
+    /// `a cosh u x + b sinh u y`.
+    Hyperbola { a: f64, b: f64 },
+    /// `focal (u^2 x + 2 u y)`.
+    Parabola { focal: f64 },
 }
 
 #[derive(Clone, Debug)]
@@ -249,14 +262,14 @@ pub struct Revolved {
 /// `frame.x` and `frame.z`.
 #[derive(Clone, Debug)]
 pub enum Profile {
-    /// `(r, v)`.
-    Cylinder { radius: f64 },
-    /// `(r + v tan, v)`, the apex at `v = -r / tan`.
-    Cone { radius: f64, tan: f64 },
+    /// A straight line, `(rho + v drho, h + v dh)`: a cylinder's, a
+    /// cone's — its apex where the radius is none — or any line's.
+    Line { rho: f64, h: f64, drho: f64, dh: f64 },
     /// `(r cos v, r sin v)`, `v` from `-pi/2` to `pi/2`.
     Sphere { radius: f64 },
-    /// `(major + minor cos v, minor sin v)`.
-    Torus { major: f64, minor: f64 },
+    /// A circle off the axis, `(rho + r cos v, h + r sin v)`: a torus'
+    /// tube, or any circle's.
+    Circle { rho: f64, h: f64, radius: f64 },
     /// A curve of its own: `v` its parameter.
     Curve(NurbsCurve),
 }
@@ -270,9 +283,12 @@ impl Revolved {
         let rho = x.hypot(y);
         let angle = (rho > self.on_axis).then(|| y.atan2(x));
         let v = match &self.profile {
-            Profile::Cylinder { .. } | Profile::Cone { .. } | Profile::Curve(_) => h,
+            Profile::Line { rho: r0, h: h0, drho, dh } => {
+                ((rho - r0) * drho + (h - h0) * dh) / (drho * drho + dh * dh)
+            }
+            Profile::Curve(_) => h,
             Profile::Sphere { .. } => h.atan2(rho),
-            Profile::Torus { major, .. } => h.atan2(rho - major),
+            Profile::Circle { rho: rc, h: hc, .. } => (h - hc).atan2(rho - rc),
         };
         (angle, v)
     }
@@ -280,15 +296,16 @@ impl Revolved {
     /// Whether the profile's parameter `v` goes once round, as a torus'
     /// does: then it is an angle too.
     pub fn v_is_angle(&self) -> bool {
-        matches!(self.profile, Profile::Torus { .. })
+        matches!(self.profile, Profile::Circle { .. })
     }
 
     /// Where the profile meets the axis, by its parameter: the poles of the
     /// surface.
     pub fn poles(&self) -> Vec<f64> {
         match &self.profile {
-            Profile::Cylinder { .. } | Profile::Torus { .. } | Profile::Curve(_) => Vec::new(),
-            Profile::Cone { radius, tan } => vec![-radius / tan],
+            Profile::Circle { .. } | Profile::Curve(_) => Vec::new(),
+            Profile::Line { drho, .. } if *drho == 0.0 => Vec::new(),
+            Profile::Line { rho, drho, .. } => vec![-rho / drho],
             Profile::Sphere { .. } => {
                 vec![-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2]
             }
@@ -298,10 +315,9 @@ impl Revolved {
     /// The profile's point at `v`, in the half plane at angle 0.
     pub fn profile_point(&self, v: f64) -> P3 {
         let (rho, h) = match &self.profile {
-            Profile::Cylinder { radius } => (*radius, v),
-            Profile::Cone { radius, tan } => (radius + v * tan, v),
+            Profile::Line { rho, h, drho, dh } => (rho + v * drho, h + v * dh),
             Profile::Sphere { radius } => (radius * v.cos(), radius * v.sin()),
-            Profile::Torus { major, minor } => (major + minor * v.cos(), minor * v.sin()),
+            Profile::Circle { rho, h, radius } => (rho + radius * v.cos(), h + radius * v.sin()),
             Profile::Curve(_) => unreachable!("a curve profile has no analytic point"),
         };
         self.frame.point([rho, 0.0, h])
@@ -312,12 +328,12 @@ impl Revolved {
     pub fn profile_curve<S: Scalar>(&self, v0: f64, v1: f64) -> GeopResult<NurbCurve3D<S>> {
         let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
         match &self.profile {
-            Profile::Cylinder { .. } | Profile::Cone { .. } => {
+            Profile::Line { .. } => {
                 line(&s3(self.profile_point(v0)), &s3(self.profile_point(v1)))
             }
-            Profile::Sphere { radius } | Profile::Torus { minor: radius, .. } => {
+            Profile::Sphere { radius } | Profile::Circle { radius, .. } => {
                 let center = match &self.profile {
-                    Profile::Torus { major, .. } => self.frame.point([*major, 0.0, 0.0]),
+                    Profile::Circle { rho, h, .. } => self.frame.point([*rho, 0.0, *h]),
                     _ => self.frame.origin,
                 };
                 // Turning from `x` towards `z` is right-handed about `-y`.
@@ -521,6 +537,43 @@ impl CurveDef {
                 NurbCurve::try_new(arc.degree, control_points, arc.knot_vector)
             }
             CurveDef::Nurbs(nurbs) => trim(nurbs.to_nurbs()?, from, to, closed, uncertainty),
+            CurveDef::Conic { frame, kind } => {
+                if closed {
+                    return Err(GeopError::new("a hyperbola or parabola cannot close on itself"));
+                }
+                // One rational quadratic piece from `from` to `to`: its
+                // middle control point where the tangents at the ends meet.
+                let parameter = |p: P3| {
+                    let l = frame.local(p);
+                    match kind {
+                        ConicKind::Hyperbola { b, .. } => (l[1] / b).asinh(),
+                        ConicKind::Parabola { focal } => l[1] / (2.0 * focal),
+                    }
+                };
+                let (u0, u1) = (parameter(from), parameter(to));
+                let (middle, weight) = match kind {
+                    ConicKind::Hyperbola { a, b } => {
+                        let (m, h) = ((u0 + u1) / 2.0, (u1 - u0) / 2.0);
+                        (
+                            frame.point([a * m.cosh() / h.cosh(), b * m.sinh() / h.cosh(), 0.0]),
+                            h.cosh(),
+                        )
+                    }
+                    ConicKind::Parabola { focal } => {
+                        (frame.point([focal * u0 * u1, focal * (u0 + u1), 0.0]), 1.0)
+                    }
+                };
+                let control_points = vec![
+                    homogeneous(from, None),
+                    homogeneous(middle, (weight != 1.0).then_some(weight)),
+                    homogeneous(to, None),
+                ];
+                NurbCurve::try_new(
+                    2,
+                    control_points,
+                    vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE],
+                )
+            }
             CurveDef::Polyline(points) => {
                 let n = points.len();
                 if n < 2 {
@@ -686,6 +739,8 @@ impl<'a> Reader<'a> {
                 "SEAM_CURVE",
                 "INTERSECTION_CURVE",
                 "POLYLINE",
+                "HYPERBOLA",
+                "PARABOLA",
             ],
         )
         .map_err(|_| unsupported(id, instance, "this kind of curve cannot be read"))?;
@@ -718,6 +773,25 @@ impl<'a> Reader<'a> {
                 let (basis, reversed) = self.curve(scope, args.reference(1)?)?;
                 (basis, reversed != !args.logical(4)?)
             }
+            "HYPERBOLA" => (
+                CurveDef::Conic {
+                    frame: self.frame(scope, args.reference(1)?)?,
+                    kind: ConicKind::Hyperbola {
+                        a: args.real(2)? * scope.length,
+                        b: args.real(3)? * scope.length,
+                    },
+                },
+                false,
+            ),
+            "PARABOLA" => (
+                CurveDef::Conic {
+                    frame: self.frame(scope, args.reference(1)?)?,
+                    kind: ConicKind::Parabola {
+                        focal: args.real(2)? * scope.length,
+                    },
+                },
+                false,
+            ),
             "POLYLINE" => (
                 CurveDef::Polyline(
                     args.references(1)?
@@ -850,8 +924,11 @@ impl<'a> Reader<'a> {
                 kind: SurfaceKind::Plane(self.frame(scope, args.reference(1)?)?),
                 flipped: false,
             }),
-            "CYLINDRICAL_SURFACE" => revolved(Profile::Cylinder {
-                radius: positive(2, "radius")?,
+            "CYLINDRICAL_SURFACE" => revolved(Profile::Line {
+                rho: positive(2, "radius")?,
+                h: 0.0,
+                drho: 0.0,
+                dh: 1.0,
             }),
             "CONICAL_SURFACE" => {
                 let angle = args.real(3)? * scope.angle;
@@ -862,9 +939,11 @@ impl<'a> Reader<'a> {
                         &format!("its half angle {angle} rad is not between none and a right angle"),
                     ));
                 }
-                revolved(Profile::Cone {
-                    radius: length(2)?,
-                    tan: angle.tan(),
+                revolved(Profile::Line {
+                    rho: length(2)?,
+                    h: 0.0,
+                    drho: angle.tan(),
+                    dh: 1.0,
                 })
             }
             "SPHERICAL_SURFACE" => revolved(Profile::Sphere {
@@ -880,20 +959,14 @@ impl<'a> Reader<'a> {
                         "a torus whose tube reaches its axis (minor radius not less than major)",
                     ));
                 }
-                revolved(Profile::Torus { major, minor })
+                revolved(Profile::Circle {
+                    rho: major,
+                    h: 0.0,
+                    radius: minor,
+                })
             }
             "SURFACE_OF_REVOLUTION" => {
-                let (curve, _) = self.curve(scope, args.reference(1)?)?;
-                let curve = match curve {
-                    CurveDef::Nurbs(nurbs) => nurbs,
-                    CurveDef::Line { .. } | CurveDef::Circle { .. } | CurveDef::Ellipse { .. } | CurveDef::Polyline(_) => {
-                        return Err(unsupported(
-                            id,
-                            instance,
-                            "a surface of revolution of a curve other than a B-spline",
-                        ));
-                    }
-                };
+                let (curve, reversed) = self.curve(scope, args.reference(1)?)?;
                 let axis = self.args(args.reference(2)?, "AXIS1_PLACEMENT")?;
                 let origin = self.point(scope, axis.reference(1)?)?;
                 let z = if axis.is_null(2) {
@@ -901,36 +974,102 @@ impl<'a> Reader<'a> {
                 } else {
                     self.direction(scope, axis.reference(2)?)?
                 };
-                // Angle 0 is the half plane the profile lies in.
-                let off_axis = curve
-                    .points
-                    .iter()
-                    .map(|&p| {
-                        let d = sub(p, origin);
-                        sub(d, scale(z, dot(d, z)))
-                    })
-                    .max_by(|a, b| norm(*a).total_cmp(&norm(*b)))
-                    .unwrap_or([0.0; 3]);
-                let frame = Frame::new(origin, z, off_axis)?;
-                for &p in &curve.points {
-                    let l = frame.local(p);
-                    if l[1].abs() > scope.uncertainty || l[0] < -scope.uncertainty {
+                let radial = |p: P3| {
+                    let d = sub(p, origin);
+                    sub(d, scale(z, dot(d, z)))
+                };
+                let off_plane = || {
+                    unsupported(
+                        id,
+                        instance,
+                        "a surface of revolution whose curve does not lie in a plane through its axis",
+                    )
+                };
+                // The file's normal is the curve's tangent across the turn;
+                // the NURBS' runs the profile's way across the turn — so
+                // they agree where the profile runs against the curve.
+                let (frame, profile, along) = match curve {
+                    CurveDef::Nurbs(curve) => {
+                        // Angle 0 is the half plane the profile lies in.
+                        let off_axis = curve
+                            .points
+                            .iter()
+                            .map(|&p| radial(p))
+                            .max_by(|a, b| norm(*a).total_cmp(&norm(*b)))
+                            .unwrap_or([0.0; 3]);
+                        let frame = Frame::new(origin, z, off_axis)?;
+                        for &p in &curve.points {
+                            let l = frame.local(p);
+                            if l[1].abs() > scope.uncertainty || l[0] < -scope.uncertainty {
+                                return Err(unsupported(
+                                    id,
+                                    instance,
+                                    "a surface of revolution whose curve does not lie in one half plane through its axis",
+                                ));
+                            }
+                        }
+                        (frame, Profile::Curve(curve), true)
+                    }
+                    CurveDef::Line { origin: p0, direction } => {
+                        let d = normalize(direction).ok_or_else(off_plane)?;
+                        let off_axis = if norm(radial(p0)) > scope.uncertainty {
+                            radial(p0)
+                        } else {
+                            radial(add(p0, d))
+                        };
+                        let frame = Frame::new(origin, z, off_axis)?;
+                        let (l0, l1) = (frame.local(p0), frame.local(add(p0, d)));
+                        if l0[1].abs() > scope.uncertainty || l1[1].abs() > scope.uncertainty {
+                            return Err(off_plane());
+                        }
+                        let profile = Profile::Line {
+                            rho: l0[0],
+                            h: l0[2],
+                            drho: l1[0] - l0[0],
+                            dh: l1[2] - l0[2],
+                        };
+                        (frame, profile, true)
+                    }
+                    CurveDef::Circle { frame: circle, radius } => {
+                        let center = radial(circle.origin);
+                        let on_axis = norm(center) <= scope.uncertainty;
+                        let reference = if on_axis { radial(add(circle.origin, circle.x)) } else { center };
+                        let frame = Frame::new(origin, z, reference)?;
+                        let c = frame.local(circle.origin);
+                        let n = [dot(circle.z, frame.x), dot(circle.z, frame.y), dot(circle.z, frame.z)];
+                        if c[1].abs() > scope.uncertainty || n[0].abs() > 1e-9 || n[2].abs() > 1e-9 {
+                            return Err(off_plane());
+                        }
+                        // Turning from `x` towards `z` is about `-y`.
+                        let along = n[1] < 0.0;
+                        if on_axis {
+                            let frame = Frame { origin: frame.point([0.0, 0.0, c[2]]), ..frame };
+                            (frame, Profile::Sphere { radius }, along)
+                        } else if c[0] < radius {
+                            return Err(unsupported(
+                                id,
+                                instance,
+                                "a surface of revolution of a circle reaching across its axis",
+                            ));
+                        } else {
+                            (frame, Profile::Circle { rho: c[0], h: c[2], radius }, along)
+                        }
+                    }
+                    CurveDef::Ellipse { .. } | CurveDef::Polyline(_) | CurveDef::Conic { .. } => {
                         return Err(unsupported(
                             id,
                             instance,
-                            "a surface of revolution whose curve does not lie in one half plane through its axis",
+                            "a surface of revolution of an ellipse, a conic or a polyline",
                         ));
                     }
-                }
+                };
                 Ok(SurfaceDef {
                     kind: SurfaceKind::Revolved(Revolved {
                         frame,
-                        profile: Profile::Curve(curve),
+                        profile,
                         on_axis: scope.uncertainty,
                     }),
-                    // The file's normal is the curve's tangent across the
-                    // turn; the NURBS' the turn across the curve.
-                    flipped: true,
+                    flipped: along != reversed,
                 })
             }
             "SURFACE_OF_LINEAR_EXTRUSION" => {
