@@ -343,7 +343,28 @@ fn find_piercing_crossing<S: Scalar>(
                 // `min_subdivision_size`-wide one, and the vertex point
                 // evaluated from it would be just as wide. Polish it before
                 // anything downstream looks at it.
-                let (t, _uv) = refine_crossing(&edge.curve, &face.surface, t, uv);
+                let (t, uv) = refine_crossing(&edge.curve, &face.surface, t, uv);
+                // Only a transversal crossing is a piercing. Where the curve
+                // runs along the surface's tangent plane the crossing is not
+                // regular, Newton cannot pin it down, and the box is what the
+                // search left at its handoff threshold — not a point the
+                // curve is known to meet the patch at. On
+                // `three_turned_boxes_one_a_turned_copy_joined` a top edge
+                // lying in another box's top plane, ending on that cap's
+                // boundary, met the patch only at its own end vertex; the
+                // search's last box stopped 1.4e-4 short of it, 1.4e-5
+                // outside the cap, and was split at as a crossing, leaving a
+                // vertex 5e-5 wide that a later imprint could not get past.
+                // A curve tangent to a face is the coincidence phase's and the
+                // tangent branches' to handle. Where the surface has no normal
+                // to ask (a pole, whose parametrization collapses), nothing
+                // says the crossing is tangential, and it is kept.
+                if let (Ok(tangent), Ok(normal)) =
+                    (edge.curve.tangent(t), face.surface.normal(uv[0], uv[1]))
+                    && tangent.prod_dot(&normal).could_be_equal(S::ZERO)
+                {
+                    continue;
+                }
                 // A `t` that isn't *definitely* strictly inside the domain
                 // could be the domain bound itself — i.e. the crossing may
                 // be the edge's own start or end vertex, which is a shared
