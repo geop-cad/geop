@@ -407,6 +407,7 @@ dependencies = [
  "geop-core-math",
  "geop-core-sketch",
  "geop-ops",
+ "geop-ops-extrude-revolve",
  "serde",
  "serde_json",
 ]

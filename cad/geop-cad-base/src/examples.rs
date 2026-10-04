@@ -1345,21 +1345,22 @@ pub fn airfoil_wing() -> Program {
     program
 }
 
-/// The route of [`pipe`]: from the origin 3 along `x`, a bend of radius 1
-/// turning to `y`, 2 on, a bend of radius 1 turning up to `z`, and 3 up —
-/// every bend tangent to the lines it joins.
-pub fn pipe_route() -> Sketch3d {
+/// The route of [`pipe`], its bends of radius `bend`: from the origin
+/// along `x`, a bend turning to `y` at `(4, 0, 0)`, a bend turning up to
+/// `z` at `(4, 4, 0)`, and up to `(4, 4, 4)` — every bend tangent to the
+/// lines it joins.
+pub fn pipe_route(bend: f64) -> Sketch3d {
     let mut s = Sketch3d::new();
-    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let (r, h) = (bend, std::f64::consts::FRAC_1_SQRT_2);
     let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(n));
     let p = [
         s.add_point(v(0.0, 0.0, 0.0)),
-        s.add_point(v(3.0, 0.0, 0.0)),
-        s.add_point(v(3.0 + half, 1.0 - half, 0.0)),
-        s.add_point(v(4.0, 1.0, 0.0)),
-        s.add_point(v(4.0, 3.0, 0.0)),
-        s.add_point(v(4.0, 3.0 + half, 1.0 - half)),
-        s.add_point(v(4.0, 4.0, 1.0)),
+        s.add_point(v(4.0 - r, 0.0, 0.0)),
+        s.add_point(v(4.0 - r + r * h, r - r * h, 0.0)),
+        s.add_point(v(4.0, r, 0.0)),
+        s.add_point(v(4.0, 4.0 - r, 0.0)),
+        s.add_point(v(4.0, 4.0 - r + r * h, r - r * h)),
+        s.add_point(v(4.0, 4.0, r)),
         s.add_point(v(4.0, 4.0, 4.0)),
     ];
     let curves = [
@@ -1382,13 +1383,13 @@ pub fn pipe_route() -> Sketch3d {
     });
     s.constrain(Constraint3d::Length {
         line: curves[0],
-        value: n(3.0),
+        value: n(4.0 - r),
     });
     for w in curves.windows(2) {
         s.constrain(Constraint3d::Tangent { a: w[0], b: w[1] });
     }
     for arc in [curves[1], curves[3]] {
-        s.constrain(Constraint3d::Radius { arc, value: n(1.0) });
+        s.constrain(Constraint3d::Radius { arc, value: n(r) });
     }
     let report = s.solve().expect("the route is valid");
     assert!(report.converged, "the route does not solve: {report:?}");
@@ -1416,7 +1417,7 @@ pub fn pipe() -> Program {
     program.push(
         "route",
         AddSketch3dArgs {
-            sketch: pipe_route(),
+            sketch: pipe_route(1.0),
             references: Vec::new(),
         },
     );

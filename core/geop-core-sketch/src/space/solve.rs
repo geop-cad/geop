@@ -42,8 +42,10 @@ use crate::{ConstraintId, CurveId, PointId};
 /// arcs, five points.
 const MAX_LOCAL_VARS: usize = 16;
 
-/// Samples along a reference curve to seed where on it a point is from.
+/// Samples along a reference curve to seed where on it a point is from,
+/// and Newton steps polishing the nearest.
 const SEED_SAMPLES: usize = 64;
+const SEED_NEWTON_STEPS: usize = 8;
 
 type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
 
@@ -504,8 +506,12 @@ impl<'a, S: Scalar> Problem<'a, S> {
     }
 }
 
-/// The parameter of `curve` whose point is nearest `p`, among evenly spaced
-/// samples: where a solve starts looking from, a free choice.
+/// The parameter of `curve` whose point is nearest `p`: the nearest of
+/// evenly spaced samples, polished by Newton's method on `(C(t) - p) .
+/// C'(t) = 0` — where a solve starts looking from, a free choice, worked
+/// out in plain numbers. Polished, a point that lies on the curve is
+/// found where it is, and a solve does not move it along the curve to
+/// meet a parameter merely near its own.
 fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopResult<S> {
     let (t0, t1) = curve.domain();
     let (t0, t1) = (t0.to_f64(), t1.to_f64());
@@ -517,7 +523,20 @@ fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopR
             best = (d, t);
         }
     }
-    Ok(S::from_f64(best.1))
+    let plain = |v: Vector3<S>| v.to_array().map(|c| c.to_f64());
+    let dot = |a: [f64; 3], b: [f64; 3]| (0..3).map(|k| a[k] * b[k]).sum::<f64>();
+    let mut t = best.1;
+    for _ in 0..SEED_NEWTON_STEPS {
+        let at = S::from_f64(t);
+        let off = plain(curve.evaluate(at)?.sub(p));
+        let (d1, d2) = (plain(curve.tangent(at)?), plain(curve.second_derivative(at)?));
+        let slope = dot(d1, d1) + dot(off, d2);
+        if !(slope > 0.0) {
+            break;
+        }
+        t = (t - dot(off, d1) / slope).clamp(t0, t1);
+    }
+    Ok(S::from_f64(t))
 }
 
 /// The variables of a system of a sketch, as they are now.
