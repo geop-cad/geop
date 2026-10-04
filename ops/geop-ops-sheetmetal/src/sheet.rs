@@ -18,25 +18,19 @@
 //! bend turns towards the B side (`toward_b`), which is then its inside,
 //! or away from it.
 
-use std::collections::BTreeMap;
-
 use geop_core_geometry::{
     nurb_curve::{NurbCurve2D, NurbCurve3D},
     nurb_surface::{NurbSurface, NurbSurface3D},
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
-    with_context,
 };
-use geop_core_topology::Sense;
 use geop_ops::Namer;
-use geop_ops_extrude_revolve::common::{arc3, embed_curve, end_point, line2, line3, start_point};
+use geop_ops_extrude_revolve::common::{embed_curve, end_point, line2, start_point};
 use serde::{Deserialize, Serialize};
-
-use crate::thicken::{SheetCoedge, SheetEdge, SheetFace, SheetSurface, SheetVertex, translate2};
 
 /// How a body's sheet metal is made and bent: what the base flange sets
 /// and every flange and the flat pattern of the body follow.
@@ -180,7 +174,7 @@ impl<S: Scalar> Placement<S> {
     /// The plane through the placement, as a bilinear patch parametrized by
     /// sheet coordinates over the box around `curves`: so a curve drawn in
     /// sheet coordinates is its own pcurve on it.
-    fn plane(&self, curves: &[&NurbCurve2D<S>]) -> GeopResult<NurbSurface3D<S>> {
+    pub(crate) fn plane(&self, curves: &[&NurbCurve2D<S>]) -> GeopResult<NurbSurface3D<S>> {
         let mut lo = [f64::INFINITY; 2];
         let mut hi = [f64::NEG_INFINITY; 2];
         for curve in curves {
@@ -279,6 +273,21 @@ pub struct Sheet<S: Scalar> {
     pub rules: SheetMetalRules,
     pub flats: Vec<Flat<S>>,
     pub bends: Vec<Bend<S>>,
+    /// The cuts through it, in the order they were made, each taken out of
+    /// the sheet as it is laid out flat (see [`crate::layout`]).
+    pub cuts: Vec<Cut<S>>,
+}
+
+/// A cut through the sheet (see [`crate::SheetCut`]): closed loops, each
+/// counter-clockwise around what it takes away, drawn in flat `flat`'s
+/// sheet coordinates — and so, where they reach past the flat, across its
+/// bends unrolled.
+#[derive(Clone, Debug)]
+pub struct Cut<S: Scalar> {
+    pub flat: usize,
+    pub loops: Vec<Vec<FlatEdge<S>>>,
+    /// The cut's own name, `C` for the operation `sheet_cut(C)`.
+    pub name: Namer,
 }
 
 /// How a bend turns, worked out from its parent flat: the frame of its
@@ -415,7 +424,7 @@ impl<S: Scalar> Sheet<S> {
     }
 
     /// Where bend `bend` starts: its parent edge's ends.
-    fn parent_line(&self, bend: &Bend<S>) -> GeopResult<[Vector2<S>; 2]> {
+    pub(crate) fn parent_line(&self, bend: &Bend<S>) -> GeopResult<[Vector2<S>; 2]> {
         let (f, k) = self.outer_edge(&bend.parent_edge).ok_or_else(|| {
             GeopError::new(format!(
                 "bend {} starts at {}, which is no edge of a flat's outline",
@@ -483,205 +492,6 @@ impl<S: Scalar> Sheet<S> {
                 })
             })
             .collect()
-    }
-
-    /// The A side of the sheet as it is bent, with its B side.
-    pub fn folded(&self) -> GeopResult<SheetSurface<S>> {
-        let places: Vec<Placement<S>> = self.flats.iter().map(|f| f.place.clone()).collect();
-        self.surface(&places, None)
-    }
-
-    /// The A side of the sheet laid flat, with its B side: every flat in
-    /// the first one's plane, moved by [`Sheet::flat_shifts`], and every
-    /// bend a flat strip as wide as its developed length.
-    pub fn unfolded(&self) -> GeopResult<SheetSurface<S>> {
-        let shifts = self.flat_shifts()?;
-        let places = vec![self.flats[0].place.clone(); self.flats.len()];
-        self.surface(&places, Some(&shifts))
-    }
-
-    /// The sheet with flat `f` at `places[f]`, its curves moved by
-    /// `shifts[f]` if laid flat — then every bend a flat strip.
-    fn surface(
-        &self,
-        places: &[Placement<S>],
-        shifts: Option<&[Vector2<S>]>,
-    ) -> GeopResult<SheetSurface<S>> {
-        let t = S::from_f64(self.rules.thickness);
-        let mut sheet = SheetSurface::default();
-        let mut edge_of: BTreeMap<String, usize> = BTreeMap::new();
-        for (f, flat) in self.flats.iter().enumerate() {
-            let ctx = with_context!("flat {}", flat.name.root());
-            let (pa, pb) = (&places[f], places[f].offset(t));
-            let mut loops = Vec::new();
-            let mut curves = Vec::new();
-            for lp in std::iter::once(&flat.outer).chain(&flat.holes) {
-                let first = sheet.vertices.len();
-                let n = lp.len();
-                let mut coedges = Vec::new();
-                for (k, e) in lp.iter().enumerate() {
-                    let curve = match shifts {
-                        Some(shifts) => translate2(&e.curve, &shifts[f]).with_context(ctx)?,
-                        None => e.curve.clone(),
-                    };
-                    let p = start_point(&curve)?;
-                    sheet.vertices.push(SheetVertex {
-                        a: pa.point(&p),
-                        b: pb.point(&p),
-                        name: e.name.scoped("v"),
-                    });
-                    sheet.edges.push(SheetEdge {
-                        a: pa.curve(&curve)?,
-                        b: pb.curve(&curve)?,
-                        start: first + k,
-                        end: first + (k + 1) % n,
-                        name: e.name.clone(),
-                    });
-                    if edge_of.insert(e.key(), sheet.edges.len() - 1).is_some() {
-                        return Err(GeopError::new(format!("two edges are named {}", e.key())))
-                            .with_context(ctx);
-                    }
-                    coedges.push(SheetCoedge {
-                        edge: sheet.edges.len() - 1,
-                        sense: Sense::Forward,
-                        pcurve: curve,
-                    });
-                }
-                curves.extend(coedges.iter().map(|c| c.pcurve.clone()));
-                loops.push(coedges);
-            }
-            let curve_refs: Vec<&NurbCurve2D<S>> = curves.iter().collect();
-            let outer = loops.remove(0);
-            sheet.faces.push(SheetFace {
-                a: pa.plane(&curve_refs).with_context(ctx)?,
-                b: pb.plane(&curve_refs).with_context(ctx)?,
-                outer,
-                holes: loops,
-                name: flat.name.clone(),
-            });
-        }
-
-        for bend in &self.bends {
-            let ctx = with_context!("bend {}", bend.name.root());
-            let edge = |key: &str| {
-                edge_of.get(key).copied().ok_or_else(|| {
-                    GeopError::new(format!("bend {} meets no edge {key}", bend.name.root()))
-                })
-            };
-            let (pe, ce) = (edge(&bend.parent_edge)?, edge(&bend.child_edge)?);
-            let (pa, pb) = (sheet.edges[pe].start, sheet.edges[pe].end);
-            let (cb, ca) = (sheet.edges[ce].start, sheet.edges[ce].end);
-            let v = |i: usize| sheet.vertices[i].clone();
-            let (face, s0, s1) = match shifts {
-                None => {
-                    let frame = self.bend_frame(bend).with_context(ctx)?;
-                    let apex =
-                        |p: &Vector3<S>, r: S| p.add(&frame.m.prod_scalar(r.mul(frame.half_tan)));
-                    let w = frame.half_cos;
-                    let arc = |p: &SheetVertex<S>, c: &SheetVertex<S>| -> GeopResult<_> {
-                        Ok((
-                            arc3(p.a, apex(&p.a, frame.r_a), c.a, w)?,
-                            arc3(p.b, apex(&p.b, frame.r_b), c.b, w)?,
-                        ))
-                    };
-                    let (s0, s1) = (arc(&v(pa), &v(ca))?, arc(&v(pb), &v(cb))?);
-                    // `u` from the parent across to the child, `v` along
-                    // the parent's edge: `∂u × ∂v = m × tau = n`.
-                    let strip = |a: &NurbCurve3D<S>, b: &NurbCurve3D<S>| {
-                        NurbSurface::try_new(
-                            2,
-                            1,
-                            a.control_points
-                                .iter()
-                                .zip(&b.control_points)
-                                .flat_map(|(p, q)| [*p, *q])
-                                .collect(),
-                            a.knot_vector.clone(),
-                            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-                        )
-                    };
-                    let p = |u: f64, v: f64| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
-                    let pcurves = [
-                        line2(p(0.0, 0.0), p(1.0, 0.0))?,
-                        line2(p(1.0, 0.0), p(1.0, 1.0))?,
-                        line2(p(1.0, 1.0), p(0.0, 1.0))?,
-                        line2(p(0.0, 1.0), p(0.0, 0.0))?,
-                    ];
-                    let surfaces = (strip(&s0.0, &s1.0)?, strip(&s0.1, &s1.1)?);
-                    ((surfaces, pcurves), s0, s1)
-                }
-                Some(shifts) => {
-                    // Laid flat: a strip in the parent's sheet coordinates,
-                    // the child's edge where the child was moved to.
-                    let parent_line = self.parent_line(bend)?;
-                    let into_parent = shifts[bend.child].sub(&shifts[bend.parent]);
-                    let child = &self.flats[bend.child];
-                    let c = child
-                        .outer
-                        .iter()
-                        .find(|e| e.key() == bend.child_edge)
-                        .ok_or_else(|| {
-                            GeopError::new(format!(
-                                "bend {} ends at {}, which is no edge of its child's outline",
-                                bend.name.root(),
-                                bend.child_edge
-                            ))
-                        })?;
-                    let [c_b, c_a] = c.line().ok_or_else(|| {
-                        GeopError::new(format!("bend {} ends at a curved edge", bend.name.root()))
-                    })??;
-                    let parent_shift = shifts[bend.parent];
-                    let [p_a, p_b] = parent_line;
-                    let (c_a, c_b) = (c_a.add(&into_parent), c_b.add(&into_parent));
-                    let pcurves = [
-                        line2(p_a, c_a)?,
-                        line2(c_a, c_b)?,
-                        line2(c_b, p_b)?,
-                        line2(p_b, p_a)?,
-                    ];
-                    let place = places[bend.parent].shifted(&parent_shift);
-                    let refs: Vec<&NurbCurve2D<S>> = pcurves.iter().collect();
-                    let surfaces = (place.plane(&refs)?, place.offset(t).plane(&refs)?);
-                    let straight = |p: &SheetVertex<S>, c: &SheetVertex<S>| -> GeopResult<_> {
-                        Ok((line3(p.a, c.a)?, line3(p.b, c.b)?))
-                    };
-                    (
-                        (surfaces, pcurves),
-                        straight(&v(pa), &v(ca))?,
-                        straight(&v(pb), &v(cb))?,
-                    )
-                }
-            };
-            let ((a, b), [p0, p1, p2, p3]) = face;
-            for (side, (curve_a, curve_b), start, end) in [("s0", s0, pa, ca), ("s1", s1, pb, cb)] {
-                sheet.edges.push(SheetEdge {
-                    a: curve_a,
-                    b: curve_b,
-                    start,
-                    end,
-                    name: bend.name.scoped(side),
-                });
-            }
-            let n = sheet.edges.len();
-            let coedge = |edge: usize, sense: Sense, pcurve: NurbCurve2D<S>| SheetCoedge {
-                edge,
-                sense,
-                pcurve,
-            };
-            sheet.faces.push(SheetFace {
-                a,
-                b,
-                outer: vec![
-                    coedge(n - 2, Sense::Forward, p0),
-                    coedge(ce, Sense::Reversed, p1),
-                    coedge(n - 1, Sense::Reversed, p2),
-                    coedge(pe, Sense::Reversed, p3),
-                ],
-                holes: Vec::new(),
-                name: bend.name.clone(),
-            });
-        }
-        Ok(sheet)
     }
 }
 

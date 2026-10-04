@@ -16,7 +16,8 @@ use geop_ops_rasterize::rasterize;
 
 use crate::{
     BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlangePosition, FlatPattern,
-    FlatPatternArgs, FlatPatternData, LengthReference, Relief, Sheet, SheetMetalRules,
+    FlatPatternArgs, FlatPatternData, LengthReference, Relief, Sheet, SheetCut, SheetCutArgs,
+    SheetMetalRules,
 };
 
 fn d(x: f64) -> Design {
@@ -556,4 +557,228 @@ fn flanged_bracket_mass_properties_converge() {
         .map(|&f| part.name_of(f).unwrap_or("?"))
         .collect();
     assert!(unresolved.is_empty(), "not resolved on {unresolved:?}");
+}
+
+/// `part` with the sketch `name` placed on `plane`.
+fn with_sketch(
+    mut part: Part<S>,
+    name: &str,
+    plane: CoordinateSystem<S>,
+    sketch: Sketch<Design>,
+) -> Part<S> {
+    part.add_sketch(PlacedSketch { plane, sketch }, name)
+        .unwrap();
+    part
+}
+
+/// The plane at `origin` spanned by `u` and `v`.
+fn plane(origin: [f64; 3], u: [f64; 3], v: [f64; 3]) -> CoordinateSystem<S> {
+    let p = |c: [f64; 3]| Vector3::from_array(c.map(S::from_f64));
+    let (u, v) = (p(u), p(v));
+    CoordinateSystem::try_new(p(origin), u, v, u.prod_cross(&v)).unwrap()
+}
+
+/// Circles of radius `r` about `centers`.
+fn circles(centers: &[[f64; 2]], r: f64) -> Sketch<Design> {
+    let mut s = Sketch::new();
+    for c in centers {
+        let p = s.add_point(d(c[0]), d(c[1]));
+        s.add_circle(p, d(r));
+    }
+    s
+}
+
+fn cut(part: Part<S>, id: &str, sketch: &str, face: &str) -> GeopResult<Part<S>> {
+    let args = SheetCutArgs {
+        sketch: sketch.into(),
+        face: face.into(),
+    };
+    SheetCut.apply(part, id, &args, &NoFiles)
+}
+
+/// The centres of the circles whose arcs make the A-side edges named
+/// `prefix...,a))` — of a flat pattern — each once.
+fn arc_centers(part: &Part<S>, prefix: &str) -> Vec<[f64; 2]> {
+    let mut centers: Vec<[f64; 2]> = Vec::new();
+    for (id, name) in part.names().iter() {
+        let geop_ops::RefId::Edge(e) = id else {
+            continue;
+        };
+        if !(name.starts_with(prefix) && name.ends_with(",a))")) {
+            continue;
+        }
+        let curve = &part.topology().get_edge(e).unwrap().curve;
+        let Some(arc) = curve.as_arc().unwrap() else {
+            continue;
+        };
+        let c = [arc.circle.center[0].to_f64(), arc.circle.center[1].to_f64()];
+        if !centers
+            .iter()
+            .any(|o| (o[0] - c[0]).abs() + (o[1] - c[1]).abs() < 1e-9)
+        {
+            centers.push(c);
+        }
+    }
+    centers.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    centers
+}
+
+/// The bracket of the examples, flanged first: a plate 2 by 1.2, a flange
+/// set in from both ends of its front edge and one along its whole back
+/// edge, 0.4 high.
+fn flanged_bracket() -> Part<S> {
+    let part = base(
+        sketched(polygon(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.2], [0.0, 1.2]])),
+        rules(0.08, 0.08, 0.44),
+        1.0,
+    );
+    let mut front = flange("base_flange(b,k,c4,b)");
+    front.length = 0.6;
+    front.offset_start = 0.3;
+    front.offset_end = 0.3;
+    let part = EdgeFlange.apply(part, "front", &front, &NoFiles).unwrap();
+    let mut back = flange("base_flange(b,k,c6,b)");
+    back.length = 0.4;
+    EdgeFlange.apply(part, "back", &back, &NoFiles).unwrap()
+}
+
+/// Mounting holes cut after flanging — through the plate and through the
+/// back flange, each sketched on the face it goes through — leave a valid
+/// body that still unfolds, and the flat pattern has each hole where it
+/// belongs: the plate's where it was drawn, the flange's as far from the
+/// bend as it is, along the flange, from where the bend ends.
+#[test]
+fn holes_cut_after_flanging_unfold_into_place() {
+    let (t, r, k) = (0.08, 0.08, 0.44);
+    let part = flanged_bracket();
+    // On the plate's top, its B side.
+    let part = with_sketch(
+        part,
+        "h",
+        plane([0.0, 0.0, t], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        circles(&[[0.5, 0.6]], 0.15),
+    );
+    let part = cut(part, "c1", "h", "").unwrap();
+    // On the back flange's outside, at y = 1.2, seen from behind: 0.3 up.
+    let part = with_sketch(
+        part,
+        "f",
+        plane([0.0, 1.2, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        circles(&[[-1.0, 0.3]], 0.05),
+    );
+    let part = cut(part, "c2", "f", "edge_flange(back,flange,a)").unwrap();
+    assert_valid(&part);
+    let sheet = part.body_data::<Sheet<S>>("sheet_cut(c2)").unwrap();
+    assert_eq!(sheet.cuts.len(), 2);
+    part.face_id("sheet_cut(c2,f,c1)").unwrap();
+
+    let flat = unfold(part, "sheet_cut(c2)");
+    assert_valid(&flat);
+    let plate = arc_centers(&flat, "flat_pattern(fp,sheet_cut(c1,");
+    assert_eq!(plate.len(), 1, "{plate:?}");
+    assert!(
+        (plate[0][0] - 0.5).abs() + (plate[0][1] - 0.6).abs() < 1e-12,
+        "{plate:?}"
+    );
+    // The back bend starts where the plate is set back by `r + t`, is as
+    // wide as its developed length, and the flange's flat starts at the
+    // height `t + r` the bend ends at.
+    let developed = PI / 2.0 * (r + k * t);
+    let want = [1.0, 1.2 - (r + t) + developed + (0.3 - (t + r))];
+    let flange = arc_centers(&flat, "flat_pattern(fp,sheet_cut(c2,");
+    assert_eq!(flange.len(), 1, "{flange:?}");
+    assert!(
+        (flange[0][0] - want[0]).abs() + (flange[0][1] - want[1]).abs() < 1e-12,
+        "{flange:?} against {want:?}"
+    );
+}
+
+/// A slot cut from the plate across the back bend into its flange, and a
+/// hole on the line the bend starts at, are cut through the bend unrolled:
+/// the body is valid, and laid flat both are exactly as drawn.
+#[test]
+fn cuts_across_a_bend_are_unrolled() {
+    let t = 0.08;
+    let part = flanged_bracket();
+    let mut s = polygon(&[[0.8, 0.9], [1.2, 0.9], [1.2, 1.3], [0.8, 1.3]]);
+    let c = s.add_point(d(0.4), d(1.1));
+    s.add_circle(c, d(0.1));
+    let part = with_sketch(
+        part,
+        "x",
+        plane([0.0, 0.0, t], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        s,
+    );
+    let part = cut(part, "c", "x", "base_flange(b,plate,b)").unwrap();
+    assert_valid(&part);
+    let flat = unfold(part, "sheet_cut(c)");
+    assert_valid(&flat);
+    let hole = arc_centers(&flat, "flat_pattern(fp,sheet_cut(c,");
+    assert_eq!(hole.len(), 1, "{hole:?}");
+    assert!(
+        (hole[0][0] - 0.4).abs() + (hole[0][1] - 1.1).abs() < 1e-12,
+        "{hole:?}"
+    );
+    // The slot's corners, where they were drawn.
+    for corner in [[0.8, 0.9], [1.2, 0.9], [1.2, 1.3], [0.8, 1.3]] {
+        let found = flat.topology().vertices.values().any(|v| {
+            (v.point[0].to_f64() - corner[0]).abs() + (v.point[1].to_f64() - corner[1]).abs()
+                < 1e-12
+                && v.point[2].to_f64().abs() < 1e-12
+        });
+        assert!(found, "no corner at {corner:?}");
+    }
+}
+
+/// A notch over the plate's free left edge splits that edge in two, and a
+/// flange is then refused on it; the cuts that cannot be made are refused
+/// by name.
+#[test]
+fn notches_and_refused_cuts() {
+    let t = 0.1;
+    let square = || {
+        base(
+            sketched(polygon(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])),
+            rules(t, 0.1, 0.44),
+            1.0,
+        )
+    };
+    let top = || plane([0.0, 0.0, t], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    let notch = polygon(&[[-0.1, 0.4], [0.2, 0.4], [0.2, 0.6], [-0.1, 0.6]]);
+    let part = cut(with_sketch(square(), "n", top(), notch), "c", "n", "").unwrap();
+    assert_valid(&part);
+    part.face_id("base_flange(b,k,c7,0)").unwrap();
+    part.face_id("base_flange(b,k,c7,2)").unwrap();
+    assert!(part.face_id("base_flange(b,k,c7,1)").is_err());
+    part.face_id("sheet_cut(c,n,c5)").unwrap();
+    let err = refused(EdgeFlange.apply(
+        part.clone(),
+        "f",
+        &flange("base_flange(b,k,c7,b)"),
+        &NoFiles,
+    ));
+    assert!(err.contains("has been cut"), "{err}");
+    assert_valid(&unfold(part, "sheet_cut(c)"));
+
+    // A corner on the outline.
+    let corner = polygon(&[[0.0, 0.4], [0.2, 0.4], [0.2, 0.6], [0.0, 0.6]]);
+    let err = refused(cut(with_sketch(square(), "n", top(), corner), "c", "n", ""));
+    assert!(err.contains("at an end"), "{err}");
+    // Right across: two pieces.
+    let across = polygon(&[[0.4, -0.1], [0.6, -0.1], [0.6, 1.1], [0.4, 1.1]]);
+    let err = refused(cut(with_sketch(square(), "n", top(), across), "c", "n", ""));
+    assert!(err.contains("splits face"), "{err}");
+    // Off the sheet.
+    let off = circles(&[[3.0, 3.0]], 0.2);
+    let err = refused(cut(with_sketch(square(), "n", top(), off), "c", "n", ""));
+    assert!(err.contains("off the sheet"), "{err}");
+    // Not parallel.
+    let side = plane([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let err = refused(cut(
+        with_sketch(square(), "n", side, circles(&[[0.5, 0.5]], 0.1)),
+        "c",
+        "n",
+        "base_flange(b,plate,b)",
+    ));
+    assert!(err.contains("not parallel"), "{err}");
 }

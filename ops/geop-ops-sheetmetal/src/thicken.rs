@@ -323,11 +323,16 @@ pub fn thicken<S: Scalar>(
 }
 
 /// `curve` moved by `shift` in its plane: every homogeneous control point
-/// by `shift` times its weight — exact for any NURBS.
+/// by `shift` times its weight — exact for any NURBS. Moved by nothing, it
+/// is the curve itself, not widened by adding zeros.
 pub(crate) fn translate2<S: Scalar>(
     curve: &NurbCurve2D<S>,
     shift: &Vector2<S>,
 ) -> GeopResult<NurbCurve2D<S>> {
+    let zero = |x: S| x.is_sharp() && x.could_be_equal(S::ZERO);
+    if zero(shift[0]) && zero(shift[1]) {
+        return Ok(curve.clone());
+    }
     NurbCurve::try_new(
         curve.degree,
         curve

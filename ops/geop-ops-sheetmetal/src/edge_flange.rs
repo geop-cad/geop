@@ -282,6 +282,11 @@ fn add_flange<S: Scalar>(
     if sheet.is_bent(&name) {
         return Err(GeopError::new(format!("edge {name} is already bent")));
     }
+    if sheet.layout()?.changed.contains(&name) {
+        return Err(GeopError::new(format!(
+            "edge {name} has been cut: a flange is bent along an edge as a flange or base flange built it — flange before cutting"
+        )));
+    }
     if !(args.angle > 0.0 && args.angle < 180.0) {
         return Err(GeopError::new(format!(
             "a flange turns by more than 0 and less than 180 degrees, not {}",
