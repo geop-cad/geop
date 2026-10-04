@@ -5,13 +5,15 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
-use crate::spline::{find_span, homogeneous_derivatives, rational_derivatives};
+use crate::spline::{centered, find_span, homogeneous_derivatives, rational_derivatives};
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// The Cartesian point and its derivatives up to order `n` at `t`:
-    /// `[C(t), C'(t), …, C⁽ⁿ⁾(t)]`, with `C = D − 1`. Evaluated directly,
-    /// without building any derivative curve ([`homogeneous_derivatives`],
-    /// then the quotient rule [`rational_derivatives`]).
+    /// `[C(t) − o, C'(t), …, C⁽ⁿ⁾(t)]`, with `C = D − 1` and `o` a control
+    /// point of the span, so only the derivatives are meaningful. Evaluated
+    /// directly, without building any derivative curve
+    /// ([`homogeneous_derivatives`], then the quotient rule
+    /// [`rational_derivatives`]).
     fn cartesian_derivatives<const C: usize>(
         &self,
         t: S,
@@ -19,11 +21,14 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     ) -> GeopResult<Vec<Vector<S, C>>> {
         let p = self.degree;
         let span = find_span(p, &self.knot_vector, self.control_points.len() - 1, t)?;
-        let local = &self.control_points[span - p..=span];
+        // Relative to a control point of the span (see [`centered`]): the
+        // derivatives do not depend on where the curve lies, and that way
+        // neither does their width. The point itself, `[0]`, is relative too.
+        let (local, _) = centered(&self.control_points[span - p..=span]);
         rational_derivatives(&homogeneous_derivatives(
             p,
             &self.knot_vector,
-            local,
+            &local,
             span,
             t,
             n,
