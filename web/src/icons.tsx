@@ -256,6 +256,37 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M13 1.5 L13 4.8" strokeWidth="1" />
     </>
   ),
+  linear_pattern: (
+    <>
+      <rect x="2.5" y="7.5" width="4" height="5" />
+      <rect x="8" y="7.5" width="4" height="5" strokeDasharray="1.5 1.5" />
+      <rect x="13.5" y="7.5" width="4" height="5" strokeDasharray="1.5 1.5" />
+      <path d="M3 16 L17 16 M15.5 14.5 L17 16 L15.5 17.5" strokeWidth="1" />
+    </>
+  ),
+  circular_pattern: (
+    <>
+      <circle cx="10" cy="10" r="6" strokeWidth="1" />
+      <rect x="8.5" y="2" width="3" height="3" />
+      <rect x="14.5" y="8.5" width="3" height="3" strokeDasharray="1.2 1.2" />
+      <rect x="8.5" y="15" width="3" height="3" strokeDasharray="1.2 1.2" />
+      <rect x="2.5" y="8.5" width="3" height="3" strokeDasharray="1.2 1.2" />
+    </>
+  ),
+  mirror: (
+    <>
+      <path d="M10 2.5 L10 17.5" strokeDasharray="1.5 1.5" />
+      <path d="M8 5 L3 7 L3 14 L8 15 Z" />
+      <path d="M12 5 L17 7 L17 14 L12 15 Z" strokeDasharray="1.5 1.5" />
+    </>
+  ),
+  move_body: (
+    <>
+      <rect x="3" y="9" width="6" height="6" strokeDasharray="1.5 1.5" />
+      <rect x="11" y="4" width="6" height="6" />
+      <path d="M7 8 L11.5 4.5 M9 4.5 L11.5 4.5 L11.5 7" strokeWidth="1" />
+    </>
+  ),
   drag: (
     <>
       <path d="M10 2.5 L10 17.5 M2.5 10 L17.5 10" />

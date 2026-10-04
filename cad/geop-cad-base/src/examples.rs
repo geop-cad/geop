@@ -22,6 +22,7 @@ use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, RevolveArgs};
+use geop_ops_pattern::{Direction, LinearPatternArgs, Spacing};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
@@ -1344,6 +1345,78 @@ pub fn airfoil_wing() -> Program {
     program
 }
 
+/// An 8 x 3 x 0.5 plate with a row of four holes: a pin sketched on the Z
+/// plane and extruded through the plate as a body of its own (`pin`), then
+/// patterned four times 2 apart along `x` and cut from the plate, itself
+/// and every copy (`holes`) — the drilled plate is `linear_pattern(holes)`,
+/// and the holes follow the pin when it changes.
+pub fn patterned_plate() -> Program {
+    let mut program = Program::new();
+    let z_plane = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
+    let mut outline = Sketch::new();
+    rectangle(&mut outline, [0.0, 0.0], 8.0, 3.0);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(z_plane()),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(0.5),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    let mut pin = Sketch::new();
+    circle(&mut pin, [1.0, 1.5], 0.3);
+    program.push(
+        "pin_sketch",
+        AddSketchArgs {
+            plane: Some(z_plane()),
+            sketch: solved(pin),
+            ..Default::default()
+        },
+    );
+    let mut through = Extents::blind(2.0);
+    through.symmetric = true;
+    program.push(
+        "pin",
+        ExtrudeArgs {
+            sketch: "pin_sketch".into(),
+            extent: through,
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "holes",
+        LinearPatternArgs {
+            bodies: vec![EntityRef::Solid {
+                name: "extrude(pin)".into(),
+            }],
+            first: Direction {
+                along: Some(EntityRef::datum_component(
+                    ORIGIN,
+                    DatumComponent::Axis(FrameAxis::X),
+                )),
+                reversed: false,
+                count: 4,
+                spacing: Spacing::Step(2.0),
+            },
+            second: None,
+            combine: Combine::Difference {
+                target: "extrude(plate)".into(),
+            },
+        },
+    );
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1358,6 +1431,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("link", link()),
         ("parametric_plate", parametric_plate()),
         ("airfoil_wing", airfoil_wing()),
+        ("patterned_plate", patterned_plate()),
     ]
 }
 
@@ -1698,6 +1772,20 @@ mod tests {
     fn airfoil_wing_round_trips() {
         let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
         assert_eq!(part.solid_names(), ["loft(wing)"]);
+    }
+
+    #[test]
+    fn patterned_plate_round_trips() {
+        let part = build_and_round_trip("patterned_plate", &patterned_plate());
+        assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
+        for (p, expected) in [
+            ([5.0, 1.5, 0.25], PointClassification::Outside),
+            ([5.0, 1.9, 0.25], PointClassification::Inside),
+            ([7.0, 1.5, 0.25], PointClassification::Outside),
+            ([6.0, 1.5, 0.25], PointClassification::Inside),
+        ] {
+            assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
+        }
     }
 
     #[test]

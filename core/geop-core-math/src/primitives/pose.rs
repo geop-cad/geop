@@ -35,6 +35,13 @@ impl<T: Scalar> Quaternion<T> {
         Self::new(T::ONE, T::ZERO, T::ZERO, T::ZERO)
     }
 
+    /// Whether it is exactly the identity: every component sharp, `1` and
+    /// three `0`s — no rotation at all, rather than one too small to tell.
+    pub fn is_identity(&self) -> bool {
+        let exactly = |c: T, value: f64| c.is_sharp() && c.to_f64() == value;
+        exactly(self.w, 1.0) && exactly(self.x, 0.0) && exactly(self.y, 0.0) && exactly(self.z, 0.0)
+    }
+
     /// `0 + v`: a vector as a pure quaternion.
     pub fn pure(v: &Vector3<T>) -> Self {
         Self::new(T::ZERO, v[0], v[1], v[2])
@@ -397,34 +404,118 @@ impl<S: Scalar> Pose<S> {
             .add(&self.position)
     }
 
+    /// Turning by `radians` about the line through `point` along the unit
+    /// vector `direction` — counter-clockwise, looking against `direction`
+    /// — as a pose: the rotation `(cos ½θ, sin ½θ d)`, and the position
+    /// that keeps `point` where it is.
+    pub fn rotation_about(
+        point: &Vector3<S>,
+        direction: &Vector3<S>,
+        radians: S,
+    ) -> GeopResult<Self> {
+        let half = radians.div(S::TWO)?;
+        let (c, s) = (half.cos(), half.sin());
+        let turn = Pose::new(
+            Vector3::zero(),
+            Quaternion::new(
+                c,
+                s.mul(direction[0]),
+                s.mul(direction[1]),
+                s.mul(direction[2]),
+            ),
+        )?;
+        Ok(turn.with_position(point.sub(&turn.apply(point))))
+    }
+
     /// What the pose does to geometry: its rotation's columns and its
     /// position, enclosed once, so moving many points costs a matrix
-    /// product each.
+    /// product each. A pose that does not turn at all — its rotation
+    /// exactly the identity — moves geometry by additions alone.
     pub fn motion(&self) -> Motion<S> {
+        let turns = !self.rotation.is_identity();
         Motion {
-            axes: self
-                .rotation
-                .rotation_columns()
-                .expect("a pose's rotation is a unit quaternion"),
+            axes: turns.then(|| {
+                self.rotation
+                    .rotation_columns()
+                    .expect("a pose's rotation is a unit quaternion")
+            }),
             position: self.position,
+            mirrors: false,
         }
     }
 }
 
-/// A [`Pose`] as it moves geometry (see [`Pose::motion`]).
+/// An isometry as it moves geometry: a [`Pose`]'s rigid motion (see
+/// [`Pose::motion`]), a plain translation, or a mirror in a plane — what a
+/// body is moved, patterned or mirrored by.
+///
+/// A point `p` goes to `A p + position`, with `A` the matrix whose columns
+/// are `axes`: a rotation's, or a mirror's reflection. Without axes `A` is
+/// the identity and nothing is multiplied: a translation moves every point
+/// by one addition per coordinate, as exactly as an interval addition can.
 #[derive(Clone, Copy, Debug)]
 pub struct Motion<S: Scalar> {
-    axes: [Vector3<S>; 3],
+    axes: Option<[Vector3<S>; 3]>,
     position: Vector3<S>,
+    mirrors: bool,
 }
 
 impl<S: Scalar> Motion<S> {
-    /// The direction `d` turned by the rotation.
+    /// Moving every point by `offset`.
+    pub fn translation(offset: Vector3<S>) -> Self {
+        Motion {
+            axes: None,
+            position: offset,
+            mirrors: false,
+        }
+    }
+
+    /// Mirroring in the plane through `point` with the normal `normal`,
+    /// which need not be unit: with `n` the unit normal, `p` goes to
+    /// `p - 2 ((p - point) . n) n` — `A = I - 2 n nᵀ`, and the position
+    /// `2 (point . n) n`.
+    pub fn mirror(point: &Vector3<S>, normal: &Vector3<S>) -> GeopResult<Self> {
+        let n = normal.normalize()?;
+        let column = |k: usize| {
+            let mut c = n.prod_scalar(S::TWO.mul(n[k]).neg());
+            c[k] = S::ONE.add(c[k]);
+            c
+        };
+        Ok(Motion {
+            axes: Some([column(0), column(1), column(2)]),
+            position: n.prod_scalar(S::TWO.mul(point.prod_dot(&n))),
+            mirrors: true,
+        })
+    }
+
+    /// Whether it mirrors: turns a right-handed frame into a left-handed
+    /// one, and with it the side of a surface its normal points to.
+    pub fn mirrors(&self) -> bool {
+        self.mirrors
+    }
+
+    /// Whether it turns or mirrors directions at all, rather than only
+    /// moving points.
+    pub fn turns(&self) -> bool {
+        self.axes.is_some()
+    }
+
+    /// Where it moves the origin to: what it adds to every point it has
+    /// turned.
+    pub fn position(&self) -> Vector3<S> {
+        self.position
+    }
+
+    /// The direction `d` turned — or mirrored; a translation leaves it as
+    /// it is.
     pub fn rotate(&self, d: &Vector3<S>) -> Vector3<S> {
-        let [x, y, z] = &self.axes;
-        x.prod_scalar(d[0])
-            .add(&y.prod_scalar(d[1]))
-            .add(&z.prod_scalar(d[2]))
+        match &self.axes {
+            None => *d,
+            Some([x, y, z]) => x
+                .prod_scalar(d[0])
+                .add(&y.prod_scalar(d[1]))
+                .add(&z.prod_scalar(d[2])),
+        }
     }
 
     /// The point `p` moved.
@@ -432,8 +523,14 @@ impl<S: Scalar> Motion<S> {
         self.rotate(p).add(&self.position)
     }
 
-    /// The frame `frame` moved.
+    /// The frame `frame` moved. Fails for a mirror, which would leave it
+    /// left-handed.
     pub fn apply_frame(&self, frame: &CoordinateSystem<S>) -> GeopResult<CoordinateSystem<S>> {
+        if self.mirrors {
+            return Err(GeopError::new(
+                "Motion::apply_frame: a mirrored frame is left-handed",
+            ));
+        }
         CoordinateSystem::try_new(
             self.apply(frame.origin()),
             self.rotate(frame.u()),
@@ -446,7 +543,7 @@ impl<S: Scalar> Motion<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scalars::scal_in_f64::ScalInF64;
+    use crate::scalars::{Field, Ring, scal_in_f64::ScalInF64};
 
     type S = ScalInF64;
 
@@ -540,5 +637,54 @@ mod tests {
         let zero =
             serde_json::json!({"position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 0.0]});
         assert!(serde_json::from_value::<Pose<S>>(zero).is_err());
+    }
+
+    /// A quarter turn about the line through (1, 1, 0) along `z` keeps that
+    /// line where it is and takes (2, 1, 5) to (1, 2, 5).
+    #[test]
+    fn rotation_about_a_line_keeps_it() {
+        let turn = Pose::rotation_about(
+            &v([1.0, 1.0, 0.0]),
+            &v([0.0, 0.0, 1.0]),
+            S::PI.div(S::TWO).unwrap(),
+        )
+        .unwrap();
+        assert!(encloses(&turn.apply(&v([1.0, 1.0, 7.0])), [1.0, 1.0, 7.0]));
+        assert!(encloses(&turn.apply(&v([2.0, 1.0, 5.0])), [1.0, 2.0, 5.0]));
+        let motion = turn.motion();
+        assert!(motion.turns() && !motion.mirrors());
+        assert!(encloses(
+            &motion.apply(&v([2.0, 1.0, 5.0])),
+            [1.0, 2.0, 5.0]
+        ));
+    }
+
+    /// A pose that does not turn moves points by additions alone; a
+    /// mirror in a slanted plane is undone by itself and reverses
+    /// orientation.
+    #[test]
+    fn translations_and_mirrors() {
+        let shift = Pose::identity().with_position(v([0.1, 0.2, 0.3])).motion();
+        assert!(!shift.turns());
+        let p = v([1.0, 2.0, 3.0]);
+        assert_eq!(
+            format!("{:?}", shift.apply(&p)),
+            format!("{:?}", p.add(&v([0.1, 0.2, 0.3])))
+        );
+        let mirror = Motion::mirror(&v([1.0, 0.0, 2.0]), &v([1.0, -2.0, 0.5])).unwrap();
+        assert!(mirror.mirrors());
+        let q = v([0.3, -0.7, 4.0]);
+        assert!(mirror.apply(&mirror.apply(&q)).could_be_equal(&q));
+        assert!(encloses(
+            &mirror.apply(&v([1.0, 0.0, 2.0])),
+            [1.0, 0.0, 2.0]
+        ));
+        let (x, y, z) = (v([1.0, 0.0, 0.0]), v([0.0, 1.0, 0.0]), v([0.0, 0.0, 1.0]));
+        let handedness = mirror
+            .rotate(&x)
+            .prod_cross(&mirror.rotate(&y))
+            .prod_dot(&mirror.rotate(&z));
+        assert!(handedness.could_be_equal(S::ONE.neg()), "{handedness:?}");
+        assert!(mirror.apply_frame(&CoordinateSystem::world_at(q)).is_err());
     }
 }

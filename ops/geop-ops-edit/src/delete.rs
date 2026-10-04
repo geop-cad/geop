@@ -6,7 +6,6 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_topology::Body;
 use geop_ops::{
     Context, EntityRef, Library, Part,
     operation::{Operation, Role},
@@ -28,22 +27,6 @@ pub struct DeleteBody;
 pub struct DeleteBodyArgs {
     /// The bodies to delete: solids, or a face of each sheet.
     pub bodies: Vec<EntityRef>,
-}
-
-/// The body `entity` refers to in `part`.
-fn body_of<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopResult<Body> {
-    if entity.split_instance().is_some() {
-        return Err(GeopError::new(format!(
-            "{entity} belongs to a placed part; delete it in the part's own program"
-        )));
-    }
-    match entity {
-        EntityRef::Solid { name } => Ok(Body::Solid(part.solid_id(name)?)),
-        EntityRef::Face { name } => part.topology().body_of_face(part.face_id(name)?),
-        other => Err(GeopError::new(format!(
-            "{other} is no body: pick a solid or a face standing on its own"
-        ))),
-    }
 }
 
 impl Operation for DeleteBody {
@@ -89,7 +72,7 @@ impl Operation for DeleteBody {
         }
         let mut bodies = Vec::new();
         for entity in &args.bodies {
-            let body = body_of(&part, entity).with_context(ctx)?;
+            let body = entity.resolve_body(&part).with_context(ctx)?;
             if !bodies.contains(&body) {
                 bodies.push(body);
             }
