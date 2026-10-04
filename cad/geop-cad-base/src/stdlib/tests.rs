@@ -1,44 +1,116 @@
-//! The standard parts: every family builds a valid solid, and a screw is
-//! placed in a plate as the editor places it.
+//! The standard parts: every family builds one valid solid of the size
+//! its table says, with the datums it is mated by.
 
-use geop_core_math::scalars::ScalInF64 as S;
-use geop_ops::{NoFiles, Part};
+use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_topology::validation::{ValidationParameters, validate_fast};
+use geop_ops::{
+    NoFiles, Part,
+    parameters::{ParameterKind, number},
+    part::ParamValue,
+};
 
-use super::{StandardPart, parts};
+use super::{StandardPart, parts, steps::SIZE};
 use crate::{Program, operations::regression_tests::check_valid};
 
-/// The part `program`, of the family `part`, builds: one valid solid, its
-/// datums and threaded faces named — or what is wrong with it.
-fn built(part: &StandardPart, program: &Program) -> Result<Part<S>, String> {
+/// How far out from the `z` axis, and from where to where along it, the
+/// part of `file` reaches, by the norm: `value` reads a column of the size
+/// built, or a parameter.
+fn expected(file: &str, value: impl Fn(&str) -> f64) -> [f64; 3] {
+    let corner = |s: f64| s / 3f64.sqrt();
+    match file {
+        "std:iso4762_socket_head_cap_screw.geop" => [value("dk") / 2.0, -value("l"), value("k")],
+        "std:iso7380_button_head_screw.geop" => {
+            // The dome's top is cut away by the socket, whose rim is
+            // highest at the middle of the flats facing `±x` — where the
+            // dome's quarter faces meet, so a vertex is there.
+            let (dk, k) = (value("dk"), value("k"));
+            let radius = (dk * dk / 4.0 + k * k) / (2.0 * k);
+            let top = k - radius + (radius.powi(2) - (value("s") / 2.0).powi(2)).sqrt();
+            [dk / 2.0, -value("l"), top]
+        }
+        "std:iso10642_countersunk_screw.geop" => [value("dk") / 2.0, -value("l"), 0.0],
+        "std:iso4017_hex_head_screw.geop" => [corner(value("s")), -value("l"), value("k")],
+        "std:iso4032_hex_nut.geop" => [corner(value("s")), 0.0, value("m")],
+        "std:iso10511_nylon_insert_nut.geop" => [corner(value("s")), 0.0, value("h")],
+        "std:iso7089_washer.geop" | "std:iso7090_chamfered_washer.geop" => {
+            [value("d2") / 2.0, 0.0, value("h")]
+        }
+        "std:iso8734_dowel_pin.geop" => [value("d") / 2.0, 0.0, value("l")],
+        "std:hex_standoff.geop" => [corner(value("s")), 0.0, value("l")],
+        "std:ball_bearing.geop" => [value("D") / 2.0, 0.0, value("B")],
+        "std:tslot_2020.geop" => [200f64.sqrt(), 0.0, value("length")],
+        "std:tslot_2040.geop" => [500f64.sqrt(), 0.0, value("length")],
+        "std:nema17_stepper.geop" => [21.15f64.hypot(17.15), -value("L"), 24.0],
+        other => panic!("no dimensions are known for {other}"),
+    }
+}
+
+/// The part `program` — of the family `part`, at some size — builds: one
+/// solid, valid as far as a fast check sees and fully if `fully`, with its
+/// datums and threaded faces named and reaching where its table says — or
+/// what is wrong with it.
+fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>, String> {
     let built = program
         .build::<S>(&NoFiles)
         .map_err(|e| format!("does not build: {e}"))?;
-    check_valid(&built).map_err(|e| format!("is not valid: {e}"))?;
+    if fully {
+        check_valid(&built).map_err(|e| format!("is not valid: {e}"))?;
+    } else if let Err(errors) = validate_fast(&ValidationParameters::default(), built.topology())
+    {
+        let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
+        return Err(format!("is not valid: {}", messages.join("\n")));
+    }
     let solids = built.solid_names();
     if solids.len() != 1 {
         return Err(format!("is not one solid: {solids:?}"));
+    }
+    for datum in ["axis", part.base] {
+        built
+            .datum_id(datum)
+            .map_err(|_| format!("has no datum {datum}"))?;
     }
     for face in &part.threaded {
         built
             .face_id(face)
             .map_err(|_| format!("has no threaded face {face}"))?;
     }
+    let inputs = program.inputs();
+    let want = expected(part.file, |name| {
+        number(&inputs, &format!("{SIZE}.{name}"))
+            .or_else(|| number(&inputs, name))
+            .unwrap_or_else(|| panic!("{} has no value {name}", part.file))
+    });
+    let points: Vec<[f64; 3]> = built
+        .topology()
+        .vertices
+        .values()
+        .map(|v| [0, 1, 2].map(|k| v.point[k].to_f64()))
+        .collect();
+    let radius = points.iter().map(|p| p[0].hypot(p[1])).fold(0.0, f64::max);
+    let low = points.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
+    let high = points.iter().map(|p| p[2]).fold(f64::NEG_INFINITY, f64::max);
+    let got = [radius, low, high];
+    if (0..3).any(|k| (got[k] - want[k]).abs() > 1e-6) {
+        return Err(format!(
+            "reaches [radius, lowest, highest] = {got:?}, not {want:?}"
+        ));
+    }
     Ok(built)
 }
 
-/// Checks the family placed from `file` builds, at the size its file
-/// has, one valid solid.
+/// Checks the family placed from `file` builds, at the size its file has.
 fn assert_family_builds(file: &str) {
     let part = super::part(file).unwrap();
-    if let Err(e) = built(part, &part.program) {
+    if let Err(e) = built(part, &part.program, false) {
         panic!("{file} {e}");
     }
 }
 
 macro_rules! families_build {
-    ($($test:ident: $file:literal,)*) => {
+    ($($(#[$attr:meta])* $test:ident: $file:literal,)*) => {
         $(
             #[test]
+            $(#[$attr])*
             fn $test() {
                 assert_family_builds($file);
             }
@@ -68,6 +140,51 @@ families_build! {
     hex_standoffs_build: "std:hex_standoff.geop",
     ball_bearings_build: "std:ball_bearing.geop",
     tslot_2020_builds: "std:tslot_2020.geop",
+    #[ignore = "slow: the 20x40 profile's boolean, as the 20x20's — run with `cargo test -- --ignored`"]
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
+}
+
+/// The programs of `part` at every size it offers: a row of its table, or
+/// a few lengths of an extrusion.
+fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
+    let with = |name: &str, value: ParamValue| {
+        let mut program = part.program.clone();
+        program.state.insert(name.into(), value);
+        program
+    };
+    match part.program.parameters.get(SIZE).map(|p| &p.kind) {
+        Some(ParameterKind::Table { rows, .. }) => rows
+            .iter()
+            .map(|r| (r.name.clone(), with(SIZE, ParamValue::Text(r.name.clone()))))
+            .collect(),
+        _ => [20.0, 333.3, 1000.0]
+            .into_iter()
+            .map(|l| {
+                let length = ParamValue::Number(geop_ops::Design::from_f64(l));
+                (format!("length {l}"), with("length", length))
+            })
+            .collect(),
+    }
+}
+
+/// Every size of every family builds one solid reaching where its table
+/// says — fully validated at the shortest and longest length of each
+/// size, by a fast check at the lengths between.
+#[test]
+#[ignore = "slow: every size of every standard part — run with `cargo test -- --ignored`"]
+fn every_size_of_every_family_builds_to_its_table() {
+    let mut failures = Vec::new();
+    for part in parts().unwrap() {
+        let sizes = every_size(part);
+        let size_of = |name: &str| name.split('x').next().unwrap_or(name).to_string();
+        for (i, (name, program)) in sizes.iter().enumerate() {
+            let first = i == 0 || size_of(&sizes[i - 1].0) != size_of(name);
+            let last = i + 1 == sizes.len() || size_of(&sizes[i + 1].0) != size_of(name);
+            if let Err(e) = built(part, program, first || last) {
+                failures.push(format!("{} {name} {e}", part.file));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

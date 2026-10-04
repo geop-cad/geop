@@ -66,6 +66,7 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:ball_bearing.geop",
         title: "Deep-groove ball bearing",
+        base: "side",
         program,
         threaded: Vec::new(),
     })
@@ -167,6 +168,7 @@ fn tslot(cells: i32, file: &'static str, title: &'static str) -> GeopResult<Stan
     Ok(StandardPart {
         file,
         title,
+        base: "end",
         program,
         threaded: Vec::new(),
     })
@@ -261,6 +263,7 @@ pub fn nema17() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:nema17_stepper.geop",
         title: "NEMA 17 stepper motor",
+        base: "face",
         program,
         threaded: Vec::new(),
     })

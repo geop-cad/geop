@@ -201,6 +201,7 @@ pub fn iso4762() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso4762_socket_head_cap_screw.geop",
         title: "ISO 4762 socket head cap screw",
+        base: "seat",
         program,
         threaded,
     })
@@ -211,6 +212,7 @@ pub fn iso7380() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso7380_button_head_screw.geop",
         title: "ISO 7380 button head screw",
+        base: "seat",
         program,
         threaded,
     })
@@ -221,6 +223,7 @@ pub fn iso10642() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso10642_countersunk_screw.geop",
         title: "ISO 10642 countersunk screw",
+        base: "top",
         program,
         threaded,
     })
@@ -231,6 +234,7 @@ pub fn iso4017() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso4017_hex_head_screw.geop",
         title: "ISO 4017 hex head screw",
+        base: "seat",
         program,
         threaded,
     })
@@ -285,6 +289,7 @@ pub fn iso4032() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso4032_hex_nut.geop",
         title: "ISO 4032 hex nut",
+        base: "base",
         program,
         threaded,
     })
@@ -295,6 +300,7 @@ pub fn iso10511() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso10511_nylon_insert_nut.geop",
         title: "ISO 10511 nylon insert lock nut",
+        base: "base",
         program,
         threaded,
     })
@@ -336,6 +342,7 @@ pub fn iso7089() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso7089_washer.geop",
         title: "ISO 7089 plain washer",
+        base: "base",
         program: washer(tables::iso7089(), false)?,
         threaded: Vec::new(),
     })
@@ -345,6 +352,7 @@ pub fn iso7090() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso7090_chamfered_washer.geop",
         title: "ISO 7090 chamfered washer",
+        base: "base",
         program: washer(tables::iso7090(), true)?,
         threaded: Vec::new(),
     })
@@ -376,6 +384,7 @@ pub fn iso8734() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:iso8734_dowel_pin.geop",
         title: "ISO 8734 dowel pin",
+        base: "base",
         program,
         threaded: Vec::new(),
     })
@@ -413,6 +422,7 @@ pub fn hex_standoff() -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file: "std:hex_standoff.geop",
         title: "Hex standoff, female",
+        base: "base",
         program,
         threaded: swept("body", "profile", lines[3]),
     })

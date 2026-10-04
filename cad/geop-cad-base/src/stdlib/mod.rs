@@ -54,6 +54,10 @@ pub struct StandardPart {
     /// What it is, in words: the norm and the name.
     pub title: &'static str,
     pub program: Program,
+    /// The datum plane through the face it sits on — `seat`, `base`, ...
+    /// — which a coincident mate picks; its datum `axis` the concentric
+    /// one.
+    pub base: &'static str,
     /// The faces a thread goes on or in — a screw's shank, a nut's or a
     /// standoff's bore — by name; none for a part without one.
     pub threaded: Vec<String>,
