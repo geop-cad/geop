@@ -18,6 +18,6 @@ pub use operation::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};
 pub use rolling::Radii;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod rolling_tests;
+#[cfg(test)]
+mod tests;

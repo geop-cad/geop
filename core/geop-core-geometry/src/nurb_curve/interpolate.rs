@@ -400,8 +400,12 @@ fn widen<S: Scalar, const C: usize, const D: usize>(curve: &mut NurbCurve<S, D>,
 /// strictly increasing, from exactly 0 to exactly 1.
 fn check_params<S: Scalar>(params: &[S], m: usize) -> GeopResult<()> {
     let increasing = params.windows(2).all(|w| w[0].definitely_less(w[1]));
-    let ends = params.first().is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ZERO))
-        && params.last().is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ONE));
+    let ends = params
+        .first()
+        .is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ZERO))
+        && params
+            .last()
+            .is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ONE));
     if params.len() != m || m < 2 || !increasing || !ends {
         return Err(GeopError::new(format!(
             "NurbCurve::interpolate_homogeneous: {m} values need as many parameters, strictly increasing from 0 to 1, not {params:?}"

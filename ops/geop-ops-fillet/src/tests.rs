@@ -73,11 +73,7 @@ fn has_vertex(part: &Part<S>, p: [f64; 3]) -> bool {
 /// the two sides `0.2` from the edge, which is gone.
 #[test]
 fn cube_fillet_one_edge() {
-    let part = blended(
-        unit_cube(),
-        &["cube(b,p0)"],
-        BlendShape::round(0.2),
-    );
+    let part = blended(unit_cube(), &["cube(b,p0)"], BlendShape::round(0.2));
     assert_eq!(part.topology().faces.len(), 7);
     assert_has_face(&part, "fillet(F,cube(b,p0),fillet)");
     for p in [

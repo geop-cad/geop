@@ -1,6 +1,7 @@
 //! Rolling-ball fillets: free-form edges, and radii that change along an
 //! edge.
 
+use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
@@ -11,7 +12,6 @@ use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
 };
-use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid,
     cylinder::{Axis, revolved_cylinder, revolved_cylinder_along_axis},
@@ -73,7 +73,10 @@ fn edges_where(part: &Part<S>, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
         .iter()
         .filter(|(_, e)| {
             let (t0, t1) = e.curve.domain();
-            let p = e.curve.evaluate(S::interpolate(t0, t1, S::from_f64(0.5))).unwrap();
+            let p = e
+                .curve
+                .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+                .unwrap();
             keep([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
         })
         .map(|(&id, _)| part.name_of(id).unwrap().to_string())
@@ -89,8 +92,8 @@ fn edges_where(part: &Part<S>, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
 fn boss_on_sphere() -> (Part<S>, Vec<String>) {
     let mut part = Part::new();
     let ball = sphere_solid(&mut part, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
-    let boss = revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.5), S::from_f64(0.4), S::ONE)
-        .unwrap();
+    let boss =
+        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.5), S::from_f64(0.4), S::ONE).unwrap();
     let namer = Namer::new("union", "u").unwrap();
     boolean(
         &mut part,
@@ -106,7 +109,10 @@ fn boss_on_sphere() -> (Part<S>, Vec<String>) {
     let rim = edges_where(&part, |p| {
         ((p[0] * p[0] + p[1] * p[1]).sqrt() - 0.4).abs() < 1e-6 && (p[2] - z).abs() < 1e-6
     });
-    assert!(!rim.is_empty(), "no edge where the cylinder meets the sphere");
+    assert!(
+        !rim.is_empty(),
+        "no edge where the cylinder meets the sphere"
+    );
     (part, rim)
 }
 
@@ -191,8 +197,8 @@ fn tee() -> (Part<S>, Vec<String>) {
         Axis::X,
     )
     .unwrap();
-    let branch = revolved_cylinder(&mut part, "b", v(0.0, 0.0, 0.0), S::from_f64(0.3), S::ONE)
-        .unwrap();
+    let branch =
+        revolved_cylinder(&mut part, "b", v(0.0, 0.0, 0.0), S::from_f64(0.3), S::ONE).unwrap();
     let namer = Namer::new("union", "u").unwrap();
     boolean(
         &mut part,

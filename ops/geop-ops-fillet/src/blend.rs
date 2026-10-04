@@ -598,10 +598,7 @@ struct ToolProfile<S: Scalar> {
 
 /// The cross-section of the tool that blends `section`'s corner into
 /// `shape` (see the module docs).
-fn tool_profile<S: Scalar>(
-    section: &Section<S>,
-    shape: &BlendShape,
-) -> GeopResult<ToolProfile<S>> {
+fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResult<ToolProfile<S>> {
     let e = section.corner;
     let (curves, control, touches) = match shape {
         BlendShape::Fillet { radii } => {
@@ -955,9 +952,9 @@ fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopR
         BlendShape::Chamfer { .. } => Err(GeopError::new(
             "only a straight edge between two planes, and a whole circle between planes across its axis and cylinders and cones around it, are chamfered",
         )),
-        BlendShape::Fillet { radii } => Ok(Planned::Rolled(rolling::plan_rolled(
-            part, chain, radii,
-        )?)),
+        BlendShape::Fillet { radii } => {
+            Ok(Planned::Rolled(rolling::plan_rolled(part, chain, radii)?))
+        }
     }
 }
 

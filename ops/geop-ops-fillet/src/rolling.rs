@@ -256,7 +256,11 @@ fn sharp_in<S: Scalar>(surface: &NurbSurface3D<S>, (u, v): (S, S)) -> (S, S) {
 }
 
 /// The unit outward normal of `face` at its point `point`.
-fn normal_at<S: Scalar>(model: &Model<S>, face: FaceId, point: &Vector3<S>) -> GeopResult<Vector3<S>> {
+fn normal_at<S: Scalar>(
+    model: &Model<S>,
+    face: FaceId,
+    point: &Vector3<S>,
+) -> GeopResult<Vector3<S>> {
     let surface = &model.get_face(face)?.surface;
     let (u, v) = seed_on(surface, point)?;
     surface.normal(u, v)?.normalize()
@@ -286,7 +290,11 @@ fn next_link<S: Scalar>(model: &Model<S>, link: &Link) -> GeopResult<Option<Link
             continue;
         }
         for forward in [true, false] {
-            let leaves = if forward { e.start_vertex } else { e.end_vertex };
+            let leaves = if forward {
+                e.start_vertex
+            } else {
+                e.end_vertex
+            };
             if leaves != vertex {
                 continue;
             }
@@ -523,9 +531,7 @@ fn roll<S: Scalar>(
     let (n0, n1) = (normal(0, seeds[0])?, normal(1, seeds[1])?);
     // Exact for two planes through `p`: `r` from both.
     let spread = S::ONE.add(n0.prod_dot(&n1));
-    let mut center = p
-        .add(&n0.add(&n1).prod_scalar(sr.div(spread)?))
-        .sharpen();
+    let mut center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
     let mut uv = seeds;
     for _ in 0..NEWTON_ITERATIONS {
         let mut rows = Vec::with_capacity(3);
@@ -539,17 +545,15 @@ fn roll<S: Scalar>(
         }
         rows.push(*tangent);
         residual.push(center.sub(p).prod_dot(tangent));
-        let jacobian = Matrix::from_rows([
-            rows[0].to_array(),
-            rows[1].to_array(),
-            rows[2].to_array(),
-        ]);
+        let jacobian =
+            Matrix::from_rows([rows[0].to_array(), rows[1].to_array(), rows[2].to_array()]);
         let step = solve_linear_system(
             &jacobian,
             &Vector3::from_array([residual[0], residual[1], residual[2]]),
         )?;
         let next = center.sub(&step).sharpen();
-        let same = (0..3).all(|k| next[k].is_subset_of(center[k]) && center[k].is_subset_of(next[k]));
+        let same =
+            (0..3).all(|k| next[k].is_subset_of(center[k]) && center[k].is_subset_of(next[k]));
         center = next;
         if same {
             break;
@@ -565,7 +569,10 @@ fn roll<S: Scalar>(
 /// where the ball would touch another face — leaves the rest.
 fn off_foot<S: Scalar>(center: &Vector3<S>, foot: &Vector3<S>, n: &Vector3<S>) -> f64 {
     let d = center.sub(foot);
-    d.sub(&n.prod_scalar(d.prod_dot(n))).norm().midpoint().to_f64()
+    d.sub(&n.prod_scalar(d.prod_dot(n)))
+        .norm()
+        .midpoint()
+        .to_f64()
 }
 
 /// The faces along either side of `chain`: where its ball may touch.
@@ -849,7 +856,11 @@ fn station_positions(chain: &Chain, n: usize) -> Vec<f64> {
 /// round a closed one again past its end.
 fn locate(chain: &Chain, c: f64) -> (usize, f64) {
     let links = chain.links.len();
-    let c = if chain.closed { c.rem_euclid(links as f64) } else { c };
+    let c = if chain.closed {
+        c.rem_euclid(links as f64)
+    } else {
+        c
+    };
     let link = (c.floor().max(0.0) as usize).min(links - 1);
     (link, c - link as f64)
 }
@@ -932,7 +943,14 @@ fn crossing<S: Scalar>(
     // The ball through the edge's point at `t`, square to the face there:
     // how far it is from touching the other side, and its makings.
     #[allow(clippy::type_complexity)]
-    let ball = |t: f64| -> GeopResult<(f64, Vector3<S>, [Vector3<S>; 2], [Vector3<S>; 2], [(S, S); 2], S)> {
+    let ball = |t: f64| -> GeopResult<(
+        f64,
+        Vector3<S>,
+        [Vector3<S>; 2],
+        [Vector3<S>; 2],
+        [(S, S); 2],
+        S,
+    )> {
         let sr = radius;
         let ts = S::from_f64(t);
         let x = curve.evaluate(ts)?;
@@ -1057,7 +1075,8 @@ fn roll_chain<S: Scalar>(
         let mut found: Vec<(f64, Station<S>)> = Vec::new();
         for k in 0..2 {
             if a.faces[k] != b.faces[k] {
-                let ctx = with_context!("rolling from face {} onto face {}", a.faces[k], b.faces[k]);
+                let ctx =
+                    with_context!("rolling from face {} onto face {}", a.faces[k], b.faces[k]);
                 // How far along it is: where the plane square to the chain
                 // through its center crosses the chain, as every station's
                 // does — then the radius there, and the ball again with it.
@@ -1082,9 +1101,11 @@ fn roll_chain<S: Scalar>(
                     }
                     Ok((0.5 * (lo + hi) - ca) / (cb - ca))
                 };
-                let guess = crossing(model, k, a, b, radius_at(0.5 * (ca + cb))).with_context(ctx)?;
+                let guess =
+                    crossing(model, k, a, b, radius_at(0.5 * (ca + cb))).with_context(ctx)?;
                 let f = along(&guess)?;
-                let station = crossing(model, k, a, b, radius_at(ca + f * (cb - ca))).with_context(ctx)?;
+                let station =
+                    crossing(model, k, a, b, radius_at(ca + f * (cb - ca))).with_context(ctx)?;
                 found.push((along(&station)?, station));
             }
         }
@@ -1112,7 +1133,10 @@ fn roll_chain<S: Scalar>(
             if f > 0.75 && !last_end {
                 keep[j] = false;
             }
-            crossings.push(((ca + f * (cb - ca)).rem_euclid(if chain.closed { links } else { f64::INFINITY }), station));
+            crossings.push((
+                (ca + f * (cb - ca)).rem_euclid(if chain.closed { links } else { f64::INFINITY }),
+                station,
+            ));
         }
     }
     let mut all: Vec<(f64, Station<S>, bool)> = positions
@@ -1135,12 +1159,16 @@ fn roll_chain<S: Scalar>(
         for q in 0..4 {
             let target = all[0].0 + q as f64 * links / 4.0;
             let nearest = (0..count)
-                .min_by(|&a, &b| (all[a].0 - target).abs().total_cmp(&(all[b].0 - target).abs()))
+                .min_by(|&a, &b| {
+                    (all[a].0 - target)
+                        .abs()
+                        .total_cmp(&(all[b].0 - target).abs())
+                })
                 .expect("stations");
-            let clear = breaks
-                .iter()
-                .all(|&b| (b as isize - nearest as isize).rem_euclid(count as isize) > 1
-                    && (nearest as isize - b as isize).rem_euclid(count as isize) > 1);
+            let clear = breaks.iter().all(|&b| {
+                (b as isize - nearest as isize).rem_euclid(count as isize) > 1
+                    && (nearest as isize - b as isize).rem_euclid(count as isize) > 1
+            });
             if clear && !breaks.contains(&nearest) {
                 breaks.push(nearest);
             }
@@ -1304,7 +1332,10 @@ fn span_deviation<S: Scalar>(
         if d > worst.0 {
             worst = (
                 d,
-                format!("{what} at {:?} of the span: {got:?} where the ball has {truth:?}", s.midpoint().to_f64()),
+                format!(
+                    "{what} at {:?} of the span: {got:?} where the ball has {truth:?}",
+                    s.midpoint().to_f64()
+                ),
             );
         }
     };
@@ -1347,7 +1378,13 @@ fn span_deviation<S: Scalar>(
         let middle = point(&truth[0].add(&truth[1].prod_scalar(S::TWO)).add(&truth[2]))?;
         let (u, v) = foot(&blend, &middle, (*s, half))?;
         let got = blend.evaluate(u, v)?;
-        note(distance(&got, &middle), "the section's middle", s, &got, &middle);
+        note(
+            distance(&got, &middle),
+            "the section's middle",
+            s,
+            &got,
+            &middle,
+        );
     }
     Ok(worst)
 }
@@ -1505,7 +1542,10 @@ pub(crate) fn plan_rolled<S: Scalar>(
         // Doubling the stations of a cubic shrinks its deviation sixteen
         // times over; one that does not even halve is not converging, and
         // more stations will not help.
-        if n >= MOST_STATIONS || deviation > before / 2.0 || before.is_infinite() && deviation.is_infinite() && n >= 64 {
+        if n >= MOST_STATIONS
+            || deviation > before / 2.0
+            || before.is_infinite() && deviation.is_infinite() && n >= 64
+        {
             return Err(GeopError::new(format!(
                 "the blend strays {deviation:e} from the rolling ball with {n} stations per edge ({before:e} with half as many), more than the {:e} it may (a {DEVIATION:e} of its radius): {worst}",
                 DEVIATION * smallest
@@ -1515,7 +1555,6 @@ pub(crate) fn plan_rolled<S: Scalar>(
         n *= 2;
     }
 }
-
 
 /// The homogeneous point `h`'s coordinates in the plane `(origin, e1, e2)`,
 /// homogeneous: `(w x, w y, w)`.
@@ -1657,7 +1696,11 @@ fn assemble<S: Scalar>(
     let mut ends = None;
     if let Some(decided_ends) = decided_ends {
         let mut decided = Vec::new();
-        for (at_end, (vertex, kind, face, out)) in decided_ends.into_iter().enumerate().map(|(i, e)| (i == 1, e)) {
+        for (at_end, (vertex, kind, face, out)) in decided_ends
+            .into_iter()
+            .enumerate()
+            .map(|(i, e)| (i == 1, e))
+        {
             let station = if at_end { last_station } else { first };
             let ctx = with_context!("the blend's end at vertex {vertex}");
             let plane = end_plane(model, station, face, &out).with_context(ctx)?;
@@ -1665,9 +1708,7 @@ fn assemble<S: Scalar>(
             let name = if at_end { "end" } else { "start" };
             // The section's control points and vertices in the plane.
             let flat = stations[index].points.map(|p| flatten(&p, &plane));
-            let flat_vertices = stations[index]
-                .vertices
-                .map(|v| flatten_point(&v, &plane));
+            let flat_vertices = stations[index].vertices.map(|v| flatten_point(&v, &plane));
             match &kind {
                 End::Flush | End::Wall => {
                     let station = &mut stations[index];

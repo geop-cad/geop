@@ -608,3 +608,63 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A fillet whose radius varies, set up as the front end does: the box's
+/// upright edge at the origin picked, "variable radius" ticked — which
+/// brings up the end radius, starting at the radius — the end radius set,
+/// then the corner on top picked as a vertex to give a radius of its own,
+/// which brings up a number for it. The step builds, rounded.
+#[test]
+fn variable_fillet_set_up_in_the_dialog() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "fillet".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    // Diagonally onto the upright edge at the origin, halfway up.
+    let update = editor.handle(click(pointer([-5.0, -5.0, 0.5], [1.0, 1.0, 0.0])));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(dialog("variable", Value::Bool(true)));
+    let step = update.step.expect("the fillet is edited");
+    let number =
+        |step: &crate::editor::StepState<S>, key: &str| match step.presentation.dialog.get(key) {
+            Some(Control::Number(n)) => n.value,
+            other => panic!("{key}: {other:?}"),
+        };
+    assert_eq!(number(&step, "end_radius"), number(&step, "radius"));
+    editor.handle(dialog("end_radius", Value::Number(0.2)));
+    // The corner on top of that edge, picked from above and outside.
+    editor.handle(dialog("radius_vertices", Value::Press));
+    let update = editor.handle(click(pointer([-5.0, -5.0, 6.0], [1.0, 1.0, -1.0])));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the fillet is edited");
+    assert_eq!(number(&step, "vertex_radius_0"), number(&step, "radius"));
+    let update = editor.handle(dialog("vertex_radius_0", Value::Number(0.15)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let last = program.steps.last().unwrap();
+    match &last.operation {
+        PartOperation::Fillet(args) => {
+            assert_eq!(args.edges.len(), 1, "{args:?}");
+            assert_eq!(args.end_radius, Some(0.2), "{args:?}");
+            assert_eq!(args.vertex_radii.len(), 1, "{args:?}");
+            assert_eq!(args.vertex_radii[0].radius, 0.15, "{args:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let part = program.build::<S>(&geop_ops::NoFiles).unwrap();
+    assert!(
+        part.solid_names().iter().any(|s| s.starts_with("fillet(")),
+        "{:?}",
+        part.solid_names()
+    );
+}

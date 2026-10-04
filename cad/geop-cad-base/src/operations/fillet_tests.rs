@@ -85,10 +85,7 @@ fn fillet_drill_hole_rim() {
     let before = program.build::<S>(&NoFiles).unwrap();
     let rim = arcs_at(&before, [1.0, 1.0, 1.0], 0.4);
     assert_eq!(rim.len(), 4, "{rim:?}");
-    program.push(
-        "round",
-        FilletArgs::constant(vec![rim[0].clone()], 0.1),
-    );
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
@@ -215,14 +212,8 @@ fn fillet_l_block_inner_edge() {
     let inner = upright_edges_at(&before, 1.0, 1.0);
     let outer = upright_edges_at(&before, 2.0, 0.0);
     assert_eq!((inner.len(), outer.len()), (1, 1));
-    program.push(
-        "round",
-        FilletArgs::constant(outer, 0.2),
-    );
-    program.push(
-        "inner",
-        FilletArgs::constant(inner, 0.2),
-    );
+    program.push("round", FilletArgs::constant(outer, 0.2));
+    program.push("inner", FilletArgs::constant(inner, 0.2));
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(inner)"]);
@@ -621,10 +612,7 @@ fn fillet_pocket_edges_together() {
     // meet where their tangent lines do, on the top 0.1 out from the
     // pocket's corners and on the walls 0.1 down its corner edges.
     let mut program = pocketed_block();
-    program.push(
-        "round",
-        FilletArgs::constant(all(&rim), 0.1),
-    );
+    program.push("round", FilletArgs::constant(all(&rim), 0.1));
     let part = program.build::<S>(&NoFiles).unwrap();
     let has_vertex = |p: [f64; 3]| {
         part.topology()
@@ -720,7 +708,10 @@ fn fillet_lofted_rim() {
     let before = program.build::<S>(&NoFiles).unwrap();
     let rim = edges_where(&before, |e| {
         let (t0, t1) = e.curve.domain();
-        let p = e.curve.evaluate(S::interpolate(t0, t1, S::from_f64(0.5))).unwrap();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
         p[2].could_be_equal(S::from_f64(2.0))
     });
     assert_eq!(rim.len(), 4, "{rim:?}");
@@ -746,7 +737,10 @@ fn fillet_lofted_bottom_edge_is_refused() {
     let before = program.build::<S>(&NoFiles).unwrap();
     let bottom = edges_where(&before, |e| {
         let (t0, t1) = e.curve.domain();
-        let p = e.curve.evaluate(S::interpolate(t0, t1, S::from_f64(0.5))).unwrap();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
         p[2].could_be_equal(S::ZERO)
     });
     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
@@ -754,10 +748,7 @@ fn fillet_lofted_bottom_edge_is_refused() {
         panic!("rounding a bottom edge of the loft is not refused");
     };
     let error = format!("{error:?}");
-    assert!(
-        error.contains("the third face is not planar"),
-        "{error}"
-    );
+    assert!(error.contains("the third face is not planar"), "{error}");
 }
 
 /// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined
@@ -814,12 +805,18 @@ fn fillet_slot_rim_as_one_chain() {
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
     let near = |p: [f64; 3]| {
-        part.topology().vertices.values().any(|v| {
-            (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-6)
-        })
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-6))
     };
     // Where the rim's sides meet its half circles, now 0.1 in and down.
-    for p in [[1.0, -0.4, 1.0], [1.0, -0.5, 0.9], [-1.0, 0.4, 1.0], [-1.0, 0.5, 0.9]] {
+    for p in [
+        [1.0, -0.4, 1.0],
+        [1.0, -0.5, 0.9],
+        [-1.0, 0.4, 1.0],
+        [-1.0, 0.5, 0.9],
+    ] {
         assert!(near(p), "no vertex at {p:?}");
     }
     assert!(!near([1.0, -0.5, 1.0]));
@@ -834,7 +831,10 @@ fn fillet_rim_over_creases_is_refused() {
     let before = program.build::<S>(&NoFiles).unwrap();
     let rim = edges_where(&before, |e| {
         let (t0, t1) = e.curve.domain();
-        let p = e.curve.evaluate(S::interpolate(t0, t1, S::from_f64(0.5))).unwrap();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
         p[2].could_be_equal(S::from_f64(2.0))
     });
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
