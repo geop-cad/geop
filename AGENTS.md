@@ -633,3 +633,35 @@ makes a cubic follow it to that accuracy. Put a station exactly there and
 break the spline: the ball's contact on the edge between the two faces
 (found on that edge, not near it), a station at the vertex where the radius
 law kinks.
+
+## A tool's own curves must not lie in the solid's faces
+
+A blend tool meets the solid where the boolean finds it; any curve of the
+tool lying *in* a face of the solid, crossing that face's boundary, asks the
+boolean to resolve an overlap rather than a crossing, and it exhausts its
+search. Three times in `geop-ops-fillet`:
+
+- A rolled chamfer's run-out ended its last span with a station at the
+  chain's end vertex, its section in the third face's plane, and its chord
+  crossed that face's boundary there. The run-out is now part of the last
+  span (a repeated knot), so the face is crossed by the span's interior.
+- A straight chamfer built as a whole tool once used its chord's ends on the
+  faces, exact lines lying in them. Extending the chord past the faces, as
+  the swept chamfer always did, made it cross them instead. (A fillet's
+  contact curves do lie on the faces, but tangentially and padded to
+  enclose the true contact, which the boolean takes.)
+- Mitring a rolled blend at an inward corner was tried, running it on
+  straight from its station at the vertex. Where the walls stand square to
+  the shared face, that station's section lies in the *other* wall's plane,
+  its curves on that wall's face, and its contact on its own wall already on
+  the mitre plane (a run-on side of no length). It failed in the boolean,
+  and rolled blends meeting at an inward corner are refused instead.
+
+## A hash map's order is no order
+
+`Model`'s entities live in `HashMap`s, whose iteration order differs between
+two models of the same part. The corner planner took a corner's edges in
+that order, and the ball's patch began at a different contact on every
+build; the example's round trip (build, save, load, build again) caught it.
+Wherever an order reaches the result — which loop corner comes first, which
+face is "first" — sort by the ids, which are given in creation order.

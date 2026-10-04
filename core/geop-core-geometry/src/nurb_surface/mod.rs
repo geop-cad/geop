@@ -8,6 +8,7 @@ mod patch;
 mod project;
 mod reverse;
 mod revolve;
+mod sphere;
 mod split;
 mod translate;
 

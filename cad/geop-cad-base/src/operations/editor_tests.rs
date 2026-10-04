@@ -1905,6 +1905,55 @@ fn variable_fillet_set_up_in_the_dialog() {
     );
 }
 
+/// The three edges at the box's corner `(0, 0, 1)` picked one after the
+/// other in a new fillet, as the front end does: the edges field holds all
+/// three, and the step builds the box with that corner rounded by a ball's
+/// piece, named after the corner's vertex.
+#[test]
+fn fillet_rounds_a_corner_picked_edge_by_edge() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "fillet".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    // The upright edge, diagonally halfway up; the top's edges along x and
+    // y, from above and outside.
+    for (origin, dir) in [
+        ([-5.0, -5.0, 0.5], [1.0, 1.0, 0.0]),
+        ([0.5, -5.0, 6.0], [0.0, 1.0, -1.0]),
+        ([-5.0, 0.5, 6.0], [1.0, 0.0, -1.0]),
+    ] {
+        let update = editor.handle(click(pointer(origin, dir)));
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    let update = editor.handle(dialog("radius", Value::Number(0.2)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let PartOperation::Fillet(args) = &program.steps.last().unwrap().operation else {
+        panic!("not a fillet");
+    };
+    assert_eq!(args.edges.len(), 3, "{args:?}");
+    let part = program.build::<S>(&geop_ops::NoFiles).unwrap();
+    let corners: Vec<&str> = part
+        .topology()
+        .faces
+        .keys()
+        .filter_map(|&f| part.name_of(f))
+        .filter(|name| name.ends_with(",corner)"))
+        .collect();
+    assert_eq!(corners.len(), 1, "{corners:?}");
+    assert!(super::regression_tests::check_valid(&part).is_ok());
+}
+
 /// The plate's thickness, typed into its extrude's dialog as a formula of
 /// the parameters, as one types it in the parameters panel: the field
 /// shows the formula and what it comes to, and drops its slider and its

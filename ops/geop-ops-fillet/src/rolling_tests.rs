@@ -314,3 +314,329 @@ fn variable_radius_on_a_straight_edge() {
         }
     }
 }
+
+/// A cylinder of radius 0.5 and height 1 standing on the origin, with a
+/// flat cut along it at `x = 0.3`: a D-shaped shaft.
+fn d_shaft() -> Part<S> {
+    let mut part = Part::new();
+    let shaft =
+        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::from_f64(0.5), S::ONE).unwrap();
+    let flat = cube_solid(&mut part, "f", v(0.3, -1.0, -1.0), v(1.0, 1.0, 2.0)).unwrap();
+    let namer = Namer::new("flat", "f").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        shaft,
+        flat,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part
+}
+
+/// The edges at the D-shaft's two top corners rounded: the flat's top
+/// edge, straight between planes, swept; the top's rim and the flat's
+/// sides, each between a plane and the cylinder, rolled. All end at the
+/// balls touching the top, the flat and the cylinder, whose pieces round
+/// the corners.
+#[test]
+fn d_shaft_fillet_top_corners() {
+    let mut part = d_shaft();
+    let y = 0.16f64.sqrt();
+    let model = part.topology();
+    let corners: Vec<_> = model
+        .vertices
+        .iter()
+        .filter(|(_, vertex)| {
+            [y, -y]
+                .iter()
+                .any(|&y| vertex.point.could_be_equal(&v(0.3, y, 1.0)))
+        })
+        .map(|(&id, _)| id)
+        .collect();
+    assert_eq!(corners.len(), 2);
+    let mut edges: Vec<String> = model
+        .edges
+        .iter()
+        .filter(|(_, e)| corners.contains(&e.start_vertex) || corners.contains(&e.end_vertex))
+        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+        .collect();
+    edges.sort();
+    edges.dedup();
+    let r = 0.1;
+    blended(&mut part, &edges, &BlendShape::round(r));
+    // `r` below the top, from the flat and inside the cylinder.
+    let y = (0.16f64 - 0.04).sqrt();
+    let centers = [y, -y].map(|y| v::<S>(0.3 - r, y, 1.0 - r));
+    let balls: Vec<_> = part
+        .topology()
+        .faces
+        .iter()
+        .filter(|&(&id, _)| part.name_of(id).unwrap().ends_with(",corner)"))
+        .collect();
+    assert_eq!(balls.len(), 2);
+    for (_, face) in balls {
+        let ps = samples(&face.surface, 4);
+        let near = |c: &Vector3<S>| ps[0][1] * c[1].to_f64() > 0.0;
+        let center = centers.iter().find(|c| near(c)).unwrap();
+        for p in ps {
+            let off = v::<S>(p[0], p[1], p[2]).sub(center).norm().to_f64() - r;
+            assert!(
+                off.abs() <= 2.0 * DEVIATION * r,
+                "{p:?} is {off:e} off the ball"
+            );
+        }
+    }
+}
+
+/// The D-shaft's flat side at `y > 0` bevelled, a straight edge between the
+/// flat and the cylinder: rolled, its sections chords `0.1` into each face
+/// in the plane square to the edge — on the flat `0.1` along it, on the
+/// cylinder `0.1` as the crow flies. The chamfer face is flat, and meets
+/// the top and bottom where the chords' ends are.
+#[test]
+fn d_shaft_chamfer_flat_side() {
+    let mut part = d_shaft();
+    let y = 0.16f64.sqrt();
+    let side = edges_where(&part, |p| {
+        (p[0] - 0.3).abs() < 1e-6 && (p[1] - y).abs() < 1e-6
+    });
+    assert_eq!(side.len(), 1, "{side:?}");
+    let d = 0.1;
+    blended(&mut part, &side, &BlendShape::Chamfer { distances: [d, d] });
+    let faces: Vec<&str> = part
+        .topology()
+        .faces
+        .keys()
+        .filter_map(|&f| part.name_of(f))
+        .filter(|n| n.ends_with(",chamfer)"))
+        .collect();
+    assert_eq!(faces.len(), 1, "{faces:?}");
+    // Where the chord meets the flat and the cylinder, at the top.
+    let on_flat = [0.3, y - d, 1.0];
+    // On the cylinder, `d` from the edge: `x^2 + y^2 = 0.25`, `|(x - 0.3,
+    // y' - y)| = d`.
+    let angle = (y / 0.3f64).atan() + 2.0 * (d / 2.0 / 0.5f64).asin();
+    let on_cylinder = [0.5 * angle.cos(), 0.5 * angle.sin(), 1.0];
+    for p in [on_flat, on_cylinder] {
+        let p = v::<S>(p[0], p[1], p[2]);
+        let near = part
+            .topology()
+            .vertices
+            .values()
+            .map(|vertex| vertex.point.sub(&p).norm().to_f64())
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            near <= 2.0 * DEVIATION * d,
+            "no vertex at {p:?}: {near:e} away"
+        );
+    }
+}
+
+/// The tee's saddle bevelled: a closed free-form edge, concave, so the
+/// chamfer fills in, its chords `0.1` into the branch and the pipe.
+#[test]
+fn tee_chamfer_around_the_saddle() {
+    let (mut part, saddle) = tee();
+    blended(
+        &mut part,
+        &saddle[..1],
+        &BlendShape::Chamfer {
+            distances: [0.1, 0.1],
+        },
+    );
+    let chamfered = part
+        .topology()
+        .faces
+        .keys()
+        .filter_map(|&f| part.name_of(f))
+        .any(|n| n.starts_with(&format!("fillet(F,{},chamfer", saddle[0])));
+    assert!(chamfered);
+}
+
+/// A block of 2 x 2 x 1 with a D-shaped pocket 0.4 deep in its top: a
+/// circle of radius 0.5 around `(1, 1)` cut off at `x = 1.3`.
+fn d_pocket() -> Part<S> {
+    let mut part = Part::new();
+    let block = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
+    let round =
+        revolved_cylinder(&mut part, "c", v(1.0, 1.0, 0.6), S::from_f64(0.5), S::ONE).unwrap();
+    let off = cube_solid(&mut part, "o", v(1.3, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
+    let difference = |part: &mut Part<S>, name: &str, a, b| {
+        let namer = Namer::new("cut", name).unwrap();
+        boolean(
+            part,
+            &namer,
+            a,
+            b,
+            BooleanOp::Difference,
+            RemeshParams::default(),
+        )
+        .unwrap()
+        .unwrap()
+    };
+    let pocket = difference(&mut part, "d", round, off);
+    difference(&mut part, "p", block, pocket);
+    part
+}
+
+/// The D-shaped pocket's rim rounded: the arc rolled, the flat side swept,
+/// meeting at two inward corners — refused, where only straight edges of
+/// constant radius are mitred. Mitring a rolled blend was tried, run on
+/// straight from its last station to the plane halving the corner, and
+/// fails in the boolean: where the walls stand square to the shared face,
+/// that station's section lies in the other wall's plane, its curves on
+/// that wall's face, and its contact on the wall already on the plane, so
+/// the run-on has a side of no length.
+#[test]
+fn d_pocket_rim_fillet_is_refused() {
+    let part = d_pocket();
+    let rim = edges_where(&part, |p| {
+        (p[2] - 1.0).abs() < 1e-6 && (p[0] - 1.0).hypot(p[1] - 1.0) < 0.51
+    });
+    let namer = Namer::new("fillet", "F").unwrap();
+    let why = match blend(&mut part.clone(), &namer, &rim, &BlendShape::round(0.1)) {
+        Ok(()) => panic!("the D-shaped pocket's rim is not refused"),
+        Err(e) => format!("{e:?}"),
+    };
+    assert!(why.contains("only mitred between straight edges"), "{why}");
+}
+
+/// A sphere of radius 1 around the origin, its half below `z = 0` cut off.
+fn hemisphere() -> Part<S> {
+    let mut part = Part::new();
+    let ball = sphere_solid(&mut part, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let below = cube_solid(&mut part, "c", v(-2.0, -2.0, -2.0), v(2.0, 2.0, 0.0)).unwrap();
+    let namer = Namer::new("half", "h").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        ball,
+        below,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part
+}
+
+/// The hemisphere's rim bevelled: a closed chain of quarter circles
+/// between the flat and the sphere's quarters, the chamfer's point on the
+/// sphere moving from quarter to quarter across their seams.
+#[test]
+fn hemisphere_rim_chamfer() {
+    let mut part = hemisphere();
+    let rim = edges_where(&part, |p| p[2].abs() < 1e-6);
+    assert!(!rim.is_empty());
+    blended(
+        &mut part,
+        &rim[..1],
+        &BlendShape::Chamfer {
+            distances: [0.1, 0.1],
+        },
+    );
+}
+
+/// A cylinder of radius 1 and height 1.5 with a flat at `x = 0.6`, its
+/// flat's side bevelled.
+#[test]
+fn wide_d_shaft_chamfer_flat_side() {
+    let mut part = Part::new();
+    let shaft =
+        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::ONE, S::from_f64(1.5)).unwrap();
+    let flat = cube_solid(&mut part, "f", v(0.6, -2.0, -1.0), v(2.0, 2.0, 2.0)).unwrap();
+    let namer = Namer::new("flat", "f").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        shaft,
+        flat,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    let side = edges_where(&part, |p| {
+        (p[0] - 0.6).abs() < 1e-6 && (p[1] - 0.8).abs() < 1e-6
+    });
+    assert_eq!(side.len(), 1, "{side:?}");
+    blended(
+        &mut part,
+        &side,
+        &BlendShape::Chamfer {
+            distances: [0.1, 0.1],
+        },
+    );
+}
+
+/// The vertex at `p` of `part`, by name.
+fn vertex_at(part: &Part<S>, p: [f64; 3]) -> String {
+    let p = v::<S>(p[0], p[1], p[2]);
+    let (&id, _) = part
+        .topology()
+        .vertices
+        .iter()
+        .find(|(_, vertex)| vertex.point.could_be_equal(&p))
+        .expect("a vertex there");
+    part.name_of(id).unwrap().to_string()
+}
+
+/// The three edges at the cube's corner `(0, 0, 1)` rounded with a radius
+/// growing from 0.1 at their far ends to 0.2 at the corner, given a radius
+/// of its own: rolled, each reaching 0.2 where it meets the corner's ball,
+/// whose piece rounds the corner.
+#[test]
+fn cube_corner_rounded_with_a_varying_radius() {
+    let mut part = unit_cube();
+    let corner = vertex_at(&part, [0.0, 0.0, 1.0]);
+    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
+        .map(String::from)
+        .to_vec();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            radius: 0.1,
+            end_radius: None,
+            at_vertices: vec![(corner, 0.2)],
+        },
+    };
+    blended(&mut part, &edges, &shape);
+    let balls: Vec<_> = part
+        .topology()
+        .faces
+        .iter()
+        .filter(|&(&id, _)| part.name_of(id).unwrap().ends_with(",corner)"))
+        .collect();
+    assert_eq!(balls.len(), 1);
+    let center = v::<S>(0.2, 0.2, 0.8);
+    for p in samples(&balls[0].1.surface, 4) {
+        let off = v::<S>(p[0], p[1], p[2]).sub(&center).norm().to_f64() - 0.2;
+        assert!(off.abs() <= 1e-9, "{p:?} is {off:e} off the ball");
+    }
+}
+
+/// The same edges with a radius from 0.1 to 0.2 along each: they meet the
+/// corner with different radii, as they run to or from it — refused, there
+/// being no one ball to round it with.
+#[test]
+fn cube_corner_with_mixed_radii_is_refused() {
+    let part = unit_cube();
+    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
+        .map(String::from)
+        .to_vec();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            radius: 0.1,
+            end_radius: Some(0.2),
+            at_vertices: Vec::new(),
+        },
+    };
+    let namer = Namer::new("fillet", "F").unwrap();
+    let why = match blend(&mut part.clone(), &namer, &edges, &shape) {
+        Ok(()) => panic!("mixed radii at the corner are not refused"),
+        Err(e) => format!("{e:?}"),
+    };
+    assert!(why.contains("with the radii"), "{why}");
+}
