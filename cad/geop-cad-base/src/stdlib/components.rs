@@ -12,7 +12,7 @@ use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use super::{
     StandardPart,
     drawing::Drawing,
-    steps::{Around, Through, axis_datum, base_datum, col, cut_to, outline_plane, revolve, size},
+    steps::{Around, axis_datum, col, extrude, outline_plane, plane_datum, revolve, size},
     tables,
 };
 use crate::Program;
@@ -67,7 +67,7 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
         Combine::NewBody,
     )?;
     axis_datum(&mut program);
-    base_datum(&mut program, "side");
+    plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
         file: "std:ball_bearing.geop",
         title: "Deep-groove ball bearing",
@@ -98,7 +98,7 @@ const SLOT: [[i32; 2]; 10] = [
 /// A 20-series T-slot extrusion `cells` of 20 x 20 long side by side
 /// along `y`, `length` long up `z` — its length the parameter `length` —
 /// with a slot down the middle of every 20 of its sides and a 4.2 bore,
-/// for an M5 thread, down every cell.
+/// for an M5 thread, down every cell: its profile extruded `length`.
 fn tslot(
     cells: i32,
     file: &'static str,
@@ -121,25 +121,7 @@ fn tslot(
             },
         }],
     };
-    // The envelope giving the length: a cylinder around the profile.
     let (half_w, half_h) = (100, 100 * cells);
-    let radius = ((half_w * half_w + half_h * half_h) as f64).sqrt().ceil() / 10.0 + 1.0;
-    let mut drawing = Drawing::new(&program.parameters)?;
-    let lines = drawing.polygon(&[
-        ["0".into(), "0".into()],
-        [radius.to_string(), "0".into()],
-        [radius.to_string(), "length".into()],
-        ["0".into(), "length".into()],
-    ])?;
-    revolve(
-        &mut program,
-        "length",
-        "length_profile",
-        drawing,
-        Around::Line(lines[3]),
-        Combine::NewBody,
-    )?;
-
     // Round the outline clockwise, from its top left corner; each side
     // `(start, direction, slot centres along it)`, in from it to its right.
     let centres: Vec<i32> = (0..cells).map(|i| 200 * i - 100 * (cells - 1)).collect();
@@ -176,16 +158,16 @@ fn tslot(
         let centre = outline.point("0", mm(*y))?;
         outline.circle(centre, "4.2")?;
     }
-    cut_to(
+    extrude(
         &mut program,
         "extrusion",
         "outline",
-        outline,
-        "revolve(length)",
-        Through::Up,
+        (outline, outline_plane()),
+        Extents::blind("length"),
+        Combine::NewBody,
     )?;
     axis_datum(&mut program);
-    base_datum(&mut program, "end");
+    plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
         file,
         title,
@@ -217,7 +199,8 @@ pub fn tslot_2040() -> GeopResult<StandardPart> {
 /// A NEMA 17 stepper motor as an envelope: a body 42.3 square with its
 /// corners chamfered, `L` long down from its mounting face; on the face a
 /// pilot boss 22 across and 2 high, a shaft 5 across standing 24 out, and
-/// four M3 holes 4.5 deep on a 31 square.
+/// four M3 holes 4.5 deep on a 31 square. The body is its outline extruded
+/// `L` down, the boss and the shaft one profile turned on its face.
 pub fn nema17() -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
@@ -228,26 +211,6 @@ pub fn nema17() -> GeopResult<StandardPart> {
         color: Some("#3a3d42".into()),
         values: vec![size(tables::nema17())],
     };
-    let below = format!("-{}", col("L"));
-    let mut drawing = Drawing::new(&program.parameters)?;
-    let lines = drawing.polygon(&[
-        ["0".into(), below.clone()],
-        ["30".into(), below],
-        ["30".into(), "0".into()],
-        ["11".into(), "0".into()],
-        ["11".into(), "2".into()],
-        ["2.5".into(), "2".into()],
-        ["2.5".into(), "24".into()],
-        ["0".into(), "24".into()],
-    ])?;
-    revolve(
-        &mut program,
-        "envelope",
-        "profile",
-        drawing,
-        Around::Line(lines[7]),
-        Combine::NewBody,
-    )?;
     let mut outline = Drawing::new(&program.parameters)?;
     let (side, cut) = ("21.15", "17.15");
     let neg = |s: &str| format!("-{s}");
@@ -261,15 +224,37 @@ pub fn nema17() -> GeopResult<StandardPart> {
         [neg(cut), neg(side)],
         [cut.into(), neg(side)],
     ])?;
-    cut_to(
+    extrude(
         &mut program,
         "body",
         "square",
-        outline,
-        "revolve(envelope)",
-        Through::Both,
+        (outline, outline_plane()),
+        Extents {
+            reversed: true,
+            ..Extents::blind(col("L"))
+        },
+        Combine::NewBody,
     )?;
-    let mut target = "extrude(body)".to_string();
+    let mut drawing = Drawing::new(&program.parameters)?;
+    let lines = drawing.polygon(&[
+        ["0".into(), "0".into()],
+        ["11".into(), "0".into()],
+        ["11".into(), "2".into()],
+        ["2.5".into(), "2".into()],
+        ["2.5".into(), "24".into()],
+        ["0".into(), "24".into()],
+    ])?;
+    revolve(
+        &mut program,
+        "top",
+        "profile",
+        drawing,
+        Around::Line(lines[5]),
+        Combine::Union {
+            target: "extrude(body)".into(),
+        },
+    )?;
+    let mut target = "revolve(top)".to_string();
     for (i, [x, y]) in [
         ["15.5", "15.5"],
         ["-15.5", "15.5"],
@@ -299,7 +284,7 @@ pub fn nema17() -> GeopResult<StandardPart> {
         target = format!("extrude({id})");
     }
     axis_datum(&mut program);
-    base_datum(&mut program, "face");
+    plane_datum(&mut program, "face", "0");
     Ok(StandardPart {
         file: "std:nema17_stepper.geop",
         title: "NEMA 17 stepper motor",

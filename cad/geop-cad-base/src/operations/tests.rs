@@ -51,7 +51,7 @@ fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
     ExtrudeArgs {
         sketch: sketch.into(),
         extent: Extents {
-            side1: Extent::Blind(distance),
+            side1: Extent::blind(distance),
             symmetric,
             side2: None,
             reversed: false,
@@ -487,13 +487,13 @@ fn revolved_rectangle(
 #[test]
 fn revolve_turns_any_angle() {
     let two = |a: f64, b: f64| Extents {
-        side1: Extent::Blind(a),
+        side1: Extent::blind(a),
         symmetric: false,
-        side2: Some(Extent::Blind(b)),
+        side2: Some(Extent::blind(b)),
         reversed: false,
     };
     let symmetric = |a: f64| Extents {
-        side1: Extent::Blind(a),
+        side1: Extent::blind(a),
         symmetric: true,
         side2: None,
         reversed: false,
@@ -592,9 +592,9 @@ fn on_unit_square(step: ExtrudeArgs) -> geop_core_math::geop_error::GeopResult<P
 fn extrude_each_side_its_own_length() {
     let part = on_unit_square(ExtrudeArgs {
         extent: Extents {
-            side1: Extent::Blind(1.0),
+            side1: Extent::blind(1.0),
             symmetric: false,
-            side2: Some(Extent::Blind(0.5)),
+            side2: Some(Extent::blind(0.5)),
             reversed: false,
         },
         ..extrude("square", 1.0, false)
@@ -690,9 +690,9 @@ fn on_block(
         "block",
         ExtrudeArgs {
             extent: Extents {
-                side1: Extent::Blind(z1),
+                side1: Extent::blind(z1),
                 symmetric: false,
-                side2: Some(Extent::Blind(-z0)),
+                side2: Some(Extent::blind(-z0)),
                 reversed: false,
             },
             ..extrude("base", 1.0, false)
@@ -808,9 +808,9 @@ fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> geop_core_math::geop_error::Ge
             &id,
             ExtrudeArgs {
                 extent: Extents {
-                    side1: Extent::Blind(2.0),
+                    side1: Extent::blind(2.0),
                     symmetric: false,
-                    side2: Some(Extent::Blind(1.0)),
+                    side2: Some(Extent::blind(1.0)),
                     reversed: false,
                 },
                 ..extrude(&sketch_id, 1.0, false)
@@ -916,7 +916,7 @@ fn split_by_a_face_ending_inside_fails() {
             ExtrudeArgs {
                 face: true,
                 extent: Extents {
-                    side1: Extent::Blind(-5.0),
+                    side1: Extent::blind(-5.0),
                     symmetric: true,
                     side2: None,
                     reversed: false,
@@ -952,9 +952,9 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     let between = |sketch: &str, z0: f64, z1: f64| -> crate::PartOperation {
         ExtrudeArgs {
             extent: Extents {
-                side1: Extent::Blind(z1),
+                side1: Extent::blind(z1),
                 symmetric: false,
-                side2: Some(Extent::Blind(-z0)),
+                side2: Some(Extent::blind(-z0)),
                 reversed: false,
             },
             ..extrude(sketch, 1.0, false)

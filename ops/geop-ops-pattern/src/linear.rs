@@ -10,14 +10,15 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, ORIGIN, Part,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Form, Number, Unit},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    Spacing, bodies_field, center, combine_instances, copy_seeds, count_number, count_of,
-    direction, newest_solid, seed_instances, seeds, track,
+    Spacing, bodies_field, center, combine_instances, copy_seeds, count_field, direction,
+    newest_solid, seed_instances, seeds, track, whole_count,
 };
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
@@ -49,8 +50,9 @@ pub struct Direction {
     /// Go against it instead.
     #[serde(default)]
     pub reversed: bool,
-    /// How many instances along it, the bodies themselves included.
-    pub count: usize,
+    /// How many instances along it, the bodies themselves included: a
+    /// number, or a formula of the part's parameters.
+    pub count: Formula,
     /// How far apart they are.
     pub spacing: Spacing,
 }
@@ -77,8 +79,8 @@ impl Direction {
                 DatumComponent::Axis(axis),
             )),
             reversed: false,
-            count: 3,
-            spacing: Spacing::Step(1.0),
+            count: Formula::Plain(3.0),
+            spacing: Spacing::step(1.0),
         }
     }
 
@@ -92,22 +94,25 @@ impl Direction {
         Ok(if self.reversed { d.neg() } else { d })
     }
 
-    /// How far apart two neighbouring instances are, as `step / count`:
-    /// none for a single instance, which has no neighbour.
-    fn step(&self) -> GeopResult<Option<(f64, usize)>> {
-        let value = self.spacing.value();
-        if !value.is_finite() || value == 0.0 {
+    /// How many instances there are, and how far apart two neighbouring
+    /// ones, as `step / count`: none for a single instance, which has no
+    /// neighbour. `value` gives the count's and the spacing's values.
+    fn measure(
+        &self,
+        mut value: impl FnMut(&Formula) -> GeopResult<f64>,
+    ) -> GeopResult<(usize, Option<(f64, usize)>)> {
+        let count = whole_count(&self.count, value(&self.count)?)?;
+        let spacing = value(self.spacing.value())?;
+        if !spacing.is_finite() || spacing == 0.0 {
             return Err(GeopError::new(format!(
-                "the spacing {value} puts every copy on top of the bodies"
+                "the spacing {spacing} puts every copy on top of the bodies"
             )));
         }
-        if self.count == 0 {
-            return Err(GeopError::new("a pattern has at least one instance"));
-        }
-        Ok((self.count > 1).then_some(match self.spacing {
-            Spacing::Step(step) => (step, 1),
-            Spacing::Extent(extent) => (extent, self.count - 1),
-        }))
+        let step = (count > 1).then_some(match self.spacing {
+            Spacing::Step(_) => (spacing, 1),
+            Spacing::Extent(_) => (spacing, count - 1),
+        });
+        Ok((count, step))
     }
 
     /// Where its instance `i` is, relative to the bodies: `i` steps along
@@ -153,33 +158,40 @@ impl Direction {
         );
         // Moving the spacing's handle by the unit direction adds one to it;
         // the count's, by one step, adds an instance.
+        let inputs = before.inputs();
         let unit = self.unit(before).ok();
-        let step = self.step().ok().flatten();
-        let step_length = step.map(|(value, divisor)| value / divisor as f64);
+        let measured = self.measure(|f| f.peek(inputs)).ok();
         let handles = at.zip(unit);
-        let count_handle = handles.zip(step_length).and_then(|((at, unit), step)| {
-            let end = (self.count.saturating_sub(1)) as f64 * step;
-            track(
-                at.add(&unit.prod_scalar(S::from_f64(end))),
-                unit.prod_scalar(S::from_f64(step)),
-            )
-        });
-        let mut count = count_number(self.count, count_handle);
-        count.step = 1.0;
-        form.number(&format!("count{suffix}"), count, move |args, value| {
-            get(args).count = count_of(value)
-        });
-        let spacing_handle = handles.and_then(|(at, unit)| {
-            track(
-                at.add(&unit.prod_scalar(S::from_f64(self.spacing.value()))),
-                unit,
-            )
-        });
+        let count_handle = handles
+            .zip(measured)
+            .and_then(|((at, unit), (count, step))| {
+                let (value, divisor) = step?;
+                let step = value / divisor as f64;
+                let end = (count - 1) as f64 * step;
+                track(
+                    at.add(&unit.prod_scalar(S::from_f64(end))),
+                    unit.prod_scalar(S::from_f64(step)),
+                )
+            });
+        count_field(
+            form,
+            &format!("count{suffix}"),
+            &self.count,
+            inputs,
+            count_handle,
+            move |args, count| get(args).count = count,
+        );
         self.spacing.show(
             form,
             &format!("spacing{suffix}"),
             ["spacing", "total"],
-            move |label, value| Number::new(label, value, Unit::Length).handle(spacing_handle),
+            move |label, value| {
+                let number = Number::formula(label, value, inputs, Unit::Length);
+                let at = handles.and_then(|(at, unit)| {
+                    track(at.add(&unit.prod_scalar(S::from_f64(number.value))), unit)
+                });
+                number.handle(at)
+            },
             move |args| &mut get(args).spacing,
         );
     }
@@ -245,7 +257,10 @@ impl Operation for LinearPattern {
         let namer = Namer::new("linear_pattern", operation_id)?;
         let seeds = seeds(&part, &args.bodies).with_context(ctx)?;
         let first = args.first.unit(&part).with_context(ctx)?;
-        let first_step = args.first.step().with_context(ctx)?;
+        let (first_count, first_step) = args
+            .first
+            .measure(|f| f.evaluate(&mut part))
+            .with_context(ctx)?;
         let second = match &args.second {
             None => None,
             Some(direction) => {
@@ -257,12 +272,15 @@ impl Operation for LinearPattern {
                     ))
                     .with_context(ctx);
                 }
-                Some((direction, unit, direction.step().with_context(ctx)?))
+                let (count, step) = direction
+                    .measure(|f| f.evaluate(&mut part))
+                    .with_context(ctx)?;
+                Some((count, unit, step))
             }
         };
-        let rows = second.as_ref().map_or(1, |(d, ..)| d.count);
+        let rows = second.as_ref().map_or(1, |(count, ..)| *count);
         let mut instances = seed_instances(&seeds, if second.is_some() { "0.0" } else { "0" });
-        for i in 0..args.first.count {
+        for i in 0..first_count {
             for j in 0..rows {
                 let along = Direction::offset(&first, first_step, i).with_context(ctx)?;
                 let across = match &second {

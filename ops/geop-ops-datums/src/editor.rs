@@ -8,6 +8,7 @@ use geop_core_math::{primitives::DatumKind, scalars::Scalar, vector::Vector3};
 use geop_ops::{
     Part,
     operation::Role,
+    parameters::Formula,
     ui::{Action, Form, Number, Tone, Track},
 };
 
@@ -54,7 +55,7 @@ fn needs(construction: &ConstructionSchema) -> String {
 fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<S>> {
     let Ok(built) = args
         .inputs(part)
-        .and_then(|inputs| args.construction.build(&inputs))
+        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.inputs())))
     else {
         return BTreeMap::new();
     };
@@ -148,13 +149,19 @@ pub(crate) fn form<'a, S: Scalar>(
         let value = args.construction.param(name);
         match param.kind {
             ParamKind::Number { min, max, unit, .. } => {
-                let v = value.and_then(|v| v.as_f64()).unwrap_or_default();
-                f.number(
+                let formula = value
+                    .and_then(|v| serde_json::from_value::<Formula>(v).ok())
+                    .unwrap_or(Formula::Plain(0.0));
+                f.formula(
                     name,
-                    Number::new(name, v, unit)
+                    Number::formula(name, &formula, part.inputs(), unit)
                         .range(min, max)
                         .handle(handles.remove(name)),
-                    move |args, v| set(args, v.into()),
+                    move |args, v| {
+                        if let Ok(v) = serde_json::to_value(v) {
+                            set(args, v)
+                        }
+                    },
                 );
             }
             ParamKind::Bool { .. } => {

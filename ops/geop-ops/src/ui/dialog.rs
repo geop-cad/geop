@@ -8,7 +8,11 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use serde::Serialize;
 
-use crate::operation::{EntityRef, Role};
+use crate::{
+    operation::{EntityRef, Role},
+    parameters::{Formula, is_formula},
+    part::State,
+};
 
 /// How a text reads: plain, a hint, a problem, or good news.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -166,16 +170,24 @@ pub struct Track<S: Scalar> {
     pub direction: Vector3<S>,
 }
 
-/// A number field.
+/// A number field — of a plain number, or of one that may also be given
+/// as a formula of the part's parameters (see [`Number::formula`]).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Number<S: Scalar> {
     pub label: String,
+    /// The value — of a formula, what it evaluates to now.
     pub value: f64,
     pub unit: Unit,
     /// What a slider offers, not what is valid.
     pub range: Option<[f64; 2]>,
     pub step: f64,
+    /// For a field that takes formulas, the value as given — a plain
+    /// number or a formula — shown and edited in place of `value`, and sent
+    /// back as [`super::Value::Text`].
+    pub text: Option<String>,
+    /// Why its formula does not evaluate, if it does not.
+    pub error: Option<String>,
     /// The handle to drag it by, drawn by the editor.
     #[serde(skip)]
     pub handle: Option<Track<S>>,
@@ -189,19 +201,57 @@ impl<S: Scalar> Number<S> {
             unit,
             range: None,
             step: unit.step(),
+            text: None,
+            error: None,
             handle: None,
         }
     }
 
-    /// With a slider from `min` to `max`, in 200 steps.
+    /// A field of `formula`, evaluated with the parameter values `inputs`
+    /// to show what it comes to — or, where it does not evaluate, why.
+    ///
+    /// A value that follows a formula is neither slid nor dragged: moving
+    /// it would have to either break the formula or move the parameters
+    /// it reads, and neither is what a drag means. So such a field has no
+    /// slider and no handle ([`Number::range`] and [`Number::handle`] keep
+    /// none); to drag the value again, type a number.
+    pub fn formula(
+        label: impl Into<String>,
+        formula: &Formula,
+        inputs: &State,
+        unit: Unit,
+    ) -> Self {
+        let (value, error) = match formula.peek(inputs) {
+            Ok(value) => (value, None),
+            Err(e) => (0.0, Some(e.root_message().to_string())),
+        };
+        Self {
+            text: Some(formula.to_string()),
+            error,
+            ..Self::new(label, value, unit)
+        }
+    }
+
+    /// Whether its value follows a formula.
+    pub fn follows_formula(&self) -> bool {
+        self.text.as_deref().is_some_and(is_formula)
+    }
+
+    /// With a slider from `min` to `max`, in 200 steps — unless it follows
+    /// a formula.
     pub fn range(mut self, min: f64, max: f64) -> Self {
-        self.range = Some([min, max]);
-        self.step = (max - min) / 200.0;
+        if !self.follows_formula() {
+            self.range = Some([min, max]);
+            self.step = (max - min) / 200.0;
+        }
         self
     }
 
+    /// With `handle` to drag it by — unless it follows a formula.
     pub fn handle(mut self, handle: Option<Track<S>>) -> Self {
-        self.handle = handle;
+        if !self.follows_formula() {
+            self.handle = handle;
+        }
         self
     }
 }
@@ -376,7 +426,13 @@ impl<S: Scalar> Dialog<S> {
                     Control::Checkbox { label, value } => {
                         (label, if *value { "yes" } else { "no" }.to_string())
                     }
-                    Control::Number(n) => (&n.label, format!("{:.2}", n.value)),
+                    Control::Number(n) => (
+                        &n.label,
+                        match &n.text {
+                            Some(text) if n.follows_formula() => text.clone(),
+                            _ => format!("{:.2}", n.value),
+                        },
+                    ),
                     Control::Color { label, value } => (label, value.clone()),
                     Control::Select {
                         label,
@@ -449,6 +505,8 @@ mod tests {
                     "unit": "length",
                     "range": [-1.0, 1.0],
                     "step": 0.01,
+                    "text": null,
+                    "error": null,
                 },
                 {
                     "key": "sketch",

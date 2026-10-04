@@ -11,6 +11,7 @@ use geop_core_topology::Body;
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Choice, Form, Number, Unit},
 };
 use geop_ops_extrude_revolve::common::{line2, start_point};
@@ -79,9 +80,12 @@ pub struct EdgeFlange;
 pub struct EdgeFlangeArgs {
     /// The edge, of a flat face of a sheet-metal body.
     pub edge: String,
-    /// How far the flange turns, in degrees: more than 0, less than 180.
-    pub angle: f64,
-    pub length: f64,
+    /// How far the flange turns, in degrees: more than 0, less than 180 —
+    /// a number, or a formula of the part's parameters.
+    pub angle: Formula,
+    /// How long it is, measured from its `reference`: a number, or a
+    /// formula of the part's parameters.
+    pub length: Formula,
     #[serde(default)]
     pub reference: LengthReference,
     #[serde(default)]
@@ -103,8 +107,8 @@ impl Operation for EdgeFlange {
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> EdgeFlangeArgs {
         EdgeFlangeArgs {
             edge: String::new(),
-            angle: 90.0,
-            length: 0.5,
+            angle: Formula::Plain(90.0),
+            length: Formula::Plain(0.5),
             reference: LengthReference::default(),
             position: FlangePosition::default(),
             radius: None,
@@ -118,7 +122,7 @@ impl Operation for EdgeFlange {
     /// from the edge's ends.
     fn form<'a, S: Scalar>(
         &self,
-        _: Context<'a, S>,
+        context: Context<'a, S>,
         args: &EdgeFlangeArgs,
         _: &(),
         _: &[String],
@@ -144,14 +148,15 @@ impl Operation for EdgeFlange {
                 }
             },
         );
-        f.number(
+        let inputs = context.before.inputs();
+        f.formula(
             "angle",
-            Number::new("angle", args.angle, Unit::Angle).range(0.0, 180.0),
+            Number::formula("angle", &args.angle, inputs, Unit::Angle).range(0.0, 180.0),
             |args, a| args.angle = a,
         );
-        f.number(
+        f.formula(
             "length",
-            Number::new("length", args.length, Unit::Length).range(0.0, 5.0),
+            Number::formula("length", &args.length, inputs, Unit::Length).range(0.0, 5.0),
             |args, l| args.length = l,
         );
         f.select(
@@ -248,7 +253,10 @@ impl Operation for EdgeFlange {
                 ))
             })
             .with_context(ctx)?;
-        add_flange(&mut sheet, &namer, f, k, toward_b, args).with_context(ctx)?;
+        let angle = args.angle.evaluate(&mut part).with_context(ctx)?;
+        let length = args.length.evaluate(&mut part).with_context(ctx)?;
+        add_flange(&mut sheet, &namer, (f, k, toward_b), (angle, length), args)
+            .with_context(ctx)?;
         let folded = sheet.folded().with_context(ctx)?;
         let id = part.solid_id(&solid)?;
         part.assemble_sheet(&[Body::Solid(id)], &[])
@@ -261,13 +269,14 @@ impl Operation for EdgeFlange {
 }
 
 /// Adds the flange `args` describes to `sheet`, bent from edge `k` of flat
-/// `f`'s outline towards its B side if `toward_b` (see [`EdgeFlange`]).
+/// `f`'s outline towards its B side if `toward_b`, `angle` degrees and
+/// `flange_length` long — the values its formulas came to (see
+/// [`EdgeFlange`]).
 fn add_flange<S: Scalar>(
     sheet: &mut Sheet<S>,
     namer: &Namer,
-    f: usize,
-    k: usize,
-    toward_b: bool,
+    (f, k, toward_b): (usize, usize, bool),
+    (angle, flange_length): (f64, f64),
     args: &EdgeFlangeArgs,
 ) -> GeopResult<()> {
     let rules = sheet.rules.clone();
@@ -282,10 +291,9 @@ fn add_flange<S: Scalar>(
     if sheet.is_bent(&name) {
         return Err(GeopError::new(format!("edge {name} is already bent")));
     }
-    if !(args.angle > 0.0 && args.angle < 180.0) {
+    if !(angle > 0.0 && angle < 180.0) {
         return Err(GeopError::new(format!(
-            "a flange turns by more than 0 and less than 180 degrees, not {}",
-            args.angle
+            "a flange turns by more than 0 and less than 180 degrees, not {angle}"
         )));
     }
     let radius = args.radius.unwrap_or(rules.bend_radius);
@@ -306,7 +314,7 @@ fn add_flange<S: Scalar>(
     let s = S::from_f64;
     let t = s(rules.thickness);
     let r = s(radius);
-    let angle = s(args.angle).mul(S::PI).div(s(180.0))?;
+    let angle = s(angle).mul(S::PI).div(s(180.0))?;
     let half = angle.div(S::TWO)?;
     let half_tan = half.sin().div(half.cos())?;
     let set_back = match args.position {
@@ -314,15 +322,14 @@ fn add_flange<S: Scalar>(
         FlangePosition::MaterialOutside => Some(r.mul(half_tan)),
         FlangePosition::BendOutside => None,
     };
-    let length = s(args.length).sub(match args.reference {
+    let length = s(flange_length).sub(match args.reference {
         LengthReference::OuterSharp => r.add(t).mul(half_tan),
         LengthReference::InnerSharp => r.mul(half_tan),
         LengthReference::Tangent => S::ZERO,
     });
     if !length.definitely_greater(S::ZERO) {
         return Err(GeopError::new(format!(
-            "a flange {} long leaves nothing flat after its bend ({length:?})",
-            args.length
+            "a flange {flange_length} long leaves nothing flat after its bend ({length:?})"
         )));
     }
 

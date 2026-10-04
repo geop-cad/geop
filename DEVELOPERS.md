@@ -34,8 +34,10 @@ ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is
                                edited (events, dialogs, visuals, hit tests),
-                               parameters and the formulas reading them,
-                               programs, the files they place parts from, and
+                               parameters and the formulas reading them —
+                               a sketch dimension, an operation's length,
+                               angle or count — programs, the
+                               files they place parts from, and
                                running them — a workspace rebuilds only what
                                a changed file reaches, and a scene sends
                                placed parts as changes (+ `geop-ops-derive`)

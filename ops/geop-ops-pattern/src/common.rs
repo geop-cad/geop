@@ -15,6 +15,8 @@ use geop_core_topology::Body;
 use geop_ops::{
     Namer, Part,
     operation::{Aspects, EntityRef, Role},
+    parameters::Formula,
+    part::State,
     ui::{Choice, Form, Number, Track, Unit},
 };
 use geop_ops_booleans::{Combine, Tool};
@@ -22,25 +24,36 @@ use serde::{Deserialize, Serialize};
 
 /// How far apart the instances of a pattern are: each `Step` from the
 /// last, or spread evenly over the `Extent` from the first to the last —
-/// a length, or an angle in degrees. Serialized as `{"step": 2.0}` or
-/// `{"extent": 10.0}`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// a length, or an angle in degrees, plain or a formula of the part's
+/// parameters. Serialized as `{"step": 2.0}`, `{"extent": 10.0}` or
+/// `{"step": "pitch"}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Spacing {
-    Step(f64),
-    Extent(f64),
+    Step(Formula),
+    Extent(Formula),
 }
 
 impl Spacing {
+    /// Each `step` — a number, or a formula's text — from the last.
+    pub fn step(step: impl Into<Formula>) -> Self {
+        Spacing::Step(step.into())
+    }
+
+    /// Spread evenly over `extent` — a number, or a formula's text.
+    pub fn extent(extent: impl Into<Formula>) -> Self {
+        Spacing::Extent(extent.into())
+    }
+
     /// The number it holds, whichever it is.
-    pub fn value(&self) -> f64 {
-        match *self {
+    pub fn value(&self) -> &Formula {
+        match self {
             Spacing::Step(v) | Spacing::Extent(v) => v,
         }
     }
 
     /// The same kind of spacing, holding `value`.
-    fn with_value(&self, value: f64) -> Self {
+    fn with_value(&self, value: Formula) -> Self {
         match self {
             Spacing::Step(_) => Spacing::Step(value),
             Spacing::Extent(_) => Spacing::Extent(value),
@@ -48,14 +61,14 @@ impl Spacing {
     }
 
     /// Its fields in `form`: which kind — keyed `{key}_mode` — and the
-    /// number, keyed `key`, made by `number(label, value)`. Switching the
-    /// kind keeps the number.
+    /// number, keyed `key`, made by `number(label, value)` (see
+    /// [`Number::formula`]). Switching the kind keeps the number.
     pub(crate) fn show<'a, S: Scalar, A: 'a>(
         &self,
         form: &mut Form<'a, S, A>,
         key: &str,
         labels: [&str; 2],
-        number: impl Fn(&str, f64) -> Number<S>,
+        number: impl Fn(&str, &Formula) -> Number<S>,
         spacing: impl Fn(&mut A) -> &mut Spacing + Copy + 'a,
     ) {
         let mode = match self {
@@ -73,7 +86,7 @@ impl Spacing {
             false,
             move |args, mode| {
                 let this = spacing(args);
-                let value = this.value();
+                let value = this.value().clone();
                 *this = match mode {
                     "extent" => Spacing::Extent(value),
                     _ => Spacing::Step(value),
@@ -84,21 +97,48 @@ impl Spacing {
             Spacing::Step(_) => labels[0],
             Spacing::Extent(_) => labels[1],
         };
-        form.number(key, number(label, self.value()), move |args, value| {
+        form.formula(key, number(label, self.value()), move |args, value| {
             let this = spacing(args);
             *this = this.with_value(value);
         });
     }
 }
 
-/// How many instances a count field's `value` asks for: a whole number, at
-/// least one — the seed alone.
-pub(crate) fn count_of(value: f64) -> usize {
-    if value.is_finite() && value >= 1.0 {
-        value.round() as usize
-    } else {
-        1
+/// The count field of a pattern, keyed `key`, of `count` — dragged by
+/// `handle` unless it follows a formula — `set` given what it is set to:
+/// a formula as typed, a number rounded to a whole one of at least one,
+/// the seed alone.
+pub(crate) fn count_field<'a, S: Scalar, A: 'a>(
+    form: &mut Form<'a, S, A>,
+    key: &str,
+    count: &Formula,
+    inputs: &State,
+    handle: Option<Track<S>>,
+    set: impl Fn(&mut A, Formula) + 'a,
+) {
+    let mut number = Number::formula("count", count, inputs, Unit::Count)
+        .range(1.0, 24.0)
+        .handle(handle);
+    number.step = 1.0;
+    form.formula(key, number, move |args, count| {
+        let count = match count {
+            Formula::Plain(value) if value.is_finite() && value >= 1.0 => value.round(),
+            Formula::Plain(_) => 1.0,
+            formula => return set(args, formula),
+        };
+        set(args, Formula::Plain(count))
+    });
+}
+
+/// The count `formula` comes to, `value`: a whole number of instances, at
+/// least one — the seed alone. Anything else is refused, saying so.
+pub(crate) fn whole_count(formula: &Formula, value: f64) -> GeopResult<usize> {
+    if value.fract() != 0.0 || value < 1.0 {
+        return Err(GeopError::new(format!(
+            "the count {formula} comes to {value}: a pattern has a whole number of instances, at least one — round a formula with round(), floor() or ceil()"
+        )));
     }
+    Ok(value as usize)
 }
 
 /// The field picking the bodies a step acts on, keyed `bodies`: solids,
@@ -318,11 +358,4 @@ pub(crate) fn track<S: Scalar>(at: Vector3<S>, direction: Vector3<S>) -> Option<
     length
         .definitely_greater(S::ZERO)
         .then_some(Track { at, direction })
-}
-
-/// A count field, keyed `key`, with `handle`.
-pub(crate) fn count_number<S: Scalar>(count: usize, handle: Option<Track<S>>) -> Number<S> {
-    Number::new("count", count as f64, Unit::Count)
-        .range(1.0, 24.0)
-        .handle(handle)
 }

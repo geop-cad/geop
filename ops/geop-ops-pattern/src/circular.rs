@@ -9,14 +9,15 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, ORIGIN, Part,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Form, Number, Unit},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    Spacing, axis, bodies_field, combine_instances, copy_seeds, count_number, count_of,
-    newest_solid, seed_instances, seeds,
+    Spacing, axis, bodies_field, combine_instances, copy_seeds, count_field, newest_solid,
+    seed_instances, seeds, whole_count,
 };
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
@@ -44,8 +45,9 @@ pub struct CircularPatternArgs {
     /// Turn the other way.
     #[serde(default)]
     pub reversed: bool,
-    /// How many instances, the bodies themselves included.
-    pub count: usize,
+    /// How many instances, the bodies themselves included: a number, or a
+    /// formula of the part's parameters.
+    pub count: Formula,
     /// How far apart they are, in degrees.
     pub angle: Spacing,
     /// Keep the copies as new bodies, or combine them with a solid.
@@ -54,35 +56,39 @@ pub struct CircularPatternArgs {
 }
 
 impl CircularPatternArgs {
-    /// How far the instance `k` is turned, in degrees, as `value * k /
-    /// divisor`. Refuses spacings that put copies on the bodies.
-    fn angles(&self) -> GeopResult<(f64, usize)> {
-        let value = self.angle.value();
-        if !value.is_finite() || value == 0.0 {
+    /// How many instances there are, and how far the instance `k` is
+    /// turned, in degrees, as `value * k / divisor`: `(count, value,
+    /// divisor)`, with `value` giving the count's and the angle's values.
+    /// Refuses spacings that put copies on the bodies.
+    fn angles(
+        &self,
+        mut value: impl FnMut(&Formula) -> GeopResult<f64>,
+    ) -> GeopResult<(usize, f64, usize)> {
+        let count = whole_count(&self.count, value(&self.count)?)?;
+        let angle = value(self.angle.value())?;
+        if !angle.is_finite() || angle == 0.0 {
             return Err(GeopError::new(format!(
-                "the angle {value}° puts every copy on top of the bodies"
+                "the angle {angle}° puts every copy on top of the bodies"
             )));
         }
-        if self.count == 0 {
-            return Err(GeopError::new("a pattern has at least one instance"));
-        }
-        let span = |step: f64| step.abs() * (self.count - 1) as f64;
-        Ok(match self.angle {
-            Spacing::Extent(extent) if extent.abs() == 360.0 => (extent, self.count),
-            Spacing::Extent(extent) if extent.abs() > 360.0 => {
+        let span = |step: f64| step.abs() * (count - 1) as f64;
+        let (value, divisor) = match self.angle {
+            Spacing::Extent(_) if angle.abs() == 360.0 => (angle, count),
+            Spacing::Extent(_) if angle.abs() > 360.0 => {
                 return Err(GeopError::new(format!(
-                    "the pattern spans {extent}°, more than a full turn: copies would come round onto each other"
+                    "the pattern spans {angle}°, more than a full turn: copies would come round onto each other"
                 )));
             }
-            Spacing::Extent(extent) => (extent, (self.count - 1).max(1)),
-            Spacing::Step(step) if span(step) >= 360.0 => {
+            Spacing::Extent(_) => (angle, (count - 1).max(1)),
+            Spacing::Step(_) if span(angle) >= 360.0 => {
                 return Err(GeopError::new(format!(
-                    "{} steps of {step}° come round onto the bodies again: spread the instances over 360° instead",
-                    self.count - 1
+                    "{} steps of {angle}° come round onto the bodies again: spread the instances over 360° instead",
+                    count - 1
                 )));
             }
-            Spacing::Step(step) => (step, 1),
-        })
+            Spacing::Step(_) => (angle, 1),
+        };
+        Ok((count, value, divisor))
     }
 }
 
@@ -100,8 +106,8 @@ impl Operation for CircularPattern {
                 DatumComponent::Axis(FrameAxis::Z),
             )),
             reversed: false,
-            count: 4,
-            angle: Spacing::Extent(360.0),
+            count: Formula::Plain(4.0),
+            angle: Spacing::extent(360.0),
             combine: Combine::NewBody,
         }
     }
@@ -130,14 +136,15 @@ impl Operation for CircularPattern {
         f.checkbox("reversed", "reverse direction", args.reversed, |args, b| {
             args.reversed = b
         });
-        let mut count = count_number(args.count, None);
-        count.step = 1.0;
-        f.number("count", count, |args, value| args.count = count_of(value));
+        let inputs = before.inputs();
+        count_field(&mut f, "count", &args.count, inputs, None, |args, count| {
+            args.count = count
+        });
         args.angle.show(
             &mut f,
             "angle",
             ["angle", "total angle"],
-            |label, value| Number::new(label, value, Unit::Angle).range(-360.0, 360.0),
+            |label, value| Number::formula(label, value, inputs, Unit::Angle).range(-360.0, 360.0),
             |args| &mut args.angle,
         );
         args.combine.show(&mut f, before, |args| &mut args.combine);
@@ -163,9 +170,9 @@ impl Operation for CircularPattern {
         } else {
             axis.direction
         };
-        let (degrees, divisor) = args.angles().with_context(ctx)?;
+        let (count, degrees, divisor) = args.angles(|f| f.evaluate(&mut part)).with_context(ctx)?;
         let mut instances = seed_instances(&seeds, "0");
-        for k in 1..args.count {
+        for k in 1..count {
             // `degrees * k / divisor` in radians, enclosed in one go rather
             // than accumulated step by step.
             let radians = S::from_f64(degrees)

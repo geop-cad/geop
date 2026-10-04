@@ -48,8 +48,8 @@ fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
 fn distance(editor: &Editor<S>, id: &str) -> f64 {
     let program = editor.program();
     match &program.steps[program.index_of(id).unwrap()].operation {
-        PartOperation::Extrude(args) => match args.extent.side1 {
-            geop_ops_extrude_revolve::Extent::Blind(d) => d,
+        PartOperation::Extrude(args) => match &args.extent.side1 {
+            geop_ops_extrude_revolve::Extent::Blind(d) => d.plain().expect("a plain distance"),
             other => panic!("{other:?} is no distance"),
         },
         other => panic!("{other:?}"),
@@ -249,7 +249,7 @@ fn new_steps_handles_are_dragged_in_steps() {
     };
     assert_eq!(
         extrude.extent.side1,
-        geop_ops_extrude_revolve::Extent::Blind(1.3)
+        geop_ops_extrude_revolve::Extent::blind(1.3)
     );
 }
 
@@ -491,7 +491,9 @@ fn offset_plane_dragged_by_its_handle() {
             selection: vec![EntityRef::Face {
                 name: "extrude(box,end)".into(),
             }],
-            construction: geop_ops_datums::Construction::Offset { distance: 0.5 },
+            construction: geop_ops_datums::Construction::Offset {
+                distance: 0.5.into(),
+            },
         },
     );
     editor.handle(Command::Load {
@@ -541,7 +543,9 @@ fn offset_plane_dragged_by_its_handle() {
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::AddDatum(args) => assert_eq!(
             args.construction,
-            geop_ops_datums::Construction::Offset { distance: 0.8 }
+            geop_ops_datums::Construction::Offset {
+                distance: 0.8.into()
+            }
         ),
         other => panic!("{other:?}"),
     }
@@ -657,9 +661,10 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
     assert!(update.error.is_none(), "{:?}", update.error);
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::LinearPattern(args) => {
-            assert_eq!(args.first.count, 4);
-            match args.first.spacing {
+            assert_eq!(args.first.count, 4.0.into());
+            match &args.first.spacing {
                 geop_ops_pattern::Spacing::Step(step) => {
+                    let step = step.plain().expect("a plain spacing");
                     assert!((step - 2.0).abs() < 1e-9, "{step}")
                 }
                 other => panic!("{other:?}"),
@@ -1851,7 +1856,7 @@ fn variable_fillet_set_up_in_the_dialog() {
     match &last.operation {
         PartOperation::Fillet(args) => {
             assert_eq!(args.edges.len(), 1, "{args:?}");
-            assert_eq!(args.end_radius, Some(0.2), "{args:?}");
+            assert_eq!(args.end_radius, Some(0.2.into()), "{args:?}");
             assert_eq!(args.vertex_radii.len(), 1, "{args:?}");
             assert_eq!(args.vertex_radii[0].radius, 0.15, "{args:?}");
         }
@@ -1862,6 +1867,98 @@ fn variable_fillet_set_up_in_the_dialog() {
         part.solid_names().iter().any(|s| s.starts_with("fillet(")),
         "{:?}",
         part.solid_names()
+    );
+}
+
+/// The plate's thickness, typed into its extrude's dialog as a formula of
+/// the parameters, as one types it in the parameters panel: the field
+/// shows the formula and what it comes to, and drops its slider and its
+/// handle — a value that follows a formula is not dragged. A formula that
+/// does not evaluate is kept as typed, the field and the step saying why;
+/// a number typed makes it plain, and draggable, again.
+#[test]
+fn formulas_are_typed_into_dialog_fields() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadExample {
+        name: "parametric_plate".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let field = |step: &crate::editor::StepState<S>| match step.presentation.dialog.get("distance")
+    {
+        Some(Control::Number(n)) => n.clone(),
+        other => panic!("{other:?} is no number field"),
+    };
+    let handle = |step: &crate::editor::StepState<S>| {
+        step.presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "distance" && matches!(v.shape, geop_ops::ui::Shape::Handle { .. }))
+    };
+    let thickness = |editor: &Editor<S>| {
+        let program = editor.program();
+        match &program.steps[program.index_of("plate").unwrap()].operation {
+            PartOperation::Extrude(args) => args.extent.side1.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let top = |editor: &Editor<S>| {
+        editor
+            .part()
+            .topology()
+            .vertices
+            .values()
+            .map(|v| v.point[2].to_f64())
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+
+    let update = editor.handle(Command::Open { id: "plate".into() });
+    let step = update.step.expect("the plate is edited");
+    // The example's own formula.
+    let n = field(&step);
+    assert_eq!(n.text.as_deref(), Some("thickness"));
+    assert_eq!((n.value, n.range, n.error), (0.5, None, None));
+    assert!(!handle(&step), "a formula's value has a handle");
+
+    let update = editor.handle(dialog("distance", Value::Text("3 * thickness".into())));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the plate is edited");
+    assert_eq!(step.error, None);
+    let n = field(&step);
+    assert_eq!(n.text.as_deref(), Some("3 * thickness"));
+    assert!((n.value - 1.5).abs() < 1e-12, "{}", n.value);
+    assert!(n.range.is_none() && !handle(&step));
+
+    let update = editor.handle(dialog("distance", Value::Text("3 * thicknes".into())));
+    let step = update.step.expect("the plate is edited");
+    let n = field(&step);
+    assert_eq!(n.text.as_deref(), Some("3 * thicknes"));
+    assert_eq!(
+        n.error.as_deref(),
+        Some(r#"there is no parameter "thicknes""#)
+    );
+    let error = step.error.expect("the step fails");
+    assert!(error.contains(r#""3 * thicknes""#), "{error}");
+
+    editor.handle(dialog("distance", Value::Text("3 * thickness".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(
+        thickness(&editor),
+        geop_ops_extrude_revolve::Extent::blind("3 * thickness")
+    );
+    assert!((top(&editor) - 1.5).abs() < 1e-9, "{}", top(&editor));
+
+    // A number typed is plain again: slid and dragged.
+    editor.handle(Command::Open { id: "plate".into() });
+    let update = editor.handle(dialog("distance", Value::Text(" 0.8 ".into())));
+    let step = update.step.expect("the plate is edited");
+    let n = field(&step);
+    assert_eq!(n.text.as_deref(), Some("0.8"));
+    assert!(n.range.is_some() && handle(&step));
+    editor.handle(Command::Commit);
+    assert_eq!(
+        thickness(&editor),
+        geop_ops_extrude_revolve::Extent::blind(0.8)
     );
 }
 

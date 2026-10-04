@@ -142,7 +142,6 @@ families_build! {
     hex_standoffs_build: "std:hex_standoff.geop",
     ball_bearings_build: "std:ball_bearing.geop",
     tslot_2020_builds: "std:tslot_2020.geop",
-    #[ignore = "slow: the 20x40 profile's boolean, as the 20x20's — run with `cargo test -- --ignored`"]
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
 }
@@ -172,7 +171,8 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
 
 /// Every size of every family builds one solid reaching where its table
 /// says — fully validated at the shortest and longest length of each
-/// size, by a fast check at the lengths between.
+/// size, by a fast check at the lengths between. Prints how long each
+/// family took to build, per size, with `--nocapture`.
 #[test]
 #[ignore = "slow: every size of every standard part — run with `cargo test -- --ignored`"]
 fn every_size_of_every_family_builds_to_its_table() {
@@ -180,13 +180,29 @@ fn every_size_of_every_family_builds_to_its_table() {
     for part in parts().unwrap() {
         let sizes = every_size(part);
         let size_of = |name: &str| name.split('x').next().unwrap_or(name).to_string();
+        let start = std::time::Instant::now();
+        let mut slowest = (String::new(), 0.0);
         for (i, (name, program)) in sizes.iter().enumerate() {
             let first = i == 0 || size_of(&sizes[i - 1].0) != size_of(name);
             let last = i + 1 == sizes.len() || size_of(&sizes[i + 1].0) != size_of(name);
+            let one = std::time::Instant::now();
             if let Err(e) = built(part, program, first || last) {
                 failures.push(format!("{} {name} {e}", part.file));
             }
+            let took = one.elapsed().as_secs_f64();
+            if took > slowest.1 {
+                slowest = (name.clone(), took);
+            }
         }
+        let total = start.elapsed().as_secs_f64();
+        println!(
+            "{:<45} {:>3} sizes {total:>8.2} s, {:>6.2} s each, slowest {} {:.2} s",
+            part.file,
+            sizes.len(),
+            total / sizes.len() as f64,
+            slowest.0,
+            slowest.1
+        );
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

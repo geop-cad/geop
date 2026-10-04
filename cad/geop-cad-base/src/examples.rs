@@ -343,7 +343,7 @@ pub fn cross_drilled_shaft() -> Program {
         ExtrudeArgs {
             sketch: "bore_sketch".into(),
             extent: Extents {
-                side1: Extent::Blind(3.0),
+                side1: Extent::blind(3.0),
                 symmetric: true,
                 side2: None,
                 reversed: false,
@@ -383,7 +383,7 @@ pub fn split_plate() -> Program {
         ExtrudeArgs {
             sketch: "plate_sketch".into(),
             extent: Extents {
-                side1: Extent::Blind(0.5),
+                side1: Extent::blind(0.5),
                 symmetric: true,
                 side2: None,
                 reversed: false,
@@ -424,7 +424,7 @@ pub fn split_plate() -> Program {
         ExtrudeArgs {
             sketch: "cut_sketch".into(),
             extent: Extents {
-                side1: Extent::Blind(3.0),
+                side1: Extent::blind(3.0),
                 symmetric: true,
                 side2: None,
                 reversed: false,
@@ -478,7 +478,9 @@ pub fn boss_on_reference_plane() -> Program {
             selection: vec![EntityRef::Face {
                 name: "extrude(box,end)".into(),
             }],
-            construction: Construction::Offset { distance: 0.5 },
+            construction: Construction::Offset {
+                distance: 0.5.into(),
+            },
         },
     );
     let mut boss = Sketch::new();
@@ -594,7 +596,7 @@ pub fn handle_with_hole() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents {
-                side1: Extent::Blind(2.44),
+                side1: Extent::blind(2.44),
                 symmetric: true,
                 side2: None,
                 reversed: false,
@@ -678,7 +680,7 @@ pub fn luggage_tag() -> Program {
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents {
-                side1: Extent::Blind(1.0 / 3.0),
+                side1: Extent::blind(1.0 / 3.0),
                 symmetric: true,
                 side2: None,
                 reversed: false,
@@ -1120,8 +1122,9 @@ fn number_parameter(name: &str, expression: &str, min: f64, max: f64) -> Paramet
 }
 
 /// A plate designed by its parameters: `width` and `depth` — half the
-/// width, unless placed otherwise — and a blind hole in its middle sized for the
-/// screw chosen from a table of sizes, and its colour. The hole's sketch,
+/// width, unless placed otherwise — extruded `thickness` thick, and a blind
+/// hole in its middle sized for the screw chosen from a table of sizes,
+/// and its colour. The hole's sketch,
 /// on the plate's top, projects the top, and puts the hole in the middle
 /// of it. The plate is meant to be placed with other values, and
 /// everything follows.
@@ -1154,6 +1157,7 @@ pub fn parametric_plate() -> Program {
                     selected: "M4".into(),
                 },
             },
+            number_parameter("thickness", "0.5", 0.1, 2.0),
         ],
     };
 
@@ -1187,7 +1191,7 @@ pub fn parametric_plate() -> Program {
         "plate",
         ExtrudeArgs {
             sketch: "outline".into(),
-            extent: Extents::blind(0.5),
+            extent: Extents::blind("thickness"),
             face: false,
             combine: Combine::NewBody,
         },
@@ -1562,7 +1566,9 @@ pub fn airfoil_wing() -> Program {
                 ORIGIN,
                 DatumComponent::Plane(FrameAxis::Y),
             )],
-            construction: Construction::Offset { distance: 3.0 },
+            construction: Construction::Offset {
+                distance: 3.0.into(),
+            },
         },
     );
     program.push(
@@ -1713,8 +1719,8 @@ pub fn patterned_plate() -> Program {
                     DatumComponent::Axis(FrameAxis::X),
                 )),
                 reversed: false,
-                count: 4,
-                spacing: Spacing::Step(2.0),
+                count: 4.0.into(),
+                spacing: Spacing::step(2.0),
             },
             second: None,
             combine: Combine::Difference {
@@ -1816,7 +1822,7 @@ pub fn hole_plate() -> Program {
                 size: "M6".into(),
                 fit: Fit::Normal,
             },
-            end: Extent::Blind(8.0),
+            end: Extent::blind(8.0),
             drill_point: true,
             thread_length: None,
         },
@@ -1946,15 +1952,15 @@ pub fn sheet_metal_bracket() -> Program {
                 bend_radius: 0.08,
                 ..SheetMetalRules::default()
             },
-            depth: 1.0,
+            depth: 1.0.into(),
             flip: false,
         },
     );
     let edge = |line: CurveId| format!("base_flange(plate,outline,{line},b)");
     let flange = |line: CurveId, length: f64, offset: f64| EdgeFlangeArgs {
         edge: edge(line),
-        angle: 90.0,
-        length,
+        angle: 90.0.into(),
+        length: length.into(),
         reference: LengthReference::OuterSharp,
         position: FlangePosition::MaterialInside,
         radius: None,

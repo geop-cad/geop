@@ -184,7 +184,7 @@ fn cylinder(d: f64, h: f64) -> f64 {
 fn blind_clearance_hole() {
     let part = drilled(
         plate(&[[20.0, 20.0]]),
-        hole(HoleKind::Simple, iso("M6", Fit::Normal), Extent::Blind(6.0)),
+        hole(HoleKind::Simple, iso("M6", Fit::Normal), Extent::blind(6.0)),
     );
     for q in 0..4 {
         part.face_id(&format!("hole(h,centres,p0,wall,q{q})"))
@@ -199,7 +199,7 @@ fn blind_clearance_hole() {
 /// A blind hole ending in a drill's point: a 118° cone below the depth.
 #[test]
 fn blind_hole_with_drill_point() {
-    let mut args = hole(HoleKind::Simple, iso("M8", Fit::Close), Extent::Blind(5.0));
+    let mut args = hole(HoleKind::Simple, iso("M8", Fit::Close), Extent::blind(5.0));
     args.drill_point = true;
     let part = drilled(plate(&[[20.0, 20.0]]), args);
     part.face_id("hole(h,centres,p0,point,q0)").unwrap();
@@ -256,7 +256,7 @@ fn custom_hole() {
                 head_diameter: 9.0,
                 head_depth: 3.0,
             },
-            Extent::Blind(7.0),
+            Extent::blind(7.0),
         ),
     );
     let removed = cylinder(9.0, 3.0) + cylinder(4.0, 4.0);
@@ -269,7 +269,7 @@ fn custom_hole() {
 fn tapped_hole_carries_a_cosmetic_thread() {
     let part = drilled(
         plate(&[[20.0, 20.0]]),
-        hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::Blind(8.0)),
+        hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::blind(8.0)),
     );
     let removed = cylinder(5.0, 8.0);
     assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
@@ -307,7 +307,7 @@ fn tapped_hole_carries_a_cosmetic_thread() {
     assert!((thread.length - PLATE[2]).abs() < 1e-9, "{}", thread.length);
 
     // A thread longer than its hole is refused.
-    let mut args = hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::Blind(8.0));
+    let mut args = hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::blind(8.0));
     args.thread_length = Some(9.0);
     let mut program = plate(&[[20.0, 20.0]]);
     program.push("h", PartOperation::Hole(args));
@@ -343,13 +343,13 @@ fn points_picked_one_by_one() {
                 name: "extrude(plate,outline,p2,end)".into(),
             }],
             construction: geop_ops_datums::Construction::Point {
-                x: -10.0,
-                y: -10.0,
-                z: 0.0,
+                x: (-10.0).into(),
+                y: (-10.0).into(),
+                z: 0.0.into(),
             },
         },
     );
-    let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::Blind(3.0));
+    let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
     args.points = vec![
         EntityRef::SketchPoint {
             sketch: "centres".into(),
@@ -501,7 +501,7 @@ fn unsupported_holes_are_refused() {
             points: vec![EntityRef::Sketch {
                 name: "below".into(),
             }],
-            ..hole(HoleKind::Simple, iso("M6", Fit::Normal), Extent::Blind(3.0))
+            ..hole(HoleKind::Simple, iso("M6", Fit::Normal), Extent::blind(3.0))
         },
         "does not lie on face",
     );
@@ -523,7 +523,7 @@ fn unsupported_holes_are_refused() {
                 head_diameter: 0.0,
                 head_depth: 0.0,
             },
-            Extent::Blind(5.0),
+            Extent::blind(5.0),
         ),
         "pick an ISO size",
     );
@@ -532,7 +532,7 @@ fn unsupported_holes_are_refused() {
         hole(
             HoleKind::Counterbore,
             iso("M10", Fit::Normal),
-            Extent::Blind(9.0),
+            Extent::blind(9.0),
         ),
         "head alone takes 10",
     );
@@ -753,7 +753,7 @@ fn every_iso_size_and_kind() {
             if kind == HoleKind::Countersink && size.countersink.is_none() {
                 continue;
             }
-            for end in [Extent::Blind(30.0), Extent::ThroughAll] {
+            for end in [Extent::blind(30.0), Extent::ThroughAll] {
                 let mut program = Program::new();
                 let (w, t) = (100.0, 40.0);
                 sketch_on(
@@ -781,7 +781,7 @@ fn every_iso_size_and_kind() {
                 );
                 program.push(
                     "h",
-                    PartOperation::Hole(hole(kind, iso(size.name, Fit::Normal), end)),
+                    PartOperation::Hole(hole(kind, iso(size.name, Fit::Normal), end.clone())),
                 );
                 let label = format!("{} {kind:?} {end:?}", size.name);
                 match program.build::<S>(&NoFiles) {

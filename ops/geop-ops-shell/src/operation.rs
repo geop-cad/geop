@@ -9,6 +9,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Form, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
@@ -30,8 +31,9 @@ pub struct ShellArgs {
     /// The faces of it to take away, leaving openings.
     #[serde(default)]
     pub faces: Vec<String>,
-    /// How thick the walls are, measured inward from the solid's faces.
-    pub thickness: f64,
+    /// How thick the walls are, measured inward from the solid's faces: a
+    /// number, or a formula of the part's parameters.
+    pub thickness: Formula,
 }
 
 /// The faces a reference field holds, by name.
@@ -51,14 +53,14 @@ impl Operation for Shell {
         ShellArgs {
             solid: before.solid_names().pop().unwrap_or_default(),
             faces: Vec::new(),
-            thickness: 0.1,
+            thickness: Formula::Plain(0.1),
         }
     }
 
     /// The solid and the faces to open it at, picked, and the thickness.
     fn form<'a, S: Scalar>(
         &self,
-        _: Context<'a, S>,
+        context: Context<'a, S>,
         args: &ShellArgs,
         _: &(),
         _: &[String],
@@ -106,9 +108,15 @@ impl Operation for Shell {
             },
         );
         f.optional("faces");
-        f.number(
+        f.formula(
             "thickness",
-            Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0),
+            Number::formula(
+                "thickness",
+                &args.thickness,
+                context.before.inputs(),
+                Unit::Length,
+            )
+            .range(0.0, 1.0),
             |args, t| args.thickness = t,
         );
         f
@@ -130,17 +138,11 @@ impl Operation for Shell {
             .map(|name| part.face_id(name))
             .collect::<GeopResult<Vec<_>>>()
             .with_context(ctx)?;
-        if !args.thickness.is_finite() {
+        let thickness = args.thickness.evaluate(&mut part).with_context(ctx)?;
+        if !thickness.is_finite() {
             return Err(GeopError::new("the thickness is not a number")).with_context(ctx);
         }
-        shell(
-            &mut part,
-            &namer,
-            solid,
-            &faces,
-            S::from_f64(args.thickness),
-        )
-        .with_context(ctx)?;
+        shell(&mut part, &namer, solid, &faces, S::from_f64(thickness)).with_context(ctx)?;
         Ok(part)
     }
 }

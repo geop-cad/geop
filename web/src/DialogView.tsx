@@ -71,6 +71,48 @@ function TextInput({ value, onChange }: { value: string; onChange: (v: string) =
   );
 }
 
+/**
+ * A number that may be given as a formula of the parameters, typed as in
+ * the parameters panel: its text edited in place (Enter applies), with a
+ * slider beside it while the kernel offers one — a plain value — and what
+ * a formula comes to, or why it does not evaluate, while it is one.
+ */
+function FormulaNumber({
+  label,
+  c,
+  send,
+}: {
+  label: string;
+  c: Extract<Control, { type: "number" }>;
+  send: (value: Value) => void;
+}) {
+  const text = c.text ?? "";
+  const formula = text.trim() !== "" && Number.isNaN(Number(text));
+  return (
+    <>
+      <div className="slider-number formula-number">
+        <span className="slider-number-label">{label}</span>
+        {c.range ? (
+          <input
+            type="range"
+            min={c.range[0]}
+            max={c.range[1]}
+            step={c.step}
+            value={c.value}
+            onChange={(e) => send({ type: "number", value: Number(e.target.value) })}
+          />
+        ) : (
+          <span className="hint formula-value">
+            {formula && c.error == null ? `= ${Number(c.value.toFixed(6))}` : ""}
+          </span>
+        )}
+        <TextInput value={text} onChange={(value) => send({ type: "text", value })} />
+      </div>
+      {c.error && <p className="op-error-text">{c.error}</p>}
+    </>
+  );
+}
+
 /** Actions grouped as their `group`s say, in the order the groups first appear. */
 function groups(actions: Action[]): [string | null, Action[]][] {
   const out: [string | null, Action[]][] = [];
@@ -197,6 +239,7 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
         );
       case "number": {
         const label = UNITS[c.unit] ? `${c.label} (${UNITS[c.unit]})` : c.label;
+        if (c.text != null) return <FormulaNumber label={label} c={c} send={send} />;
         return c.range ? (
           <SliderNumber
             label={label}
