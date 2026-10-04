@@ -269,10 +269,7 @@ fn stress(program: Program, size: f64) {
         Outcome::Wrong(why) => wrong.push(format!("{case}: {why}")),
     };
     for edge in &edges {
-        let args = FilletArgs {
-            edges: vec![edge.clone()],
-            radius: size,
-        };
+        let args = FilletArgs::constant(vec![edge.clone()], size);
         record(format!("fillet {edge}"), outcome(&part, Fillet, &args));
         let args = ChamferArgs {
             edges: vec![edge.clone()],

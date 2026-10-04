@@ -410,10 +410,7 @@ fn seeking_back_before_a_fillet() {
     let mut program = editor.program().clone();
     program.push(
         "round",
-        geop_ops_fillet::FilletArgs {
-            edges: vec![rim],
-            radius: 0.1,
-        },
+        geop_ops_fillet::FilletArgs::constant(vec![rim], 0.1),
     );
     let steps = program.steps.len();
     let update = editor.handle(Command::Load {

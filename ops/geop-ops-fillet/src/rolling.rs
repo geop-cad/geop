@@ -947,8 +947,6 @@ pub(crate) struct Rolled<S: Scalar> {
     /// Per link, the ball at its middle: where it must touch its faces
     /// inside them.
     middles: Vec<Station<S>>,
-    /// How far the blend strays from the rolling ball, at most, measured.
-    pub deviation: f64,
 }
 
 /// A homogeneous point's position.
@@ -1090,6 +1088,44 @@ fn contact_checks<S: Scalar>(rolling: &Rolling<S>, k: usize) -> Vec<(S, Vector3<
         .collect()
 }
 
+/// How an open chain's tool ends at a vertex: the vertex, the end, the
+/// third face there and the way out of the chain.
+type ChainEnd<S> = (VertexId, End<S>, FaceId, Vector3<S>);
+
+/// How the tool of `chain`, bending `bend`, ends at the start and the end
+/// of it, if it is open (see [`tool_end`]): decided before anything is
+/// rolled, so that an end that is not supported is refused by name.
+fn chain_ends<S: Scalar>(
+    model: &Model<S>,
+    chain: &Chain,
+    bend: Bend,
+) -> GeopResult<Option<[ChainEnd<S>; 2]>> {
+    if chain.closed {
+        return Ok(None);
+    }
+    let vertices = chain.vertices(model)?;
+    let first_link = &chain.links[0];
+    let last_link = chain.links.last().expect("links");
+    let (_, t0) = first_link.at(model, S::ZERO)?;
+    let (_, t1) = last_link.at(model, S::ONE)?;
+    let mut ends = Vec::new();
+    for (vertex, faces, out) in [
+        (vertices[0], first_link.faces, t0.neg()),
+        (*vertices.last().expect("vertices"), last_link.faces, t1),
+    ] {
+        let ctx = with_context!("the blend's end at vertex {vertex}");
+        let (kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
+        if matches!(kind, End::Mitre { .. }) {
+            return Err(GeopError::new("a rolling-ball blend is not mitred")).with_context(ctx);
+        }
+        ends.push((vertex, kind, face, out));
+    }
+    let [a, b]: [ChainEnd<S>; 2] = ends
+        .try_into()
+        .map_err(|_| GeopError::new("an open chain has two ends"))?;
+    Ok(Some([a, b]))
+}
+
 /// Plans the rolling-ball blend of `chain` with `radii` (see the module
 /// docs): the ball rolled along it, the tool skinned through its stations,
 /// refined until it follows the ball, and its ends decided.
@@ -1119,6 +1155,7 @@ pub(crate) fn plan_rolled<S: Scalar>(
             )));
         }
     }
+    let decided_ends = chain_ends(model, &chain, bend)?;
     let side = bend.side::<S>();
     let smallest = law
         .knots
@@ -1133,7 +1170,7 @@ pub(crate) fn plan_rolled<S: Scalar>(
         let curves = span_curves(&rolling)?;
         let (deviation, worst) = span_deviation(&curves, &rolling.between)?;
         if deviation <= DEVIATION * smallest {
-            return assemble(model, chain, bend, rolling, curves, deviation);
+            return assemble(model, chain, bend, rolling, curves, decided_ends);
         }
         // Doubling the stations of a cubic shrinks its deviation sixteen
         // times over; one that does not even halve is not converging, and
@@ -1216,7 +1253,7 @@ fn assemble<S: Scalar>(
     bend: Bend,
     rolling: Rolling<S>,
     mut curves: [NurbCurve3D<S>; 4],
-    deviation: f64,
+    decided_ends: Option<[ChainEnd<S>; 2]>,
 ) -> GeopResult<Rolled<S>> {
     for k in [0, 2] {
         let pad = curves[k].enclosing_pad(&contact_checks(&rolling, k))?;
@@ -1309,25 +1346,11 @@ fn assemble<S: Scalar>(
     }
 
     let mut ends = None;
-    if !chain.closed {
-        let vertices = chain.vertices(model)?;
-        let first_link = &chain.links[0];
-        let last_link = chain.links.last().expect("links");
-        let (_, t0) = first_link.at(model, S::ZERO)?;
-        let (_, t1) = last_link.at(model, S::ONE)?;
+    if let Some(decided_ends) = decided_ends {
         let mut decided = Vec::new();
-        for (at_end, vertex, faces, out, station) in [
-            (false, vertices[0], first_link.faces, t0.neg(), first),
-            (
-                true,
-                *vertices.last().expect("vertices"),
-                last_link.faces,
-                t1,
-                last_station,
-            ),
-        ] {
+        for (at_end, (vertex, kind, face, out)) in decided_ends.into_iter().enumerate().map(|(i, e)| (i == 1, e)) {
+            let station = if at_end { last_station } else { first };
             let ctx = with_context!("the blend's end at vertex {vertex}");
-            let (kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
             let plane = end_plane(model, station, face, &out).with_context(ctx)?;
             let index = if at_end { stations.len() - 1 } else { 0 };
             let name = if at_end { "end" } else { "start" };
@@ -1423,7 +1446,6 @@ fn assemble<S: Scalar>(
         },
         ends,
         middles,
-        deviation,
     })
 }
 
