@@ -30,9 +30,10 @@ fn assert_valid(part: &Part<S>) {
     }
 }
 
-/// The bracket example builds a valid sheet-metal body of three flats and
-/// two bends, survives a trip through JSON, and its flat pattern — a step
-/// like any other — is a valid flat body with its bend lines.
+/// The bracket example builds a valid sheet-metal body of three flats, two
+/// bends and the holes cut through it after flanging, survives a trip
+/// through JSON, and its flat pattern — a step like any other — is a valid
+/// flat body with its bend lines.
 #[test]
 fn bracket_example_builds_and_unfolds() {
     let mut program = examples::sheet_metal_bracket();
@@ -43,14 +44,15 @@ fn bracket_example_builds_and_unfolds() {
     );
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("edge_flange(back)").unwrap();
+    let sheet = part.body_data::<Sheet<S>>("sheet_cut(mount)").unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
-    assert_eq!(sheet.flats[0].holes.len(), 2);
+    assert_eq!(sheet.cuts.len(), 1);
+    assert_eq!(sheet.cuts[0].loops.len(), 2);
 
     program.push(
         "flat",
         FlatPatternArgs {
-            solid: "edge_flange(back)".into(),
+            solid: "sheet_cut(mount)".into(),
             keep: false,
         },
     );

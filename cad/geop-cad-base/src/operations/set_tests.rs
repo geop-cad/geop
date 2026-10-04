@@ -54,7 +54,9 @@ fn every_operation_is_offered() {
             "part_pattern",
             "route",
             "drawing",
-            "import_step"
+            "import_step",
+            "sheet_cut",
+            "hem"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

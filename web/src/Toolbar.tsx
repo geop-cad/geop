@@ -17,6 +17,8 @@ interface Props {
   onExportUrdf: () => void;
   /** Write the part shown as a STEP file and save it. */
   onExportStep: () => void;
+  /** Write the flat pattern of the newest sheet-metal body as a DXF file for laser cutting. */
+  onExportFlatPattern: () => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
@@ -63,6 +65,7 @@ export function Toolbar({
   onExportDrawing,
   onExportUrdf,
   onExportStep,
+  onExportFlatPattern,
   onLoadFile,
   exampleNames,
   onLoadExample,
@@ -110,6 +113,16 @@ export function Toolbar({
       icon: "drawing",
       disabled: !hasSteps,
       onSelect: () => onExportDrawing("dxf"),
+    },
+    { kind: "separator" },
+    { kind: "heading", label: "Sheet metal" },
+    {
+      kind: "item",
+      label: "Export flat pattern as DXF",
+      icon: "flat_pattern",
+      hint: "for laser cutting",
+      disabled: !hasSteps,
+      onSelect: onExportFlatPattern,
     },
     { kind: "separator" },
     { kind: "heading", label: "Robot" },

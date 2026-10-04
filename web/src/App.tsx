@@ -409,6 +409,16 @@ function App() {
     trackFile("saved");
   }
 
+  /** Write the flat pattern of the newest sheet-metal body as a DXF file for laser cutting, and save it. */
+  async function exportFlatPattern() {
+    const update = await dispatch({ command: "export_flat_pattern" });
+    const file = update?.export;
+    if (file?.text == null) return;
+    if (host) host.saveFile(file);
+    else download(file.name, file.text, "application/dxf");
+    trackFile("saved");
+  }
+
   /** Export the assembly as a URDF robot, a ZIP archive, and save it. */
   async function exportUrdf() {
     const update = await dispatch({ command: "export_urdf" });
@@ -626,6 +636,7 @@ function App() {
         onExportDrawing={(format) => void exportDrawing(format)}
         onExportUrdf={() => void exportUrdf()}
         onExportStep={() => void exportStep()}
+        onExportFlatPattern={() => void exportFlatPattern()}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}

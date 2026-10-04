@@ -121,6 +121,8 @@ impl Operation for SheetCut {
                 }
             },
         );
+        // The face the sketch lies on, unless one is picked.
+        f.optional("face");
         f
     }
 

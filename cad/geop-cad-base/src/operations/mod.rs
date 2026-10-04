@@ -35,7 +35,8 @@ use geop_ops_pattern::{
 };
 use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
 use geop_ops_sheetmetal::{
-    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs,
+    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs, Hem,
+    HemArgs, SheetCut, SheetCutArgs,
 };
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
@@ -206,6 +207,7 @@ pub enum PartOperation {
     /// Bend a flange up from a straight edge of a sheet-metal body.
     #[operation(label = "Edge flange")]
     EdgeFlange(EdgeFlangeArgs),
+    /// Unfold a sheet-metal body into its flat pattern.
     #[operation(label = "Flat pattern")]
     FlatPattern(FlatPatternArgs),
     /// Cut the groove that takes a lip into the rim of the other half.
@@ -227,10 +229,15 @@ pub enum PartOperation {
     /// Describe a 2-D drawing of the part — views with hidden lines, a
     /// section, dimensions and a title block — to export as SVG or DXF.
     Drawing(DrawingArgs),
-    /// Unfold a sheet-metal body into its flat pattern.
     /// Add the solids and sheets of a STEP file next to the program.
     #[operation(label = "Import STEP")]
     ImportStep(ImportStepArgs),
+    /// Cut holes and notches through a sheet-metal body along a sketch,
+    /// across its bends as they lie unrolled.
+    #[operation(label = "Sheet-metal cut")]
+    SheetCut(SheetCutArgs),
+    /// Fold an edge of a sheet-metal body right back over it.
+    Hem(HemArgs),
 }
 
 /// A program of the editor's operations.

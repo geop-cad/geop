@@ -17,5 +17,6 @@ geop-ops-step.workspace = true
 geop-ops-drawing.workspace = true
 geop-ops-urdf.workspace = true
 geop-ops-bom.workspace = true
+geop-ops-sheetmetal.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
