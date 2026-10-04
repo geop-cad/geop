@@ -16,7 +16,10 @@ a failure. Intersecting two disjoint solids, or subtracting a solid that
 contains the first one, legitimately leaves nothing.
 
 The work is split in two. `remesh` does the hard part, and `boolean` is
-simple *because* of it.
+simple *because* of it. Remesh takes any two *bodies* — solids, or sheets of
+faces standing on their own — since imprinting asks nothing of a body but
+its faces, edges and vertices; that is what lets `split` cut a solid with a
+sheet.
 
 ## Remesh
 
@@ -94,6 +97,35 @@ classification followed by a lookup table:
 The containment queries use a fixed seed, so a boolean is reproducible from
 run to run.
 
+## Up to next
+
+`boolean_up_to_next` combines only part of its second solid, a tool, with
+the first, a target. The target's boundary cuts the tool into pieces,
+alternately outside and inside the target; the piece kept is the first of
+the kind the operator wants that the tool's start face reaches — outside
+for a union, inside for a difference or an intersection. After remesh, the
+faces bounding the pieces (tool faces, and both sides of each target face
+inside the tool) fall into connected sets, one per piece, and a target face
+between two pieces makes them neighbours. A piece that also reaches the
+tool's end face was stopped by nothing, which is an error.
+
+`trim_up_to_next` does the same for a sheet: it imprints a copy of the
+target onto it, so the target itself is left as it is, and keeps the
+connected piece of the sheet its start edges lie on.
+
+## Split
+
+`split` cuts a solid into pieces with a sheet. A copy of the sheet is
+imprinted onto the solid; its faces inside the solid are the cuts, each a
+face of two pieces — as it is on the side its normal points away from,
+turned around on the other. Which face of the solid is on which side of a
+cut is topological: of the two faces along an edge where the sheet crossed
+the solid's boundary, the one running the edge the other way than the cut
+does. So the pieces are the connected sets of face sides, each built as a
+solid of its own (`Part::build_body`), sharing nothing. A sheet ending inside
+the solid, or one the solid stays connected around, splits nothing and is an
+error.
+
 ## Naming
 
 Everything a boolean creates is named after what it was made from, in terms
@@ -125,6 +157,10 @@ One failing scene is logged and rendered as far as it got, so it never hides
 the others.
 
 ## The operations
+
+`Split` cuts a solid with a face standing on its own — and the rest of its
+sheet — into pieces named `split(S,0)`, `split(S,1)`, ..., leaving the face
+as it was.
 
 `Boolean` is the operation a program uses (see
 [geop-ops](./geop-ops.md#operations)) to unite, intersect or subtract two

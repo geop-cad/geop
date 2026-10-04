@@ -27,6 +27,7 @@ mod sketch;
 mod state;
 
 pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
+pub use edit::BodyNames;
 pub use ids::{DatumId, InstanceId, RefId, SketchId};
 pub use instance::{Component, Instance};
 pub use names::{NameRegistry, Namer, validate_operation_id};

@@ -354,12 +354,40 @@ pub fn shell_contains<S: Scalar>(
     )))
 }
 
+/// Classify `point` against the solid `solid_id`: on its boundary if on any
+/// of its shells', else inside exactly when inside an odd number of them —
+/// inside the outer shell and no void, say — for the shells of one solid
+/// never cross. Asking each shell alone would put a point in a void inside
+/// the solid. Arguments as for [`shell_contains`].
+pub fn solid_contains<S: Scalar>(
+    model: &Model<S>,
+    solid_id: crate::SolidId,
+    point: Vector3<S>,
+    max_nodes: usize,
+    epsilon: S,
+    seed: u64,
+) -> GeopResult<PointClassification> {
+    let mut inside = false;
+    for &shell_id in &model.get_solid(solid_id)?.shells {
+        match shell_contains(model, shell_id, point, max_nodes, epsilon, seed)? {
+            PointClassification::Inside => inside = !inside,
+            PointClassification::Outside => {}
+            on => return Ok(on),
+        }
+    }
+    Ok(if inside {
+        PointClassification::Inside
+    } else {
+        PointClassification::Outside
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PointClassification, shell_contains};
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, FaceId, Model, Sense, Shell, ShellId,
-        SolidId, Vertex, VertexId, boundary::BoundaryType,
+        Vertex, VertexId, boundary::BoundaryType,
     };
     use geop_core_geometry::{
         nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D},
@@ -469,7 +497,7 @@ mod tests {
     fn unit_cube<S: Scalar>(model: &mut Model<S>) -> ShellId {
         let shell_id = model.insert_shell(Shell {
             faces: vec![],
-            solid: SolidId(999),
+            solid: None,
         });
         let faces = vec![
             quad_face(

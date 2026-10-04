@@ -12,7 +12,7 @@ pub mod profile;
 pub mod sketch;
 pub mod solve;
 
-pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region};
+pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region, Shape};
 pub use sketch::{
     Constraint, ConstraintId, Curve, CurveId, CurveKind, Enclosure, Point, PointId, Positions,
     Sketch, SplineShape,

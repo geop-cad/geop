@@ -122,7 +122,10 @@ sweep tells a major arc from the minor arc with the same curvature
 
 ## Profiles
 
-`Sketch::regions` turns a solved sketch into `Region`s: a counter-clockwise
+`Sketch::region` turns a solved sketch into its one `Region` — a sketch is
+one area to sweep, and one of several separate areas is an error — and
+`Sketch::shape` into that, or, if its curves enclose nothing, the one open
+chain they form. `Sketch::regions` finds every `Region`: a counter-clockwise
 outer `ProfileLoop` and its clockwise holes. `ProfileLoop::to_nurbs` turns a
 loop into `ProfilePiece`s, 2-D NURBS curves that extrude and revolve consume,
 each recording which sketch curve it came from so that the faces built from

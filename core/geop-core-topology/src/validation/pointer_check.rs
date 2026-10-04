@@ -103,10 +103,12 @@ pub fn check_pointers<S: Scalar>(
                 )));
             }
         }
-        if !model.solids.contains_key(&shell.solid) {
+        if let Some(solid) = shell.solid
+            && !model.solids.contains_key(&solid)
+        {
             errors.push(GeopError::new(format!(
                 "shell references solid {} which does not exist",
-                shell.solid.0
+                solid.0
             )));
         }
     }
@@ -163,7 +165,7 @@ mod tests {
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
         model.faces.get_mut(&face_id).unwrap().shell = crate::ShellId(9999);
-        model.shells.get_mut(&shell_id).unwrap().solid = crate::SolidId(9999);
+        model.shells.get_mut(&shell_id).unwrap().solid = Some(crate::SolidId(9999));
         let mut errors = Vec::new();
         check_pointers(&ValidationParameters::default(), &mut errors, &model);
         assert_eq!(errors.len(), 2);

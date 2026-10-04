@@ -7,4 +7,5 @@ pub mod matrix;
 pub mod polygon;
 pub mod primitives;
 pub mod scalars;
+pub mod union_find;
 pub mod vector;

@@ -23,8 +23,70 @@ mod two_way_references;
 pub use manifold_check::validate_manifold;
 pub use parameters::ValidationParameters;
 
-use crate::Model;
+use std::collections::{BTreeMap, HashMap};
+
+use crate::{Body, CoedgeGeometry, EdgeId, FaceId, Model, VertexId};
 use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+
+/// The vertices, edges and faces of one body (see [`body_groups`]).
+#[derive(Default)]
+pub(crate) struct BodyGroup {
+    pub vertices: Vec<VertexId>,
+    pub edges: Vec<EdgeId>,
+    pub faces: Vec<FaceId>,
+}
+
+/// The model's entities, grouped by the body they belong to — what must not
+/// overlap, or cross without sharing a vertex, is the entities of one body:
+/// separate bodies may touch, or overlap, as they please (the two halves of
+/// a split, a new body extruded into another). An entity of no body — of a
+/// face whose shell is not there, as in a model still being put together —
+/// is in a group of its own with all others like it.
+pub(crate) fn body_groups<S: Scalar>(model: &Model<S>) -> Vec<BodyGroup> {
+    let body_of_face = |face: FaceId| model.body_of_face(face).ok();
+    let body_of_coedge = |c: &crate::Coedge<S>| body_of_face(c.face);
+    let mut edge_body: HashMap<EdgeId, Option<Body>> = HashMap::new();
+    let mut vertex_body: HashMap<VertexId, Option<Body>> = HashMap::new();
+    for coedge in model.coedges.values() {
+        let body = body_of_coedge(coedge);
+        match coedge.geometry {
+            CoedgeGeometry::Edge(e) => {
+                edge_body.entry(e).or_insert(body);
+            }
+            CoedgeGeometry::Vertex(v) => {
+                vertex_body.entry(v).or_insert(body);
+            }
+        }
+    }
+    for (&id, edge) in &model.edges {
+        let body = edge_body.get(&id).copied().flatten();
+        for v in [edge.start_vertex, edge.end_vertex] {
+            vertex_body.entry(v).or_insert(body);
+        }
+    }
+    let key = |body: Option<Body>| match body {
+        None => (0, 0),
+        Some(Body::Solid(s)) => (1, s.0),
+        Some(Body::Sheet(s)) => (2, s.0),
+    };
+    let mut groups: BTreeMap<(u8, u64), BodyGroup> = BTreeMap::new();
+    for &id in model.vertices.keys() {
+        let body = vertex_body.get(&id).copied().flatten();
+        groups.entry(key(body)).or_default().vertices.push(id);
+    }
+    for &id in model.edges.keys() {
+        let body = edge_body.get(&id).copied().flatten();
+        groups.entry(key(body)).or_default().edges.push(id);
+    }
+    for &id in model.faces.keys() {
+        groups
+            .entry(key(body_of_face(id)))
+            .or_default()
+            .faces
+            .push(id);
+    }
+    groups.into_values().collect()
+}
 
 pub fn validate<S: Scalar>(
     params: &ValidationParameters<S>,

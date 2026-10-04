@@ -189,11 +189,14 @@ pub enum StructureKind {
     Datum,
     Sketch,
     Solid,
+    /// A face standing on its own, of no solid.
+    Face,
     Part,
     Mate,
 }
 
-/// A datum, sketch, solid, placed part or mate of the part drawn, by name:
+/// A datum, sketch, solid, face standing on its own, placed part or mate of
+/// the part drawn, by name:
 /// whether it is shown, if it is something drawn at all — what
 /// [`Command::Visibility`] switches.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1122,6 +1125,7 @@ impl<S: Scalar> Editor<S> {
                 EntityRef::datum(name.clone()),
                 EntityRef::Sketch { name: name.clone() },
                 EntityRef::Solid { name: name.clone() },
+                EntityRef::Face { name: name.clone() },
             ];
             if visible || wanted.iter().any(pickable) {
                 hidden.retain(|h| h != name);
@@ -1132,9 +1136,10 @@ impl<S: Scalar> Editor<S> {
         hidden
     }
 
-    /// What the part `steps` steps build has beyond its faces: its datums,
-    /// sketches, solids, the parts placed in it and their mates — each
-    /// shown or not as `hidden` says, but a mate, which is never drawn.
+    /// What the part `steps` steps build has beyond the faces of its solids:
+    /// its datums, sketches, solids, faces standing on their own, the parts
+    /// placed in it and their mates — each shown or not as `hidden` says,
+    /// but a mate, which is never drawn.
     fn structure(&self, steps: usize, hidden: &[String]) -> Vec<StructureItem> {
         let part = self.runner.part_at(steps);
         let item = |kind, name: &str| StructureItem {
@@ -1156,6 +1161,11 @@ impl<S: Scalar> Editor<S> {
             part.solid_names()
                 .iter()
                 .map(|n| item(StructureKind::Solid, n)),
+        );
+        items.extend(
+            part.sheet_face_names()
+                .iter()
+                .map(|n| item(StructureKind::Face, n)),
         );
         items.extend(
             part.instances()

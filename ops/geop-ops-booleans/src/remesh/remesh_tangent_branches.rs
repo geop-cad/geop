@@ -33,7 +33,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_topology::{EdgeId, FaceId, Model, Sense, SolidId, VertexId};
+use geop_core_topology::{Body, EdgeId, FaceId, Model, Sense, VertexId};
 use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
@@ -297,20 +297,20 @@ fn branch_can_leave<S: Scalar>(
 #[allow(clippy::type_complexity)]
 fn find_tangent_branch<S: Scalar>(
     model: &Model<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Option<(EdgeId, S, Option<VertexId>, Vector3<S>, FaceId)>> {
-    for edge_id in model.iter_solid_edges(edge_solid)? {
+    for edge_id in model.iter_body_edges(edge_solid)? {
         let edge = model.get_edge(edge_id)?;
         let bounded: Vec<FaceId> = model
             .coedges_of_edge(edge_id)
             .into_iter()
             .map(|coedge| model.get_coedge(coedge).map(|c| c.face))
             .collect::<GeopResult<_>>()?;
-        for face_id in model.solid_faces(face_solid)? {
+        for face_id in model.body_faces(face_solid)? {
             let pair_ctx = |e: GeopError| e.with_context(format!("edge={edge_id}, face={face_id}"));
             let surf_f = &model.get_face(face_id)?.surface;
             let on_face = curve_surface_intersect(
@@ -375,8 +375,8 @@ fn find_tangent_branch<S: Scalar>(
 pub fn remesh_tangent_branches<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,

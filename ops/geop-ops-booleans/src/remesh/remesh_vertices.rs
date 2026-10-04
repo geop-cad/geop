@@ -2,12 +2,12 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_core_topology::{Model, SolidId, VertexId};
+use geop_core_topology::{Body, Model, VertexId};
 use geop_ops::Part;
 
 /// The first `(vertex_a, vertex_b)` pair — `vertex_a` from `solid_a`,
 /// `vertex_b` from `solid_b`, distinct ids — whose points coincide, if any.
-/// Split out from `remesh_vertices` because `iter_solid_vertices` borrows
+/// Split out from `remesh_vertices` because `iter_body_vertices` borrows
 /// `model`: this search and any resulting `merge_vertex` call can't
 /// interleave (the borrow checker won't allow a `&mut self` call while the
 /// iterators from this function are still live), so the search has to run
@@ -15,8 +15,8 @@ use geop_ops::Part;
 /// to mutate.
 fn find_coincident_vertex_pair<S: Scalar>(
     model: &Model<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
 ) -> GeopResult<Option<(VertexId, VertexId)>> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
@@ -24,8 +24,8 @@ fn find_coincident_vertex_pair<S: Scalar>(
         ))
     };
 
-    for vertex_a in model.iter_solid_vertices(solid_a).with_context(&ctx)? {
-        for vertex_b in model.iter_solid_vertices(solid_b).with_context(&ctx)? {
+    for vertex_a in model.iter_body_vertices(solid_a).with_context(&ctx)? {
+        for vertex_b in model.iter_body_vertices(solid_b).with_context(&ctx)? {
             if vertex_b == vertex_a {
                 continue;
             }
@@ -46,8 +46,8 @@ fn find_coincident_vertex_pair<S: Scalar>(
 /// with. Creates nothing, so needs no names: each survivor keeps its own.
 pub fn remesh_vertices<S: Scalar>(
     part: &mut Part<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
         e.with_context(format!(

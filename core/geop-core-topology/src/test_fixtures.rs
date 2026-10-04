@@ -45,7 +45,7 @@ pub fn test_cube_solid<S: Scalar>(model: &mut Model<S>) -> SolidId {
 
     let shell_id = model.insert_shell(Shell {
         faces: Vec::new(),
-        solid: SolidId(0), // patched once the solid itself exists, below.
+        solid: None, // patched once the solid itself exists, below.
     });
 
     // Each face names its own boundary loop's corners in `(0,0) -> (1,0) ->
@@ -63,7 +63,7 @@ pub fn test_cube_solid<S: Scalar>(model: &mut Model<S>) -> SolidId {
     let solid_id = model.insert_solid(Solid {
         shells: vec![shell_id],
     });
-    model.shells.get_mut(&shell_id).unwrap().solid = solid_id;
+    model.shells.get_mut(&shell_id).unwrap().solid = Some(solid_id);
     solid_id
 }
 

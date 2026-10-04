@@ -1,10 +1,33 @@
 # Agent rules for this repo
 
-This project is a new CAD kernel. It's self contained, and backwards compatibility is not important. The code is written in Rust, and the goal is to be correct, robust, simple, and maintainable. For every change, ask how this fits nicely into the overall design, and whether it makes the code easier to understand and maintain. If it doesn't, consider a different approach. New helper functions need to be added in the correct place. If it makes sense to rename a method, unify some arguments, or change a type, do so, even if it break backwards compatibility. The goal is to have a clean, simple, and correct codebase, not to maintain a stable API.
+This project is a new CAD kernel. It's self contained, and backwards compatibility is not important. The code is written in Rust, and the goal is to be correct, robust, simple, and maintainable. For every change, ask how this fits nicely into the overall design, and whether it makes the code easier to understand and maintain. If it doesn't, consider a different approach. New helper functions need to be added in the correct place. If it makes sense to rename a method, unify some arguments, or change a type, do so, even if it break backwards compatibility. The goal is to have a clean, simple, and correct codebase, not to maintain a stable API. The same holds for saved files: when a format change breaks old `.geop` files, delete them rather than adding a compatibility reader, and keep the schema simple and consistent. For the same reason, never commit `.geop` files as test fixtures — rebuild a user's reproducing file in Rust instead (see `cad/geop-cad-base/src/operations/regression_tests.rs`), and confirm the Rust version still fails without the fix.
 
 Do not introduce new helper function for a single use case or because another function is violating its abstraction or intention. Instead, fix the existing function to work as expected.
 
 Think logical. If the code makes sense from a logical perspective, but doesn't work as intended, fix the underlying logical issue instead of just patching the symptom.
+
+## Cap every run's memory and time
+
+Every program you start — a test, the CLI, a scratch run — runs with a
+memory cap and a timeout, e.g.
+`timeout 600 prlimit --as=16000000000 cargo test ...` or
+`timeout 120 prlimit --as=6000000000 target/release/geop compile ...`.
+A geometric search or triangulation that runs away does not stop on its
+own: it grows until the machine runs out of memory, and takes everything
+else on it down with it. A capped run fails fast instead, with
+"memory allocation failed" or a timeout, which is itself a finding — then
+find out where it ran away (run it under `gdb` and interrupt it) rather
+than raising the cap.
+
+The runaway is often far from where the failure was reported. A revolve
+that "crashed the boolean" was in fact the rasterizer: clipping a concave
+hole of many corners split it into exponentially many pieces
+(`subtract_convex` kept degenerate leftovers). Only interrupting the
+capped run showed where it was.
+
+When you need a process id, take it from the process you started (`$!`),
+never by matching names: `pgrep geop` also finds the user's own editor and
+servers.
 
 ## Debugging: use `with_context`, never `eprintln!`/temporary code
 
@@ -87,6 +110,52 @@ pressure — but say so explicitly, and prefer spending the extra time to
 find the root cause over shipping a trim/pad/seed that merely relocates
 where the bug shows up next.
 
+## Name the entities before you name the cause
+
+"Near-tangent crossing", "imprecise near a shared vertex": an explanation
+like this sounds plausible, cannot be checked, and is often wrong. Before
+you state why something failed, identify the exact entities at the failing
+vertex or edge by name (`assert_builds_valid` in the
+regression tests resolves the ids in validation errors to names via
+`names_mentioned`), and check the explanation against them.
+
+From one real session: a revolve cut "up to next" failed with a vertex too
+wide to validate, and was explained to the user as a near-tangency. The user
+looked at the scene: there was none. Naming the vertex showed it was where
+the drilled hole's rim crossed the revolve's *end face*, and the end face
+was there because the operation's own fallback had stopped the tool flat at
+the first point of contact, which was an existing corner. The bug was a
+logic error in our own code, not numerics.
+
+So ask first whether something our code *chose* (a stop position, a cap,
+a split point) put the entities there. Blame numerics only after that is
+ruled out, and do not present an explanation as fact until it is traced to
+specific entities.
+
+### Never place a cut on a corner that already exists
+
+That case generalizes. When an operation chooses where a new face goes, a
+choice that lands it exactly on an existing vertex or edge of the other body
+asks the boolean to cross an edge at its own end point, a degenerate
+configuration no enclosure stays tight through. Choose positions the
+geometry actually defines instead. For up to next, that means going up to
+the next face from where the tool enters the target, or all the way round
+or through all if part of it never meets the target again, rather than
+stopping flat at a sampled contact point.
+
+## Construction code is sensitive at the last bit
+
+Shapes feed booleans, and booleans at tangent contacts depend on interval
+widths down to the last ULP. Rewriting extrude/revolve as one sweep builder
+broke six "inscribed cylinder" boolean tests with identical geometry: every
+station row was multiplied by an exact weight of 1, and the outward rounding
+widened every control point. Skipping that multiplication fixed all six.
+
+- Never multiply or add by exact constants needlessly in construction code.
+- When you change how a shape is built, diff old and new models entity by
+  entity (build both from a `git worktree` of HEAD outside the repo),
+  comparing interval bounds, not just midpoints.
+
 ## Combine two enclosures of the same value with `union`, never an average
 
 When two independent computations each produce an enclosure of the *same*
@@ -108,6 +177,12 @@ still a valid enclosure and is tighter than either — there, keeping less
 width is justified, because both bounds genuinely hold simultaneously.
 Union when you must cover both possibilities, intersect when both
 constraints must hold at once, average never.
+
+Example: `splice_edge_into_face` pins each end of a new loop to the
+arriving end's `(u, v)` *intersected* with the vertex's projection onto the
+surface. Using the end alone let `interpolate_enclosing`'s width spread
+around the loop until a face split came out degenerate. Both values enclose
+the same point, so their intersection is honest and tighter.
 
 ## Sharpen only where the value is a free choice, never where it is an answer
 

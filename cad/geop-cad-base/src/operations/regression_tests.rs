@@ -11,7 +11,7 @@ use geop_core_topology::{
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, RevolveArgs};
 use geop_ops_rasterize::face_triangles_uv;
 use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch::{Constraint, Sketch};
@@ -26,13 +26,51 @@ fn assert_builds_valid(program: &Program) {
     let part = program.build::<S>(&NoFiles).unwrap();
     if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
+        let all = messages.join("\n");
         panic!(
-            "{} validation error(s):\n{}",
+            "{} validation error(s):\n{all}\nwhere {}",
             messages.len(),
-            messages.join("\n")
+            names_mentioned(&part, &all).join(", ")
         );
     }
     assert_draws_its_trims(&part);
+}
+
+/// The names of the vertices, edges and faces of `part` that `text` — a
+/// validation report, which knows only ids — mentions, as `id = name`.
+fn names_mentioned(part: &Part<S>, text: &str) -> Vec<String> {
+    let model = part.topology();
+    let mentioned = |forms: [String; 3]| forms.iter().any(|f| text.contains(f.as_str()));
+    let mut names = Vec::new();
+    for &id in model.vertices.keys() {
+        if mentioned([
+            format!("{id}"),
+            format!("vertex {} ", id.0),
+            format!("vertex {}'", id.0),
+        ]) {
+            names.push(format!("{id} = {}", part.name_of(id).unwrap_or("?")));
+        }
+    }
+    for &id in model.edges.keys() {
+        if mentioned([
+            format!("{id}"),
+            format!("edge {} ", id.0),
+            format!("edge {}'", id.0),
+        ]) {
+            names.push(format!("{id} = {}", part.name_of(id).unwrap_or("?")));
+        }
+    }
+    for &id in model.faces.keys() {
+        if mentioned([
+            format!("{id}"),
+            format!("face {} ", id.0),
+            format!("face {},", id.0),
+        ]) {
+            names.push(format!("{id} = {}", part.name_of(id).unwrap_or("?")));
+        }
+    }
+    names.sort();
+    names
 }
 
 /// Twice the signed area of a closed polygon.
@@ -153,8 +191,8 @@ fn cylinder_joined_over_a_hole() {
         "extrude1",
         ExtrudeArgs {
             sketch: "sketch1".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -187,8 +225,8 @@ fn cylinder_joined_over_a_hole() {
         "extrude2",
         ExtrudeArgs {
             sketch: "sketch2".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::Union {
                 target: "extrude(extrude1)".into(),
             },
@@ -239,6 +277,8 @@ fn outline_revolved_around_its_edge_joined_to_its_box() {
                 sketch: "outline".into(),
                 curve: right,
             }),
+            extent: Extents::blind(360.0),
+            face: false,
             combine: Combine::Union {
                 target: "extrude(hole)".into(),
             },
@@ -314,6 +354,8 @@ fn spline_revolved_then_extruded_and_joined() {
                 sketch: "sketch1".into(),
                 curve: axis,
             }),
+            extent: Extents::blind(360.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -321,8 +363,8 @@ fn spline_revolved_then_extruded_and_joined() {
         "extrude1",
         ExtrudeArgs {
             sketch: "sketch1".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::Union {
                 target: "revolve(revolve1)".into(),
             },
@@ -371,8 +413,8 @@ fn ring_revolved_onto_plate() {
         "extrude1",
         ExtrudeArgs {
             sketch: "sketch1".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -417,10 +459,285 @@ fn ring_revolved_onto_plate() {
                 sketch: "sketch2".into(),
                 curve: axis,
             }),
+            extent: Extents::blind(360.0),
+            face: false,
             combine: Combine::Union {
                 target: "extrude(extrude1)".into(),
             },
         },
     );
     assert_builds_valid(&program);
+}
+
+/// The frame axes every sketch drawn in the editor starts with: fixed
+/// construction lines from its origin along `x` and `y`. Returns the `x`
+/// line.
+fn frame_axes(sketch: &mut Sketch) -> geop_core_sketch::CurveId {
+    let origin = sketch.add_fixed_point(n(0.0), n(0.0));
+    let x = sketch.add_fixed_point(n(1.0), n(0.0));
+    let y = sketch.add_fixed_point(n(0.0), n(1.0));
+    let x_axis = sketch.add_line(origin, x);
+    let y_axis = sketch.add_line(origin, y);
+    for line in [x_axis, y_axis] {
+        sketch.set_construction(line, true);
+    }
+    x_axis
+}
+
+/// The two brackets of `bracket_with_torus`: their outlines' lower-left
+/// corners, which differ, and where the ring's sketch puts its line.
+struct Bracket {
+    corners: [(f64, f64); 4],
+    line: (f64, f64, f64),
+}
+
+/// The first bracket: a torus around its line turns a half turn out of the
+/// bracket, partly lands on its slanted arm, and partly passes on.
+const PARTLY_STOPPED: Bracket = Bracket {
+    corners: [
+        (-1.643567, -2.654248),
+        (-2.560606, 1.310979),
+        (-3.335569, 1.033284),
+        (-2.231247, -3.816692),
+    ],
+    line: (-1.050451, 1.550927, 0.42898),
+};
+
+/// The second: the arm is wide enough to stop the torus all round after a
+/// half turn.
+const FULLY_STOPPED: Bracket = Bracket {
+    corners: [
+        (-1.367377992154214, -2.470121649185356),
+        (-2.2844172960685256, 1.4951046367539953),
+        (-3.5606118527937647, 0.9514499643977747),
+        (-2.456289874136388, -3.898525509120877),
+    ],
+    line: (-1.306181007097579, 1.7657405500456889, 0.6437934059762662),
+};
+
+/// A bracket-like outline extruded both ways from the X plane, a round hole
+/// cut into it up to next from a plane through two of its edges, and a
+/// circle drawn on its start face revolved into a torus and joined to it —
+/// around the sketch's own `x` axis, which lies in that face, or around a
+/// line of the sketch beside the circle. The torus around the `x` axis
+/// meets the face exactly along two of its own meridians.
+///
+/// Around the `x` axis, remesh traced an intersection curve along a
+/// meridian already lying in the face and failed to splice it ("degenerate
+/// split"); around the line, the boolean worked, but drawing the result ran
+/// out of memory (see `a_concave_hole_of_many_corners_stays_cheap` in
+/// `geop-ops-rasterize`).
+fn bracket_with_torus(
+    bracket: &Bracket,
+    around_x_axis: bool,
+    extent: Extents,
+    combine: Combine,
+) -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    frame_axes(&mut outline);
+    let [c0, c1, c2, c3] = bracket.corners;
+    let p = [
+        (1.798277, -1.687521),
+        (1.798277, -0.759183),
+        (-0.465176, -0.759183),
+        (-0.465176, 1.860703),
+        (-1.351225, 1.860703),
+        (-0.674863, -2.137606),
+        c0,
+        c1,
+        c2,
+        c3,
+        (-1.131652, -3.164469),
+    ]
+    .map(|(x, y)| outline.add_point(n(x), n(y)));
+    let lines: Vec<_> = (0..p.len())
+        .map(|i| outline.add_line(p[i], p[(i + 1) % p.len()]))
+        .collect();
+    outline.constrain(Constraint::Vertical { line: lines[0] });
+    outline.constrain(Constraint::Horizontal { line: lines[1] });
+    outline.constrain(Constraint::Vertical { line: lines[2] });
+    outline.constrain(Constraint::Horizontal { line: lines[3] });
+    program.push(
+        "sketch1",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::X),
+            )),
+            sketch: outline,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "extrude1",
+        ExtrudeArgs {
+            sketch: "sketch1".into(),
+            extent: Extents {
+                side2: Some(geop_ops_extrude_revolve::Extent::Blind(1.0)),
+                ..Extents::blind(1.0)
+            },
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    // The edges swept by the outline's second and fourth corners.
+    let edge = |k: usize| EntityRef::Edge {
+        name: format!("extrude(extrude1,sketch1,{})", p[k]),
+    };
+    program.push(
+        "reference1",
+        AddDatumArgs {
+            selection: vec![edge(1), edge(3)],
+            construction: Construction::TwoLines {},
+        },
+    );
+    let mut hole = Sketch::new();
+    frame_axes(&mut hole);
+    let center = hole.add_point(n(1.03222), n(1.727961));
+    hole.add_circle(center, n(0.3591930147933918));
+    program.push(
+        "sketch2",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum("reference1")),
+            sketch: hole,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "extrude2",
+        ExtrudeArgs {
+            sketch: "sketch2".into(),
+            extent: Extents {
+                side1: geop_ops_extrude_revolve::Extent::UpToNext,
+                ..Extents::blind(1.0)
+            },
+            face: false,
+            combine: Combine::Difference {
+                target: "extrude(extrude1)".into(),
+            },
+        },
+    );
+    let mut ring = Sketch::new();
+    let x_axis = frame_axes(&mut ring);
+    let (x, y0, y1) = bracket.line;
+    let (a, b) = (ring.add_point(n(x), n(y0)), ring.add_point(n(x), n(y1)));
+    let line = ring.add_line(a, b);
+    ring.constrain(Constraint::Vertical { line });
+    let center = ring.add_point(n(-0.275127), n(1.238878));
+    ring.add_circle(center, n(0.39413315729396897));
+    program.push(
+        "sketch3",
+        AddSketchArgs {
+            plane: Some(EntityRef::Face {
+                name: "extrude(extrude1,start)".into(),
+            }),
+            sketch: ring,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: "sketch3".into(),
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "sketch3".into(),
+                curve: if around_x_axis { x_axis } else { line },
+            }),
+            extent,
+            face: false,
+            combine,
+        },
+    );
+    program
+}
+
+/// Joined to the bracket.
+fn joined() -> Combine {
+    Combine::Union {
+        target: "extrude(extrude2)".into(),
+    }
+}
+
+#[test]
+fn torus_around_a_line_beside_it_joined_to_a_bracket() {
+    assert_builds_valid(&bracket_with_torus(
+        &PARTLY_STOPPED,
+        false,
+        Extents::blind(360.0),
+        joined(),
+    ));
+}
+
+#[test]
+fn torus_around_an_axis_in_its_face_joined_to_a_bracket() {
+    assert_builds_valid(&bracket_with_torus(
+        &PARTLY_STOPPED,
+        true,
+        Extents::blind(360.0),
+        joined(),
+    ));
+}
+
+/// The torus turned up to the next face of the bracket, `reversed` or not,
+/// around `around_x_axis` or its line.
+fn torus_turned_up_to_next(
+    bracket: &Bracket,
+    around_x_axis: bool,
+    reversed: bool,
+    combine: Combine,
+) -> Program {
+    let extent = Extents {
+        side1: geop_ops_extrude_revolve::Extent::UpToNext,
+        reversed,
+        ..Extents::blind(1.0)
+    };
+    bracket_with_torus(bracket, around_x_axis, extent, combine)
+}
+
+/// The torus turned up to the next face of the bracket, either way, around
+/// `around_x_axis` or its line, combined every way: a new body, joined,
+/// cut, intersected.
+fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool) {
+    let target = || "extrude(extrude2)".to_string();
+    for reversed in [false, true] {
+        for combine in [
+            Combine::NewBody,
+            Combine::Union { target: target() },
+            Combine::Difference { target: target() },
+            Combine::Intersection { target: target() },
+        ] {
+            let program =
+                torus_turned_up_to_next(bracket, around_x_axis, reversed, combine.clone());
+            let built = std::panic::catch_unwind(|| assert_builds_valid(&program));
+            assert!(
+                built.is_ok(),
+                "around_x_axis={around_x_axis}, reversed={reversed}, {combine:?}"
+            );
+        }
+    }
+}
+
+/// Stopped all round after a half turn: the piece up to there.
+#[test]
+fn torus_up_to_next_stopped_all_round() {
+    torus_up_to_next(&FULLY_STOPPED, false);
+}
+
+/// Stopped by only part of the profile: as far as it first meets the
+/// bracket — for a cut or an intersection coming from outside, on to where
+/// it next does, or all the way round if part of it never meets it again.
+///
+/// The reversed cut around the `x` axis is the case that pins the second
+/// half of that: it first meets the bracket flat against the start face, a
+/// half turn round. Stopping flat at that first contact put the tool's end
+/// face exactly through the corner where the drilled hole's rim crosses the
+/// torus, and the boolean then had to cross an edge at its own vertex — a
+/// degenerate configuration that came out too wide to validate. Going on
+/// up to the next face from there (or all the way) never stops on a corner
+/// that is already there.
+#[test]
+fn torus_up_to_next_partly_stopped() {
+    torus_up_to_next(&PARTLY_STOPPED, false);
+    torus_up_to_next(&PARTLY_STOPPED, true);
 }

@@ -1,5 +1,6 @@
-//! Extruding and revolving profiles into B-rep solids, and the [`Extrude`]
-//! and [`Revolve`] operations built on them.
+//! Extruding and revolving profiles into B-rep solids and sheets — both
+//! sweeps (see [`sweep`]) — and the [`Extrude`] and [`Revolve`] operations
+//! built on them.
 //!
 //! With the `test-shapes` feature — which only other crates' tests turn on
 //! — [`shapes`] also builds basic solids directly: cubes, cylinders,
@@ -12,5 +13,6 @@ pub mod operation;
 pub mod revolve;
 #[cfg(any(test, feature = "test-shapes"))]
 pub mod shapes;
+pub mod sweep;
 
-pub use operation::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
+pub use operation::{Extent, Extents, Extrude, ExtrudeArgs, Revolve, RevolveArgs};

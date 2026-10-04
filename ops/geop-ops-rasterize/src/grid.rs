@@ -468,6 +468,44 @@ mod tests {
         }
     }
 
+    /// A concave hole of many corners in a single cell — a crescent, as a
+    /// solid's face is left with where a torus was joined over it — is
+    /// split into many triangles, each taken out of what is left of the
+    /// cell in turn. That must stay cheap: a piece a triangle does not
+    /// overlap is left whole, not cut along the triangle's sides.
+    #[test]
+    fn a_concave_hole_of_many_corners_stays_cheap() {
+        let square = [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
+        let n = 60;
+        let arc = |r: f64, k: usize| {
+            let t = std::f64::consts::PI * (0.15 + 1.7 * k as f64 / n as f64);
+            [2.0 + r * t.cos(), 2.0 + r * t.sin()]
+        };
+        // Clockwise, as a hole: along the outer arc, back along the inner.
+        let mut crescent: Vec<Point> = (0..=n).rev().map(|k| arc(1.5, k)).collect();
+        crescent.extend((0..=n).map(|k| arc(1.0, k)));
+        let started = std::time::Instant::now();
+        let triangles =
+            triangulate_region(&square, &[crescent.clone()], [0.0, 0.0], [4.0, 4.0], 1, 1);
+        let hole = covered(
+            &crate::clip::ear_clip(&crescent)
+                .into_iter()
+                .map(|t| [crescent[t[0]], crescent[t[1]], crescent[t[2]]])
+                .collect::<Vec<_>>(),
+        );
+        assert!((covered(&triangles) - (16.0 - hole)).abs() < 1e-9);
+        assert!(
+            triangles.len() < 20 * crescent.len(),
+            "{} triangles",
+            triangles.len()
+        );
+        assert!(
+            started.elapsed().as_secs() < 2,
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
     /// A round hole takes out itself, and leaves nothing inside it, on a
     /// grid of any fineness.
     #[test]
@@ -787,12 +825,18 @@ mod tests {
             .collect();
         let hole: Vec<_> = ccw.iter().rev().map(|c| c.reverse()).collect();
         let namer = geop_ops::Namer::new("extrude", "e").unwrap();
+        use geop_ops_extrude_revolve::{common::Profile, sweep::SweepLoop};
         geop_ops_extrude_revolve::extrude::extrude(
             &mut part,
-            &geop_ops_extrude_revolve::extrude::ExtrudeNames::single(&namer),
+            &namer,
+            Some(&namer.root()),
             &cs,
-            &geop_ops_extrude_revolve::common::Profile::closed(outer),
-            &[geop_ops_extrude_revolve::common::Profile::closed(hole).with_prefix("h")],
+            S::ZERO,
+            S::ONE,
+            &[
+                SweepLoop::plain(Profile::closed(outer)),
+                SweepLoop::plain(Profile::closed(hole).with_prefix("h")),
+            ],
         )
         .unwrap();
         let model = part.topology();

@@ -59,7 +59,7 @@ impl<S: Scalar> Display for Model<S> {
         for (id, shell) in sorted_by_id(&self.shells) {
             writeln!(
                 f,
-                "    {id}: solid={}, faces={:?}",
+                "    {id}: solid={:?}, faces={:?}",
                 shell.solid, shell.faces
             )?;
         }

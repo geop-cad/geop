@@ -9,7 +9,7 @@
 
 use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs};
-use geop_ops_booleans::{Boolean, BooleanArgs};
+use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
 use geop_ops_extrude_revolve::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
@@ -43,12 +43,16 @@ pub enum PartOperation {
     /// planar face.
     #[operation(label = "Sketch")]
     AddSketch(AddSketchArgs),
-    /// Sweep a sketch's regions along its plane's normal into a solid.
+    /// Sweep a sketch's area along its plane's normal into a solid, or its
+    /// curves into faces.
     Extrude(ExtrudeArgs),
-    /// Sweep a sketch's regions a full turn around one of its lines.
+    /// Sweep a sketch's area around one of its lines into a solid, or its
+    /// curves into faces.
     Revolve(RevolveArgs),
     /// Unite, intersect or subtract two solids.
     Boolean(BooleanArgs),
+    /// Cut a solid into pieces with a face standing on its own.
+    Split(SplitArgs),
     /// Add reference geometry — a point, an axis, a plane or a coordinate
     /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]

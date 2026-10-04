@@ -184,6 +184,12 @@ const ICONS: Record<string, ReactElement> = {
       <rect x="8" y="8" width="9" height="9" />
     </>
   ),
+  split: (
+    <>
+      <path d="M3 4 L10 4 L8 16 L3 16 Z" />
+      <path d="M12.5 4 L17 4 L17 16 L10.5 16 Z" />
+    </>
+  ),
   add_datum: (
     <>
       <path d="M2.5 13 L7 8 L17.5 8 L13 13 Z" />

@@ -83,6 +83,28 @@ impl<S: Scalar> Part<S> {
             .collect()
     }
 
+    /// The name of every face standing on its own — of a sheet, part of no
+    /// solid — oldest first.
+    pub fn sheet_face_names(&self) -> Vec<String> {
+        let model = self.topology();
+        let mut faces: Vec<FaceId> = model
+            .faces
+            .iter()
+            .filter(|(_, f)| {
+                model
+                    .shells
+                    .get(&f.shell)
+                    .is_some_and(|s| s.solid.is_none())
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        faces.sort_by_key(|f| f.0);
+        faces
+            .into_iter()
+            .filter_map(|f| self.name_of(f).map(str::to_string))
+            .collect()
+    }
+
     /// Every sketch's name, oldest first.
     pub fn sketch_names(&self) -> Vec<String> {
         self.sketches()

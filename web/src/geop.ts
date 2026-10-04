@@ -96,9 +96,9 @@ export interface ViewInstance {
 
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
-  /** Each with the solid it belongs to, if any. */
-  vertices: { name: string; solid: string | null; at: Vec3 }[];
-  edges: { name: string; solid: string | null; polyline: Vec3[] }[];
+  /** Each with the solid it belongs to, if any — else the faces standing on their own it bounds, hidden with all of them. */
+  vertices: { name: string; solid: string | null; sheet_faces: string[]; at: Vec3 }[];
+  edges: { name: string; solid: string | null; sheet_faces: string[]; polyline: Vec3[] }[];
   /** Triangulated, with the kernel's surface normal at each corner. */
   faces: { name: string; solid: string | null; triangles: [Vec3, Vec3, Vec3][]; normals: [Vec3, Vec3, Vec3][] }[];
   /** Curves in their plane's `u`/`v` coordinates. */
@@ -252,7 +252,7 @@ export interface ListItem {
 }
 
 /** What an entity can be used as, and what a pick looks for — see `geop_ops::operation::Role`. */
-export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "solid" | "sketch";
+export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "solid" | "sheet" | "sketch";
 
 /** What a number measures. */
 export type Unit = "length" | "angle" | "fraction" | "count";
@@ -370,7 +370,7 @@ export type Command =
   | { command: "load_workspace_example"; name: string; folder?: string }
   | { command: "undo" }
   | { command: "redo" }
-  /** Show or hide the datum, sketch, solid or placed part `name`. */
+  /** Show or hide the datum, sketch, solid, face standing on its own or placed part `name`. */
   | { command: "visibility"; name: string; visible: boolean }
   /** The program's parameters are now these. */
   | { command: "parameters"; parameters: Parameters }
@@ -410,9 +410,9 @@ export interface ProgramState {
 }
 
 /** What kind of thing a [[StructureItem]] is. */
-export type StructureKind = "datum" | "sketch" | "solid" | "part" | "mate";
+export type StructureKind = "datum" | "sketch" | "solid" | "face" | "part" | "mate";
 
-/** A datum, sketch, solid, placed part or mate of the part drawn: whether it is shown, if it is drawn at all. */
+/** A datum, sketch, solid, face standing on its own, placed part or mate of the part drawn: whether it is shown, if it is drawn at all. */
 export interface StructureItem {
   kind: StructureKind;
   name: string;

@@ -111,14 +111,22 @@ button.small {
 
 .slider-number {
   display: grid;
-  grid-template-columns: 1rem 1fr 3.6rem;
+  grid-template-columns: minmax(1rem, max-content) minmax(0, 1fr) 3.6rem;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.vec3 .slider-number {
   font-size: 0.75rem;
   color: #bbb;
 }
 .slider-number-label {
   text-transform: none;
+  white-space: nowrap;
+}
+.slider-number input[type="range"] {
+  min-width: 0;
+  width: 100%;
 }
 .slider-number-input {
   width: 3.6rem;

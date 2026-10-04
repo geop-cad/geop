@@ -2,8 +2,17 @@
 //! `euler.rs`: each registers what it creates under the caller's name and
 //! forgets what it deletes.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
-use geop_core_topology::{Edge, EdgeId, FaceId, SolidId, Vertex, VertexId};
+use std::collections::HashSet;
+
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector3,
+};
+use geop_core_topology::{
+    Body, Edge, EdgeId, FaceId, ShellId, SolidId, Vertex, VertexId,
+    build::{BodySpec, BuiltBody},
+};
 
 use super::Part;
 
@@ -112,12 +121,63 @@ impl<S: Scalar> Part<S> {
         Ok(new_edge)
     }
 
+    /// Forwards to [`geop_core_topology::Model::build_body`], naming
+    /// everything it builds after `names`, index for index. Fails, leaving
+    /// the part unchanged, if a name is missing, repeated or taken.
+    pub fn build_body(&mut self, spec: BodySpec<S>, names: BodyNames) -> GeopResult<BuiltBody> {
+        let counts = [
+            (names.vertices.len(), spec.vertices.len(), "vertices"),
+            (names.edges.len(), spec.edges.len(), "edges"),
+            (names.faces.len(), spec.faces.len(), "faces"),
+        ];
+        if let Some((n, m, what)) = counts.iter().find(|(n, m, _)| n != m) {
+            return Err(GeopError::new(format!(
+                "Part::build_body: {n} names for {m} {what}"
+            )));
+        }
+        if names.solid.is_some() != spec.solid {
+            return Err(GeopError::new(format!(
+                "Part::build_body: a solid name {:?} for a body that {} a solid",
+                names.solid,
+                if spec.solid { "is" } else { "is not" }
+            )));
+        }
+        let all = names
+            .vertices
+            .iter()
+            .chain(&names.edges)
+            .chain(&names.faces)
+            .chain(&names.solid);
+        let mut seen = HashSet::new();
+        for name in all {
+            if !seen.insert(name) || self.names.id_of(name).is_some() {
+                return Err(GeopError::new(format!(
+                    "Part::build_body: the name {name:?} is taken"
+                )));
+            }
+        }
+        let built = self.topology.build_body(spec)?;
+        for (&id, name) in built.vertices.iter().zip(names.vertices) {
+            self.names.insert(id, name)?;
+        }
+        for (&id, name) in built.edges.iter().zip(names.edges) {
+            self.names.insert(id, name)?;
+        }
+        for (&id, name) in built.faces.iter().zip(names.faces) {
+            self.names.insert(id, name)?;
+        }
+        if let (Some(id), Some(name)) = (built.solid, names.solid) {
+            self.names.insert(id, name)?;
+        }
+        Ok(built)
+    }
+
     /// Forwards to [`geop_core_topology::Model::assemble_solid`], naming the
     /// solid it creates (if any) and forgetting the names of everything it
     /// deletes.
     pub fn assemble_solid(
         &mut self,
-        consumed: &[SolidId],
+        consumed: &[Body],
         keep: &[FaceId],
         solid_name: impl Into<String>,
     ) -> GeopResult<Option<SolidId>> {
@@ -129,6 +189,18 @@ impl<S: Scalar> Part<S> {
         Ok(solid)
     }
 
+    /// Forwards to [`geop_core_topology::Model::assemble_sheet`], forgetting
+    /// the names of everything it deletes.
+    pub fn assemble_sheet(
+        &mut self,
+        consumed: &[Body],
+        keep: &[FaceId],
+    ) -> GeopResult<Option<ShellId>> {
+        let sheet = self.topology.assemble_sheet(consumed, keep)?;
+        self.forget_dead_names();
+        Ok(sheet)
+    }
+
     /// Forwards to [`geop_core_topology::Model::merge_solids`], forgetting
     /// the name of the solid it deletes.
     pub fn merge_solids(&mut self, into: SolidId, from: SolidId) -> GeopResult<()> {
@@ -136,4 +208,15 @@ impl<S: Scalar> Part<S> {
         self.names.remove(from);
         Ok(())
     }
+}
+
+/// The names [`Part::build_body`] gives what it builds: one per vertex, edge
+/// and face of the [`BodySpec`], index for index, and the solid's, if it
+/// builds one.
+#[derive(Clone, Debug, Default)]
+pub struct BodyNames {
+    pub vertices: Vec<String>,
+    pub edges: Vec<String>,
+    pub faces: Vec<String>,
+    pub solid: Option<String>,
 }

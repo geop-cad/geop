@@ -86,7 +86,7 @@ fn make_face<S: Scalar>(model: &mut Model<S>) -> crate::FaceId {
     let solid_id = model.insert_solid(crate::Solid { shells: vec![] });
     let shell_id = model.insert_shell(crate::Shell {
         faces: vec![],
-        solid: solid_id,
+        solid: Some(solid_id),
     });
     // A face always has exactly one outer boundary, so "no edges yet" is a
     // bare-vertex boundary — the state `mvfs` produces. `VertexId(0)` is a

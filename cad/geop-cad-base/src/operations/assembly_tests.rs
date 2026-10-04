@@ -201,7 +201,7 @@ fn a_changed_file_is_placed_anew() {
     let PartOperation::Extrude(extrude) = &mut longer.steps[1].operation else {
         panic!("the pin is extruded");
     };
-    extrude.distance = 3.0;
+    extrude.extent = geop_ops_extrude_revolve::Extents::blind(3.0);
     let update = editor.handle(Command::Files {
         files: BTreeMap::from([("pin.geop".into(), Some(longer.to_json().unwrap()))]),
     });

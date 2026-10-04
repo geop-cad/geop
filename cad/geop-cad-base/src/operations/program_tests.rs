@@ -3,15 +3,15 @@
 use geop_core_math::scalars::ScalInF64 as S;
 use geop_ops::{NoFiles, Part, PartDescription};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::ExtrudeArgs;
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 
 use crate::{PartOperation, ProgramRunner, examples::box_with_drill_hole};
 
 fn extrude(sketch: &str, distance: f64) -> PartOperation {
     ExtrudeArgs {
         sketch: sketch.into(),
-        distance,
-        symmetric: false,
+        extent: Extents::blind(distance),
+        face: false,
         combine: Combine::NewBody,
     }
     .into()
@@ -63,8 +63,8 @@ fn runner_reports_the_failing_step() {
     let hole = program.index_of("hole").unwrap();
     program.steps[hole].operation = ExtrudeArgs {
         sketch: "hole_sketch".into(),
-        distance: -0.5,
-        symmetric: false,
+        extent: Extents::blind(-0.5),
+        face: false,
         combine: Combine::Difference {
             target: "extrude(nothing)".into(),
         },

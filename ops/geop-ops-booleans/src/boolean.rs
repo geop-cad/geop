@@ -14,12 +14,17 @@
 //! 3. Keep the faces the operator wants (see [`BooleanOp::keeps`]), reversing
 //!    them where the operator needs the material on the other side.
 //! 4. Assemble the survivors into a new solid and discard everything else.
+//!
+//! [`boolean_up_to_next`] is the same with one more step between 3 and 4:
+//! of the second solid, a tool, it keeps only the first piece its start
+//! reaches on the side of the first solid's boundary the operator wants.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    union_find::UnionFind,
     vector::Vector3,
 };
 use geop_core_topology::{
@@ -164,14 +169,132 @@ pub fn boolean<S: Scalar>(
     op: BooleanOp,
     params: RemeshParams<S>,
 ) -> GeopResult<Option<SolidId>> {
+    combine(part, namer, solid_a, solid_b, op, None, params)
+}
+
+/// A tool going up to the next face — the second operand of a boolean — by
+/// the names its start and end faces had before it (see [`crate::naming`]),
+/// and whether only the piece of it taken is kept, `alone`, as a solid of
+/// its own, rather than combined with the first operand.
+#[derive(Clone, Copy, Debug)]
+struct UpToNext<'a> {
+    start: &'a str,
+    end: &'a str,
+    alone: bool,
+}
+
+/// Like [`boolean`] — `target` combined with `tool` — but "up to next":
+/// only the first piece of `tool` its face `start` reaches is combined.
+///
+/// For a [`BooleanOp::Union`] that is the first piece of the tool outside
+/// the target — growing from `start` until it runs into the target; for a
+/// [`BooleanOp::Difference`] or [`BooleanOp::Intersection`], the first
+/// piece inside it — cutting, or keeping, from where the tool enters the
+/// target until it comes out of it again. The tool has to be long enough to
+/// reach past whatever stops it: if the piece also reaches its face `end`,
+/// nothing stopped it, and that is an error. `start` and `end` are the
+/// names those faces had before the boolean (see [`crate::naming`]).
+pub fn boolean_up_to_next<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    target: SolidId,
+    tool: SolidId,
+    op: BooleanOp,
+    (start, end): (&str, &str),
+    params: RemeshParams<S>,
+) -> GeopResult<Option<SolidId>> {
+    let up_to_next = UpToNext {
+        start,
+        end,
+        alone: false,
+    };
+    combine(part, namer, target, tool, op, Some(up_to_next), params)
+}
+
+/// The first piece of `tool` its face `start` reaches outside `stops` — up
+/// to the next face of any of them — as a solid of its own, named
+/// `namer`'s root, `stops` left as they are: what a new body going up to the
+/// next face is. Fails, as [`boolean_up_to_next`] does, if nothing stops
+/// the tool before its face `end`.
+///
+/// The tool is cut by a copy of the solids it stops at, so that only the
+/// copy is imprinted and consumed.
+pub fn piece_up_to_next<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    tool: SolidId,
+    stops: &[SolidId],
+    (start, end): (&str, &str),
+    params: RemeshParams<S>,
+) -> GeopResult<SolidId> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
-            "boolean(name={}, solid_a={solid_a}, solid_b={solid_b}, op={op:?})",
+            "piece_up_to_next(name={}, tool={tool}, stops={stops:?})",
+            namer.root()
+        ))
+    };
+    let mut faces = Vec::new();
+    for &solid in stops {
+        faces.extend(part.topology().solid_faces(solid).with_context(&ctx)?);
+    }
+    let (spec, sources) = part.topology().body_spec(&faces, true).with_context(&ctx)?;
+    let copied = |ids: Vec<geop_ops::RefId>| -> GeopResult<Vec<String>> {
+        ids.into_iter()
+            .map(|id| {
+                let name = part
+                    .name_of(id)
+                    .ok_or_else(|| GeopError::new(format!("{id} has no name")))?;
+                Ok(namer.name(&["copy", name]))
+            })
+            .collect()
+    };
+    let names = geop_ops::BodyNames {
+        vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
+        edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
+        faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
+        solid: Some(namer.name(&["copy"])),
+    };
+    let copy = part.build_body(spec, names).with_context(&ctx)?;
+    let copy = copy.solid.expect("built as a solid");
+    // As a join of the tool to the copy, picking only the piece — the copy
+    // first, as in every other combination with a tool.
+    let up_to_next = UpToNext {
+        start,
+        end,
+        alone: true,
+    };
+    combine(
+        part,
+        namer,
+        copy,
+        tool,
+        BooleanOp::Union,
+        Some(up_to_next),
+        params,
+    )
+    .with_context(&ctx)?
+    .ok_or_else(|| ctx(GeopError::new("up to next: nothing of the tool is left")))
+}
+
+/// [`boolean`], or with `up_to_next` [`boolean_up_to_next`] — or, with the
+/// tool kept alone, [`piece_up_to_next`].
+fn combine<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    solid_a: SolidId,
+    solid_b: SolidId,
+    op: BooleanOp,
+    up_to_next: Option<UpToNext>,
+    params: RemeshParams<S>,
+) -> GeopResult<Option<SolidId>> {
+    let ctx = |e: GeopError| {
+        e.with_context(format!(
+            "boolean(name={}, solid_a={solid_a}, solid_b={solid_b}, op={op:?}, up_to_next={up_to_next:?})",
             namer.root()
         ))
     };
 
-    remesh(part, namer, solid_a, solid_b, params).with_context(&ctx)?;
+    let origins = remesh(part, namer, solid_a, solid_b, params).with_context(&ctx)?;
     let model = part.topology();
 
     let faces_a = model.solid_faces(solid_a).with_context(&ctx)?;
@@ -187,16 +310,43 @@ pub fn boolean<S: Scalar>(
                 .with_context(&|e: GeopError| {
                     e.with_context(format!("classifying face {face_id}"))
                 })?;
-            let decision = op.keeps(class, from_a);
-            decisions.insert(face_id, (class, decision));
-            match decision {
-                Keep::AsIs => keep.push(face_id),
-                Keep::Reversed => {
-                    keep.push(face_id);
-                    reverse.push(face_id);
-                }
-                Keep::Drop => {}
+            decisions.insert(face_id, (class, op.keeps(class, from_a)));
+        }
+    }
+    if let Some(UpToNext { start, end, alone }) = up_to_next {
+        let tool: HashSet<FaceId> = faces_b.iter().copied().collect();
+        // The piece of the kind the operator takes from the target, and
+        // what of the target the tool leaves untouched — but for an
+        // intersection, which keeps only what both hold, or a piece kept
+        // alone.
+        let (wanted_inside, keep_untouched) = match op {
+            BooleanOp::Union => (false, !alone),
+            BooleanOp::Difference => (true, true),
+            BooleanOp::Intersection => (true, false),
+        };
+        let reached = reach_up_to_next(
+            model,
+            &tool,
+            (wanted_inside, keep_untouched),
+            &origins.faces,
+            (start, end),
+            &mut decisions,
+        )
+        .with_context(&ctx)?;
+        if alone {
+            keep_alone(&reached, &mut decisions);
+        }
+    }
+    // In the order the faces were classified, so the result's shell lists
+    // its faces the same way every run.
+    for &face_id in faces_a.iter().chain(&faces_b) {
+        match decisions[&face_id].1 {
+            Keep::AsIs => keep.push(face_id),
+            Keep::Reversed => {
+                keep.push(face_id);
+                reverse.push(face_id);
             }
+            Keep::Drop => {}
         }
     }
     check_closed(model, &decisions).with_context(&ctx)?;
@@ -205,9 +355,223 @@ pub fn boolean<S: Scalar>(
         part.reverse_face(face_id).with_context(&ctx)?;
     }
 
-    part.assemble_solid(&[solid_a, solid_b], &keep, namer.root())
+    part.assemble_solid(&[solid_a.into(), solid_b.into()], &keep, namer.root())
         .with_context(&ctx)
 }
+
+/// Narrows `decisions` down to the piece of the tool (the faces `tool`) that
+/// its start reaches first, see [`boolean_up_to_next`].
+///
+/// The target's boundary cuts the tool's material into pieces, alternately
+/// outside and inside the target. Each piece is bounded by tool faces —
+/// all on one side of the target, the side its classification says — and
+/// by target faces inside the tool, each of which bounds two pieces: the
+/// inside one on its material's side, the outside one on the other. (Remesh
+/// split every face along every crossing, so no face straddles two pieces.)
+/// Faces sharing an edge bound the same piece if their material lies on the
+/// same side of the target, which makes the pieces connected sets of face
+/// *sides*, and two pieces neighbours when a target face lies between them.
+///
+/// From the piece bounded by the start face, the piece wanted is the first
+/// of the kind wanted — outside the target, growing until it runs into the
+/// target, or inside it, cutting or keeping from where it enters the target
+/// until it leaves it. That is the start's own piece, if it is of that
+/// kind, or else the pieces next to it. The tool's other pieces are
+/// dropped, and the target's faces between them kept if `keep_untouched`,
+/// as if the tool had not been there, or else dropped too.
+fn reach_up_to_next<S: Scalar>(
+    model: &Model<S>,
+    tool: &HashSet<FaceId>,
+    (wanted_inside, keep_untouched): (bool, bool),
+    origins: &HashMap<FaceId, String>,
+    (start, end): (&str, &str),
+    decisions: &mut HashMap<FaceId, (FaceClassification, Keep)>,
+) -> GeopResult<Reached> {
+    use FaceClassification::*;
+    // Which side of the target the material behind a tool face lies on.
+    let inside = |class: FaceClassification| matches!(class, Inside | OnSameNormal);
+    let mut tool_faces: Vec<FaceId> = tool.iter().copied().collect();
+    tool_faces.sort_by_key(|f| f.0);
+    let mut between: Vec<FaceId> = decisions
+        .iter()
+        .filter(|(face, (class, _))| !tool.contains(face) && *class == Inside)
+        .map(|(&face, _)| face)
+        .collect();
+    between.sort_by_key(|f| f.0);
+    // Nodes: every tool face, then each target face between pieces by its
+    // inner side, then by its outer side.
+    let (n, m) = (tool_faces.len(), between.len());
+    let (inner, outer) = (|j: usize| n + j, |j: usize| n + m + j);
+    let tool_index: HashMap<FaceId, usize> = tool_faces
+        .iter()
+        .enumerate()
+        .map(|(i, &f)| (f, i))
+        .collect();
+    let between_index: HashMap<FaceId, usize> =
+        between.iter().enumerate().map(|(j, &f)| (f, j)).collect();
+    let class = |face: &FaceId| decisions[face].0;
+
+    let mut users: HashMap<EdgeId, Vec<FaceId>> = HashMap::new();
+    for &face in tool_faces.iter().chain(&between) {
+        for coedge in model.iterate_face_coedges(face) {
+            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
+                users.entry(edge).or_default().push(face);
+            }
+        }
+    }
+    let mut pieces = UnionFind::new(n + 2 * m);
+    for faces in users.values() {
+        let (mut in_node, mut out_node) = (None, None);
+        let join = |slot: &mut Option<usize>, node: usize, pieces: &mut UnionFind| match *slot {
+            Some(other) => pieces.union(other, node),
+            None => *slot = Some(node),
+        };
+        for face in faces {
+            if let Some(&i) = tool_index.get(face) {
+                let slot = if inside(class(face)) {
+                    &mut in_node
+                } else {
+                    &mut out_node
+                };
+                join(slot, i, &mut pieces);
+            } else {
+                let j = between_index[face];
+                join(&mut in_node, inner(j), &mut pieces);
+                join(&mut out_node, outer(j), &mut pieces);
+            }
+        }
+    }
+    // A tool face's piece is on its material's side; a target face's inner
+    // side is in an inside piece, its outer side in an outside one.
+    let piece_inside = |node: usize| match node {
+        i if i < n => inside(class(&tool_faces[i])),
+        i => i < n + m,
+    };
+    let mut kind: HashMap<usize, bool> = HashMap::new();
+    for node in 0..n + 2 * m {
+        kind.insert(pieces.find(node), piece_inside(node));
+    }
+    let mut neighbours: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for j in 0..m {
+        let (a, b) = (pieces.find(inner(j)), pieces.find(outer(j)));
+        neighbours.entry(a).or_default().insert(b);
+        neighbours.entry(b).or_default().insert(a);
+    }
+
+    let origin_is = |face: &FaceId, name: &str| origins.get(face).is_some_and(|o| o == name);
+    let mut reached: HashSet<usize> = HashSet::new();
+    for (i, face) in tool_faces.iter().enumerate() {
+        if !origin_is(face, start) {
+            continue;
+        }
+        let piece = pieces.find(i);
+        if kind[&piece] == wanted_inside {
+            reached.insert(piece);
+        } else {
+            let next = neighbours.get(&piece).into_iter().flatten();
+            reached.extend(next.filter(|p| kind[p] == wanted_inside));
+        }
+    }
+    if reached.is_empty() {
+        let starts: Vec<String> = tool_faces
+            .iter()
+            .enumerate()
+            .filter(|(_, face)| origin_is(face, start))
+            .map(|(i, face)| {
+                let piece = pieces.find(i);
+                format!(
+                    "{face} ({:?}, in an {} piece with {} neighbour(s))",
+                    class(face),
+                    if kind[&piece] { "inside" } else { "outside" },
+                    neighbours.get(&piece).map_or(0, HashSet::len)
+                )
+            })
+            .collect();
+        let mut tool_origins: Vec<&str> = tool_faces
+            .iter()
+            .filter_map(|f| origins.get(f).map(String::as_str))
+            .collect();
+        tool_origins.sort_unstable();
+        tool_origins.dedup();
+        return Err(GeopError::new(format!(
+            "up to next: from its start {start:?}, the profile meets nothing of the target to {} — does it go the right way? (the start's faces: [{}]; {} piece(s), {m} target face(s) between them; the tool's faces come from {tool_origins:?})",
+            if wanted_inside {
+                "cut into"
+            } else {
+                "grow up to"
+            },
+            starts.join(", "),
+            kind.len(),
+        )));
+    }
+    for (i, face) in tool_faces.iter().enumerate() {
+        let in_reach = reached.contains(&pieces.find(i));
+        if in_reach && origin_is(face, end) {
+            return Err(GeopError::new(format!(
+                "{NOTHING_STOPS}: it reaches the end {end:?} without meeting a face of the target all around"
+            )));
+        }
+        if !in_reach {
+            decisions.get_mut(face).expect("classified").1 = Keep::Drop;
+        }
+    }
+    let mut bounding = Reached {
+        tool: HashSet::new(),
+        target: HashSet::new(),
+    };
+    for (i, face) in tool_faces.iter().enumerate() {
+        if reached.contains(&pieces.find(i)) {
+            bounding.tool.insert(*face);
+        }
+    }
+    for (j, face) in between.iter().enumerate() {
+        let facing = if wanted_inside { inner(j) } else { outer(j) };
+        if reached.contains(&pieces.find(facing)) {
+            bounding.target.insert(*face);
+        } else {
+            // Untouched by the piece taking part: the target's boundary
+            // there stays — unless only what the tool reaches is kept.
+            decisions.get_mut(face).expect("classified").1 = if keep_untouched {
+                Keep::AsIs
+            } else {
+                Keep::Drop
+            };
+        }
+    }
+    Ok(bounding)
+}
+
+/// What [`reach_up_to_next`] found the tool's taken piece bounded by: the
+/// tool's faces, and the target's faces between it and the rest.
+struct Reached {
+    tool: HashSet<FaceId>,
+    target: HashSet<FaceId>,
+}
+
+/// Turns the decisions of a union of a target with the piece of a tool it
+/// `reached` into those of the piece alone: its own faces as they are —
+/// where it lies on the target too, its start drawn on a face of the target,
+/// included — and the target's faces bounding it turned around to face out
+/// of it. Nothing else of either.
+fn keep_alone(reached: &Reached, decisions: &mut HashMap<FaceId, (FaceClassification, Keep)>) {
+    use FaceClassification::*;
+    for (face, (class, keep)) in decisions.iter_mut() {
+        *keep = if reached.tool.contains(face) && matches!(class, Outside | OnOppositeNormal) {
+            Keep::AsIs
+        } else if reached.target.contains(face) {
+            Keep::Reversed
+        } else {
+            Keep::Drop
+        };
+    }
+}
+
+/// Marks the error [`boolean_up_to_next`] and [`piece_up_to_next`] raise
+/// when the tool is not stopped all round — when the target meets part of
+/// the profile, or none, and the rest goes on past it. A caller can then go
+/// only as far as the profile first meets the target instead. Matched on the
+/// message, as `GeopError` carries no code.
+pub const NOTHING_STOPS: &str = "up to next: nothing stops the profile";
 
 /// Fails unless the kept faces close up: every edge they use must be used an
 /// even number of times by them — twice where two faces meet, four times
@@ -297,6 +661,9 @@ pub fn classify_face<S: Scalar>(
         SEED,
         |u, v| {
             let point = face.surface.evaluate(u, v)?;
+            // Inside the solid is inside an odd number of its shells: inside
+            // its outer shell, but not in a void.
+            let mut inside = false;
             for &shell_id in &shells {
                 match shell_contains(
                     model,
@@ -306,18 +673,22 @@ pub fn classify_face<S: Scalar>(
                     params.curve_curve_min_subdivision_size,
                     SEED,
                 )? {
-                    ShellPoint::Inside => {
-                        decided.push((FaceClassification::Inside, point));
-                        return Ok(false);
-                    }
-                    ShellPoint::Outside => continue,
+                    ShellPoint::Inside => inside = !inside,
+                    ShellPoint::Outside => {}
                     ShellPoint::OnFace | ShellPoint::OnEdge | ShellPoint::OnVertex => {
                         on_boundary.push((u, v, point, shell_id));
                         return Ok(false);
                     }
                 }
             }
-            decided.push((FaceClassification::Outside, point));
+            decided.push((
+                if inside {
+                    FaceClassification::Inside
+                } else {
+                    FaceClassification::Outside
+                },
+                point,
+            ));
             Ok(false)
         },
     )?;
@@ -1570,8 +1941,9 @@ mod tests {
     /// differenced, then a sphere differenced out of that, then a thin slab
     /// cube differenced out of *that*. The second cube and the sphere were
     /// anchored to corners of the first cube, picked by kernel id
-    /// (`VertexId(13)` and `VertexId(9)`); building that cube the same way
-    /// assigns the same ids, so they are read back from it here.
+    /// (`VertexId(13)` and `VertexId(9)`, its corners `p3,start` and
+    /// `p2,start`); their coordinates as the session read them are given
+    /// here, to the last bit.
     ///
     /// Used to fail inside the final boolean's `classify_face`:
     /// `shell_contains` reported a point on the slab's boundary that no face
@@ -1584,17 +1956,9 @@ mod tests {
     fn chained_differences_with_anchored_shapes_and_thin_slab_cutter_succeeds() {
         let mut part = M::new();
         let block = cube(&mut part, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
-        let corner = |part: &M, id: u64| {
-            let p = part
-                .topology()
-                .get_vertex(geop_core_topology::VertexId(id))
-                .unwrap()
-                .point;
-            [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
-        };
-        let [x, y, z] = corner(&part, 13);
+        let [x, y, z] = [-0.5000000000000001, 0.5000000000000002, 0.5000000000000001];
         let second = cube(&mut part, [x - 0.5, y - 0.5, z - 0.5], [1.0, 1.0, 1.0]);
-        let center = corner(&part, 9);
+        let center = [0.5000000000000003, 0.5000000000000002, 0.5000000000000001];
         let ball = sphere(&mut part, center, 0.5);
         // Only success is asserted, as when this was captured: the full
         // `validate` that `op` runs finds an edge of the second result

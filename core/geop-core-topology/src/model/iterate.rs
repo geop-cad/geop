@@ -1,5 +1,5 @@
 use crate::{
-    CoedgeGeometry, CoedgeId, EdgeId, FaceId, SolidId, VertexId,
+    Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, SolidId, VertexId,
     boundary::{BoundaryIndex, BoundaryType},
 };
 use geop_core_math::{
@@ -69,12 +69,12 @@ impl<'a, S: Scalar> Iterator for FaceCoedges<'a, S> {
     }
 }
 
-/// Walks the distinct vertices referenced by a solid's faces, borrowing
+/// Walks the distinct vertices referenced by a body's faces, borrowing
 /// `model` for its whole lifetime — so a caller holding one of these live
 /// cannot also call a `&mut self` method like `merge_vertex` on the same
 /// model; the borrow checker enforces it rather than relying on a caller to
 /// remember that a `Vec` snapshot goes stale the moment the model mutates.
-struct SolidVertices<'a, S: Scalar> {
+struct BodyVertices<'a, S: Scalar> {
     model: &'a Model<S>,
     faces: std::vec::IntoIter<FaceId>,
     coedges: std::vec::IntoIter<CoedgeId>,
@@ -82,7 +82,7 @@ struct SolidVertices<'a, S: Scalar> {
     pending: std::collections::VecDeque<VertexId>,
 }
 
-impl<'a, S: Scalar> Iterator for SolidVertices<'a, S> {
+impl<'a, S: Scalar> Iterator for BodyVertices<'a, S> {
     type Item = VertexId;
 
     fn next(&mut self) -> Option<VertexId> {
@@ -121,17 +121,17 @@ impl<'a, S: Scalar> Iterator for SolidVertices<'a, S> {
     }
 }
 
-/// Walks the distinct edges referenced by a solid's faces — see
-/// [`SolidVertices`]'s own doc comment for why this borrows `model` instead
+/// Walks the distinct edges referenced by a body's faces — see
+/// [`BodyVertices`]'s own doc comment for why this borrows `model` instead
 /// of returning an owned snapshot.
-struct SolidEdges<'a, S: Scalar> {
+struct BodyEdges<'a, S: Scalar> {
     model: &'a Model<S>,
     faces: std::vec::IntoIter<FaceId>,
     coedges: std::vec::IntoIter<CoedgeId>,
     seen: std::collections::HashSet<EdgeId>,
 }
 
-impl<'a, S: Scalar> Iterator for SolidEdges<'a, S> {
+impl<'a, S: Scalar> Iterator for BodyEdges<'a, S> {
     type Item = EdgeId;
 
     fn next(&mut self) -> Option<EdgeId> {
@@ -191,14 +191,14 @@ impl<S: Scalar> Model<S> {
         }
     }
 
-    /// The distinct vertices referenced by `solid_id`'s faces, as an
-    /// iterator borrowing `self` — see [`SolidVertices`]'s own doc comment.
-    pub fn iter_solid_vertices(
+    /// The distinct vertices referenced by `body`'s faces, as an iterator
+    /// borrowing `self` — see [`BodyVertices`]'s own doc comment.
+    pub fn iter_body_vertices(
         &self,
-        solid_id: SolidId,
+        body: impl Into<Body>,
     ) -> GeopResult<impl Iterator<Item = VertexId> + '_> {
-        let faces = self.solid_faces(solid_id)?;
-        Ok(SolidVertices {
+        let faces = self.body_faces(body)?;
+        Ok(BodyVertices {
             model: self,
             faces: faces.into_iter(),
             coedges: Vec::new().into_iter(),
@@ -207,14 +207,14 @@ impl<S: Scalar> Model<S> {
         })
     }
 
-    /// The distinct edges referenced by `solid_id`'s faces, as an iterator
-    /// borrowing `self` — see [`SolidVertices`]'s own doc comment.
-    pub fn iter_solid_edges(
+    /// The distinct edges referenced by `body`'s faces, as an iterator
+    /// borrowing `self` — see [`BodyVertices`]'s own doc comment.
+    pub fn iter_body_edges(
         &self,
-        solid_id: SolidId,
+        body: impl Into<Body>,
     ) -> GeopResult<impl Iterator<Item = EdgeId> + '_> {
-        let faces = self.solid_faces(solid_id)?;
-        Ok(SolidEdges {
+        let faces = self.body_faces(body)?;
+        Ok(BodyEdges {
             model: self,
             faces: faces.into_iter(),
             coedges: Vec::new().into_iter(),
@@ -280,11 +280,30 @@ impl<S: Scalar> Model<S> {
 
     /// Every `FaceId` across every shell of `solid_id`.
     pub fn solid_faces(&self, solid_id: SolidId) -> GeopResult<Vec<FaceId>> {
-        let solid = self.get_solid(solid_id)?;
+        self.body_faces(solid_id)
+    }
+
+    /// Every `FaceId` of `body`: across every shell of a solid, or of the
+    /// one shell a sheet is.
+    pub fn body_faces(&self, body: impl Into<Body>) -> GeopResult<Vec<FaceId>> {
+        let shells = match body.into() {
+            Body::Solid(solid) => self.get_solid(solid)?.shells.clone(),
+            Body::Sheet(shell) => vec![shell],
+        };
         let mut faces = Vec::new();
-        for &shell_id in &solid.shells {
+        for shell_id in shells {
             faces.extend(self.get_shell(shell_id)?.faces.iter().copied());
         }
         Ok(faces)
+    }
+
+    /// The body `face_id` is part of: its shell's solid, or its shell, if
+    /// that is a sheet.
+    pub fn body_of_face(&self, face_id: FaceId) -> GeopResult<Body> {
+        let shell_id = self.get_face(face_id)?.shell;
+        Ok(match self.get_shell(shell_id)?.solid {
+            Some(solid) => Body::Solid(solid),
+            None => Body::Sheet(shell_id),
+        })
     }
 }

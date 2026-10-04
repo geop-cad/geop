@@ -50,7 +50,7 @@ use geop_core_math::{
     vector::{Vector, Vector3},
 };
 use geop_core_topology::{
-    CoedgeGeometry, Edge, EdgeId, FaceId, Model, SolidId, VertexId,
+    Body, CoedgeGeometry, Edge, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
 };
 use geop_ops::Part;
@@ -74,14 +74,14 @@ struct TracingStartPoint {
     vertex: VertexId,
     /// The solid whose edge ends at `vertex`, so `vertex` lies on the
     /// boundary of its faces there.
-    edge_solid: SolidId,
+    edge_solid: Body,
     /// The face of the other solid found holding `vertex`, as of when the
     /// point was found — only a record of where to look: the vertex may lie
     /// on none of that solid's boundaries, and an earlier trace may have
     /// split the face since (see [`faces_at_vertex`]).
     face: FaceId,
     /// The solid `face` belongs to.
-    face_solid: SolidId,
+    face_solid: Body,
 }
 
 /// Fixed PRNG seed for `face_contains`' ray casting — the classification it
@@ -149,8 +149,8 @@ fn adaptive_step_size<S: Scalar>(
 pub fn remesh_edges_x_faces<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
@@ -292,8 +292,8 @@ fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Opti
 #[allow(clippy::type_complexity)]
 fn find_piercing_crossing<S: Scalar>(
     model: &Model<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
@@ -304,8 +304,8 @@ fn find_piercing_crossing<S: Scalar>(
         ))
     };
 
-    for edge_id in model.iter_solid_edges(edge_solid).with_context(&ctx)? {
-        for face_id in model.solid_faces(face_solid).with_context(&ctx)? {
+    for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
+        for face_id in model.body_faces(face_solid).with_context(&ctx)? {
             if edge_is_boundary_of_face(model, edge_id, face_id) {
                 continue;
             }
@@ -376,8 +376,8 @@ fn find_piercing_crossing<S: Scalar>(
 fn split_piercing_crossings<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
@@ -530,8 +530,8 @@ fn seam_plane<S: Scalar>(
 /// `face`.
 fn find_coincident_pair<S: Scalar>(
     model: &Model<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
@@ -542,10 +542,10 @@ fn find_coincident_pair<S: Scalar>(
         ))
     };
 
-    for edge_id in model.iter_solid_edges(edge_solid).with_context(&ctx)? {
+    for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         let seam =
             seam_plane(model, edge_id, max_nodes, min_subdivision_size).with_context(&ctx)?;
-        for face_id in model.solid_faces(face_solid).with_context(&ctx)? {
+        for face_id in model.body_faces(face_solid).with_context(&ctx)? {
             if edge_is_boundary_of_face(model, edge_id, face_id) {
                 continue;
             }
@@ -655,8 +655,8 @@ fn imprint_coincident_edge<S: Scalar>(
 fn imprint_coincident_pairs<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
@@ -710,8 +710,8 @@ fn imprint_coincident_pairs<S: Scalar>(
 /// with), not something this module solves fresh.
 fn find_tracing_start_points<S: Scalar>(
     model: &Model<S>,
-    edge_solid: SolidId,
-    face_solid: SolidId,
+    edge_solid: Body,
+    face_solid: Body,
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Vec<TracingStartPoint>> {
@@ -724,11 +724,11 @@ fn find_tracing_start_points<S: Scalar>(
     let mut seen: std::collections::HashSet<VertexId> = std::collections::HashSet::new();
     let mut starts = Vec::new();
 
-    for edge_id in model.iter_solid_edges(edge_solid).with_context(&ctx)? {
+    for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         let edge = model.get_edge(edge_id).with_context(&ctx)?;
         for &vertex_id in &[edge.start_vertex, edge.end_vertex] {
             let point = model.get_vertex(vertex_id).with_context(&ctx)?.point;
-            for face_id in model.solid_faces(face_solid).with_context(&ctx)? {
+            for face_id in model.body_faces(face_solid).with_context(&ctx)? {
                 // Rejected before the pair is claimed, not after. This edge
                 // running along `face_id`'s boundary says nothing about
                 // whether the *vertex* is a place an intersection curve
@@ -1145,13 +1145,13 @@ fn trace_from_start_point<S: Scalar>(
 /// tested first and the rest only if it no longer holds the vertex.
 fn faces_at_vertex<S: Scalar>(
     model: &Model<S>,
-    solid: SolidId,
+    solid: Body,
     vertex: VertexId,
     recorded: Option<FaceId>,
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Vec<FaceId>> {
-    let faces = model.solid_faces(solid)?;
+    let faces = model.body_faces(solid)?;
     let on_boundary: Vec<FaceId> = faces
         .iter()
         .copied()
@@ -1679,8 +1679,8 @@ mod tests {
     #[test]
     fn box_grid_offset_x_half_edges_x_faces() {
         let mut part = Part::<ScalInF64>::new();
-        let solid_a = unit_cube_at(&mut part, "a", 0.0, 0.0, 0.0);
-        let solid_b = unit_cube_at(&mut part, "b", 0.5, 0.0, 0.0);
+        let solid_a = unit_cube_at(&mut part, "a", 0.0, 0.0, 0.0).into();
+        let solid_b = unit_cube_at(&mut part, "b", 0.5, 0.0, 0.0).into();
         let namer = Namer::new("boolean", "ab").unwrap();
         let mut naming = BooleanNaming::new(&part, &namer, &[solid_a, solid_b]).unwrap();
 

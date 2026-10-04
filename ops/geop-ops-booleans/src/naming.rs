@@ -32,7 +32,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
+use geop_core_topology::{Body, EdgeId, FaceId, VertexId};
 use geop_ops::{Namer, Part, RefId};
 
 /// What a created entity was made from — everything its final name derives
@@ -75,9 +75,9 @@ pub struct BooleanNaming<S: Scalar> {
 }
 
 impl<S: Scalar> BooleanNaming<S> {
-    /// Starts naming a boolean of `solids`, remembering the names their
+    /// Starts naming a boolean of `bodies`, remembering the names their
     /// edges and faces have now as those entities' origins.
-    pub fn new(part: &Part<S>, namer: &Namer, solids: &[SolidId]) -> GeopResult<Self> {
+    pub fn new(part: &Part<S>, namer: &Namer, bodies: &[Body]) -> GeopResult<Self> {
         let model = part.topology();
         let name = |id: RefId| {
             part.name_of(id)
@@ -86,11 +86,11 @@ impl<S: Scalar> BooleanNaming<S> {
         };
         let mut edge_origin = HashMap::new();
         let mut face_origin = HashMap::new();
-        for &solid in solids {
-            for edge in model.iter_solid_edges(solid)? {
+        for &body in bodies {
+            for edge in model.iter_body_edges(body)? {
                 edge_origin.insert(edge, name(edge.into())?);
             }
-            for face in model.solid_faces(solid)? {
+            for face in model.body_faces(body)? {
                 face_origin.insert(face, name(face.into())?);
             }
         }
@@ -115,6 +115,16 @@ impl<S: Scalar> BooleanNaming<S> {
             .ok_or_else(|| {
                 GeopError::new(format!("boolean naming: edge {edge} has no known origin"))
             })
+    }
+
+    /// Every edge's origin, see [`BooleanNaming::edge_origin`].
+    pub fn edge_origins(&self) -> &HashMap<EdgeId, String> {
+        &self.edge_origin
+    }
+
+    /// Every face's origin, see [`BooleanNaming::face_origin`].
+    pub fn face_origins(&self) -> &HashMap<FaceId, String> {
+        &self.face_origin
     }
 
     pub fn face_origin(&self, face: FaceId) -> GeopResult<&str> {

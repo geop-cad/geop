@@ -8,7 +8,7 @@ use crate::{
         face::{PointClassification, face_contains},
         rng::Rng,
     },
-    validation::ValidationParameters,
+    validation::{ValidationParameters, body_groups},
 };
 
 /// Every pair of faces that already touch in the model — sharing an edge
@@ -83,9 +83,20 @@ pub fn check_face_face_numerical_intersection<S: Scalar>(
     errors: &mut Vec<GeopError>,
     model: &Model<S>,
 ) {
-    let face_ids: Vec<FaceId> = model.faces.keys().copied().collect();
     let adjacent = adjacent_face_pairs(model);
+    // Faces of separate bodies may overlap as they please.
+    for group in body_groups(model) {
+        check_faces_of_body(params, errors, model, &group.faces, &adjacent);
+    }
+}
 
+fn check_faces_of_body<S: Scalar>(
+    params: &ValidationParameters<S>,
+    errors: &mut Vec<GeopError>,
+    model: &Model<S>,
+    face_ids: &[FaceId],
+    adjacent: &HashSet<(FaceId, FaceId)>,
+) {
     for i in 0..face_ids.len() {
         for j in (i + 1)..face_ids.len() {
             let face_a_id = face_ids[i];

@@ -17,18 +17,48 @@
 //! point to classify, which is precisely what a boolean needs from every
 //! face. Both are asserted against in this module's own tests.
 
-use crate::{
-    common::{arc3, line2, pt3, sqrt2_over_2},
-    revolve::{close_bottom_pole_gap, close_top_pole_gap},
-};
+use crate::common::{arc3, line2, pt3, sqrt2_over_2};
 use geop_core_geometry::nurb_surface::NurbSurface;
 use geop_core_math::{
-    geop_error::GeopResult,
+    geop_error::{GeopResult, WithContext},
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
 };
-use geop_core_topology::SolidId;
+use geop_core_topology::{CoedgeId, SolidId};
 use geop_ops::{Namer, Part};
+
+/// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole it
+/// touches on its `v = 0` side: the face's two meridian edges meet at the
+/// shared pole vertex, but nothing represents the pole's zero-length
+/// angular span in *parameter* space, so the loop would jump from `u = 0`
+/// to `u = 1` without a pcurve covering the gap — fatal to
+/// `contains::face::face_contains`, which relies on the pcurves alone
+/// tracing a closed polygon. `at` is the coedge right after the gap; the
+/// bridge, a degenerate coedge sitting at the pole, goes right before it.
+fn close_top_pole_gap<S: Scalar>(part: &mut Part<S>, at: CoedgeId) -> GeopResult<()> {
+    let before = part.topology().get_coedge(at)?.prev;
+    let pole = part.topology().coedge_end_vertex_id(before)?;
+    let pcurve = line2(
+        Vector2::from_array([S::ZERO, S::ZERO]),
+        Vector2::from_array([S::ONE, S::ZERO]),
+    )?;
+    part.add_vertex_coedge(before, pole, pcurve)
+        .with_context("sphere: closing top-pole pcurve gap failed")?;
+    Ok(())
+}
+
+/// Like [`close_top_pole_gap`], for a pole on a quadrant's `v = 1` side:
+/// the gap sits right *after* `at`, so the bridge grows from `at` itself.
+fn close_bottom_pole_gap<S: Scalar>(part: &mut Part<S>, at: CoedgeId) -> GeopResult<()> {
+    let pole = part.topology().coedge_end_vertex_id(at)?;
+    let pcurve = line2(
+        Vector2::from_array([S::ONE, S::ONE]),
+        Vector2::from_array([S::ZERO, S::ONE]),
+    )?;
+    part.add_vertex_coedge(at, pole, pcurve)
+        .with_context("sphere: closing bottom-pole pcurve gap failed")?;
+    Ok(())
+}
 
 // `sphere_quadrant_surface`'s own `u` (equator direction) runs `eq1 -> eq0`
 // (`u = 0` at `eq1`, `u = 1` at `eq0`) — backwards from the naive "eq0 is

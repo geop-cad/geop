@@ -1,6 +1,6 @@
 //! [`Aspects`]: what an entity a step builds on can be used as — a point, a
-//! line, a plane, an arc, something round, a curve, a solid, a sketch, or
-//! several of these at once — and the [`Role`]s that lets it fill. Which of them an
+//! line, a plane, an arc, something round, a curve, a solid, a sheet, a
+//! sketch, or several of these at once — and the [`Role`]s that lets it fill. Which of them an
 //! entity is decides what it can be picked for, and what can be built on
 //! it.
 
@@ -43,6 +43,9 @@ pub struct Aspects<S: Scalar> {
     pub frame: Option<CoordinateSystem<S>>,
     /// A solid, as a whole.
     pub solid: bool,
+    /// A face of a sheet, standing on its own: what a solid can be cut
+    /// with.
+    pub sheet: bool,
     /// A sketch, as a whole: its regions, to sweep.
     pub sketch: bool,
 }
@@ -81,6 +84,10 @@ impl<S: Scalar> Aspects<S> {
                 let surface = &part.topology().get_face(id).with_context(ctx)?.surface;
                 g.plane = entity.resolve_plane(part).ok();
                 g.round = surface.axis_of_revolution().with_context(ctx)?;
+                g.sheet = matches!(
+                    part.topology().body_of_face(id).with_context(ctx)?,
+                    geop_core_topology::Body::Sheet(_)
+                );
             }
             EntityRef::Datum { .. } => {
                 let datum = entity.resolve_datum(part)?;
@@ -157,6 +164,7 @@ impl<S: Scalar> Aspects<S> {
             curve: self.curve.map(|c| c.place(placement)),
             frame: frame(self.frame)?,
             solid: self.solid,
+            sheet: self.sheet,
             sketch: self.sketch,
         })
     }
@@ -190,12 +198,14 @@ pub enum Role {
     Round,
     /// A solid, as a whole.
     Solid,
+    /// A face standing on its own, part of no solid.
+    Sheet,
     /// A sketch, as a whole.
     Sketch,
 }
 
 impl Role {
-    pub const ALL: [Role; 8] = [
+    pub const ALL: [Role; 9] = [
         Role::Point,
         Role::Line,
         Role::Plane,
@@ -203,6 +213,7 @@ impl Role {
         Role::Circle,
         Role::Round,
         Role::Solid,
+        Role::Sheet,
         Role::Sketch,
     ];
 
@@ -215,6 +226,7 @@ impl Role {
             Role::Circle => aspects.arc.is_some(),
             Role::Round => aspects.round.is_some(),
             Role::Solid => aspects.solid,
+            Role::Sheet => aspects.sheet,
             Role::Sketch => aspects.sketch,
         }
     }
@@ -229,6 +241,7 @@ impl Role {
             Role::Circle => "a circular edge",
             Role::Round => "a circular edge or a round face",
             Role::Solid => "a solid",
+            Role::Sheet => "a face on its own",
             Role::Sketch => "a sketch",
         }
     }
@@ -243,6 +256,7 @@ impl Role {
             Role::Circle => "circle",
             Role::Round => "round",
             Role::Solid => "solid",
+            Role::Sheet => "sheet",
             Role::Sketch => "sketch",
         }
     }

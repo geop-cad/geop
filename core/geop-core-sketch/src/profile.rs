@@ -61,10 +61,101 @@ pub struct Region {
     pub holes: Vec<ProfileLoop>,
 }
 
+/// What a sketch draws to sweep: the one area its curves enclose, or — for
+/// a sweep into a sheet only — the one open chain they form, enclosing
+/// nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Shape {
+    Region(Region),
+    Chain(ProfileLoop),
+}
+
 /// Samples per span of a curved piece, for drawing.
 const SAMPLES: usize = 16;
 
 impl<S: Scalar> Sketch<S> {
+    /// The one area the sketch's curves enclose, with its holes.
+    ///
+    /// One sketch is one area to extrude or revolve: a sketch of several
+    /// separate areas is an error — each would be a body of its own, so each
+    /// belongs in a sketch of its own.
+    pub fn region(&self) -> GeopResult<Region> {
+        let mut regions = self.regions()?;
+        match regions.len() {
+            1 => Ok(regions.remove(0)),
+            n => Err(GeopError::new(format!(
+                "sketch has {n} separate areas, but one sketch is one area to sweep: draw each in a sketch of its own"
+            ))),
+        }
+    }
+
+    /// What the sketch draws to sweep (see [`Shape`]): its one area, or, if
+    /// its curves enclose nothing, the one chain they form.
+    pub fn shape(&self) -> GeopResult<Shape> {
+        self.validate()?;
+        if self.loops()?.is_empty() {
+            Ok(Shape::Chain(self.chain()?))
+        } else {
+            Ok(Shape::Region(self.region()?))
+        }
+    }
+
+    /// The one open chain the sketch's non-construction curves form, walked
+    /// from its end at the lower point id. Fails unless they form exactly
+    /// one, unbranched.
+    fn chain(&self) -> GeopResult<ProfileLoop> {
+        let class = self.point_classes();
+        let edges: Vec<(CurveId, PointId, PointId)> = self
+            .curves
+            .iter()
+            .filter(|(_, c)| !c.construction)
+            .filter_map(|(&id, c)| c.endpoints().map(|(s, e)| (id, class[&s], class[&e])))
+            .collect();
+        if edges.is_empty() {
+            return Err(GeopError::new("sketch has no curves to sweep"));
+        }
+        let mut degree: BTreeMap<PointId, usize> = BTreeMap::new();
+        for &(_, a, b) in &edges {
+            *degree.entry(a).or_default() += 1;
+            *degree.entry(b).or_default() += 1;
+        }
+        if let Some((p, d)) = degree.iter().find(|(_, d)| **d > 2) {
+            return Err(GeopError::new(format!(
+                "profile curves branch at point {p}: {d} curves meet there"
+            )));
+        }
+        let ends: Vec<PointId> = degree
+            .iter()
+            .filter(|(_, d)| **d == 1)
+            .map(|(&p, _)| p)
+            .collect();
+        let pieces = ends.len() / 2;
+        let Some(&start) = ends.first() else {
+            return Err(GeopError::new("sketch has no curves to sweep"));
+        };
+        let mut used = vec![false; edges.len()];
+        let mut chain = Vec::new();
+        let mut at = start;
+        while let Some(k) =
+            (0..edges.len()).find(|&k| !used[k] && (edges[k].1 == at || edges[k].2 == at))
+        {
+            used[k] = true;
+            let reversed = edges[k].1 != at;
+            chain.push(ProfileEdge {
+                curve: edges[k].0,
+                reversed,
+            });
+            at = if reversed { edges[k].1 } else { edges[k].2 };
+        }
+        if pieces != 1 || used.iter().any(|u| !u) {
+            return Err(GeopError::new(format!(
+                "sketch has {} separate chains of curves, but one sketch is one profile to sweep: draw each in a sketch of its own",
+                pieces.max(2)
+            )));
+        }
+        Ok(ProfileLoop { edges: chain })
+    }
+
     /// Every region bounded by the sketch's non-construction curves.
     pub fn regions(&self) -> GeopResult<Vec<Region>> {
         self.validate()?;
@@ -310,7 +401,8 @@ impl ProfileLoop {
     /// Arcs are split into pieces of at most a quarter turn — a rational
     /// quadratic's middle weight `cos(sweep / 2)` must stay positive — and
     /// circles into four quarters. A loop of a single piece (a closed spline)
-    /// is split in two, so every loop has at least two joints. Each piece
+    /// is split in two, so every loop has at least two joints; an open chain
+    /// of one piece stays one. Each piece
     /// records which sketch curve it is part of and which joints it runs
     /// between (see [`ProfilePiece`]).
     ///
@@ -356,7 +448,9 @@ impl ProfileLoop {
                 out.extend(pieces);
             }
         }
-        if let [only] = &out[..] {
+        if let [only] = &out[..]
+            && only.start == only.end
+        {
             // A closed curve of a single piece: split it at its middle, which
             // becomes the curve's joint 1 whichever way the loop runs.
             let (a, b) = only.curve.split(S::ONE.div(S::TWO)?)?;

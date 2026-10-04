@@ -1,8 +1,7 @@
 //! Shared geometry helpers for the constructors in this crate, and
-//! [`Profile`], the named curve chain extrude and revolve sweep. Topology
-//! construction itself goes straight through `Part`'s euler operators
-//! (`mvfs`, `mve`, `mef`, `mer`, `replace_face`, ...) — see `extrude.rs` for
-//! a worked example of how they compose.
+//! [`Profile`], the named curve chain extrude and revolve sweep. The
+//! topology itself is described whole and built in one go, see
+//! [`crate::sweep`].
 
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D},

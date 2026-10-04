@@ -3,7 +3,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_core_topology::{EdgeId, Model, SolidId, VertexId};
+use geop_core_topology::{Body, EdgeId, Model, VertexId};
 use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
@@ -11,14 +11,14 @@ use crate::naming::BooleanNaming;
 /// The first `(edge_a, t, vertex_b)` split — `edge_a` from `solid_a`,
 /// `vertex_b` a `solid_b` vertex lying on it at parameter `t` — if any.
 /// Split out from `remesh_vertices_x_edges` for the same reason as
-/// `remesh_vertices::find_coincident_vertex_pair`: `iter_solid_edges`/
-/// `iter_solid_vertices` borrow `model`, so this search has to finish and
+/// `remesh_vertices::find_coincident_vertex_pair`: `iter_body_edges`/
+/// `iter_body_vertices` borrow `model`, so this search has to finish and
 /// hand back plain ids before the caller is free to call
 /// `split_edge_at_vertex` (`&mut self`).
 fn find_edge_vertex_split<S: Scalar>(
     model: &Model<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Option<(EdgeId, S, VertexId)>> {
@@ -28,8 +28,8 @@ fn find_edge_vertex_split<S: Scalar>(
         ))
     };
 
-    for edge_a in model.iter_solid_edges(solid_a).with_context(&ctx)? {
-        for vertex_b in model.iter_solid_vertices(solid_b).with_context(&ctx)? {
+    for edge_a in model.iter_body_edges(solid_a).with_context(&ctx)? {
+        for vertex_b in model.iter_body_vertices(solid_b).with_context(&ctx)? {
             let edge_vertex_ctx =
                 |e: GeopError| e.with_context(format!("edge_a={edge_a}, vertex_b={vertex_b}"));
 
@@ -56,7 +56,7 @@ fn find_edge_vertex_split<S: Scalar>(
             // have merged the two — that's the real bug this guards
             // against. Coinciding while genuinely *being* that endpoint
             // (same id) is the expected, healthy terminal state once it has
-            // been merged — e.g. `iter_solid_vertices(solid_b)` legitimately
+            // been merged — e.g. `iter_body_vertices(solid_b)` legitimately
             // re-surfaces a vertex shared by both solids — so that's just
             // "nothing to split here", not an error.
             if vertex_point.could_be_equal(&start_point) && vertex_b != start_vertex {
@@ -82,8 +82,8 @@ fn find_edge_vertex_split<S: Scalar>(
 pub fn remesh_vertices_x_edges<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<()> {

@@ -16,10 +16,21 @@ use crate::{
 /// `contains` module relies on, and two coedges of the *same* sense would
 /// mean both adjoining faces treat the edge as running the same direction —
 /// a torn (rather than shared) seam, not a genuinely closed manifold edge.
+///
+/// The one exception is a sheet's border: a sheet bounds nothing, so an
+/// edge only one of its faces uses is simply where it ends.
 fn check_every_edge_has_two_coedges<S: Scalar>(errors: &mut Vec<GeopError>, model: &Model<S>) {
     for &edge_id in model.edges.keys() {
         let coedge_ids = model.coedges_of_edge(edge_id);
         let n = coedge_ids.len();
+        let on_sheet = |coedge: &crate::CoedgeId| {
+            model
+                .body_of_face(model.coedges[coedge].face)
+                .is_ok_and(|body| matches!(body, crate::Body::Sheet(_)))
+        };
+        if n == 1 && on_sheet(&coedge_ids[0]) {
+            continue;
+        }
         if n != 2 {
             errors.push(GeopError::new(format!(
                 "edge {} has {} coedge(s) (expected exactly 2 for a manifold shell)",
@@ -74,7 +85,8 @@ fn check_ray_direction_consistency<S: Scalar>(
     errors: &mut Vec<GeopError>,
     model: &Model<S>,
 ) {
-    for &shell_id in model.shells.keys() {
+    // Only a solid's shells enclose anything to be inside of.
+    for (&shell_id, _) in model.shells.iter().filter(|(_, s)| s.solid.is_some()) {
         let (vertex_ids, edge_ids) = shell_vertices_and_edges(model, shell_id);
         if vertex_ids.is_empty() {
             continue;

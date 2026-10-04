@@ -5,7 +5,7 @@ use crate::{
     boundary::BoundaryType,
     contains::{
         face::face_interior_point,
-        shell::{PointClassification, shell_contains},
+        shell::{PointClassification, solid_contains},
     },
     loop_sampling::sample_loop_to_polygon,
     validation::ValidationParameters,
@@ -144,7 +144,13 @@ pub fn check_normals_point_outward<S: Scalar>(
     errors: &mut Vec<GeopError>,
     model: &Model<S>,
 ) {
+    // A sheet bounds nothing, so either side of it may face anywhere.
     for (&shell_id, shell) in &model.shells {
+        // Measured against the whole solid: a void's faces point into the
+        // void, out of the material around it.
+        let Some(solid_id) = shell.solid else {
+            continue;
+        };
         for &face_id in &shell.faces {
             let Some(face) = model.faces.get(&face_id) else {
                 continue;
@@ -182,17 +188,17 @@ pub fn check_normals_point_outward<S: Scalar>(
                 let outward = point.add(&normal.prod_scalar(step));
                 let inward = point.sub(&normal.prod_scalar(step));
                 if let (Ok(out_class), Ok(in_class)) = (
-                    shell_contains(
+                    solid_contains(
                         model,
-                        shell_id,
+                        solid_id,
                         outward,
                         params.max_nodes,
                         params.min_subdivision_size,
                         SEED,
                     ),
-                    shell_contains(
+                    solid_contains(
                         model,
-                        shell_id,
+                        solid_id,
                         inward,
                         params.max_nodes,
                         params.min_subdivision_size,
@@ -243,7 +249,7 @@ pub fn check_normals_point_outward<S: Scalar>(
             }
             if verdict == Some(false) {
                 errors.push(GeopError::new(format!(
-                    "face {face_id}'s normal points into shell {shell_id} rather than out of it: at its interior point {point:?} the normal is {normal:?}, and the closest probe that resolved put the solid on the normal's side"
+                    "face {face_id}'s normal points into solid {solid_id} (from its shell {shell_id}) rather than out of it: at its interior point {point:?} the normal is {normal:?}, and the closest probe that resolved put the solid on the normal's side"
                 )));
             }
         }

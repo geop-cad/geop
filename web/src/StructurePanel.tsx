@@ -10,6 +10,7 @@ interface Props {
 /** The kinds listed, in order, with what their group is called. */
 const GROUPS: [StructureKind, string][] = [
   ["solid", "Solids"],
+  ["face", "Faces"],
   ["sketch", "Sketches"],
   ["datum", "Datums"],
   ["part", "Placed parts"],
@@ -27,8 +28,9 @@ function Eye({ open }: { open: boolean }) {
 }
 
 /**
- * What the part has beyond its faces — its solids, sketches, datums, the
- * parts placed in it and their mates — grouped by kind, each with a
+ * What the part has beyond the faces of its solids — its solids, faces
+ * standing on their own, sketches, datums, the parts placed in it and their
+ * mates — grouped by kind, each with a
  * switch to show or hide it. Whether it is shown is the kernel's: what the
  * editor hides by itself — a sketch once extruded — until the user says
  * otherwise.

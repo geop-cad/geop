@@ -4,8 +4,9 @@
 
 use crate::{
     common::{Profile, polygon, polyline},
-    extrude::{ExtrudeNames, extrude},
+    extrude::extrude,
     revolve::revolve_at_oriented,
+    sweep::SweepLoop,
 };
 use geop_core_math::{
     geop_error::GeopResult,
@@ -107,7 +108,7 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
 /// boundary's normals to face outward (see its own module doc).
 ///
 /// Named as the operation `cylinder(name)`, after the polygon's corners
-/// `p0..` and sides `c0..` (see [`ExtrudeNames`]).
+/// `p0..` and sides `c0..` (see [`extrude`]).
 pub fn extruded_cylinder<S: Scalar>(
     part: &mut Part<S>,
     name: &str,
@@ -134,13 +135,16 @@ pub fn extruded_cylinder<S: Scalar>(
         .collect();
 
     let namer = Namer::new("cylinder", name)?;
-    extrude(
+    let built = extrude(
         part,
-        &ExtrudeNames::single(&namer),
+        &namer,
+        Some(&namer.root()),
         &coordinate_system,
-        &Profile::closed(polygon(&outer)?),
-        &[],
-    )
+        S::ZERO,
+        S::ONE,
+        &[SweepLoop::plain(Profile::closed(polygon(&outer)?))],
+    )?;
+    Ok(built.solid.expect("extruded as a solid"))
 }
 
 #[cfg(test)]

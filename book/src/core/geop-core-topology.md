@@ -22,8 +22,13 @@ Solid ──▶ Shell(s) ──▶ Face(s) [+Surface] ──▶ Coedge(s) [+Curv
 | `Edge`   | a `Curve3` trimmed so its domain is exactly the edge, and its start and end vertex |
 | `Coedge` | one side of an edge on one face: `sense`, a `Curve2` pcurve on the face's surface, `next`/`prev` in its loop |
 | `Face`   | a `NurbSurface3D`, one `outer` boundary and a list of `holes`          |
-| `Shell`  | a connected set of faces                                               |
+| `Shell`  | a connected set of faces, and the solid it bounds — none for a *sheet* of faces standing on their own |
 | `Solid`  | its shells, outer shell first                                          |
+
+A `Body` is either: a solid, or a sheet. A sheet bounds nothing, so its
+border edges are used by one face only; what bodies may not do is overlap
+within themselves — separate bodies may touch or overlap, and validation
+only checks each body's own entities against each other.
 
 Geometry is owned by the entity it belongs to, not shared through another
 arena, because nothing references it on its own. A loop is not an entity
@@ -92,13 +97,20 @@ are built from:
   neighbouring faces.
 - `assemble_solid` builds the result of a boolean: one new solid made of the
   faces to keep, deleting everything no longer reachable from them.
+- `build_body` builds a whole body at once from a `BodySpec` — vertices,
+  edges, and faces bounded by loops of coedges, all by index — once
+  `BodySpec::check` finds it consistent: every loop closes, every edge is
+  used at most twice and then in opposite senses (exactly twice for a
+  solid). `body_spec` describes faces of a model the same way, as a copy.
 
 ## Containment
 
 `contains::face::face_contains` classifies a `(u, v)` point against a face's
 trim as `OnVertex`, `OnCoedge`, `Inside` or `Outside`, by casting a ray in
 parameter space. `contains::shell` does the same in 3-D for a point against
-a solid. Both first check for coincidence with the boundary. They then pick
+a shell, and `solid_contains` against a solid: inside an odd number of its
+shells — its outer one, and no void. Both first check for coincidence with
+the boundary. They then pick
 ray directions from a seeded PRNG and retry until a ray crosses the boundary
 only at clean interior points (a graze through a vertex or edge cannot be
 counted reliably), so the parity of the crossing count gives the answer.

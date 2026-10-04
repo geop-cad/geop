@@ -2,7 +2,9 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
-use geop_core_topology::SolidId;
+use std::collections::HashMap;
+
+use geop_core_topology::{Body, EdgeId, FaceId};
 use geop_ops::{Namer, Part};
 
 use crate::naming::BooleanNaming;
@@ -60,10 +62,12 @@ impl<S: Scalar> Default for RemeshParams<S> {
     }
 }
 
-/// Prepare `solid_a` and `solid_b`'s topology for a boolean operation:
-/// every coincidence between them (vertex/vertex, vertex/edge, edge/edge,
-/// edge/face) is resolved into shared topology, so that afterwards the two
-/// solids meet only along entities they genuinely share.
+/// Prepare `body_a` and `body_b`'s topology for a boolean operation or a
+/// split: every coincidence between them (vertex/vertex, vertex/edge,
+/// edge/edge, edge/face) is resolved into shared topology, so that
+/// afterwards the two bodies meet only along entities they genuinely share.
+/// Either may be a sheet: imprinting asks nothing of a body but its faces,
+/// edges and vertices.
 ///
 /// Runs in strictly increasing order of dimension — vertices, then edges
 /// against vertices, then edges against edges, then edges against faces
@@ -75,22 +79,26 @@ impl<S: Scalar> Default for RemeshParams<S> {
 ///
 /// Everything it creates is named by `namer`, following
 /// [`crate::naming`]'s scheme.
+///
+/// Returns what every face and edge of either body came from (see
+/// [`Origins`]).
 pub fn remesh<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    body_a: impl Into<Body>,
+    body_b: impl Into<Body>,
     params: RemeshParams<S>,
-) -> GeopResult<()> {
+) -> GeopResult<Origins> {
+    let (body_a, body_b) = (body_a.into(), body_b.into());
     let ctx = |e: GeopError| {
         e.with_context(format!(
-            "remesh(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
+            "remesh(body_a={body_a}, body_b={body_b}, params={params:?})"
         ))
     };
 
-    let mut naming = BooleanNaming::new(part, namer, &[solid_a, solid_b]).with_context(&ctx)?;
+    let mut naming = BooleanNaming::new(part, namer, &[body_a, body_b]).with_context(&ctx)?;
 
-    remesh_vertices(part, solid_a, solid_b).with_context(&ctx)?;
+    remesh_vertices(part, body_a, body_b).with_context(&ctx)?;
 
     // The one place an edge x face question creates a vertex ahead of the
     // edge phases: where an intersection branch leaves an edge along which
@@ -99,7 +107,7 @@ pub fn remesh<S: Scalar>(
     // the shared profile, as each solid built it — so the new vertex lies on
     // the other solid's copy too, and `remesh_vertices_x_edges` below splits
     // that one like any other vertex on an edge.
-    for (edge_solid, face_solid) in [(solid_a, solid_b), (solid_b, solid_a)] {
+    for (edge_solid, face_solid) in [(body_a, body_b), (body_b, body_a)] {
         remesh_tangent_branches(
             part,
             &mut naming,
@@ -112,9 +120,9 @@ pub fn remesh<S: Scalar>(
         .with_context(&ctx)?;
     }
 
-    // `remesh_vertices_x_edges` only splits `solid_a`'s edges at `solid_b`'s
-    // vertices — it has no idea a `solid_a` vertex might just as well be
-    // sitting on one of `solid_b`'s edges, so that direction needs its own,
+    // `remesh_vertices_x_edges` only splits `body_a`'s edges at `body_b`'s
+    // vertices — it has no idea a `body_a` vertex might just as well be
+    // sitting on one of `body_b`'s edges, so that direction needs its own,
     // separate call with the solids swapped. Vertex positions never change
     // (splitting only refines topology), so running direction A then
     // direction B can't reopen the other: a coincidence direction B finds
@@ -123,8 +131,8 @@ pub fn remesh<S: Scalar>(
     remesh_vertices_x_edges(
         part,
         &mut naming,
-        solid_a,
-        solid_b,
+        body_a,
+        body_b,
         params.max_nodes,
         params.min_subdivision_size,
     )
@@ -132,21 +140,21 @@ pub fn remesh<S: Scalar>(
     remesh_vertices_x_edges(
         part,
         &mut naming,
-        solid_b,
-        solid_a,
+        body_b,
+        body_a,
         params.max_nodes,
         params.min_subdivision_size,
     )
     .with_context(&ctx)?;
 
     // Unlike the vertex-onto-edge step above, this one already checks every
-    // `solid_a` edge against every `solid_b` edge directly (both directions
+    // `body_a` edge against every `body_b` edge directly (both directions
     // in one nested loop), so it doesn't need a second, swapped call.
     remesh_edges_x_edges(
         part,
         &mut naming,
-        solid_a,
-        solid_b,
+        body_a,
+        body_b,
         params.max_edge_intersections,
         params.max_nodes,
         params.curve_curve_min_subdivision_size,
@@ -159,8 +167,8 @@ pub fn remesh<S: Scalar>(
     remesh_edges_x_faces(
         part,
         &mut naming,
-        solid_a,
-        solid_b,
+        body_a,
+        body_b,
         params.max_edge_intersections,
         params.max_nodes,
         params.curve_curve_min_subdivision_size,
@@ -169,5 +177,20 @@ pub fn remesh<S: Scalar>(
     )
     .with_context(&ctx)?;
 
-    naming.finish(part).with_context(&ctx)
+    let origins = Origins {
+        faces: naming.face_origins().clone(),
+        edges: naming.edge_origins().clone(),
+    };
+    naming.finish(part).with_context(&ctx)?;
+    Ok(origins)
+}
+
+/// What the faces and edges of two remeshed bodies came from: the name each
+/// had before, or, for a piece split off one, the name that one had — its
+/// *origin* (see [`crate::naming`]). Entities created otherwise, and since
+/// deleted, may be missing or left over.
+#[derive(Clone, Debug, Default)]
+pub struct Origins {
+    pub faces: HashMap<FaceId, String>,
+    pub edges: HashMap<EdgeId, String>,
 }

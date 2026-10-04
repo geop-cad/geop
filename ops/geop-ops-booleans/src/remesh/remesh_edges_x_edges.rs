@@ -4,7 +4,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_topology::{EdgeId, Model, SolidId, VertexId};
+use geop_core_topology::{Body, EdgeId, Model, VertexId};
 use geop_ops::Part;
 
 use crate::naming::BooleanNaming;
@@ -53,7 +53,7 @@ fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Opti
 /// The first actionable `solid_a` edge x `solid_b` edge pair, if any — see
 /// [`EdgeEdgeAction`]. Split out from `remesh_edges_x_edges` for the same
 /// reason as `remesh_vertices::find_coincident_vertex_pair`:
-/// `iter_solid_edges` borrows `model`, so this search has to finish and hand
+/// `iter_body_edges` borrows `model`, so this search has to finish and hand
 /// back plain data before the caller is free to mutate.
 ///
 /// Coincidence is detected by vertex identity — the two edges already share
@@ -76,8 +76,8 @@ fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Opti
 /// `max_nodes` at all.
 fn find_edge_edge_action<S: Scalar>(
     model: &Model<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
     max_solutions: usize,
     max_nodes: usize,
     curve_curve_min_subdivision_size: S,
@@ -88,8 +88,8 @@ fn find_edge_edge_action<S: Scalar>(
         ))
     };
 
-    for edge_a in model.iter_solid_edges(solid_a).with_context(&ctx)? {
-        for edge_b in model.iter_solid_edges(solid_b).with_context(&ctx)? {
+    for edge_a in model.iter_body_edges(solid_a).with_context(&ctx)? {
+        for edge_b in model.iter_body_edges(solid_b).with_context(&ctx)? {
             // Already the same edge (e.g. an earlier merge this pass already
             // welded them together) — nothing to do.
             if edge_a == edge_b {
@@ -186,8 +186,8 @@ fn find_edge_edge_action<S: Scalar>(
 pub fn remesh_edges_x_edges<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
-    solid_a: SolidId,
-    solid_b: SolidId,
+    solid_a: Body,
+    solid_b: Body,
     max_solutions: usize,
     max_nodes: usize,
     curve_curve_min_subdivision_size: S,

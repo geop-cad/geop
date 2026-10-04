@@ -3,13 +3,14 @@
 //!
 //! This is just an outer footprint and two hole footprints (a dumbbell
 //! outline — two square "lobes" joined by a narrow neck — with a small
-//! square hole in each lobe) handed to [`extrude`], which does all the
-//! actual euler-operator work (including the holes, all the way through
-//! both caps and their own side walls).
+//! square hole in each lobe) handed to [`extrude`], which builds all of it
+//! (including the holes, all the way through both caps and their own side
+//! walls).
 
 use crate::{
     common::{Profile, polygon},
-    extrude::{ExtrudeNames, extrude},
+    extrude::extrude,
+    sweep::SweepLoop,
 };
 use geop_core_math::{
     geop_error::GeopResult,
@@ -66,7 +67,7 @@ pub fn hole_polygons<S: Scalar>() -> [Vec<Vector2<S>>; 2] {
 ///
 /// Named as the operation `figure8(name)`, after the outline's corners
 /// `p0..` and sides `c0..` and the holes' `h0p0..`, `h1c0..` (see
-/// [`ExtrudeNames`]).
+/// [`extrude`]).
 pub fn figure8_profile<S: Scalar>(part: &mut Part<S>, name: &str) -> GeopResult<SolidId> {
     // Left-handed (`u x v = -w`): `extrude` extrudes a CCW `outer` polygon
     // backwards along `w`, so a CCW boundary with outward-facing normals
@@ -84,14 +85,21 @@ pub fn figure8_profile<S: Scalar>(part: &mut Part<S>, name: &str) -> GeopResult<
         .enumerate()
         .map(|(k, h)| Ok(Profile::closed(polygon(h)?).with_prefix(&format!("h{k}"))))
         .collect::<GeopResult<Vec<_>>>()?;
+    let loops: Vec<SweepLoop<S>> = std::iter::once(outer)
+        .chain(holes)
+        .map(SweepLoop::plain)
+        .collect();
     let namer = Namer::new("figure8", name)?;
-    extrude(
+    let built = extrude(
         part,
-        &ExtrudeNames::single(&namer),
+        &namer,
+        Some(&namer.root()),
         &coordinate_system,
-        &outer,
-        &holes,
-    )
+        S::ZERO,
+        S::ONE,
+        &loops,
+    )?;
+    Ok(built.solid.expect("extruded as a solid"))
 }
 
 #[cfg(test)]

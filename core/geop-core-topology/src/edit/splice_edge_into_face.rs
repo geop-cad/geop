@@ -69,8 +69,8 @@ impl<S: Scalar> Model<S> {
             surface
                 .fit_pcurve(
                     &curve,
-                    pcurve_end_uv(model, at_start)?,
-                    pcurve_end_uv(model, at_end)?,
+                    pin(model, &surface, at_start, start_vertex)?,
+                    pin(model, &surface, at_end, end_vertex)?,
                     max_nodes,
                     min_subdivision_size,
                 )
@@ -187,8 +187,9 @@ impl<S: Scalar> Model<S> {
                         for ring in [fwd, rev] {
                             let area = signed_area(model, ring).with_context(&ctx)?;
                             if !area.abs().definitely_greater(S::ZERO) {
+                                let widest = widest_pcurve(model, ring).with_context(&ctx)?;
                                 return Err(ctx(GeopError::new(format!(
-                                    "{DEGENERATE_SPLIT}: splicing edge {edge_id} into face {face_id} would split its outer loop into a ring of signed area {area:?} — the edge runs along the boundary it is being spliced into, so one side encloses nothing"
+                                    "{DEGENERATE_SPLIT}: splicing edge {edge_id} into face {face_id} would split its outer loop into a ring of signed area {area:?} — the edge runs along the boundary it is being spliced into, so one side encloses nothing (the ring's widest pcurve: {widest})"
                                 ))));
                             }
                         }
@@ -273,6 +274,42 @@ fn pcurve_end_uv<S: Scalar>(
     let (_, t1) = pcurve.domain();
     Ok(Some(pcurve.evaluate(t1)?))
 }
+
+/// The `(u, v)` to pin a new pcurve's end to at `vertex`, where `coedge`
+/// arrives on `surface`: that coedge's end — what keeps the loop continuous
+/// — intersected with `vertex`'s own projection onto the surface. Both are
+/// enclosures of the one `(u, v)` the vertex is at, so their intersection is
+/// too, and it is no wider than the narrower: an end widened by its own
+/// pcurve's history (a pin of its own, the drift it encloses) does not pass
+/// that width on — a pcurve is widened to hold its pins whole, all along
+/// (see `NurbCurve2D::interpolate_enclosing`), so a wide pin is a wide
+/// pcurve. A projection that fails, or misses the end altogether, leaves
+/// the end as it is.
+fn pin<S: Scalar>(
+    model: &Model<S>,
+    surface: &geop_core_geometry::nurb_surface::NurbSurface3D<S>,
+    coedge: Option<CoedgeId>,
+    vertex: VertexId,
+) -> GeopResult<Option<Vector2<S>>> {
+    let Some(end) = pcurve_end_uv(model, coedge)? else {
+        return Ok(None);
+    };
+    let point = model.get_vertex(vertex)?.point;
+    let Ok((u, v)) = surface.project(point, end[0].midpoint(), end[1].midpoint(), PIN_ITERATIONS)
+    else {
+        return Ok(Some(end));
+    };
+    let overlaps = end[0].could_be_equal(u) && end[1].could_be_equal(v);
+    Ok(Some(if overlaps {
+        Vector2::from_array([end[0].intersect(u), end[1].intersect(v)])
+    } else {
+        end
+    }))
+}
+
+/// Newton iterations refining a pin (see [`pin`]): from a seed already on
+/// the foot point's doorstep, a handful converge.
+const PIN_ITERATIONS: usize = 8;
 
 /// Every coedge of `face_id` that *arrives* at `vertex`: one per time its
 /// boundary passes through it. A new edge leaving `vertex` has to be spliced
@@ -635,6 +672,101 @@ fn new_face_from_ring<S: Scalar>(
 fn signed_area<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<S> {
     let polygon = sample_loop_to_polygon(model, anchor, LOOP_AREA_SAMPLES)?;
     Ok(polygon_signed_area(&polygon))
+}
+
+/// Which coedge of the ring anchored at `anchor` has the widest pcurve, as
+/// sampled for [`signed_area`], and how wide: what an area too uncertain to
+/// be told from zero comes from — a ring that really encloses nothing, or a
+/// pcurve carrying too much uncertainty to say.
+fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<String> {
+    let width = |uv: &geop_core_math::vector::Vector2<S>| {
+        uv[0].width().to_f64().max(uv[1].width().to_f64())
+    };
+    let mut widest = (0.0, None);
+    let mut each = Vec::new();
+    for coedge_id in ring_coedges(model, anchor)? {
+        let coedge = model.get_coedge(coedge_id)?;
+        let (t0, t1) = coedge.pcurve.domain();
+        let mut samples = Vec::with_capacity(LOOP_AREA_SAMPLES);
+        for i in 0..LOOP_AREA_SAMPLES {
+            let frac = S::from_ratio(i as i64, (LOOP_AREA_SAMPLES - 1) as i64)?;
+            let uv = coedge.pcurve.evaluate(t0.add(t1.sub(t0).mul(frac)))?;
+            if width(&uv) > widest.0 {
+                widest = (width(&uv), Some((coedge_id, coedge.geometry, uv)));
+            }
+            samples.push(width(&uv));
+        }
+        let mid = samples[samples.len() / 2];
+        each.push(format!(
+            "{:?}: {:.1e} / {mid:.1e} / {:.1e}",
+            coedge.geometry,
+            samples[0],
+            samples[samples.len() - 1]
+        ));
+    }
+    let each = each.join(", ");
+    Ok(match widest.1 {
+        Some((coedge, geometry, uv)) => {
+            // How fast the surface moves there: a slow parametrization
+            // turns a narrow point into a wide `(u, v)`.
+            let face = model.get_coedge(coedge)?.face;
+            let surface_width = model
+                .get_face(face)?
+                .surface
+                .control_points
+                .iter()
+                .flat_map(|cp| (0..4).map(move |k| cp[k].width().to_f64()))
+                .fold(0.0, f64::max);
+            let speed = model
+                .get_face(face)?
+                .surface
+                .derivatives(uv[0].midpoint(), uv[1].midpoint())
+                .map(|(du, dv)| format!("|dS/du| = {:?}, |dS/dv| = {:?}", du.norm(), dv.norm()))
+                .unwrap_or_else(|e| format!("no derivatives: {}", e.root_message()));
+            // Whether its ends land on the surface where its vertices are: a
+            // pcurve pinned to a `(u, v)` off its vertex is widened to span
+            // the gap all along.
+            let coedge_data = model.get_coedge(coedge)?;
+            let surface = &model.get_face(face)?.surface;
+            let (t0, t1) = coedge_data.pcurve.domain();
+            let mut ends = Vec::new();
+            for (t, vertex) in [
+                (t0, model.coedge_start_vertex(coedge)?),
+                (t1, model.coedge_end_vertex(coedge)?),
+            ] {
+                let uv = coedge_data.pcurve.evaluate(t)?;
+                let width = (0..3)
+                    .map(|k| vertex.point[k].width().to_f64())
+                    .fold(0.0, f64::max);
+                ends.push(match surface.evaluate(uv[0].midpoint(), uv[1].midpoint()) {
+                    Ok(p) => format!(
+                        "{:.1e} (vertex {width:.1e} wide)",
+                        p.sub(&vertex.point).norm().to_f64()
+                    ),
+                    Err(_) => {
+                        format!("(outside the surface's domain at {uv:?}; vertex {width:.1e} wide)")
+                    }
+                });
+            }
+            let ends = ends.join(" and ");
+            // And whether it inherits that from its edge's 3-D curve.
+            let curve_width = match geometry {
+                CoedgeGeometry::Edge(edge) => model
+                    .get_edge(edge)?
+                    .curve
+                    .control_points
+                    .iter()
+                    .flat_map(|cp| (0..4).map(move |k| cp[k].width().to_f64()))
+                    .fold(0.0, f64::max),
+                CoedgeGeometry::Vertex(_) => 0.0,
+            };
+            format!(
+                "coedge {coedge} on {geometry:?}, {:e} wide at uv={uv:?}, where {speed} and the surface's control points are up to {surface_width:e} wide; its ends land {ends} away from their vertices; its 3-D curve's control points up to {curve_width:e} wide. Every coedge's width at its start / middle / end: {each}",
+                widest.0
+            )
+        }
+        None => "every sample sharp".into(),
+    })
 }
 
 /// Samples per coedge for [`signed_area`]. Only the *sign* is used, and a

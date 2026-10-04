@@ -125,13 +125,14 @@ pub fn check_two_way_references<S: Scalar>(
         }
 
         // Every shell's `solid` must list that shell back.
-        if let Some(solid) = model.solids.get(&shell.solid) {
-            if !solid.shells.contains(&shell_id) {
-                errors.push(GeopError::new(format!(
-                    "shell {} names solid {}, but that solid does not list it back",
-                    shell_id.0, shell.solid.0
-                )));
-            }
+        if let Some(solid_id) = shell.solid
+            && let Some(solid) = model.solids.get(&solid_id)
+            && !solid.shells.contains(&shell_id)
+        {
+            errors.push(GeopError::new(format!(
+                "shell {} names solid {}, but that solid does not list it back",
+                shell_id.0, solid_id.0
+            )));
         }
     }
 
@@ -139,10 +140,10 @@ pub fn check_two_way_references<S: Scalar>(
         // Every shell a solid lists must name that solid back.
         for &shell_id in &solid.shells {
             if let Some(shell) = model.shells.get(&shell_id) {
-                if shell.solid != solid_id {
+                if shell.solid != Some(solid_id) {
                     errors.push(GeopError::new(format!(
-                        "solid {} lists shell {}, but that shell names solid {} instead",
-                        solid_id.0, shell_id.0, shell.solid.0
+                        "solid {} lists shell {}, but that shell names solid {:?} instead",
+                        solid_id.0, shell_id.0, shell.solid
                     )));
                 }
             }

@@ -947,7 +947,12 @@ fn colours_are_picked_without_rebuilding() {
     let update = editor.handle(Command::Parameters { parameters });
     let took = started.elapsed();
     assert_eq!(
-        update.scene.expect("drawn in the new colour").part.color.as_deref(),
+        update
+            .scene
+            .expect("drawn in the new colour")
+            .part
+            .color
+            .as_deref(),
         Some("#123456")
     );
     assert!(

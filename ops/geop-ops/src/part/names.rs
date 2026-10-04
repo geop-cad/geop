@@ -127,6 +127,8 @@ pub fn validate_operation_id(id: &str) -> GeopResult<()> {
 pub struct Namer {
     kind: String,
     operation: String,
+    /// The arguments every name starts with, see [`Namer::scoped`].
+    scope: Vec<String>,
 }
 
 impl Namer {
@@ -136,19 +138,34 @@ impl Namer {
         Ok(Self {
             kind: kind.to_string(),
             operation: operation.to_string(),
+            scope: Vec::new(),
         })
     }
 
+    /// The names for one of several parts of the operation's work that
+    /// would otherwise name things alike — the second side of an extrude
+    /// built on its own, say: `kind(operation,scope,arg,...)`.
+    pub fn scoped(&self, scope: &str) -> Self {
+        let mut scoped = self.clone();
+        scoped.scope.push(scope.to_string());
+        scoped
+    }
+
     /// `kind(operation)`: the operation's own name, which is what the solid
-    /// it builds is called.
+    /// it builds is called — `kind(operation,scope)` for a scoped one.
     pub fn root(&self) -> String {
-        format!("{}({})", self.kind, self.operation)
+        self.name(&[])
     }
 
     /// `kind(operation,arg,...)`.
     pub fn name(&self, args: &[&str]) -> String {
         let mut name = format!("{}({}", self.kind, self.operation);
-        for arg in args {
+        for arg in self
+            .scope
+            .iter()
+            .map(String::as_str)
+            .chain(args.iter().copied())
+        {
             name.push(',');
             name.push_str(arg);
         }

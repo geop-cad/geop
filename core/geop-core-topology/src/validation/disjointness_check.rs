@@ -4,7 +4,7 @@ use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
 use crate::{
     CoedgeGeometry, EdgeId, Model, VertexId,
     contains::face::{PointClassification, face_contains},
-    validation::ValidationParameters,
+    validation::{ValidationParameters, body_groups},
 };
 
 /// Fixed seed for the ray casting behind the edge-inside-face-trim test.
@@ -29,16 +29,25 @@ fn coincides_with_a_vertex<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> b
         .any(|v| point.could_be_equal(&v.point))
 }
 
-/// Checks that no two (distinct) vertices could overlap — every vertex is
-/// meant to occupy a genuinely distinct position; a shared position should
-/// be represented by reusing the same `VertexId`, not by two coincident
-/// ones.
+/// Checks that no two (distinct) vertices of one body could overlap — every
+/// vertex is meant to occupy a genuinely distinct position; a shared
+/// position should be represented by reusing the same `VertexId`, not by
+/// two coincident ones.
 pub fn check_vertices_disjoint<S: Scalar>(
     _params: &ValidationParameters<S>,
     errors: &mut Vec<GeopError>,
     model: &Model<S>,
 ) {
-    let ids: Vec<VertexId> = model.vertices.keys().copied().collect();
+    for group in body_groups(model) {
+        check_vertices_of_body_disjoint(errors, model, &group.vertices);
+    }
+}
+
+fn check_vertices_of_body_disjoint<S: Scalar>(
+    errors: &mut Vec<GeopError>,
+    model: &Model<S>,
+    ids: &[VertexId],
+) {
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
             let a = model.vertices[&ids[i]].point;
@@ -53,16 +62,27 @@ pub fn check_vertices_disjoint<S: Scalar>(
     }
 }
 
-/// Checks every distinct pair of edges: two edges that are (at least partly)
-/// coincident — `Intersections::Coincident` — always fail; otherwise, every intersection point found must coincide
-/// with an existing vertex (edges are only allowed to touch each other at
-/// shared vertices, never crossing through some other point).
+/// Checks every distinct pair of edges of one body: two edges that are (at
+/// least partly) coincident — `Intersections::Coincident` — always fail;
+/// otherwise, every intersection point found must coincide with an existing
+/// vertex (edges are only allowed to touch each other at shared vertices,
+/// never crossing through some other point).
 pub fn check_edges_disjoint<S: Scalar>(
     params: &ValidationParameters<S>,
     errors: &mut Vec<GeopError>,
     model: &Model<S>,
 ) {
-    let ids: Vec<EdgeId> = model.edges.keys().copied().collect();
+    for group in body_groups(model) {
+        check_edges_of_body_disjoint(params, errors, model, &group.edges);
+    }
+}
+
+fn check_edges_of_body_disjoint<S: Scalar>(
+    params: &ValidationParameters<S>,
+    errors: &mut Vec<GeopError>,
+    model: &Model<S>,
+    ids: &[EdgeId],
+) {
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
             let edge_a = &model.edges[&ids[i]];
@@ -109,9 +129,9 @@ pub fn check_edges_disjoint<S: Scalar>(
     }
 }
 
-/// Checks every edge x face pair: every intersection point found must
-/// coincide with an existing vertex (an edge
-/// may only pierce a face's surface at a shared vertex, never elsewhere).
+/// Checks every edge x face pair of one body: every intersection point found
+/// must coincide with an existing vertex (an edge may only pierce a face's
+/// surface at a shared vertex, never elsewhere).
 ///
 /// A pair where the edge is *already* a declared boundary coedge of the
 /// face is skipped rather than run through `curve_surface_intersect` at
@@ -127,14 +147,31 @@ pub fn check_edges_and_faces_consistent<S: Scalar>(
     errors: &mut Vec<GeopError>,
     model: &Model<S>,
 ) {
-    for (&edge_id, edge) in &model.edges {
-        for (&face_id, face) in &model.faces {
+    for group in body_groups(model) {
+        for &edge_id in &group.edges {
+            for &face_id in &group.faces {
+                check_edge_and_face_consistent(params, errors, model, edge_id, face_id);
+            }
+        }
+    }
+}
+
+fn check_edge_and_face_consistent<S: Scalar>(
+    params: &ValidationParameters<S>,
+    errors: &mut Vec<GeopError>,
+    model: &Model<S>,
+    edge_id: EdgeId,
+    face_id: crate::FaceId,
+) {
+    let (edge, face) = (&model.edges[&edge_id], &model.faces[&face_id]);
+    {
+        {
             let is_boundary_edge = model.iterate_face_coedges(face_id).any(|coedge_id| {
                 model.coedges.get(&coedge_id).map(|c| c.geometry)
                     == Some(CoedgeGeometry::Edge(edge_id))
             });
             if is_boundary_edge {
-                continue;
+                return;
             }
 
             let intersections = match curve_surface_intersect(
@@ -147,7 +184,7 @@ pub fn check_edges_and_faces_consistent<S: Scalar>(
                 Ok(v) => v,
                 Err(e) => {
                     errors.push(e.with_context(format!("edge {} x face {}", edge_id.0, face_id.0)));
-                    continue;
+                    return;
                 }
             };
 

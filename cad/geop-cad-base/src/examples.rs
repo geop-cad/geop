@@ -19,9 +19,9 @@ use geop_ops::{
     part::{ParamValue, State, pose_parameter},
 };
 use geop_ops_assembly::AddPartArgs;
-use geop_ops_booleans::Combine;
+use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{ExtrudeArgs, RevolveArgs};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
@@ -141,8 +141,8 @@ pub fn box_with_drill_hole() -> Program {
         "box",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -163,8 +163,8 @@ pub fn box_with_drill_hole() -> Program {
         "hole",
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
-            distance: -0.5,
-            symmetric: false,
+            extent: Extents::blind(-0.5),
+            face: false,
             combine: Combine::Difference {
                 target: "extrude(box)".into(),
             },
@@ -200,8 +200,8 @@ pub fn bracket() -> Program {
         "block",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 10.0,
-            symmetric: false,
+            extent: Extents::blind(10.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -222,8 +222,8 @@ pub fn bracket() -> Program {
         "hole",
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
-            distance: -10.0,
-            symmetric: false,
+            extent: Extents::blind(-10.0),
+            face: false,
             combine: Combine::Difference {
                 target: "extrude(block)".into(),
             },
@@ -308,6 +308,8 @@ pub fn cross_drilled_shaft() -> Program {
                 sketch: "section".into(),
                 curve: axis,
             }),
+            extent: Extents::blind(360.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -331,8 +333,13 @@ pub fn cross_drilled_shaft() -> Program {
         "bore",
         ExtrudeArgs {
             sketch: "bore_sketch".into(),
-            distance: 3.0,
-            symmetric: true,
+            extent: Extents {
+                side1: Extent::Blind(3.0),
+                symmetric: true,
+                side2: None,
+                reversed: false,
+            },
+            face: false,
             combine: Combine::Difference {
                 target: "revolve(shaft)".into(),
             },
@@ -341,32 +348,87 @@ pub fn cross_drilled_shaft() -> Program {
     program
 }
 
-/// Two separate plates from one sketch of two regions, one with a round
-/// hole, extruded symmetrically into a single solid of two shells.
-pub fn two_plates() -> Program {
+/// A plate with a round hole, cut in two: the plate (`plate`) extruded both
+/// ways from its sketch, a line across it sketched on the plane through its
+/// middle and extruded into a face standing on its own (`cut`), and the
+/// plate split along that face (`halves`) into `split(halves,0)` and
+/// `split(halves,1)`, one of them with the hole.
+pub fn split_plate() -> Program {
     let mut program = Program::new();
-    let mut plates = Sketch::new();
-    rectangle(&mut plates, [0.0, 0.0], 1.5, 1.0);
-    rectangle(&mut plates, [2.0, 0.0], 1.0, 1.0);
-    circle(&mut plates, [0.75, 0.5], 0.3);
+    let mut plate = Sketch::new();
+    rectangle(&mut plate, [0.0, 0.0], 3.0, 1.0);
+    circle(&mut plate, [0.75, 0.5], 0.3);
     program.push(
-        "plates_sketch",
+        "plate_sketch",
         AddSketchArgs {
             plane: Some(EntityRef::datum_component(
                 ORIGIN,
                 DatumComponent::Plane(FrameAxis::Z),
             )),
-            sketch: solved(plates),
+            sketch: solved(plate),
             ..Default::default()
         },
     );
     program.push(
-        "plates",
+        "plate",
         ExtrudeArgs {
-            sketch: "plates_sketch".into(),
-            distance: 0.25,
-            symmetric: true,
+            sketch: "plate_sketch".into(),
+            extent: Extents {
+                side1: Extent::Blind(0.5),
+                symmetric: true,
+                side2: None,
+                reversed: false,
+            },
+            face: false,
             combine: Combine::NewBody,
+        },
+    );
+
+    // Sketch x runs along world x, sketch y along world -z: a line across
+    // the plate's thickness at x = 2.
+    let mut cut = Sketch::new();
+    let (a, b) = (
+        cut.add_point(n(2.0), n(-1.0)),
+        cut.add_point(n(2.0), n(1.0)),
+    );
+    let line = cut.add_line(a, b);
+    for (point, y) in [(a, -1.0), (b, 1.0)] {
+        cut.constrain(Constraint::Fix {
+            point,
+            x: n(2.0),
+            y: n(y),
+        });
+    }
+    program.push(
+        "cut_sketch",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )),
+            sketch: solved(cut),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "cut",
+        ExtrudeArgs {
+            sketch: "cut_sketch".into(),
+            extent: Extents {
+                side1: Extent::Blind(3.0),
+                symmetric: true,
+                side2: None,
+                reversed: false,
+            },
+            face: true,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "halves",
+        SplitArgs {
+            solid: "extrude(plate)".into(),
+            face: format!("extrude(cut,cut_sketch,{line})"),
         },
     );
     program
@@ -396,8 +458,8 @@ pub fn boss_on_reference_plane() -> Program {
         "box",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -424,8 +486,8 @@ pub fn boss_on_reference_plane() -> Program {
         "boss",
         ExtrudeArgs {
             sketch: "boss_sketch".into(),
-            distance: -0.75,
-            symmetric: false,
+            extent: Extents::blind(-0.75),
+            face: false,
             combine: Combine::Union {
                 target: "extrude(box)".into(),
             },
@@ -498,8 +560,8 @@ pub fn handle_with_hole() -> Program {
         "handle",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 1.0,
-            symmetric: false,
+            extent: Extents::blind(1.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -522,8 +584,13 @@ pub fn handle_with_hole() -> Program {
         "hole",
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
-            distance: 2.44,
-            symmetric: true,
+            extent: Extents {
+                side1: Extent::Blind(2.44),
+                symmetric: true,
+                side2: None,
+                reversed: false,
+            },
+            face: false,
             combine: Combine::Difference {
                 target: "extrude(handle)".into(),
             },
@@ -601,8 +668,13 @@ pub fn luggage_tag() -> Program {
         "tag",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 1.0 / 3.0,
-            symmetric: true,
+            extent: Extents {
+                side1: Extent::Blind(1.0 / 3.0),
+                symmetric: true,
+                side2: None,
+                reversed: false,
+            },
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -652,8 +724,8 @@ pub fn revolved_cone_on_box() -> Program {
         "extrude1",
         ExtrudeArgs {
             sketch: "sketch1".into(),
-            distance: 1.8900000000000001,
-            symmetric: false,
+            extent: Extents::blind(1.8900000000000001),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -684,6 +756,8 @@ pub fn revolved_cone_on_box() -> Program {
                 sketch: "sketch2".into(),
                 curve: axis,
             }),
+            extent: Extents::blind(360.0),
+            face: false,
             combine: Combine::Union {
                 target: "extrude(extrude1)".into(),
             },
@@ -713,8 +787,8 @@ pub fn pin() -> Program {
         "pin",
         ExtrudeArgs {
             sketch: "pin_sketch".into(),
-            distance: 2.0,
-            symmetric: false,
+            extent: Extents::blind(2.0),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -810,8 +884,8 @@ pub fn bar(length: f64) -> Program {
         "link",
         ExtrudeArgs {
             sketch: "link_sketch".into(),
-            distance: 0.2,
-            symmetric: false,
+            extent: Extents::blind(0.2),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -1027,8 +1101,8 @@ pub fn parametric_plate() -> Program {
         "plate",
         ExtrudeArgs {
             sketch: "outline".into(),
-            distance: 0.5,
-            symmetric: false,
+            extent: Extents::blind(0.5),
+            face: false,
             combine: Combine::NewBody,
         },
     );
@@ -1076,8 +1150,8 @@ pub fn parametric_plate() -> Program {
         "hole",
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
-            distance: -0.3,
-            symmetric: false,
+            extent: Extents::blind(-0.3),
+            face: false,
             combine: Combine::Difference {
                 target: "extrude(plate)".into(),
             },
@@ -1166,7 +1240,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("box_with_drill_hole", box_with_drill_hole()),
         ("bracket", bracket()),
         ("cross_drilled_shaft", cross_drilled_shaft()),
-        ("two_plates", two_plates()),
+        ("split_plate", split_plate()),
         ("boss_on_reference_plane", boss_on_reference_plane()),
         ("handle_with_hole", handle_with_hole()),
         ("luggage_tag", luggage_tag()),
@@ -1350,26 +1424,26 @@ mod tests {
     }
 
     #[test]
-    fn two_plates_round_trip() {
-        let part = build_and_round_trip("two_plates", &two_plates());
+    fn split_plate_round_trips() {
+        let part = build_and_round_trip("split_plate", &split_plate());
         let description = PartDescription::of(&part).unwrap();
         assert_eq!(
-            description.solids["extrude(plates)"].len(),
-            2,
-            "one shell per plate"
+            description.solids.keys().collect::<Vec<_>>(),
+            ["split(halves,0)", "split(halves,1)"]
         );
-        assert_eq!(
-            inside(&part, "extrude(plates)", [0.2, 0.2, 0.0]),
-            PointClassification::Inside
+        // The face it was cut with stays, standing on its own.
+        assert_eq!(part.sheet_face_names(), ["extrude(cut,cut_sketch,c2)"]);
+        // One half each side of the cut at x = 2, neither in the hole.
+        let at = |p: [f64; 3]| {
+            ["split(halves,0)", "split(halves,1)"]
+                .map(|half| inside(&part, half, p) == PointClassification::Inside)
+        };
+        let (left, right) = (at([0.2, 0.2, 0.0]), at([2.5, 0.5, 0.1]));
+        assert!(
+            left[0] != left[1] && right == [left[1], left[0]],
+            "{left:?} {right:?}"
         );
-        assert_eq!(
-            inside(&part, "extrude(plates)", [0.75, 0.5, 0.0]),
-            PointClassification::Outside
-        );
-        assert_eq!(
-            inside(&part, "extrude(plates)", [2.5, 0.5, 0.1]),
-            PointClassification::Inside
-        );
+        assert_eq!(at([0.75, 0.5, 0.0]), [false, false]);
     }
 
     #[test]
@@ -1447,7 +1521,9 @@ mod tests {
         let mut edited = original.clone();
         for step in &mut edited.steps {
             match &mut step.operation {
-                crate::PartOperation::Extrude(args) if step.id == "box" => args.distance = 1.5,
+                crate::PartOperation::Extrude(args) if step.id == "box" => {
+                    args.extent = Extents::blind(1.5)
+                }
                 crate::PartOperation::AddSketch(args) if step.id == "hole_sketch" => {
                     for c in args.sketch.constraints.values_mut() {
                         if let Constraint::Radius { value, .. } = c {

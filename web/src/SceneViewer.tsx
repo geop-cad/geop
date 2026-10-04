@@ -83,10 +83,16 @@ function colorHex(color: string | null | undefined, fallback: number): number {
   return hex ? parseInt(hex, 16) : fallback;
 }
 
-/** `part` as a [[Scene]], its faces in its own colour if it has one, without the solids in `hidden`. */
+/**
+ * `part` as a [[Scene]], its faces in its own colour if it has one, without
+ * the solids and the faces standing on their own in `hidden` — nor the edges
+ * and vertices of only those.
+ */
 function flatten(part: PartView, hidden: string[] = []): Scene {
   const faceColor = colorHex(part.color, FACE_COLOR);
-  const shown = (solid: string | null) => solid == null || !hidden.includes(solid);
+  const shown = (solid: string | null, sheetFaces: string[] = []) =>
+    (solid == null || !hidden.includes(solid)) &&
+    (sheetFaces.length === 0 || sheetFaces.some((f) => !hidden.includes(f)));
   const scene: Scene = {
     points: [],
     point_names: [],
@@ -101,7 +107,7 @@ function flatten(part: PartView, hidden: string[] = []): Scene {
     faces: [],
   };
   for (const v of part.vertices) {
-    if (!shown(v.solid)) continue;
+    if (!shown(v.solid, v.sheet_faces)) continue;
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
   }
@@ -112,11 +118,11 @@ function flatten(part: PartView, hidden: string[] = []): Scene {
     scene.line_edges.push(edge);
   };
   for (const e of part.edges) {
-    if (!shown(e.solid)) continue;
+    if (!shown(e.solid, e.sheet_faces)) continue;
     for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name);
   }
   part.faces.forEach((f) => {
-    if (!shown(f.solid)) return;
+    if (!shown(f.solid) || (f.solid == null && hidden.includes(f.name))) return;
     const index = scene.faces.length;
     scene.faces.push({ name: f.name, solid: f.solid });
     f.triangles.forEach(([a, b, c], i) => {

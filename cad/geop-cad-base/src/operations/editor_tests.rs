@@ -48,7 +48,10 @@ fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
 fn distance(editor: &Editor<S>, id: &str) -> f64 {
     let program = editor.program();
     match &program.steps[program.index_of(id).unwrap()].operation {
-        PartOperation::Extrude(args) => args.distance,
+        PartOperation::Extrude(args) => match args.extent.side1 {
+            geop_ops_extrude_revolve::Extent::Blind(d) => d,
+            other => panic!("{other:?} is no distance"),
+        },
         other => panic!("{other:?}"),
     }
 }
@@ -244,10 +247,9 @@ fn new_steps_handles_are_dragged_in_steps() {
     let PartOperation::Extrude(extrude) = &program.steps.last().unwrap().operation else {
         panic!("an extrude");
     };
-    assert!(
-        (extrude.distance - 1.3).abs() < 1e-9,
-        "{}",
-        extrude.distance
+    assert_eq!(
+        extrude.extent.side1,
+        geop_ops_extrude_revolve::Extent::Blind(1.3)
     );
 }
 

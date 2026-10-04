@@ -5,7 +5,8 @@
 
 use crate::{
     common::{Profile, polygon},
-    extrude::{ExtrudeNames, extrude},
+    extrude::extrude,
+    sweep::SweepLoop,
 };
 use geop_core_math::{
     geop_error::GeopResult,
@@ -21,7 +22,7 @@ use geop_ops::{Namer, Part};
 ///
 /// Named as the operation `cube(name)`, after that square: its corners
 /// `p0..p3` (counter-clockwise from `min` as seen from above) and sides
-/// `c0..c3`, see [`ExtrudeNames`].
+/// `c0..c3`, see [`extrude`].
 pub fn cube_solid<S: Scalar>(
     part: &mut Part<S>,
     name: &str,
@@ -50,13 +51,16 @@ pub fn cube_solid<S: Scalar>(
     ];
 
     let namer = Namer::new("cube", name)?;
-    extrude(
+    let built = extrude(
         part,
-        &ExtrudeNames::single(&namer),
+        &namer,
+        Some(&namer.root()),
         &coordinate_system,
-        &Profile::closed(polygon(&outer)?),
-        &[],
-    )
+        S::ZERO,
+        S::ONE,
+        &[SweepLoop::plain(Profile::closed(polygon(&outer)?))],
+    )?;
+    Ok(built.solid.expect("extruded as a solid"))
 }
 
 #[cfg(test)]

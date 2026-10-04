@@ -19,6 +19,7 @@ fn every_operation_is_offered() {
             "extrude",
             "revolve",
             "boolean",
+            "split",
             "add_datum",
             "add_part"
         ]

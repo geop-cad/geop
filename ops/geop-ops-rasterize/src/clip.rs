@@ -140,6 +140,13 @@ pub fn is_convex(poly: &[Point]) -> bool {
 /// edge) or the final leftover (inside every edge, i.e. inside `hole`,
 /// correctly discarded) — never double-counted, unlike a naive per-edge
 /// clip-and-collect would.
+///
+/// If that leftover is empty — `hole` does not overlap `subject` — the
+/// peeled pieces are only `subject` cut up for nothing, and `subject` is
+/// returned whole. That matters: a concave hole is taken out as many
+/// triangles, one after another, and cutting every piece along every
+/// triangle's sides whether it overlaps or not multiplies the pieces with
+/// each triangle.
 pub fn subtract_convex(subject: &[Point], hole: &[Point]) -> Vec<Vec<Point>> {
     if hole.len() < 3 {
         return vec![subject.to_vec()];
@@ -173,6 +180,9 @@ pub fn subtract_convex(subject: &[Point], hole: &[Point]) -> Vec<Vec<Point>> {
             pieces.push(outside);
         }
         remaining = inside;
+    }
+    if remaining.len() < 3 || signed_area2(&remaining) == 0.0 {
+        return vec![subject.to_vec()];
     }
     pieces
 }

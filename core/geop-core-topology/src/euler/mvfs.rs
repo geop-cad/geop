@@ -17,14 +17,14 @@ impl<S: Scalar> Model<S> {
         });
         let shell_id = self.insert_shell(Shell {
             faces: vec![face_id],
-            solid: SolidId(0), // set later
+            solid: None, // set later
         });
         let solid_id = self.insert_solid(crate::Solid {
             shells: vec![shell_id],
         });
         // backwards linking
         self.faces.get_mut(&face_id).unwrap().shell = shell_id;
-        self.shells.get_mut(&shell_id).unwrap().solid = solid_id;
+        self.shells.get_mut(&shell_id).unwrap().solid = Some(solid_id);
         (vertex_id, face_id, solid_id)
     }
 }

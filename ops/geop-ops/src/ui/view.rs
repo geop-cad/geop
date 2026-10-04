@@ -64,6 +64,9 @@ pub struct ViewVertex<S: Scalar> {
     pub name: String,
     /// The solid it is a corner of.
     pub solid: Option<String>,
+    /// Of no solid, the faces standing on their own it is a corner of: it
+    /// is hidden with all of them.
+    pub sheet_faces: Vec<String>,
     pub at: Vector3<S>,
 }
 
@@ -82,6 +85,9 @@ pub struct ViewEdge<S: Scalar> {
     pub name: String,
     /// The solid it bounds.
     pub solid: Option<String>,
+    /// Of no solid, the faces standing on their own it bounds: it is hidden
+    /// with all of them.
+    pub sheet_faces: Vec<String>,
     pub polyline: Vec<Vector3<S>>,
     /// What it can be picked as: an edge, and a line or a circle if it is
     /// one.
@@ -280,13 +286,13 @@ impl<S: Scalar> Layer<'_, S> {
 }
 
 /// The solid that owns `face`: a face is part of exactly one shell, and a
-/// shell of exactly one solid.
+/// shell of at most one solid — none, for a sheet.
 pub fn solid_of_face<S: Scalar>(model: &Model<S>, face: FaceId) -> Option<SolidId> {
     model
         .get_face(face)
         .ok()
         .and_then(|f| model.get_shell(f.shell).ok())
-        .map(|s| s.solid)
+        .and_then(|s| s.solid)
 }
 
 /// The solid `edge` bounds: that of a face it runs along.
@@ -374,13 +380,32 @@ impl<S: Scalar> PartView<S> {
             })
             .collect::<GeopResult<_>>()?;
 
-        // A vertex is a corner of the solid an edge at it bounds.
+        // A vertex is a corner of the solid an edge at it bounds — or of
+        // the faces standing on their own those edges bound.
         let mut corner_of = std::collections::HashMap::new();
+        let mut sheet_faces_of_edge = std::collections::HashMap::new();
+        let mut sheet_corner_of: std::collections::HashMap<_, Vec<String>> = Default::default();
         for (&id, edge) in &model.edges {
             if let Some(solid) = solid_of_edge(model, id) {
                 corner_of.insert(edge.start_vertex, solid);
                 corner_of.insert(edge.end_vertex, solid);
+                continue;
             }
+            let mut faces: Vec<String> = model
+                .coedges_of_edge(id)
+                .into_iter()
+                .filter_map(|c| model.get_coedge(c).ok())
+                .map(|c| name(c.face.into()))
+                .collect();
+            faces.sort();
+            faces.dedup();
+            for v in [edge.start_vertex, edge.end_vertex] {
+                let at = sheet_corner_of.entry(v).or_default();
+                at.extend(faces.iter().cloned());
+                at.sort();
+                at.dedup();
+            }
+            sheet_faces_of_edge.insert(id, faces);
         }
         let mut view = PartView {
             vertices: vertices
@@ -388,6 +413,7 @@ impl<S: Scalar> PartView<S> {
                 .map(|(&id, p)| ViewVertex {
                     name: name(id.into()),
                     solid: corner_of.get(&id).map(|&s| name(s.into())),
+                    sheet_faces: sheet_corner_of.get(&id).cloned().unwrap_or_default(),
                     at: *p,
                 })
                 .collect(),
@@ -397,6 +423,7 @@ impl<S: Scalar> PartView<S> {
                     let edge = name(id.into());
                     ViewEdge {
                         solid: solid_of_edge(model, id).map(|s| name(s.into())),
+                        sheet_faces: sheet_faces_of_edge.get(&id).cloned().unwrap_or_default(),
                         roles: roles_of(&EntityRef::Edge { name: edge.clone() }, part),
                         name: edge,
                         polyline: polyline.clone(),

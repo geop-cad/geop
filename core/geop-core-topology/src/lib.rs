@@ -1,5 +1,7 @@
 pub mod argument_validation;
+pub mod body;
 pub mod boundary;
+pub mod build;
 pub mod coedge;
 pub mod contains;
 pub mod edge;
@@ -16,6 +18,7 @@ pub(crate) mod test_fixtures;
 pub mod validation;
 pub mod vertex;
 
+pub use body::Body;
 pub use coedge::{Coedge, CoedgeGeometry, Sense};
 pub use edge::Edge;
 pub use face::Face;

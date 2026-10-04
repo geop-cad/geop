@@ -1,12 +1,13 @@
 //! [`Boolean`]: combine two solids — and [`Combine`], the same done by an
-//! extrude or revolve with the solid it builds.
+//! extrude or revolve with the solid it builds. [`Split`]: cut a solid into
+//! pieces with a face standing on its own.
 
 use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
-use geop_core_topology::SolidId;
+use geop_core_topology::{Body, SolidId};
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
@@ -15,8 +16,9 @@ use geop_ops::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    boolean::{BooleanOp, boolean},
+    boolean::{BooleanOp, boolean, boolean_up_to_next, piece_up_to_next},
     remesh::remesh::RemeshParams,
+    split::split,
 };
 
 /// Combines the solids named `a` and `b` into one solid named `boolean(B)`
@@ -154,6 +156,10 @@ impl Operation for Boolean {
 /// consumes, like a [`Boolean`] does. `Difference` cuts the new solid out
 /// of the target: an extruded pocket, a drilled hole.
 ///
+/// A step may build its solid in several parts, each combined in turn — the
+/// two sides of an extrude, one of which goes up to the next face of the
+/// target (see [`Tool`]).
+///
 /// Either way the step's result is named after the step — `extrude(E)` —
 /// so what comes after refers to "what step `E` left" however it was made.
 /// Combined, the built solid is only a tool, gone once the step is done,
@@ -201,6 +207,16 @@ impl Combine {
             Combine::Union { target }
             | Combine::Intersection { target }
             | Combine::Difference { target } => Some(target),
+        }
+    }
+
+    /// The same, combining with `target` instead — a new body becomes a
+    /// join: what a face going as far as a solid picks it by, a face being
+    /// combined with nothing.
+    pub fn with_target(&self, target: String) -> Self {
+        match self {
+            Combine::NewBody => Combine::Union { target },
+            other => Combine::with_mode(other.mode(), target).expect("its own mode"),
         }
     }
 
@@ -303,31 +319,215 @@ impl Combine {
         }
     }
 
-    /// Combines `built` as the step `operation_id`, whose names `namer`
-    /// builds: the result is named `namer`'s root. An empty result — an
-    /// intersection with a solid the new one does not touch — leaves no
-    /// solid.
+    /// Combines the `tools` built, one after the other, as the step
+    /// `operation_id`, whose names `namer` builds: the result is named
+    /// `namer`'s root, and what the `k`-th tool's combination creates is
+    /// named after `combine(E)` — scoped by the tool's own scope, if it has
+    /// one. An empty result — an intersection with a solid the new one does
+    /// not touch — leaves no solid, and no tool.
+    ///
+    /// A new body is the tools as built — a tool going up to the next face
+    /// of whichever other solid it meets first (see [`piece_up_to_next`]),
+    /// those solids left as they are — joined into one.
     pub fn apply<S: Scalar>(
         &self,
         part: &mut Part<S>,
         namer: &Namer,
         operation_id: &str,
-        built: SolidId,
+        tools: &[Tool],
     ) -> GeopResult<()> {
         let (op, target) = match self {
-            Combine::NewBody => return Ok(()),
+            Combine::NewBody => return new_body(part, namer, operation_id, tools),
             Combine::Union { target } => (BooleanOp::Union, target),
             Combine::Intersection { target } => (BooleanOp::Intersection, target),
             Combine::Difference { target } => (BooleanOp::Difference, target),
         };
         let ctx = with_context!("combining with {target:?} ({op:?})");
-        let target = part.solid_id(target).with_context(ctx)?;
-        let combine = Namer::new("combine", operation_id)?;
-        let result = boolean(part, &combine, target, built, op, RemeshParams::default())
+        let mut target = part.solid_id(target).with_context(ctx)?;
+        for (k, tool) in tools.iter().enumerate() {
+            let mut combine = Namer::new("combine", operation_id)?;
+            if let Some(scope) = &tool.scope {
+                combine = combine.scoped(scope);
+            }
+            let params = RemeshParams::default();
+            let result = match &tool.up_to_next {
+                None => boolean(part, &combine, target, tool.solid, op, params),
+                Some((start, end)) => {
+                    boolean_up_to_next(part, &combine, target, tool.solid, op, (start, end), params)
+                }
+            }
             .with_context(ctx)?;
-        if let Some(result) = result {
+            let Some(result) = result else {
+                // Nothing left to combine the other tools with.
+                let rest: Vec<Body> = tools[k + 1..].iter().map(|t| t.solid.into()).collect();
+                part.assemble_solid(&rest, &[], namer.root())?;
+                return Ok(());
+            };
             part.rename(result, namer.root())?;
+            target = result;
         }
         Ok(())
+    }
+}
+
+/// The new body `tools` make, named `namer`'s root (see [`Combine::apply`]).
+fn new_body<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    operation_id: &str,
+    tools: &[Tool],
+) -> GeopResult<()> {
+    let built: Vec<SolidId> = tools.iter().map(|t| t.solid).collect();
+    let mut stops: Vec<SolidId> = part
+        .topology()
+        .solids
+        .keys()
+        .copied()
+        .filter(|s| !built.contains(s))
+        .collect();
+    stops.sort_by_key(|s| s.0);
+    let params = RemeshParams::default();
+    let mut body: Option<SolidId> = None;
+    for tool in tools {
+        let mut combine = Namer::new("combine", operation_id)?;
+        if let Some(scope) = &tool.scope {
+            combine = combine.scoped(scope);
+        }
+        let piece = match &tool.up_to_next {
+            None => tool.solid,
+            Some(_) if stops.is_empty() => {
+                return Err(GeopError::new(
+                    "up to next: there is no other solid to go up to the next face of",
+                ));
+            }
+            Some((start, end)) => {
+                piece_up_to_next(part, &combine, tool.solid, &stops, (start, end), params)?
+            }
+        };
+        body = Some(match body {
+            None => piece,
+            Some(body) => boolean(
+                part,
+                &combine.scoped("join"),
+                body,
+                piece,
+                BooleanOp::Union,
+                params,
+            )?
+            .ok_or_else(|| GeopError::new("joining the sides of a new body left nothing"))?,
+        });
+    }
+    if let Some(body) = body
+        && part.name_of(body) != Some(namer.root().as_str())
+    {
+        part.rename(body, namer.root())?;
+    }
+    Ok(())
+}
+
+/// One solid an extrude or revolve built, for [`Combine::apply`] to
+/// combine: the whole of it, or, with `up_to_next` — the names of its start
+/// and end faces — only up to the next face of the target (see
+/// [`boolean_up_to_next`]). `scope` tells its combination's names apart
+/// from another tool's of the same step (see [`Namer::scoped`]).
+#[derive(Clone, Debug)]
+pub struct Tool {
+    pub solid: SolidId,
+    pub up_to_next: Option<(String, String)>,
+    pub scope: Option<String>,
+}
+
+/// Cuts the solid named `solid` into pieces with the face named `face` —
+/// a face standing on its own, such as an extrude or revolve builds as a
+/// face, and with it every face of its sheet. The pieces are named
+/// `split(S,0)`, `split(S,1)`, ... for the operation `S`, the solid is
+/// consumed, and the face is left as it is (see [`crate::split::split`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Split;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SplitArgs {
+    /// The solid to cut.
+    pub solid: String,
+    /// A face of the sheet to cut it with.
+    pub face: String,
+}
+
+/// A face by name, as a reference field holds it: nothing, if unnamed.
+fn face(name: &str) -> Vec<EntityRef> {
+    if name.is_empty() {
+        Vec::new()
+    } else {
+        vec![EntityRef::Face { name: name.into() }]
+    }
+}
+
+impl Operation for Split {
+    type Args = SplitArgs;
+    type Session = ();
+
+    /// The newest solid, cut by the newest face standing on its own.
+    fn new_args<S: Scalar>(&self, before: &Part<S>) -> SplitArgs {
+        SplitArgs {
+            solid: before.solid_names().pop().unwrap_or_default(),
+            face: before.sheet_face_names().pop().unwrap_or_default(),
+        }
+    }
+
+    /// The solid and the face, picked.
+    fn form<'a, S: Scalar>(
+        &self,
+        _: Context<'a, S>,
+        args: &SplitArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, SplitArgs> {
+        let mut f = Form::<S, SplitArgs>::new();
+        f.reference(
+            "solid",
+            "solid",
+            solid(&args.solid),
+            &[Role::Solid],
+            None,
+            false,
+            |e, p| e.args.solid = solid_name(&p),
+        );
+        f.reference(
+            "face",
+            "face",
+            face(&args.face),
+            &[Role::Sheet],
+            None,
+            false,
+            |e, p| {
+                e.args.face = match p.as_slice() {
+                    [EntityRef::Face { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            },
+        );
+        f
+    }
+
+    fn apply<S: Scalar>(
+        &self,
+        mut part: Part<S>,
+        operation_id: &str,
+        args: &SplitArgs,
+        _library: &dyn Library<S>,
+    ) -> GeopResult<Part<S>> {
+        let ctx = with_context!("split({operation_id}, {args:?})");
+        let namer = Namer::new("split", operation_id)?;
+        let solid = part.solid_id(&args.solid).with_context(ctx)?;
+        let face = part.face_id(&args.face).with_context(ctx)?;
+        let Body::Sheet(sheet) = part.topology().body_of_face(face)? else {
+            return Err(GeopError::new(format!(
+                "{:?} is a face of a solid; cut with a face standing on its own, as an extrude or revolve builds in face mode",
+                args.face
+            )))
+            .with_context(ctx);
+        };
+        split(&mut part, &namer, solid, sheet, RemeshParams::default()).with_context(ctx)?;
+        Ok(part)
     }
 }

@@ -3,7 +3,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 
-use crate::{FaceId, Model, Sense};
+use crate::{Curve2, FaceId, Model, Sense};
 
 impl<S: Scalar> Model<S> {
     /// Turn `face_id`'s material side around, so its normal points the other
@@ -32,20 +32,7 @@ impl<S: Scalar> Model<S> {
 
         for coedge_id in self.iterate_face_coedges(face_id).collect::<Vec<_>>() {
             let coedge = self.get_coedge_mut(coedge_id).with_context(&ctx)?;
-            // A pcurve's control points are homogeneous `[u*w, v*w, w]`, so
-            // mirroring `u -> span - u` is `x -> span*w - x`. Applying it to
-            // the control points rather than to evaluated points keeps the
-            // curve exact: a mirror is affine, and an affine map of a NURBS
-            // curve is the same map applied to its control net.
-            for point in &mut coedge.pcurve.control_points {
-                point[0] = span.mul(point[2]).sub(point[0]);
-            }
-            // The mutation above bypasses every constructor that would
-            // otherwise keep the pcurve's cached bounding box (used by the
-            // intersection search's `aabb_could_overlap` prefilter) in
-            // sync — refresh it explicitly or it goes stale and starts
-            // pruning real overlaps involving this pcurve.
-            coedge.pcurve.recompute_aabb();
+            mirror_u(&mut coedge.pcurve, span);
 
             // Then reverse the loop: swap `next`/`prev`, run the pcurve the
             // other way, and flip the sense.
@@ -74,6 +61,27 @@ impl<S: Scalar> Model<S> {
         }
         Ok(())
     }
+}
+
+/// Mirrors `pcurve` in `u`, `u -> span - u`: what a face's pcurves go
+/// through when its surface is mirrored by
+/// [`geop_core_geometry::nurb_surface::NurbSurface::reverse_u`].
+///
+/// A pcurve's control points are homogeneous `[u*w, v*w, w]`, so mirroring
+/// `u -> span - u` is `x -> span*w - x`. Applying it to the control points
+/// rather than to evaluated points keeps the curve exact: a mirror is
+/// affine, and an affine map of a NURBS curve is the same map applied to its
+/// control net.
+pub(crate) fn mirror_u<S: Scalar>(pcurve: &mut Curve2<S>, span: S) {
+    for point in &mut pcurve.control_points {
+        point[0] = span.mul(point[2]).sub(point[0]);
+    }
+    // The mutation above bypasses every constructor that would otherwise
+    // keep the pcurve's cached bounding box (used by the intersection
+    // search's `aabb_could_overlap` prefilter) in sync — refresh it
+    // explicitly or it goes stale and starts pruning real overlaps
+    // involving this pcurve.
+    pcurve.recompute_aabb();
 }
 
 #[cfg(test)]
