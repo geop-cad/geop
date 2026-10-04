@@ -13,5 +13,6 @@ geop-core-math.workspace = true
 geop-ops.workspace = true
 geop-cad-base.workspace = true
 geop-ops-rasterize.workspace = true
+geop-ops-step.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true

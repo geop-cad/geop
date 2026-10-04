@@ -225,6 +225,7 @@ dependencies = [
  "geop-core-math",
  "geop-ops",
  "geop-ops-rasterize",
+ "geop-ops-step",
  "serde_json",
 ]
 

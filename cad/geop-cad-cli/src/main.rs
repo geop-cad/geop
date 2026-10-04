@@ -5,7 +5,9 @@
 //! makes as an STL mesh. The mesh is the one the editor draws (see
 //! `geop_ops_rasterize::stl`), so a compiled file looks exactly like the
 //! part on screen — the parts it places included, each where it is placed,
-//! read from the program files next to it.
+//! read from the program files next to it. With an output ending in
+//! `.step` or `.stp`, it writes the part's B-rep as a STEP file instead
+//! (see `geop_ops_step::export`): exact geometry other CAD systems open.
 //!
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
@@ -66,8 +68,9 @@ enum Command {
 struct CompileArgs {
     /// The program to build, e.g. `part.geop`.
     program: PathBuf,
-    /// Where to write the mesh. Defaults to the program's path with
-    /// `.geop` replaced by `.stl`.
+    /// Where to write the part: an STL mesh, or — ending in `.step` or
+    /// `.stp` — a STEP file. Defaults to the program's path with `.geop`
+    /// replaced by `.stl`.
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// Only this solid, by name (e.g. `extrude(hole)`); repeat for several.
@@ -122,8 +125,12 @@ fn default_output(program: &Path) -> PathBuf {
 struct Disk;
 
 impl Files for Disk {
+    /// A file that is not UTF-8 throughout — a STEP file with a Latin-1
+    /// name in it — is read with what is not replaced.
     fn read(&self, path: &str) -> GeopResult<String> {
-        std::fs::read_to_string(path).map_err(|e| GeopError::new(format!("reading {path}: {e}")))
+        std::fs::read(path)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|e| GeopError::new(format!("reading {path}: {e}")))
     }
 
     /// Nothing: a compile only reads what the program places.
@@ -226,6 +233,32 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         part = program.build(&library)?;
     }
 
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| default_output(&args.program));
+    let name = output
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("part");
+    if geop_ops_step::is_step_file(&output.to_string_lossy()) {
+        if !args.solids.is_empty() {
+            return Err(GeopError::new(
+                "choosing solids (--solid) is only for an STL mesh: a STEP file holds the whole part",
+            ));
+        }
+        let text = geop_ops_step::write_step(&part, name)?;
+        std::fs::write(&output, text).map_err(io_err("writing", &output))?;
+        let solids = part.topology().solids.len();
+        return Ok(Compiled {
+            output,
+            steps: program.steps.len(),
+            solids,
+            triangles: 0,
+            solved_for: report.failed,
+        });
+    }
+
     // The solids to write, in name order so the file does not depend on
     // how the part stores them.
     let mut all = Vec::new();
@@ -259,14 +292,6 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         .flat_map(|(_, triangles)| triangles.iter().map(outward))
         .collect();
 
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| default_output(&args.program));
-    let name = output
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .unwrap_or("part");
     let format = if args.ascii {
         StlFormat::Ascii
     } else {
@@ -399,12 +424,16 @@ fn main() -> ExitCode {
                     c.solved_for.join(", ")
                 );
             }
+            let mesh = if c.triangles > 0 {
+                format!(", {} triangles", c.triangles)
+            } else {
+                String::new()
+            };
             eprintln!(
-                "{} steps, {} solid{}, {} triangles -> {}",
+                "{} steps, {} solid{}{mesh} -> {}",
                 c.steps,
                 c.solids,
                 if c.solids == 1 { "" } else { "s" },
-                c.triangles,
                 c.output.display()
             );
         }),
@@ -480,6 +509,41 @@ mod tests {
                 .is_some_and(|e| !e.is_empty())
         );
         assert!(editor.handle_json("not json").is_err());
+    }
+
+    /// An output ending in `.step` is a STEP file of the part, which a
+    /// program next to it imports back to as many solids.
+    #[test]
+    fn compiles_to_step_and_imports_it_back() {
+        let dir = scratch("step");
+        let program = examples::all()
+            .into_iter()
+            .find(|(name, _)| *name == "box_with_drill_hole")
+            .unwrap()
+            .1;
+        let path = dir.join("box.geop");
+        std::fs::write(&path, program.to_json().unwrap()).unwrap();
+        let compiled = compile(&CompileArgs {
+            output: Some(dir.join("box.step")),
+            ..args(path)
+        })
+        .unwrap();
+        let text = std::fs::read_to_string(&compiled.output).unwrap();
+        assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
+        assert!(text.contains("MANIFOLD_SOLID_BREP"));
+
+        let mut import = geop_cad_base::Program::default();
+        import.push(
+            "imp",
+            geop_cad_base::PartOperation::ImportStep(geop_ops_step::ImportStepArgs {
+                file: "box.step".into(),
+            }),
+        );
+        let path = dir.join("import.geop");
+        std::fs::write(&path, import.to_json().unwrap()).unwrap();
+        let back = compile(&args(path)).unwrap();
+        assert_eq!(back.solids, compiled.solids);
+        assert!(back.triangles > 0);
     }
 
     #[test]
