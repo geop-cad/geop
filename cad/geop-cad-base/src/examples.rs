@@ -14,7 +14,7 @@ use geop_core_math::{
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops::{
     Design, EntityRef, ORIGIN,
-    assembly::{Mate, MateKind},
+    assembly::{Kind, Mate},
     parameters::{Parameter, ParameterKind, Parameters, Row},
     part::{ParamValue, State, pose_parameter},
 };
@@ -812,10 +812,7 @@ pub fn pin_in_plate_assembly() -> Program {
         },
     );
     let face = |name: &str| EntityRef::Face { name: name.into() };
-    let mate = |kind, a: &str, b: &str| Mate {
-        kind,
-        entities: vec![face(a), face(b)],
-    };
+    let mate = |kind, a: &str, b: &str| Mate::constraint(kind, vec![face(a), face(b)]);
     program.push(
         "pin",
         AddPartArgs {
@@ -826,7 +823,7 @@ pub fn pin_in_plate_assembly() -> Program {
                 (
                     "m1".into(),
                     mate(
-                        MateKind::Concentric,
+                        Kind::Concentric,
                         "pin/extrude(pin,pin_sketch,c1)",
                         "plate/extrude(hole,hole_sketch,c1)",
                     ),
@@ -834,7 +831,7 @@ pub fn pin_in_plate_assembly() -> Program {
                 (
                     "m2".into(),
                     mate(
-                        MateKind::Coincident,
+                        Kind::Coincident,
                         "pin/extrude(pin,start)",
                         "plate/extrude(hole,end)",
                     ),
@@ -908,9 +905,9 @@ pub fn link_holes(instance: &str) -> [EntityRef; 2] {
 /// bottom face on the other's top — so bars linked in a stack never cut
 /// into each other.
 fn on_top(above: &str, below: &str) -> Mate {
-    Mate {
-        kind: MateKind::Coincident,
-        entities: vec![
+    Mate::constraint(
+        Kind::Coincident,
+        vec![
             EntityRef::Face {
                 name: format!("{above}/extrude(link,start)"),
             },
@@ -918,16 +915,16 @@ fn on_top(above: &str, below: &str) -> Mate {
                 name: format!("{below}/extrude(link,end)"),
             },
         ],
-    }
+    )
 }
 
 /// The hole `hole` of the bar placed as `link` on the axis of the hole `pin`
 /// of the one placed as `on`.
 fn pinned(link: &str, hole: usize, on: &str, pin: usize) -> Mate {
-    Mate {
-        kind: MateKind::Concentric,
-        entities: vec![link_holes(on)[pin].clone(), link_holes(link)[hole].clone()],
-    }
+    Mate::constraint(
+        Kind::Concentric,
+        vec![link_holes(on)[pin].clone(), link_holes(link)[hole].clone()],
+    )
 }
 
 /// A part placed from `file`, held by `mates`.

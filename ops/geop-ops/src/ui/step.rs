@@ -199,6 +199,11 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         self.form(context).drags
     }
 
+    /// The joint coordinates the step has set (see [`Form::holds`]).
+    pub fn holds(&self, context: Context<'_, S>) -> Vec<String> {
+        self.form(context).holds
+    }
+
     /// The program's state is `state` now: solved anew.
     pub fn set_state(&mut self, state: State) {
         self.state = state;

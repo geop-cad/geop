@@ -490,7 +490,7 @@ impl<S: Scalar> PartView<S> {
                 instance_name.clone(),
                 instance.pose,
                 &instance.component,
-                Some(instance.parameter.clone()),
+                instance.parameter.clone(),
                 instance.fixed,
             )?;
             // Those placed in it, where it puts them: its view has them all

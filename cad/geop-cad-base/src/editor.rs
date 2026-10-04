@@ -552,7 +552,9 @@ impl<S: Scalar> Editor<S> {
                         local: grab.local,
                         target: target.sharpen(),
                     };
-                    if let Ok((moved, report)) = self.runner.part().solve_mates(None, &[drag]) {
+                    if let Ok((moved, report)) =
+                        self.runner.part().solve_mates(None, &[], &[drag])
+                    {
                         self.program.state.extend(moved);
                         self.dragged = Some(report);
                     }
@@ -896,7 +898,7 @@ impl<S: Scalar> Editor<S> {
         let complete = self.runner.results().len() == program.steps.len()
             && self.runner.results().iter().all(|r| r.error.is_none());
         let part = self.runner.part();
-        let (drags, own) = match &self.open {
+        let (drags, holds, own) = match &self.open {
             Some(open) => {
                 let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
                     .built(self.runner.built(open.index));
@@ -909,37 +911,41 @@ impl<S: Scalar> Editor<S> {
                     .filter(|name| !declared.contains_key(*name))
                     .cloned()
                     .collect();
-                (open.editor.drags(context), own)
+                (open.editor.drags(context), open.editor.holds(context), own)
             }
-            None => (Vec::new(), Vec::new()),
+            None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        let holds = || part.check_mates().is_ok_and(|report| report.converged);
+        let hold = || part.check_mates().is_ok_and(|report| report.converged);
         let solved = if !drags.is_empty() {
-            part.solve_mates(None, &drags).ok().map(|(moved, _)| moved)
-        } else if holds() {
+            part.solve_mates(None, &holds, &drags)
+                .ok()
+                .map(|(moved, _)| moved)
+        } else if hold() {
             None
         } else {
             let own_first = own
                 .first()
-                .and_then(|name| part.solve_mates(Some(name), &[]).ok())
+                .and_then(|name| part.solve_mates(Some(name), &holds, &[]).ok())
                 .filter(|(_, report)| report.converged);
             own_first
-                .or_else(|| part.solve_mates(None, &[]).ok())
+                .or_else(|| part.solve_mates(None, &holds, &[]).ok())
                 .map(|(moved, _)| moved)
         };
         let mut state = program.state.clone();
         state.extend(solved.into_iter().flatten());
         if complete {
-            // Every pose a step declares, and no other: the file says where
-            // every placed part is. The numbers its steps read are its
-            // parameters', defined apart from its state.
+            // Every pose a step declares, and every joint's coordinates, and
+            // no other: the file says where every placed part is. The
+            // numbers its steps read are its parameters', defined apart
+            // from its state.
             let declared: State = part
                 .state()
                 .iter()
                 .filter(|(_, value)| matches!(value, ParamValue::Pose(_)))
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
-            state.retain(|name, _| declared.contains_key(name));
+            let solved = part.solved_parameters();
+            state.retain(|name, _| declared.contains_key(name) || solved.contains(name));
             for (name, value) in declared {
                 state.entry(name).or_insert(value);
             }

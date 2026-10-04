@@ -124,7 +124,7 @@ impl Operation for AddPart {
         let instance = Instance {
             component,
             pose: pose.cast(),
-            parameter,
+            parameter: Some(parameter),
             fixed: args.fixed,
             flexible: args.flexible,
         };
@@ -132,7 +132,7 @@ impl Operation for AddPart {
             .with_context(ctx)?;
         let namer = Namer::new("add_part", operation_id)?;
         for (mate_id, mate) in &args.mates {
-            if mate.pair().is_some() {
+            if mate.is_complete() {
                 part.add_mate(mate.clone(), namer.name(&[mate_id]))
                     .with_context(ctx)?;
             }

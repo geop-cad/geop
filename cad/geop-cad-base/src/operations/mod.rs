@@ -5,11 +5,12 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts and their patterns in
+//! `geop_ops_assembly`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
-use geop_ops_assembly::{AddPart, AddPartArgs};
+use geop_ops_assembly::{AddPart, AddPartArgs, PartPattern, PartPatternArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
 use geop_ops_edit::{
@@ -101,6 +102,10 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Place copies of a placed part in a row along a line, or round an
+    /// axis.
+    #[operation(label = "Part pattern")]
+    PartPattern(PartPatternArgs),
 }
 
 /// A program of the editor's operations.

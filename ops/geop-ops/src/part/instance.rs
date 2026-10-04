@@ -76,7 +76,8 @@ impl<S: Scalar> Component<S> {
 /// A part placed in another: a [`Component`] at a [`Pose`] — every point
 /// `p` of it at `pose.apply(p)` — the value of the parameter
 /// `parameter` of the part it is placed in, which a solve of the mates may
-/// change unless the instance is `fixed`.
+/// change unless the instance is `fixed`. A copy of a pattern of placed
+/// parts has no parameter: it goes where the pattern puts it.
 ///
 /// Placed `flexible`, the parts placed in it are the part's to move too:
 /// their poses are state of the part it is placed in, its component
@@ -87,7 +88,7 @@ impl<S: Scalar> Component<S> {
 pub struct Instance<S: Scalar> {
     pub component: Arc<Component<S>>,
     pub pose: Pose<S>,
-    pub parameter: String,
+    pub parameter: Option<String>,
     pub fixed: bool,
     pub flexible: bool,
 }

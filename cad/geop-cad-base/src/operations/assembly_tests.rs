@@ -403,7 +403,7 @@ fn a_mate_added_moves_the_part_of_its_step() {
     for (id, mate) in &mates {
         editor.handle(dialog(
             "add_mate",
-            Value::Choice(format!("{:?}", mate.kind).to_lowercase()),
+            Value::Choice(mate.kind.label().to_lowercase()),
         ));
         let update = editor.handle(dialog(
             &format!("mate:{id}:entities"),
@@ -555,9 +555,9 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
             flexible,
             mates: BTreeMap::from([(
                 "m1".into(),
-                geop_ops::assembly::Mate {
-                    kind: geop_ops::assembly::MateKind::Distance { value: n(3.0) },
-                    entities: vec![
+                geop_ops::assembly::Mate::constraint(
+                    geop_ops::assembly::Kind::Distance { value: n(3.0) },
+                    vec![
                         EntityRef::Face {
                             name: "hinge/pin/extrude(pin,end)".into(),
                         },
@@ -568,7 +568,7 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
                             ),
                         ),
                     ],
-                },
+                ),
             )]),
             ..Default::default()
         },
@@ -883,7 +883,7 @@ fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
                 local: v([2.5, 0.0, 0.2]),
                 target: v([to[0], to[1] / 2.0, 0.2 + to[1] / 2.0]),
             };
-            let (moved, report) = part.solve_mates(None, &[drag]).unwrap();
+            let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
             program.state.extend(moved);
             let check = program.build(&library).unwrap().check_mates().unwrap();
             assert!(
@@ -1035,7 +1035,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
             local: v([1.5, 0.0, 0.1]),
             target: v([1.5 * angle.cos(), 1.5 * angle.sin(), 0.3]),
         };
-        let (moved, report) = part.solve_mates(None, &[drag]).unwrap();
+        let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
         assert!(report.converged, "step {step}: {report:?}");
         program.state.extend(moved);
         let tip = pose_of(&program, "crank").apply(&v([1.5, 0.0, 0.0]));
