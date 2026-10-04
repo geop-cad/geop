@@ -49,7 +49,10 @@
 use std::collections::HashMap;
 
 use geop_core_geometry::{
-    contains::surface::surface_could_contain, nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D,
+    contains::surface::surface_could_contain,
+    nurb_curve::NurbCurve3D,
+    nurb_surface::NurbSurface3D,
+    shape::{Arc, Circle},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -1144,11 +1147,13 @@ fn shaped_like<S: Scalar>(
             "{end:?} is not on the circle around {axis:?} through {start:?}"
         )));
     }
-    // The arc's own control points moved along the axis and scaled about
-    // it, weights and knots kept: the same arc of the other circle, with
-    // the same parametrization — so the ruled surface between the two, a
-    // sheet's wall, is the cylinder, cone or ring between them, not a
-    // twisted one.
+    // Where the copy spans the same angles as the arc — a cylinder's rim
+    // moved along its axis, a disc's rim shrunk — it is the arc's own
+    // control points moved along the axis and scaled about it, weights and
+    // knots kept: the same parametrization, so the ruled surface between
+    // the two, a sheet's wall, is the cylinder, cone or ring between them,
+    // not a twisted one. Where it spans other angles — a sphere's meridian
+    // cut by an offset plane — it is the arc between its ends.
     let scale = radius.div(arc.circle.radius)?;
     let control_points = curve
         .control_points
@@ -1168,12 +1173,20 @@ fn shaped_like<S: Scalar>(
     let moved = NurbCurve3D::try_new(curve.degree, control_points, curve.knot_vector.clone())?;
     let (t0, t1) = moved.domain();
     let (from, to) = (moved.evaluate(t0)?, moved.evaluate(t1)?);
-    if !(from.could_be_equal(&start) && to.could_be_equal(if closed { &start } else { &end })) {
-        return Err(GeopError::new(format!(
-            "the arc moved onto the circle through {start:?} runs from {from:?} to {to:?}, not to {end:?}"
-        )));
+    let end = if closed { start } else { end };
+    if from.could_be_equal(&start) && to.could_be_equal(&end) {
+        return Ok(moved);
     }
-    Ok(moved)
+    Arc {
+        circle: Circle {
+            center,
+            normal: arc.circle.normal,
+            radius,
+        },
+        start,
+        end,
+    }
+    .to_curve()
 }
 
 /// The pcurve on `surface` of a coedge that runs along `curve` — or sits at
