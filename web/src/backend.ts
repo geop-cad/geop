@@ -27,6 +27,8 @@ export interface Host {
   onFiles(onFiles: (files: Record<string, string | null>) => void): void;
   /** The program is now this (a JSON value): write it to the document. */
   programChanged(program: unknown): void;
+  /** Offer to save `text` as a file called `name`, next to the document. */
+  saveFile(name: string, text: string): void;
 }
 
 export const host: Host | null = null;

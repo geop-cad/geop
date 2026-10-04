@@ -75,6 +75,24 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         })
     }
 
+    /// The curve cut at every interior knot: its polynomial (or rational)
+    /// pieces, in order.
+    pub fn bezier_pieces(&self) -> GeopResult<Vec<Self>> {
+        let end = self.domain().1;
+        let interior = &self.knot_vector[self.degree + 1..self.control_points.len()];
+        let mut rest = self.clone();
+        let mut pieces = Vec::new();
+        for &k in interior {
+            if k.definitely_greater(rest.domain().0) && k.definitely_less(end) {
+                let (left, right) = rest.split(k)?;
+                pieces.push(left);
+                rest = right;
+            }
+        }
+        pieces.push(rest);
+        Ok(pieces)
+    }
+
     /// Split at the midpoint of the parameter domain.
     pub fn split_mid(&self) -> GeopResult<(NurbCurve<S, D>, NurbCurve<S, D>)> {
         let (t0, t1) = self.domain();

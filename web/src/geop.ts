@@ -408,7 +408,9 @@ export type Command =
   /** Take the measure tool in hand, or put it down: with no step edited, clicks pick up to two entities to measure. */
   | { command: "measure_tool"; on: boolean }
   /** Ask a question of the part as drawn, answered in [[Update]] `inspection`; changes nothing. */
-  | { command: "inspect"; query: "mass_properties" | "interference" };
+  | { command: "inspect"; query: "mass_properties" | "interference" }
+  /** Write a drawing of the part — the drawing step `id`, else the one edited or the last — as SVG or DXF. */
+  | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string };
 
 /** A joint's coordinate — see `geop_ops::assembly::JointValue`. */
 export interface JointValue {
@@ -559,6 +561,8 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
+  /** The file `export_drawing` wrote, to save. */
+  export: { name: string; text: string } | null;
   /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
 }

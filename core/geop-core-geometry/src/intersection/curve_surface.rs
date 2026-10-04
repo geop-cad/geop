@@ -264,7 +264,7 @@ pub fn curve_surface_crossings<S: Scalar>(
 /// so a curve running *along* a boundary contributes that stretch's ends.
 /// A boundary that isn't clamped (so its control row isn't the surface
 /// there) contributes no candidates.
-pub(crate) fn curve_surface_overlaps<S: Scalar>(
+pub fn curve_surface_overlaps<S: Scalar>(
     curve: &NurbCurve<S, 4>,
     surface: &NurbSurface<S, 4>,
     max_nodes: usize,

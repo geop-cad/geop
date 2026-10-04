@@ -281,7 +281,7 @@ where
 
 /// Overlaps of `a` with `b`, and the isolated crossings away from them (the
 /// clipping search run on each stretch of `a` between overlaps).
-pub(crate) fn curve_curve_overlaps_and_crossings<S: Scalar, const D: usize, const C: usize>(
+pub fn curve_curve_overlaps_and_crossings<S: Scalar, const D: usize, const C: usize>(
     a: &NurbCurve<S, D>,
     b: &NurbCurve<S, D>,
     max_nodes: usize,

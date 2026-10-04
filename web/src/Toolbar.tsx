@@ -11,6 +11,8 @@ interface Props {
   hosted: boolean;
   hasSteps: boolean;
   onSave: () => void;
+  /** Export a drawing of the part (see the drawing step) as SVG or DXF. */
+  onExportDrawing: (format: "svg" | "dxf") => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
@@ -54,6 +56,7 @@ export function Toolbar({
   hosted,
   hasSteps,
   onSave,
+  onExportDrawing,
   onLoadFile,
   exampleNames,
   onLoadExample,
@@ -85,6 +88,23 @@ export function Toolbar({
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
           { kind: "separator" },
         ] as MenuEntry[])),
+    { kind: "heading", label: "Drawing" },
+    {
+      kind: "item",
+      label: "Export drawing as SVG",
+      icon: "drawing",
+      hint: "views, hidden lines",
+      disabled: !hasSteps,
+      onSelect: () => onExportDrawing("svg"),
+    },
+    {
+      kind: "item",
+      label: "Export drawing as DXF",
+      icon: "drawing",
+      disabled: !hasSteps,
+      onSelect: () => onExportDrawing("dxf"),
+    },
+    { kind: "separator" },
     { kind: "heading", label: "Example parts" },
     ...exampleNames.map(
       (name): MenuEntry => ({ kind: "item", label: title(name), icon: "example", onSelect: () => onLoadExample(name) }),

@@ -55,9 +55,9 @@ function typing(e: KeyboardEvent): boolean {
 /** The commands that change the program, for statistics. */
 const EDITS: Command["command"][] = ["commit", "remove", "move", "load", "load_example", "undo", "redo"];
 
-/** Download `text` as the file `name`. */
-function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+/** Download `text` as the file `name`, of the media type `type`. */
+function download(name: string, text: string, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
@@ -353,6 +353,16 @@ function App() {
     trackFile("saved");
   }
 
+  /** Export a drawing of the part, and save it: downloaded, or through VS Code. */
+  async function exportDrawing(format: "svg" | "dxf") {
+    const date = new Date().toISOString().slice(0, 10);
+    const update = await dispatch({ command: "export_drawing", format, date });
+    const file = update?.export;
+    if (!file) return;
+    if (host) host.saveFile(file.name, file.text);
+    else download(file.name, file.text, format === "svg" ? "image/svg+xml" : "application/dxf");
+  }
+
   async function loadExample(name: string) {
     // In the browser an example gets a file of its own, rather than
     // replacing the one edited.
@@ -549,6 +559,7 @@ function App() {
         hosted={host != null}
         hasSteps={stepCount > 0}
         onSave={() => downloadFile(workspace.active)}
+        onExportDrawing={(format) => void exportDrawing(format)}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}

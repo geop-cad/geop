@@ -20,6 +20,7 @@ members = [
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
+    "ops/geop-ops-drawing",
     "ops/geop-ops-inspect",
     "ops/geop-ops-subd",
     "ops/geop-ops-sheetmetal",
@@ -50,6 +51,7 @@ geop-ops-booleans = { path = "ops/geop-ops-booleans" }
 geop-ops-edit = { path = "ops/geop-ops-edit" }
 geop-ops-fillet = { path = "ops/geop-ops-fillet" }
 geop-ops-shell = { path = "ops/geop-ops-shell" }
+geop-ops-drawing = { path = "ops/geop-ops-drawing" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
 geop-ops-inspect = { path = "ops/geop-ops-inspect" }
 geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }

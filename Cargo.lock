@@ -199,6 +199,7 @@ dependencies = [
  "geop-ops-assembly",
  "geop-ops-booleans",
  "geop-ops-datums",
+ "geop-ops-drawing",
  "geop-ops-edit",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
@@ -226,6 +227,7 @@ dependencies = [
  "geop-cad-base",
  "geop-core-math",
  "geop-ops",
+ "geop-ops-drawing",
  "geop-ops-rasterize",
  "serde_json",
 ]
@@ -331,6 +333,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "geop-ops-drawing"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-booleans",
+ "geop-ops-extrude-revolve",
+ "serde",
 ]
 
 [[package]]

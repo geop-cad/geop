@@ -18,6 +18,7 @@ use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs, PartPattern, PartPatternArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
+use geop_ops_drawing::{Drawing, DrawingArgs};
 use geop_ops_edit::{
     DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
 };
@@ -51,6 +52,8 @@ mod assembly_scale_tests;
 mod assembly_tests;
 #[cfg(test)]
 mod datum_tests;
+#[cfg(test)]
+mod drawing_tests;
 #[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
@@ -214,6 +217,9 @@ pub enum PartOperation {
     /// Route a bundle of wires from a connector through clips to another
     /// connector, its bends checked and every wire's cut length reported.
     Route(RouteArgs),
+    /// Describe a 2-D drawing of the part — views with hidden lines, a
+    /// section, dimensions and a title block — to export as SVG or DXF.
+    Drawing(DrawingArgs),
 }
 
 /// A program of the editor's operations.

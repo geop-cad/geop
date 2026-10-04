@@ -7,7 +7,8 @@ import { GeopServer } from "./server";
 type FromPage =
   | { type: "ready" }
   | { type: "command"; id: number; command: string }
-  | { type: "program"; program: unknown };
+  | { type: "program"; program: unknown }
+  | { type: "save"; name: string; text: string };
 
 /**
  * A `.geop` file as the web editor: the page is the one `web/` builds, the
@@ -175,6 +176,15 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
             latest = message.program;
             if (!writing) await write();
             break;
+          case "save": {
+            // An exported drawing: saved where the user says, next to the
+            // document unless told otherwise.
+            const target = await vscode.window.showSaveDialog({
+              defaultUri: vscode.Uri.joinPath(document.uri, "..", message.name),
+            });
+            if (target) await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(message.text));
+            break;
+          }
         }
       }),
     );

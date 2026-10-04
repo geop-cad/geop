@@ -52,7 +52,8 @@ fn every_operation_is_offered() {
             "subd",
             "add_part",
             "part_pattern",
-            "route"
+            "route",
+            "drawing"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

@@ -2,6 +2,7 @@ mod closest;
 mod compatible;
 mod evaluate;
 mod extend;
+mod extrema;
 mod helix;
 pub use helix::{Handedness, HelixRow, cos_sin, helix_rows};
 mod interpolate;

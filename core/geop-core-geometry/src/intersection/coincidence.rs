@@ -32,7 +32,7 @@ use super::Intersections;
 /// A point of the primary curve at parameter `t` that lies on the other
 /// object at `partner` (its parameter(s) there).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Hit<S: Scalar, P> {
+pub struct Hit<S: Scalar, P> {
     pub t: S,
     pub partner: P,
 }
@@ -40,7 +40,7 @@ pub(crate) struct Hit<S: Scalar, P> {
 /// A stretch `[start.t, end.t]` of the primary curve lying on the other
 /// object.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Overlap<S: Scalar, P> {
+pub struct Overlap<S: Scalar, P> {
     pub start: Hit<S, P>,
     pub end: Hit<S, P>,
 }

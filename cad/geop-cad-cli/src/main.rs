@@ -21,7 +21,7 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{Editor, Program, Workspace, stdlib::WithStandardParts};
+use geop_cad_base::{Editor, PartOperation, Program, Workspace, stdlib::WithStandardParts};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{Pose, TriangleFace},
@@ -56,6 +56,9 @@ enum Command {
     Compile(CompileArgs),
     /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
     Examples(ExamplesArgs),
+    /// Build a program and write a 2-D drawing of its part — views with
+    /// hidden lines, dimensions, a title block — as SVG or DXF.
+    Drawing(DrawingCliArgs),
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
@@ -98,6 +101,162 @@ struct ExamplesArgs {
     /// How finely curved faces are meshed: higher is smoother, and bigger.
     #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
     quality: u16,
+}
+
+#[derive(clap::Args)]
+struct DrawingCliArgs {
+    /// The program to draw, e.g. `part.geop`.
+    program: PathBuf,
+    /// Where to write the drawing: `.svg` or `.dxf`. Defaults to the
+    /// program's path with `.geop` replaced by `.svg`.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// The drawing step to draw, by id. The program's last drawing step if
+    /// not given; the default drawing of the whole part if it has none.
+    #[arg(long)]
+    step: Option<String>,
+    /// The views, e.g. `front,top,right,iso` (also `left`, `bottom`,
+    /// `back`). The drawing step's if not given.
+    #[arg(long, value_delimiter = ',')]
+    views: Vec<String>,
+    /// Lay the views out in first-angle projection (ISO) rather than third
+    /// angle (ASME).
+    #[arg(long)]
+    first_angle: bool,
+    /// The scale, e.g. `1:2` or `5:1`; the largest standard one that fits
+    /// if not given.
+    #[arg(long)]
+    scale: Option<String>,
+    /// The paper: `a4` to `a0`, landscape.
+    #[arg(long)]
+    sheet: Option<String>,
+    /// The part's name for the title block; the program's file name if
+    /// neither this nor the drawing step gives one.
+    #[arg(long)]
+    name: Option<String>,
+    /// What the part is made of, for the title block.
+    #[arg(long)]
+    material: Option<String>,
+}
+
+/// Today's date, `YYYY-MM-DD` (UTC), for a title block.
+fn today() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_secs() / 86_400) as i64)
+        .unwrap_or(0);
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// A scale as written, `1:2` or `5:1`, as paper length per model length.
+fn parse_scale(text: &str) -> GeopResult<f64> {
+    let bad = || GeopError::new(format!("the scale {text:?} is not like 1:2 or 5:1"));
+    let (a, b) = text.split_once(':').ok_or_else(bad)?;
+    let (a, b): (f64, f64) = (
+        a.trim().parse().map_err(|_| bad())?,
+        b.trim().parse().map_err(|_| bad())?,
+    );
+    if a > 0.0 && b > 0.0 {
+        Ok(a / b)
+    } else {
+        Err(bad())
+    }
+}
+
+/// Writes the drawing `args` ask for; returns where.
+fn drawing(args: &DrawingCliArgs) -> GeopResult<PathBuf> {
+    use geop_ops_drawing::{DrawingArgs, Format, Projection, SheetSize, ViewKind};
+    let path = args.program.to_string_lossy();
+    let program = Program::from_json(&Disk.read(&path)?)?;
+    let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
+    let library = workspace.scope(&path);
+    let found = match &args.step {
+        Some(id) => {
+            let index = program.index_of(id)?;
+            match &program.steps[index].operation {
+                PartOperation::Drawing(d) => Some((index, d.clone())),
+                _ => return Err(GeopError::new(format!("the step {id:?} is no drawing"))),
+            }
+        }
+        None => program
+            .steps
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, s)| match &s.operation {
+                PartOperation::Drawing(d) => Some((i, d.clone())),
+                _ => None,
+            }),
+    };
+    let (index, mut spec) = found.unwrap_or((program.steps.len(), DrawingArgs::default()));
+    let mut before = program.clone();
+    before.steps.truncate(index);
+    let part = before.build(&library)?;
+
+    if !args.views.is_empty() {
+        spec.views = args
+            .views
+            .iter()
+            .map(|v| {
+                ViewKind::from_name(v.trim()).ok_or_else(|| {
+                    let known: Vec<&str> = ViewKind::ALL.iter().map(|k| k.name()).collect();
+                    GeopError::new(format!(
+                        "no view is named {v:?}; the views are {}",
+                        known.join(", ")
+                    ))
+                })
+            })
+            .collect::<GeopResult<_>>()?;
+    }
+    if args.first_angle {
+        spec.projection = Projection::FirstAngle;
+    }
+    if let Some(scale) = &args.scale {
+        spec.scale = Some(parse_scale(scale)?);
+    }
+    if let Some(sheet) = &args.sheet {
+        spec.sheet = SheetSize::ALL
+            .into_iter()
+            .find(|s| s.name() == sheet.to_ascii_lowercase())
+            .ok_or_else(|| GeopError::new(format!("no paper is named {sheet:?}: a4 to a0")))?;
+    }
+    if let Some(name) = &args.name {
+        spec.name = name.clone();
+    }
+    if spec.name.is_empty() {
+        spec.name = args
+            .program
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+    }
+    if let Some(material) = &args.material {
+        spec.material = material.clone();
+    }
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.program.with_extension("svg"));
+    let format = Format::of_path(&output.to_string_lossy()).ok_or_else(|| {
+        GeopError::new(format!(
+            "{} is neither .svg nor .dxf: name the drawing for the format to write",
+            output.display()
+        ))
+    })?;
+    let text = geop_ops_drawing::render(&part, &spec, &today(), format)?;
+    std::fs::write(&output, text)
+        .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
+    Ok(output)
 }
 
 /// What a compile wrote, for the report.
@@ -408,6 +567,9 @@ fn main() -> ExitCode {
                 c.output.display()
             );
         }),
+        Command::Drawing(args) => drawing(&args).map(|output| {
+            eprintln!("drawing -> {}", output.display());
+        }),
         Command::Examples(args) => export_examples(&args).map(|compiled| {
             for c in &compiled {
                 eprintln!("{} triangles -> {}", c.triangles, c.output.display());
@@ -601,6 +763,40 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("luggage_tag"), "{err}");
+    }
+
+    /// `geop drawing bracket.geop -o bracket.dxf --views front,top`: the
+    /// drawing written in the format its name says, the views asked for.
+    #[test]
+    fn draws_a_program() {
+        let dir = scratch("drawing");
+        let path = dir.join("bracket.geop");
+        std::fs::write(&path, examples::bracket().to_json().unwrap()).unwrap();
+        let args = |output: &str, views: &[&str]| DrawingCliArgs {
+            program: path.clone(),
+            output: Some(dir.join(output)),
+            step: None,
+            views: views.iter().map(|v| v.to_string()).collect(),
+            first_angle: true,
+            scale: Some("2:1".into()),
+            sheet: None,
+            name: None,
+            material: Some("6061-T6".into()),
+        };
+        let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
+        let dxf = std::fs::read_to_string(written).unwrap();
+        assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
+        for text in ["bracket", "6061-T6", "2:1", "FIRST ANGLE"] {
+            assert!(dxf.contains(&format!("\n{text}\n")), "{text}");
+        }
+        let svg = std::fs::read_to_string(drawing(&args("bracket.svg", &[])).unwrap()).unwrap();
+        assert!(svg.starts_with("<svg"));
+        let err = drawing(&args("bracket.png", &[])).unwrap_err();
+        assert!(err.to_string().contains(".svg nor .dxf"), "{err}");
+        let err = drawing(&args("bracket.svg", &["side"])).unwrap_err();
+        assert!(err.to_string().contains("front"), "{err}");
+        assert_eq!(parse_scale("1:5").unwrap(), 0.2);
+        assert_eq!(today().len(), 10);
     }
 
     #[test]
