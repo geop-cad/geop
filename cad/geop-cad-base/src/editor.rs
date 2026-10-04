@@ -30,7 +30,9 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{PartOperation, Program, ProgramRunner, Workspace, examples};
+use crate::{
+    PartOperation, Program, ProgramRunner, Workspace, examples, stdlib::WithStandardParts,
+};
 
 /// Something the user did.
 #[derive(Clone, Debug, Deserialize)]
@@ -378,7 +380,7 @@ impl<S: Scalar> Editor<S> {
         Self {
             program: Program::new(),
             path: None,
-            workspace: Workspace::new(BTreeMap::new()),
+            workspace: Workspace::new(WithStandardParts(BTreeMap::new())),
             undo: Vec::new(),
             redo: Vec::new(),
             marker: None,

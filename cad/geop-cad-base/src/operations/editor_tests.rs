@@ -1295,3 +1295,96 @@ fn new_rib_grows_from_the_newest_sketch() {
         scene.part.solids
     );
 }
+
+/// A standard screw is placed as any part: offered among the files, its
+/// size picked from its table, and mated by its datums — its axis on the
+/// hole's, the underside of its head on the plate.
+#[test]
+fn a_standard_screw_is_placed_in_a_plate() {
+    use geop_ops::part::{ParamValue, pose_parameter};
+
+    let screw = "std:iso4762_socket_head_cap_screw.geop";
+    let (plate, hole) = (examples::metric_plate(), examples::metric_plate_hole());
+    let mut editor = Editor::<S>::new();
+    let files = [("plate.geop".to_string(), Some(plate.to_json().unwrap()))].into();
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("assembly.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    editor.handle(dialog("file", Value::Choice("plate.geop".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let update = editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    let step = update.step.unwrap();
+    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen from a list");
+    };
+    assert!(options.iter().any(|o| o.value == screw), "{options:?}");
+    editor.handle(dialog("file", Value::Choice(screw.into())));
+    let update = editor.handle(dialog("parameter:size", Value::Choice("M4x12".into())));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let face = |name: &str| EntityRef::Face { name: name.into() };
+    let mates = [
+        (
+            "m1",
+            "concentric",
+            vec![
+                EntityRef::datum("part2/axis"),
+                face(&format!("part1/{hole}")),
+            ],
+        ),
+        (
+            "m2",
+            "coincident",
+            vec![
+                EntityRef::datum("part2/seat"),
+                face("part1/extrude(plate,end)"),
+            ],
+        ),
+    ];
+    for (id, kind, entities) in mates {
+        editor.handle(dialog("add_mate", Value::Choice(kind.into())));
+        let update = editor.handle(dialog(
+            &format!("mate:{id}:entities"),
+            Value::Entities(entities),
+        ));
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let program = editor.program();
+    let PartOperation::AddPart(args) = &program.steps[1].operation else {
+        panic!("the screw is placed");
+    };
+    assert_eq!(
+        args.parameters.get("size"),
+        Some(&ParamValue::Text("M4x12".into()))
+    );
+    assert!(editor.part().check_mates().unwrap().converged);
+    let Some(ParamValue::Pose(pose)) = program.state.get(&pose_parameter("part2")) else {
+        panic!("the screw has a pose");
+    };
+    // Its head on the plate's top, its tip 12 below, down the hole.
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops::Design::from_f64));
+    for (local, want) in [
+        ([0.0, 0.0, 0.0], [20.0, 20.0, 5.0]),
+        ([0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
+    ] {
+        let got = pose.apply(&v(local));
+        let got = [0, 1, 2].map(|k| got[k].to_f64());
+        assert!(
+            (0..3).all(|k| (got[k] - want[k]).abs() < 1e-6),
+            "{local:?} is at {got:?}, not {want:?}"
+        );
+    }
+}

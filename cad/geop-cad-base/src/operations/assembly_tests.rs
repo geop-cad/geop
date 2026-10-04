@@ -19,7 +19,9 @@ use geop_ops::part::{ParamValue, pose_parameter};
 use geop_ops_datums::{AddDatumArgs, Construction};
 
 use crate::examples::{n, pose};
-use crate::{Command, Editor, PartOperation, Program, Step, Workspace, examples};
+use crate::{
+    Command, Editor, PartOperation, Program, Step, Workspace, examples, stdlib::WithStandardParts,
+};
 
 /// The files of the `pin_in_plate` example but its assembly, by path.
 fn parts() -> BTreeMap<String, String> {
@@ -50,7 +52,7 @@ fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
 /// around `(1, 1)` — where the program's state puts it.
 #[test]
 fn the_pin_is_mated_into_the_plate() {
-    let workspace = Workspace::<S>::new(parts());
+    let workspace = Workspace::<S>::new(WithStandardParts(parts()));
     let program = examples::pin_in_plate_assembly();
     let part = program.build(&workspace.scope("assembly.geop")).unwrap();
     part.check_names().unwrap();
@@ -86,11 +88,11 @@ fn files_must_not_place_each_other_in_a_cycle() {
         );
         program
     };
-    let workspace = Workspace::<S>::new(BTreeMap::from([
+    let workspace = Workspace::<S>::new(WithStandardParts(BTreeMap::from([
         ("a.geop".into(), placing("b.geop").to_json().unwrap()),
         ("b.geop".into(), placing("sub/../a.geop").to_json().unwrap()),
         ("c.geop".into(), placing("c.geop").to_json().unwrap()),
-    ]));
+    ])));
     let error = |program: Program, file: &str| match program.build::<S>(&workspace.scope(file)) {
         Ok(_) => panic!("{file} built"),
         Err(e) => e.to_string(),
@@ -140,7 +142,10 @@ fn the_editor_places_parts_from_its_files() {
         panic!("the file is chosen from a list");
     };
     let files: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
-    assert_eq!(files, ["", "pin.geop", "plate.geop"]);
+    // The workspace's own, then the standard parts.
+    let (own, standard) = files.split_at(3);
+    assert_eq!(own, ["", "pin.geop", "plate.geop"]);
+    assert!(!standard.is_empty() && standard.iter().all(|f| f.starts_with("std:")));
 
     // What a viewer keeps: every component it was sent.
     let mut known = BTreeMap::new();
@@ -369,7 +374,7 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
     );
     let plate = pose_of(editor.program(), "plate");
     assert!(position(&plate) != [2.0, -1.0, 0.0], "the plate moved");
-    let workspace = Workspace::<S>::new(parts());
+    let workspace = Workspace::<S>::new(WithStandardParts(parts()));
     let part = editor
         .program()
         .build(&workspace.scope("assembly.geop"))
@@ -462,7 +467,8 @@ fn an_example_of_several_files_adds_its_files() {
             "chain",
             "parametric_plates",
             "four_bar",
-            "arm"
+            "arm",
+            "bolted_plate"
         ]
     );
     let part = update.scene.unwrap().part;
@@ -627,12 +633,12 @@ fn a_rigid_sub_assembly_moves_as_one() {
     let (files, program) = hinge(false);
     let editor = editor_with(files.clone(), program, "top.geop");
     assert!(!editor.program().state.contains_key("hinge/pin.pose"));
-    let workspace = Workspace::<S>::new(
+    let workspace = Workspace::<S>::new(WithStandardParts(
         files
             .into_iter()
             .filter_map(|(path, text)| Some((path, text?)))
             .collect(),
-    );
+    ));
     let part = editor
         .program()
         .build(&workspace.scope("top.geop"))
@@ -750,12 +756,12 @@ fn drive_chain(
         Some(examples::link().to_json().unwrap()),
     )]);
     let mut editor = editor_with(files.clone(), examples::chain_assembly(), "chain.geop");
-    let workspace = Workspace::<S>::new(
+    let workspace = Workspace::<S>::new(WithStandardParts(
         files
             .into_iter()
             .map(|(path, text)| (path, text.unwrap()))
             .collect::<BTreeMap<_, _>>(),
-    );
+    ));
     let library = workspace.scope("chain.geop");
     editor.handle(Command::DragTool { on: true });
     // Seen from in front and above — so the plane a drag moves in, facing
@@ -877,7 +883,7 @@ fn folded_path() -> Vec<[f64; 2]> {
 /// over again).
 fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
     let files = BTreeMap::from([("link.geop".to_string(), examples::link().to_json().unwrap())]);
-    let workspace = Workspace::<S>::new(files);
+    let workspace = Workspace::<S>::new(WithStandardParts(files));
     let library = workspace.scope("chain.geop");
     let mut program = examples::chain_assembly();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
@@ -1015,7 +1021,7 @@ fn linkage_examples_are_stacked_and_hold() {
     ] {
         let (files, program) = workspace_example(name);
         let part = program
-            .build(&Workspace::<S>::new(files).scope(&format!("{name}.geop")))
+            .build(&Workspace::<S>::new(WithStandardParts(files)).scope(&format!("{name}.geop")))
             .unwrap();
         let report = part.check_mates().unwrap();
         assert!(report.converged, "{name}: {report:?}");
@@ -1031,7 +1037,7 @@ fn linkage_examples_are_stacked_and_hold() {
 #[test]
 fn the_four_bar_crank_turns_all_the_way_round() {
     let (files, mut program) = workspace_example("four_bar");
-    let workspace = Workspace::<S>::new(files);
+    let workspace = Workspace::<S>::new(WithStandardParts(files));
     let library = workspace.scope("four_bar.geop");
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     for step in 1..=36 {
@@ -1060,7 +1066,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
 fn the_arm_lists_its_joints_and_how_free_its_links_are() {
     let (files, program) = workspace_example("arm");
     let part = program
-        .build(&Workspace::<S>::new(files).scope("arm.geop"))
+        .build(&Workspace::<S>::new(WithStandardParts(files)).scope("arm.geop"))
         .unwrap();
     let joints = part.joints().unwrap();
     let values: Vec<_> = joints
@@ -1093,7 +1099,7 @@ fn the_arm_lists_its_joints_and_how_free_its_links_are() {
 #[test]
 fn the_arm_is_dragged_up_to_its_limit() {
     let (files, mut program) = workspace_example("arm");
-    let workspace = Workspace::<S>::new(files);
+    let workspace = Workspace::<S>::new(WithStandardParts(files));
     let library = workspace.scope("arm.geop");
     let part = program.build(&library).unwrap();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
@@ -1134,7 +1140,7 @@ fn the_arm_is_dragged_up_to_its_limit() {
 /// the pin takes its copies with it.
 #[test]
 fn six_pins_are_patterned_round_a_hole() {
-    let workspace = Workspace::<S>::new(parts());
+    let workspace = Workspace::<S>::new(WithStandardParts(parts()));
     let library = workspace.scope("assembly.geop");
     let mut program = Program::new();
     program.push(
@@ -1220,7 +1226,7 @@ fn six_pins_are_patterned_round_a_hole() {
 fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     use geop_ops::assembly::{CouplingKind, JointKind, Mate};
     let (files, _) = workspace_example("arm");
-    let workspace = Workspace::<S>::new(files);
+    let workspace = Workspace::<S>::new(WithStandardParts(files));
     let library = workspace.scope("gears.geop");
     let joint = |on_hole: usize, link: &str| {
         Mate::joint(
