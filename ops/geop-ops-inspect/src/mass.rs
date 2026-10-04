@@ -44,7 +44,7 @@ impl MassSummary {
             principal_axes: principal
                 .axes
                 .map(|axis| [0, 1, 2].map(|k| axis[k].to_f64())),
-            converged: properties.converged,
+            converged: properties.converged(),
         })
     }
 }

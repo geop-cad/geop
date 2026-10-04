@@ -527,3 +527,33 @@ fn sweep_angles_radii_and_k_factors() {
     // back into the plate.
     assert!(built >= 50, "{built} of 60 flanges built");
 }
+
+/// A bracket — a plate with two holes, a flange set in from both ends of
+/// its front edge and one along its whole back edge — has mass properties
+/// the quadrature resolves on every face, its bends' among them.
+#[test]
+fn flanged_bracket_mass_properties_converge() {
+    let mut s = polygon(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.2], [0.0, 1.2]]);
+    for x in [0.5, 1.5] {
+        let c = s.add_point(d(x), d(0.6));
+        s.add_circle(c, d(0.15));
+    }
+    let part = base(sketched(s), rules(0.08, 0.08, 0.44), 1.0);
+    let mut front = flange("base_flange(b,k,c4,b)");
+    front.length = 0.6;
+    front.offset_start = 0.3;
+    front.offset_end = 0.3;
+    let part = EdgeFlange.apply(part, "front", &front, &NoFiles).unwrap();
+    let mut back = flange("base_flange(b,k,c6,b)");
+    back.length = 0.4;
+    let part = EdgeFlange.apply(part, "back", &back, &NoFiles).unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("edge_flange(back)").unwrap();
+    let mass = part.topology().mass_properties(solid, S::ONE).unwrap();
+    let unresolved: Vec<&str> = mass
+        .unresolved
+        .iter()
+        .map(|&f| part.name_of(f).unwrap_or("?"))
+        .collect();
+    assert!(unresolved.is_empty(), "not resolved on {unresolved:?}");
+}

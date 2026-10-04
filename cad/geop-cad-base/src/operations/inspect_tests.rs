@@ -114,6 +114,26 @@ fn check_mass(name: &str, summary: &MassSummary, failures: &mut Vec<String>) {
     }
 }
 
+/// The sheet-metal bracket's mass properties converge on every face — its
+/// bends' faces among them, whose integrals once stalled.
+#[test]
+fn sheet_metal_bracket_mass_properties_converge() {
+    let part: Part<S> = examples::sheet_metal_bracket().build(&NoFiles).unwrap();
+    for placed in placed_solids(&part).unwrap() {
+        let mass = placed.mass_properties().unwrap();
+        let unresolved: Vec<&str> = mass
+            .unresolved
+            .iter()
+            .map(|&f| part.name_of(f).unwrap_or("?"))
+            .collect();
+        assert!(
+            unresolved.is_empty(),
+            "{}: not resolved on {unresolved:?}",
+            placed.name
+        );
+    }
+}
+
 /// Every example part: every solid's mass properties pass [`check_mass`],
 /// and its volume is that of its two pieces — cut across by a box, by
 /// booleans, each piece's volume integrated on its own.

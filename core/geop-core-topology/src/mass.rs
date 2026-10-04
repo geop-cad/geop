@@ -36,6 +36,7 @@
 
 use std::cell::Cell;
 
+use geop_core_geometry::nurb_curve::NurbCurve2D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::{Matrix, symmetric_eigen3},
@@ -65,9 +66,9 @@ const INNER: Quadrature = Quadrature {
 ///
 /// Every value is an enclosure in the sense of [`geop_core_math::quadrature`]:
 /// proven as far as interval arithmetic goes, widened by the quadrature's
-/// estimate of its truncation error — `converged` says whether that
-/// estimate came within the tolerance asked.
-#[derive(Clone, Copy, Debug)]
+/// estimate of its truncation error — `unresolved` names the faces where
+/// that estimate did not come within the tolerance asked.
+#[derive(Clone, Debug)]
 pub struct MassProperties<S: Scalar> {
     pub volume: S,
     pub area: S,
@@ -77,7 +78,9 @@ pub struct MassProperties<S: Scalar> {
     /// The inertia tensor about `center`, along the world's axes:
     /// `I_ij = ∫ ρ (|r|² δ_ij - r_i r_j) dV`, `r` measured from `center`.
     pub inertia: [[S; 3]; 3],
-    pub converged: bool,
+    /// The faces whose integrals did not converge (see
+    /// [`MassProperties::converged`]).
+    pub unresolved: Vec<FaceId>,
 }
 
 /// The principal moments of inertia, ascending, each enclosed, and the axis
@@ -119,7 +122,7 @@ impl<S: Scalar> Model<S> {
         let faces = self.solid_faces(solid).with_context(&ctx)?;
         let reference = self.reference_point(&faces).with_context(&ctx)?;
         let mut total = [S::ZERO; SOLID_COMPONENTS];
-        let mut converged = true;
+        let mut unresolved = Vec::new();
         for &face in &faces {
             let integral = self
                 .integrate_over_face(face, SOLID_COMPONENTS, &|p, n| {
@@ -142,7 +145,9 @@ impl<S: Scalar> Model<S> {
                     ])
                 })
                 .with_context(&ctx)?;
-            converged &= integral.converged;
+            if !integral.converged {
+                unresolved.push(face);
+            }
             for (t, v) in total.iter_mut().zip(integral.value) {
                 *t = t.add(v);
             }
@@ -180,7 +185,7 @@ impl<S: Scalar> Model<S> {
             mass: volume.mul(density),
             center: reference.add(&offset),
             inertia,
-            converged,
+            unresolved,
         })
     }
 
@@ -240,13 +245,13 @@ impl<S: Scalar> Model<S> {
             };
             for coedge_id in self.iterate_loop_coedges(anchor) {
                 let pcurve = &self.get_coedge(coedge_id)?.pcurve;
+                if is_iso_v(pcurve) {
+                    // Along an iso-`v` line `dv` is zero: nothing is added.
+                    continue;
+                }
                 let around = |t: S| -> GeopResult<Vec<S>> {
                     let uv = pcurve.evaluate(t)?;
                     let dv = pcurve.tangent(t)?[1];
-                    // Along an iso-`v` line nothing is added.
-                    if dv.is_sharp() && dv.could_be_equal(S::ZERO) {
-                        return Ok(vec![S::ZERO; components]);
-                    }
                     Ok(inner(uv[0], uv[1])?
                         .into_iter()
                         .map(|value| value.mul(dv))
@@ -269,7 +274,30 @@ impl<S: Scalar> Model<S> {
     }
 }
 
+/// Whether `pcurve` runs along a line of constant `v`: every control point
+/// at the same `v`, with the same weight, both sharp — so identical, and
+/// the curve, in their hull, has `v` constant.
+///
+/// Decided from the control points, not from `dv` along the curve: the
+/// derivative of a constant comes out of interval arithmetic as a tiny
+/// interval around zero, not as zero, and Green's theorem would integrate
+/// along the whole line only to multiply by it.
+fn is_iso_v<S: Scalar>(pcurve: &NurbCurve2D<S>) -> bool {
+    let identical = |a: S, b: S| a.is_sharp() && b.is_sharp() && a.could_be_equal(b);
+    let first = pcurve.control_points[0];
+    pcurve
+        .control_points
+        .iter()
+        .all(|cp| identical(cp[1], first[1]) && identical(cp[2], first[2]))
+}
+
 impl<S: Scalar> MassProperties<S> {
+    /// Whether every integral came within its tolerance: when not, the
+    /// enclosures are wider than asked.
+    pub fn converged(&self) -> bool {
+        self.unresolved.is_empty()
+    }
+
     /// The body moved by `pose`: its centre moved, its inertia turned with
     /// it (`R I Rᵀ`).
     pub fn placed(&self, pose: &Pose<S>) -> GeopResult<Self> {
@@ -288,7 +316,7 @@ impl<S: Scalar> MassProperties<S> {
         Ok(Self {
             center: motion.apply(&self.center),
             inertia,
-            ..*self
+            ..self.clone()
         })
     }
 
@@ -328,7 +356,7 @@ impl<S: Scalar> MassProperties<S> {
             mass,
             center,
             inertia,
-            converged: parts.iter().all(|p| p.converged),
+            unresolved: parts.iter().flat_map(|p| p.unresolved.clone()).collect(),
         }))
     }
 
@@ -352,7 +380,7 @@ mod tests {
         let mut model = Model::<S>::new();
         let solid = test_cube_solid(&mut model);
         let mass = model.mass_properties(solid, S::TWO).unwrap();
-        assert!(mass.converged);
+        assert!(mass.converged());
         assert!(mass.volume.could_be_equal(S::ONE), "{:?}", mass.volume);
         assert!(
             mass.area.could_be_equal(S::from_f64(6.0)),

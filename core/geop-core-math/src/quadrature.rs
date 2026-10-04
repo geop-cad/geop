@@ -226,20 +226,24 @@ pub fn integrate<S: Scalar>(
         // rules smaller than their own enclosures' widths is rounding, not
         // truncation, and no halving reduces it.
         let width = total(&panels, |p| &p.width);
-        let done = (0..components)
-            .all(|c| error[c] <= quadrature.relative_tolerance * scale[c] || error[c] <= width[c]);
-        if done {
+        let open: Vec<usize> = (0..components)
+            .filter(|&c| error[c] > quadrature.relative_tolerance * scale[c] && error[c] > width[c])
+            .collect();
+        if open.is_empty() {
             break true;
         }
         if panels.len() >= quadrature.max_panels {
             break false;
         }
         // The panel contributing most to the component furthest from
-        // converging.
+        // converging — among those that have not: a component already
+        // resolved, down to rounding, say, only looks far off relative to
+        // its own tiny scale, and halving where it is largest would spend
+        // the whole budget on rounding while the component still open is
+        // never refined.
         let worst = |p: &Panel<S>| {
-            (0..components)
-                .filter(|&c| scale[c] > 0.0)
-                .map(|c| p.error[c] / scale[c])
+            open.iter()
+                .map(|&c| p.error[c] / scale[c])
                 .fold(0.0, f64::max)
         };
         let (index, _) = panels
@@ -337,5 +341,31 @@ mod tests {
         let integral = integrate(f, &[S::ZERO, S::ONE], 1, &tight).unwrap();
         assert!(!integral.converged);
         assert!(integral.value[0].could_be_equal(S::from_ratio(2, 3).unwrap()));
+    }
+
+    /// A component resolved down to its rounding does not take the budget
+    /// from one still open: here the first is a wiggle far below its own
+    /// enclosure's width — relative to its tiny scale it looks far off on
+    /// every panel — and the second needs its panels halved near `x = 0.9`,
+    /// where its peak is.
+    #[test]
+    fn a_resolved_component_does_not_starve_an_open_one() {
+        use crate::scalars::ScalInF64 as S;
+        let f = |x: S| {
+            let noise = S::from_f64(1e-20).mul(S::from_f64(1e6).mul(x).sin());
+            let rounding = S::from_f64(-1e-17).union(S::from_f64(1e-17));
+            let d = x.sub(S::from_f64(0.9));
+            let peak = S::ONE.div(S::ONE.add(S::from_f64(400.0).mul(d).mul(d)))?;
+            Ok(vec![noise.add(rounding), peak])
+        };
+        let budget = Quadrature {
+            relative_tolerance: 1e-10,
+            max_panels: 24,
+        };
+        let integral = integrate(f, &[S::ZERO, S::ONE], 2, &budget).unwrap();
+        assert!(integral.converged, "{integral:?}");
+        // atan(20 (x - 0.9)) / 20 from 0 to 1.
+        let exact = (2.0f64.atan() + 18.0f64.atan()) / 20.0;
+        assert!(integral.value[1].could_be_equal(S::from_f64(exact)));
     }
 }
