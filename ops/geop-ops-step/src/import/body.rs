@@ -73,7 +73,13 @@ const MIN_SUBDIVISION_SIZE: f64 = 1e-4;
 const LOOP_SAMPLES: usize = 16;
 
 struct Vertex<S: Scalar> {
+    /// Every place the file says the vertex is, united (see the module
+    /// docs): grows as its edges and faces are built.
     point: Vector3<S>,
+    /// Where the vertex itself says it is: what its foot points on its
+    /// faces are projected from, so that one face's foot point does not
+    /// widen what the next one is projected from.
+    origin: Vector3<S>,
     name: Vec<String>,
 }
 
@@ -205,6 +211,7 @@ impl<S: Scalar> Builder<'_, S> {
         let v = self.vertices.len();
         self.vertices.push(Vertex {
             point: s3(point),
+            origin: s3(point),
             name: name("v", self.vertex_index.len()),
         });
         self.vertex_index.insert(id, v);
@@ -365,6 +372,7 @@ impl<S: Scalar> Builder<'_, S> {
             name.push(format!("c{k}"));
             self.vertices.push(Vertex {
                 point: curve.evaluate(t)?,
+                origin: curve.evaluate(t)?,
                 name,
             });
             new_vertices.push(v);
@@ -665,6 +673,7 @@ impl<S: Scalar> Builder<'_, S> {
                 existing.unwrap_or_else(|| {
                     builder.vertices.push(Vertex {
                         point: s3(p),
+                        origin: s3(p),
                         name: vec![builder.faces[f].name[0].clone(), which.to_string()],
                     });
                     builder.vertices.len() - 1
@@ -1029,12 +1038,50 @@ enum CoedgeOnLocal {
     Vertex(usize),
 }
 
-/// A face's patch, and where its poles are: the profile parameter bound
-/// of the patch (`v` low or high) each collapses at, and the point.
+/// The surface a face lies on, built to cover it.
 struct Patch<S: Scalar> {
     surface: NurbSurface3D<S>,
-    /// `(at the high end of v, the pole)`.
-    poles: Vec<(bool, P3)>,
+}
+
+/// A row of a patch's control points collapsed to one point: a pole of its
+/// parametrization. The row is where `u` (`fixes_u`) or `v` is `at`.
+#[derive(Clone, Copy, Debug)]
+struct Pole<S: Scalar> {
+    fixes_u: bool,
+    at: S,
+    point: P3,
+}
+
+/// The poles of `surface`: each boundary row whose control points all lie
+/// within `uncertainty` of each other — the file's own statement of which
+/// points are one.
+fn poles_of<S: Scalar>(surface: &NurbSurface3D<S>, uncertainty: f64) -> GeopResult<Vec<Pole<S>>> {
+    let point = |i: usize, j: usize| -> GeopResult<P3> {
+        let cp = surface.control_points[i * surface.num_v + j];
+        let w = cp[3];
+        Ok([cp[0].div(w)?.to_f64(), cp[1].div(w)?.to_f64(), cp[2].div(w)?.to_f64()])
+    };
+    let (u_lo, u_hi) = surface.domain_u();
+    let (v_lo, v_hi) = surface.domain_v();
+    let (nu, nv) = (surface.num_u, surface.num_v);
+    let mut poles = Vec::new();
+    let rows: [(bool, S, Vec<(usize, usize)>); 4] = [
+        (true, u_lo, (0..nv).map(|j| (0, j)).collect()),
+        (true, u_hi, (0..nv).map(|j| (nu - 1, j)).collect()),
+        (false, v_lo, (0..nu).map(|i| (i, 0)).collect()),
+        (false, v_hi, (0..nu).map(|i| (i, nv - 1)).collect()),
+    ];
+    for (fixes_u, at, row) in rows {
+        let points: Vec<P3> = row.iter().map(|&(i, j)| point(i, j)).collect::<GeopResult<_>>()?;
+        if points.iter().all(|&p| distance(p, points[0]) <= uncertainty) {
+            poles.push(Pole {
+                fixes_u,
+                at,
+                point: points[0],
+            });
+        }
+    }
+    Ok(poles)
 }
 
 /// The unwrapped angles about `revolved`'s axis of `points`, a loop's in
@@ -1168,11 +1215,10 @@ fn patch_of<S: Scalar>(
                 vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
                 vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
             )?;
-            Ok(Patch { surface, poles: Vec::new() })
+            Ok(Patch { surface })
         }
         SurfaceKind::Nurbs(nurbs) => Ok(Patch {
             surface: nurbs.to_nurbs()?,
-            poles: Vec::new(),
         }),
         SurfaceKind::Extrusion { curve, vector } => {
             let length2 = dot(*vector, *vector);
@@ -1192,7 +1238,6 @@ fn patch_of<S: Scalar>(
             let start = curve.translate(s3(scale(*vector, v0)));
             Ok(Patch {
                 surface: start.sweep(s3(scale(*vector, v1 - v0))),
-                poles: Vec::new(),
             })
         }
         SurfaceKind::Revolved(revolved) => {
@@ -1200,32 +1245,9 @@ fn patch_of<S: Scalar>(
                 Some(patch) => patch,
                 None => revolved_extent(revolved, face, &loop_points, scope)?,
             };
-            let surface = revolved.patch(from, to, v0, v1)?;
-            let mut poles = Vec::new();
-            match &revolved.profile {
-                Profile::Curve(curve) => {
-                    let curve = curve.to_nurbs::<S>()?;
-                    let (lo, hi) = curve.domain();
-                    for (high, t) in [(false, lo), (true, hi)] {
-                        let p = to_p3(&curve.evaluate(t)?);
-                        let l = revolved.frame.local(p);
-                        if l[0].hypot(l[1]) <= scope.uncertainty {
-                            poles.push((high, p));
-                        }
-                    }
-                }
-                _ => {
-                    for pole in revolved.poles() {
-                        if pole == v0 {
-                            poles.push((false, revolved.profile_point(pole)));
-                        }
-                        if pole == v1 {
-                            poles.push((true, revolved.profile_point(pole)));
-                        }
-                    }
-                }
-            }
-            Ok(Patch { surface, poles })
+            Ok(Patch {
+                surface: revolved.patch(from, to, v0, v1)?,
+            })
         }
     }
 }
@@ -1316,10 +1338,14 @@ impl<S: Scalar> Grid<S> {
         let mut points = Vec::new();
         for i in 0..=GRID {
             for j in 0..=GRID {
-                let fu = S::from_ratio(i as i64, GRID as i64)?;
-                let fv = S::from_ratio(j as i64, GRID as i64)?;
-                let u = u0.add(u1.sub(u0).mul(fu)).sharpen();
-                let v = v0.add(v1.sub(v0).mul(fv)).sharpen();
+                // Seeds are free choices; the ends are the domain's own.
+                let at = |lo: S, hi: S, k: usize| match k {
+                    0 => lo,
+                    GRID => hi,
+                    _ => S::from_f64(lo.to_f64() + (hi.to_f64() - lo.to_f64()) * k as f64 / GRID as f64),
+                };
+                let u = at(u0, u1, i);
+                let v = at(v0, v1, j);
                 points.push((u, v, to_p3(&surface.evaluate(u, v)?)));
             }
         }
@@ -1357,15 +1383,15 @@ fn fit_loop<S: Scalar>(
         let edge = &edges[e];
         if forward { (edge.start, edge.end) } else { (edge.end, edge.start) }
     };
-    let (v_lo, v_hi) = surface.domain_v();
+    let poles = poles_of(surface, scope.uncertainty)?;
+    let _ = patch;
     // The pole a vertex sits at, if any.
-    let pole_of = |v: usize, vertices: &[Vertex<S>]| -> Option<S> {
-        let p = to_p3(&vertices[v].point);
-        patch
-            .poles
+    let pole_of = |v: usize, vertices: &[Vertex<S>]| -> Option<Pole<S>> {
+        let p = to_p3(&vertices[v].origin);
+        poles
             .iter()
-            .find(|(_, pole)| distance(*pole, p) <= scope.uncertainty.max(1e-9))
-            .map(|&(high, _)| if high { v_hi } else { v_lo })
+            .find(|pole| distance(pole.point, p) <= scope.uncertainty)
+            .copied()
     };
     // Where each corner — the end of coedge `k`, the start of `k + 1` —
     // is on the patch: its vertex's foot point, unless at a pole.
@@ -1375,12 +1401,13 @@ fn fit_loop<S: Scalar>(
         corners.push(match pole_of(end, vertices) {
             Some(_) => None,
             None => {
-                let (pu, pv) = grid.project(surface, &vertices[end].point)?;
+                let (pu, pv) = grid.project(surface, &vertices[end].origin)?;
                 Some(Vector2::from_array([pu, pv]))
             }
         });
     }
     let mut out = Vec::new();
+    let mut pins = Vec::with_capacity(n);
     for k in 0..n {
         let u = lp[k];
         let (start, end) = ends(u);
@@ -1390,15 +1417,20 @@ fn fit_loop<S: Scalar>(
             match corner {
                 Some(uv) => Ok(uv),
                 None => {
-                    // At a pole any `u` is the same point: take the one the
-                    // curve arrives along, from a point of it near the pole.
+                    // At a pole the free parameter names the same point
+                    // whatever it is: take the one the curve arrives along,
+                    // from a point of it near the pole.
                     let (lo, hi) = curve.domain();
                     let f = S::from_ratio(1, 64)?;
                     let t = if at_start { lo.add(hi.sub(lo).mul(f)) } else { hi.sub(hi.sub(lo).mul(f)) };
                     let near = curve.evaluate(t.sharpen())?;
-                    let (pu, _) = grid.project(surface, &near)?;
-                    let pole_v = pole_of(vertex, vertices).expect("a corner without a foot point is at a pole");
-                    Ok(Vector2::from_array([pu, pole_v]))
+                    let (pu, pv) = grid.project(surface, &near)?;
+                    let pole = pole_of(vertex, vertices).expect("a corner without a foot point is at a pole");
+                    Ok(if pole.fixes_u {
+                        Vector2::from_array([pole.at, pv])
+                    } else {
+                        Vector2::from_array([pu, pole.at])
+                    })
                 }
             }
         };
@@ -1416,6 +1448,7 @@ fn fit_loop<S: Scalar>(
                 e.with_context(format!("fitting the pcurve of the edge {}", edge.name.join(",")))
             })?;
         out.push((CoedgeOnLocal::Edge(u.0, u.1), pcurve));
+        pins.push((pin_start, pin_end));
     }
     // Every place each vertex is said to be, united.
     for k in 0..n {
@@ -1428,10 +1461,9 @@ fn fit_loop<S: Scalar>(
         } else {
             (edge.curve.evaluate(hi)?, edge.curve.evaluate(lo)?)
         };
-        let pcurve = &out[k].1;
-        let (t0, t1) = pcurve.domain();
-        let a = pcurve.evaluate(t0)?;
-        let b = pcurve.evaluate(t1)?;
+        // The pins, not the pcurve's ends: those are widened by the fit's
+        // drift, which says where the pcurve may be, not the vertex.
+        let (a, b) = pins[k];
         let on_start = surface.evaluate(a[0], a[1])?;
         let on_end = surface.evaluate(b[0], b[1])?;
         for (v, extra) in [(start, [curve_start, on_start]), (end, [curve_end, on_end])] {

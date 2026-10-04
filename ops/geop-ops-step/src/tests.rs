@@ -2,7 +2,7 @@
 //! written and read back the same.
 
 use geop_core_math::{
-    scalars::{Field, Ring},
+    scalars::Ring,
     scalars::{Scalar, scal_in_f64::ScalInF64},
     vector::Vector3,
 };
@@ -51,8 +51,8 @@ fn bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
     let mut hi = [f64::NEG_INFINITY; 3];
     for edge in model.edges.values() {
         let (t0, t1) = edge.curve.domain();
-        for i in 0..=16 {
-            let t = t0.to_f64() + (t1.to_f64() - t0.to_f64()) * i as f64 / 16.0;
+        for i in 0..=256 {
+            let t = t0.to_f64() + (t1.to_f64() - t0.to_f64()) * i as f64 / 256.0;
             let p = edge.curve.evaluate(S::from_f64(t)).unwrap();
             for c in 0..3 {
                 lo[c] = lo[c].min(p[c].to_f64());
@@ -66,7 +66,9 @@ fn bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
 fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
     let (a, b) = bounds(model);
     for c in 0..3 {
-        assert!((a[c] - lo[c]).abs() < 1e-9 && (b[c] - hi[c]).abs() < 1e-9, "bounds {a:?} {b:?}, expected {lo:?} {hi:?}");
+        // Sampled: an arc's extreme may fall between samples.
+        let tol = 1e-4 * (hi[c] - lo[c]).abs().max(1.0);
+        assert!((a[c] - lo[c]).abs() < tol && (b[c] - hi[c]).abs() < tol, "bounds {a:?} {b:?}, expected {lo:?} {hi:?}");
     }
 }
 
@@ -321,3 +323,4 @@ fn an_unsupported_entity_is_refused_by_name() {
     let error = read_step::<S>(&text).err().expect("refused").to_string();
     assert!(error.contains("#110 OFFSET_SURFACE is not supported"), "{error}");
 }
+

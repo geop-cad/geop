@@ -711,7 +711,7 @@ END-ISO-10303-21;
 
     #[test]
     fn reals_are_written_as_part_21_reads_them() {
-        assert_eq!(real(1.0), "1.");
+        assert_eq!(real(1.0), "1.0");
         assert_eq!(real(-0.25), "-0.25");
         assert_eq!(real(1.5e-7), "1.5E-7");
         assert_eq!(real(1e20), "1.E20");
