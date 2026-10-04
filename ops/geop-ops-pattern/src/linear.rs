@@ -179,9 +179,7 @@ impl Direction {
             form,
             &format!("spacing{suffix}"),
             ["spacing", "total"],
-            move |label, value| {
-                Number::new(label, value, Unit::Length).handle(spacing_handle.clone())
-            },
+            move |label, value| Number::new(label, value, Unit::Length).handle(spacing_handle),
             move |args| &mut get(args).spacing,
         );
     }
