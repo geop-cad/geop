@@ -259,7 +259,10 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
         offsets: &[Option<usize>],
     ) -> Vec<Option<GeopResult<Value<Dual<S, POSE_VARS>>>>> {
         let mut locals: Vec<_> = self.params.iter().map(|_| None).collect();
-        let needed = self.residuals.iter().flat_map(|r| r.params().iter().copied());
+        let needed = self
+            .residuals
+            .iter()
+            .flat_map(|r| r.params().iter().copied());
         for p in needed.chain(pulls.iter().map(|(pull, _)| pull.param())) {
             if locals[p].is_none() {
                 locals[p] = Some(self.value(p, x, offsets[p]));

@@ -885,7 +885,11 @@ fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
             };
             let (moved, report) = part.solve_mates(None, &[drag]).unwrap();
             program.state.extend(moved);
-            let check = program.build(&library).unwrap().check_mates(|_| true).unwrap();
+            let check = program
+                .build(&library)
+                .unwrap()
+                .check_mates(|_| true)
+                .unwrap();
             assert!(
                 check.converged,
                 "after {to:?}: {check:?}, solved: {report:?}"
@@ -1041,7 +1045,11 @@ fn the_four_bar_crank_turns_all_the_way_round() {
         let tip = pose_of(&program, "crank").apply(&v([1.5, 0.0, 0.0]));
         let tip = [0, 1, 2].map(|k| tip[k].to_f64());
         assert_close(tip, [1.5 * angle.cos(), 1.5 * angle.sin(), 0.2], 1e-3);
-        let check = program.build(&library).unwrap().check_mates(|_| true).unwrap();
+        let check = program
+            .build(&library)
+            .unwrap()
+            .check_mates(|_| true)
+            .unwrap();
         assert!(check.converged, "step {step}: {check:?}");
     }
 }

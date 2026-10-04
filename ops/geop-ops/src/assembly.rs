@@ -313,7 +313,7 @@ impl<S: Scalar> Part<S> {
     /// — would have to be for every mate to hold, as little away from where
     /// they are as the mates allow, after `drags` pulled them — only the one
     /// whose pose is the parameter `only`, if given, and never a fixed one:
-    /// the new values of the parameters their poses are, each relative to
+    /// the new values of the parameters the poses of those it moved are, each relative to
     /// the part it is placed in, and which mates hold there. Fails for a
     /// mate that cannot hold between its entities at all.
     pub fn solve_mates(
@@ -339,9 +339,12 @@ impl<S: Scalar> Part<S> {
             })
             .collect::<GeopResult<Vec<_>>>()?;
         let report = assembly.solve(&pulls)?;
+        // Only those the solve may have moved: the others are where the
+        // state has them already, and written back they would only pick
+        // up the rounding of composing their poses.
         let mut moved = State::new();
-        for (placed, body) in bodies_of.iter().zip(&assembly.bodies) {
-            if body.free {
+        for (b, (placed, body)) in bodies_of.iter().zip(&assembly.bodies).enumerate() {
+            if body.free && report.moved.binary_search(&b).is_ok() {
                 let pose = match placed.parent {
                     Some(parent) => assembly.bodies[parent].pose.inverse().compose(&body.pose),
                     None => body.pose,

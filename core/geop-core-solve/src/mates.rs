@@ -195,6 +195,10 @@ pub struct SolveReport<S: Scalar> {
     /// The constraints left unsatisfied — conflicting, or unreachable from
     /// where the bodies started — by index; empty when `converged`.
     pub failed: Vec<usize>,
+    /// The free bodies a solve may have moved, by index: those of the
+    /// groups it solved (see [`Assembly::solve`]). Every other body is
+    /// exactly where it was.
+    pub moved: Vec<usize>,
 }
 
 /// Bodies and the constraints between them.
@@ -558,6 +562,7 @@ impl<S: Scalar> Assembly<S> {
         self.validate()?;
         let mut phases: Vec<crate::Phase<S>> = Vec::new();
         let mut iterations = 0;
+        let mut moved = Vec::new();
         for (free, constraints) in self.independent() {
             let (mut part, bodies) = self.restricted(&free, &constraints);
             let pulls: Vec<Pull<S>> = pulls
@@ -588,6 +593,7 @@ impl<S: Scalar> Assembly<S> {
             for (&b, body) in bodies.iter().zip(&part.bodies) {
                 self.bodies[b].pose = body.pose;
             }
+            moved.extend(&free);
             iterations = iterations.max(report.iterations);
             for (k, phase) in report.phases.into_iter().enumerate() {
                 match phases.get_mut(k) {
@@ -604,9 +610,11 @@ impl<S: Scalar> Assembly<S> {
                 }
             }
         }
+        moved.sort();
         Ok(SolveReport {
             iterations,
             phases,
+            moved,
             ..self.report()?
         })
     }
@@ -645,6 +653,9 @@ impl<S: Scalar> Assembly<S> {
             iterations: report.iterations,
             phases: report.phases,
             failed: report.failed,
+            moved: (0..self.bodies.len())
+                .filter(|&b| self.bodies[b].free)
+                .collect(),
         })
     }
 
@@ -658,6 +669,7 @@ impl<S: Scalar> Assembly<S> {
             iterations: 0,
             phases: Vec::new(),
             failed: report.failed,
+            moved: Vec::new(),
         })
     }
 }

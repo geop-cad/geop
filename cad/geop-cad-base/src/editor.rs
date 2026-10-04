@@ -23,10 +23,10 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
     Context, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
     assembly::Drag,
-    program::library::resolve,
     operation::Role,
     parameters::{Parameters, Resolved},
     part::{ParamValue, State},
+    program::library::resolve,
     ui::{
         Dialog, PartView, Presentation, Shape, StepEditEvent, StepEditor, Style, ViewInstance,
         Visual,
@@ -483,8 +483,12 @@ impl<S: Scalar> Editor<S> {
             let used: HashSet<&String> = before.values().map(|(key, _)| key).collect();
             for instance in &part.instances {
                 let f = &instance.frame;
-                let frame = [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
-                let drawn = (instance.component.clone(), frame.concat().try_into().expect("12 numbers"));
+                let frame =
+                    [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
+                let drawn = (
+                    instance.component.clone(),
+                    frame.concat().try_into().expect("12 numbers"),
+                );
                 if before.get(&instance.name) != Some(&drawn) {
                     instances.push(instance.clone());
                 }
@@ -966,7 +970,10 @@ impl<S: Scalar> Editor<S> {
             }
             None => (Vec::new(), Vec::new()),
         };
-        let holds = || part.check_mates(|_| true).is_ok_and(|report| report.converged);
+        let holds = || {
+            part.check_mates(|_| true)
+                .is_ok_and(|report| report.converged)
+        };
         let solved = if !drags.is_empty() {
             part.solve_mates(None, &drags).ok().map(|(moved, _)| moved)
         } else if holds() {

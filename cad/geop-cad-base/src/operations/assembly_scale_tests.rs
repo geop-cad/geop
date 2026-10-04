@@ -158,7 +158,13 @@ fn robot(boards: usize, screws: usize) -> BTreeMap<String, String> {
         .map(|i| {
             let id = format!("board{i}");
             let below = face(&id, "plate/extrude(plate,start)");
-            (id, "board.geop", below, top("plate"), [i as f64 * 11.0, 0.0, 0.2])
+            (
+                id,
+                "board.geop",
+                below,
+                top("plate"),
+                [(i + 1) as f64 * 11.0, 0.0, 0.2],
+            )
         })
         .collect();
     robot_parts.extend((0..screws).map(|i| {
@@ -311,7 +317,12 @@ fn size(update: &Update<S>) -> String {
         })
         .collect();
     parts.sort();
-    format!("{} bytes ({})", len(&json), parts.join(", "))
+    let moved = update.scene.as_ref().map_or(0, |s| s.instances.len());
+    format!(
+        "{} bytes ({}), {moved} placed parts sent",
+        len(&json),
+        parts.join(", ")
+    )
 }
 
 /// A pointer straight down onto `(x, y)`.
@@ -369,7 +380,10 @@ fn a_changed_leaf_is_sent_once() {
         .map(|k| k.split('#').next().unwrap())
         .collect();
     // The screw, and what places it — but none of the others.
-    assert_eq!(sent, BTreeSet::from(["board.geop", "module.geop", "screw.geop"]));
+    assert_eq!(
+        sent,
+        BTreeSet::from(["board.geop", "module.geop", "screw.geop"])
+    );
 
     // Saved again unchanged: nothing to show.
     let update = editor.handle(Command::Files {
