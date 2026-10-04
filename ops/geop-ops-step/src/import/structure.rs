@@ -262,8 +262,9 @@ impl Reader<'_> {
         }
         let group_of = |groups: &mut UnionFind, rep: u64| index.get(&rep).map(|&i| groups.find(i));
 
-        // Products and the representations of their shapes.
-        let mut shape_of_definition: HashMap<u64, Vec<u64>> = HashMap::new();
+        // Products and the representations of their shapes, by id: where
+        // several definitions share a group, the first names it.
+        let mut shape_of_definition: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
         let mut definition_name: HashMap<u64, String> = HashMap::new();
         for id in exchange.all_of("SHAPE_DEFINITION_REPRESENTATION") {
             let args = self.args(id, "SHAPE_DEFINITION_REPRESENTATION")?;
