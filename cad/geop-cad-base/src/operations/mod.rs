@@ -5,7 +5,8 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! wire harness routes in `geop_ops_harness`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -21,6 +22,7 @@ use geop_ops_extrude_revolve::{
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
+use geop_ops_harness::{Route, RouteArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -101,6 +103,9 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Route a bundle of wires from a connector through clips to another
+    /// connector, its bends checked and every wire's cut length reported.
+    Route(RouteArgs),
 }
 
 /// A program of the editor's operations.

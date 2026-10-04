@@ -54,6 +54,10 @@ ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, drag it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
+ops/geop-ops-harness          wire harnesses: wires routed through connectors
+                               and clips as lines and arcs, bend radius
+                               checked, the bundle swept, cut lengths; the
+                               route operation
 cad/geop-cad-base             the operations the editor offers, the editor engine,
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)

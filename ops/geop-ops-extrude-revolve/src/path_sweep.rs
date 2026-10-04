@@ -183,10 +183,13 @@ fn end_of<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<Vector3<S>> {
 /// What a path curve is, as far as sweeping along it goes.
 enum Kind<S: Scalar> {
     Line,
-    /// A circular arc about `center`, turning by `rotation`; `weight` is the
-    /// cosine of half its angle.
+    /// A circular arc from `start` to `end`, its tangents meeting at
+    /// `middle`, turning by `rotation`; `weight` is the cosine of half its
+    /// angle.
     Arc {
-        center: Vector3<S>,
+        start: Vector3<S>,
+        middle: Vector3<S>,
+        end: Vector3<S>,
         rotation: Rotation<S>,
         weight: S,
     },
@@ -226,17 +229,18 @@ fn kind<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<Kind<S>> {
     if !is_arc {
         return Ok(Kind::Other);
     }
-    let one_minus_w2 = S::ONE.sub(w.mul(w));
-    // The centre lies beyond the chord's midpoint from the middle control
-    // point, `1 / sin^2(angle / 2)` as far as the midpoint is.
-    let middle = p0.add(&p2).prod_scalar(S::ONE.div(S::TWO)?);
-    let center = p1.add(&middle.sub(&p1).prod_scalar(S::ONE.div(one_minus_w2)?));
+    // The turn's sine, read off the legs as `|a x b| / (|a| |b|)`, stays as
+    // sharp as the legs however flat the arc — unlike `2 w sqrt(1 - w^2)`,
+    // whose slope grows without bound as `w` nears one.
+    let cross = a.prod_cross(&b);
     Ok(Kind::Arc {
-        center,
+        start: p0,
+        middle: p1,
+        end: p2,
         rotation: Rotation {
-            axis: a.prod_cross(&b).normalize()?,
+            axis: cross.normalize()?,
             cos,
-            sin: S::TWO.mul(w).mul(one_minus_w2.sqrt()?),
+            sin: cross.norm().div(la.mul(lb).sqrt()?)?,
         },
         weight: w,
     })
@@ -391,14 +395,24 @@ fn carry<S: Scalar>(
             (Span::Line, end)
         }
         Kind::Arc {
-            center,
+            start: from,
+            middle: corner,
+            end: to,
             rotation,
             weight,
         } => {
-            let end = moved(start, rotation, center, center);
+            // The rigid motion along the arc turns about its axis and takes
+            // its start to its end: a point `from + r` goes to
+            // `to + rotation(r)`. Measured from the arc's own start, not
+            // from its centre, so a wide, flat arc's far-off centre never
+            // multiplies the turn's width.
+            let end = moved(start, rotation, from, to);
             // The middle control row of the arc each point travels: where
-            // the tangents at its ends meet, `1 / (1 + cos)` along the sum
-            // of its radii from the axis.
+            // the tangents at its ends meet. That is linear in the point,
+            // and the arc's own start travels the arc itself, whose
+            // tangents meet at `corner`; an offset `e` from there adds its
+            // part along the axis, and `1 / (1 + cos)` of the sum of its
+            // part across and that part turned.
             let k = S::ONE.div(S::ONE.add(rotation.cos))?;
             let axis = &rotation.axis;
             let middle_vector = |e: &Vector3<S>| {
@@ -407,7 +421,7 @@ fn carry<S: Scalar>(
                 along.add(&off.add(&rotation.apply(&off)).prod_scalar(k))
             };
             let middle = Frame {
-                origin: center.add(&middle_vector(&start.origin.sub(center))),
+                origin: corner.add(&middle_vector(&start.origin.sub(from))),
                 e1: middle_vector(&start.e1),
                 e2: middle_vector(&start.e2),
             };
