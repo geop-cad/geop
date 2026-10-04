@@ -26,7 +26,7 @@ import {
 } from "./geop";
 import { host, onRestart } from "./backend";
 import { KernelCrashed } from "./crash";
-import { DEFAULT_POSE, headOnPose, type CameraPose, type Projection } from "./camera";
+import { DEFAULT_POSE, headOnPose, wantsFraming, type CameraPose, type Drawn, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
 import { Explorer } from "./Explorer";
 import {
@@ -137,9 +137,17 @@ function App() {
   }, [workspace]);
 
   const [focus, setFocus] = useState<CameraPose | null>(null);
-  /** Bumped to frame the whole drawing (see `SceneViewer`'s `fit`): on opening another file or an example, on F, by the button. */
-  const [fit, setFit] = useState(0);
-  const fitView = () => setFit((f) => f + 1);
+  /**
+   * Set afresh to frame the whole drawing (see `SceneViewer`'s `fit`): on
+   * opening another file or an example, on F, by the button — and when the
+   * drawing wants it (see [[wantsFraming]]).
+   */
+  const [fit, setFit] = useState<{ from: CameraPose | null } | null>(null);
+  /** Frame the drawing, looking from `from`'s direction, else the camera's. */
+  const fitView = (from: CameraPose | null = null) => setFit({ from });
+  /** The drawing last shown, and whether the one shown now is to be framed (see [[wantsFraming]]). */
+  const drawnRef = useRef<Drawn | null>(null);
+  const frameRef = useRef(false);
   const [projection, setProjection] = useState<Projection>("perspective");
   const poseRef = useRef<CameraPose>(DEFAULT_POSE);
   /** How many commands wait for the kernel's answer: the app is busy (`aria-busy`) while any do. */
@@ -178,6 +186,12 @@ function App() {
         setBom(null);
         placedRef.current = applyScene(placedRef.current, update.scene);
         setPlaced(placedRef.current);
+        const drawn = {
+          extent: update.scene.part.extent,
+          solids: update.scene.part.solids.length + placedRef.current.instances.size,
+        };
+        if (drawnRef.current && wantsFraming(drawnRef.current, drawn, poseRef.current)) frameRef.current = true;
+        drawnRef.current = drawn;
       }
       setStep(update.step);
       setTool(update.tool);
@@ -249,18 +263,33 @@ function App() {
   const plane = presentation?.focus ?? null;
 
   // Working in a plane: the camera turns to face it, and comes back to
-  // where it was once done.
+  // where it was once done — framing the drawing from there, if it wants
+  // framing now: a sketch drawn much larger than the view.
   const planeKey = JSON.stringify(plane);
   useEffect(() => {
+    const frame = frameRef.current;
+    frameRef.current = false;
     if (plane) {
       beforePlaneRef.current ??= poseRef.current;
-      setFocus(headOnPose(plane, poseRef.current));
+      const headOn = headOnPose(plane, poseRef.current);
+      if (frame) fitView(headOn);
+      else setFocus(headOn);
     } else if (beforePlaneRef.current) {
-      setFocus({ ...beforePlaneRef.current });
+      const before = beforePlaneRef.current;
       beforePlaneRef.current = null;
+      if (frame) fitView(before);
+      else setFocus({ ...before });
+    } else if (frame) {
+      fitView();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planeKey]);
+  // The drawing changed with the camera where it is: framed, if it wants it.
+  useEffect(() => {
+    if (!frameRef.current) return;
+    frameRef.current = false;
+    fitView();
+  }, [scene]);
 
   // Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes — a step's own edits
   // while one is edited — unless typed into a field.
@@ -757,7 +786,7 @@ function App() {
                 onPose={(pose) => (poseRef.current = pose)}
               />
             )}
-            <button className="fit-view" title="Frame the whole part in the view (F)" onClick={fitView}>
+            <button className="fit-view" title="Frame the whole part in the view (F)" onClick={() => fitView()}>
               Fit
             </button>
             <button

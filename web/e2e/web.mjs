@@ -12,7 +12,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { Checks, fileMenu, WEB, expect, launch, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
+import { Checks, fileMenu, WEB, expect, launch, pixelAt, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
@@ -233,6 +233,11 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   const stats = await builtCleanly();
   expect(stats.startsWith("2 steps"), `not two steps: ${stats}`);
   expect((await page.locator(".structure-panel").innerText()).includes("extrude(extrude1)"), "no solid extrude(extrude1)");
+  // The first solid is framed: drawn off-centre, it is in the middle of the view now.
+  await page.waitForTimeout(1000);
+  const box = await page.locator("main.viewport canvas").first().boundingBox();
+  const [r, g, b] = await pixelAt(page, box.x + box.width / 2, box.y + box.height / 2);
+  expect(b > r + 30 && b > g, `the middle of the view is rgb(${r}, ${g}, ${b}), not the blue solid: it was not framed`);
 
   await page.getByTitle("Mass properties of every solid, of its part's material").click();
   await settle(page);

@@ -81,11 +81,11 @@ interface Props {
   /** A pose to glide to; set it to move the camera, `null` to leave it alone. */
   focus?: CameraPose | null;
   /**
-   * Changed to frame the whole drawing — the part and the parts placed in
-   * it — from the direction the camera looks now: a glide like
-   * [[Props.focus]]'s.
+   * Set afresh to frame the whole drawing — the part and the parts placed
+   * in it — looking from `from`'s direction, with its up, else from the
+   * direction the camera looks now: a glide like [[Props.focus]]'s.
    */
-  fit?: number;
+  fit?: { from: CameraPose | null } | null;
   /** Fired when a [[Props.focus]] move finishes, with the pose reached. */
   onFocusReached?: (pose: CameraPose) => void;
   /** Fired whenever the user finishes moving the camera, so a caller can come back to it later. */
@@ -685,7 +685,7 @@ export function SceneViewer({
     if (fit == null || !camera || !controls || !container) return;
     const now: CameraPose = { position: arr(camera.position), target: arr(controls.target), up: arr(camera.up) };
     const aspect = container.clientWidth / Math.max(container.clientHeight, 1);
-    glideTo(fitPose(partRef.current.extent, now, aspect));
+    glideTo(fitPose(partRef.current.extent, fit.from ?? now, aspect));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fit]);
 

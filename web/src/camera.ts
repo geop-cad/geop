@@ -39,8 +39,27 @@ export function worldPerPixel(camera: THREE.Camera, at: THREE.Vector3, height: n
   return 1 / scaleForDistance(camera.position.distanceTo(at), Math.max(height, 1));
 }
 
-/** The view a fresh session starts from. */
-export const DEFAULT_POSE: CameraPose = { position: [3, 2, 4], target: [0, 0, 0], up: [0, 1, 0] };
+/** The view a fresh session starts from: an empty part's drawing (100 mm, see `geop_ops::ui::EMPTY_EXTENT`) framed. */
+export const DEFAULT_POSE: CameraPose = { position: [66, 44, 88], target: [0, 0, 0], up: [0, 1, 0] };
+
+/** What a drawing is, for whether to frame it: its extent, and how many solids and placed parts it has. */
+export interface Drawn {
+  extent: Extent;
+  solids: number;
+}
+
+/**
+ * Whether the drawing, `before` and now `after`, is to be framed from a
+ * camera at `pose`: when its first solid or placed part appears, or when it
+ * grew by half again and is now twice as big as the view shows. Any other
+ * edit leaves the camera where the user put it — zoomed in on a detail, say.
+ */
+export function wantsFraming(before: Drawn, after: Drawn, pose: CameraPose): boolean {
+  if (before.solids === 0 && after.solids > 0) return true;
+  const distance = Math.hypot(...[0, 1, 2].map((k) => pose.position[k] - pose.target[k]));
+  const shown = 2 * distance * Math.tan((CAMERA_FOV * Math.PI) / 360);
+  return after.extent.size > 1.5 * before.extent.size && after.extent.size > 2 * shown;
+}
 
 /** A point of the plane `frame`, `height` above it, in world coordinates. */
 function planeToWorld(frame: Frame, p: [number, number], height = 0): Vec3 {

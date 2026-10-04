@@ -11,6 +11,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 
 /** `web/`. */
 export const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -160,6 +161,22 @@ export async function settle(page, timeout = 120000) {
 /** The errors the app shows: a refused command, a step's error, a failed field. */
 export function shownErrors(page) {
   return page.locator(".error, .op-error-text").allInnerTexts();
+}
+
+/** The colour of the page's pixel at `x`, `y`: `[r, g, b]`, from a screenshot of it (a PNG, read here). */
+export async function pixelAt(page, x, y) {
+  const png = await page.screenshot({ clip: { x, y, width: 1, height: 1 } });
+  // Chunks after the 8-byte signature: length, type, data, CRC.
+  const data = [];
+  for (let at = 8; at < png.length; ) {
+    const length = png.readUInt32BE(at);
+    if (png.toString("ascii", at + 4, at + 8) === "IDAT") data.push(png.subarray(at + 8, at + 8 + length));
+    at += 12 + length;
+  }
+  // One row: its filter byte — every filter leaves the first pixel of the
+  // first row as it is — then RGB(A).
+  const row = zlib.inflateSync(Buffer.concat(data));
+  return [row[1], row[2], row[3]];
 }
 
 /** Pick the entry `label` — exactly that — from the app's File menu. */

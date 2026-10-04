@@ -87,7 +87,13 @@ mod tests {
             serde_json::json!([0.0, 0.0, 1.0])
         );
 
-        send(serde_json::json!({"command": "load", "program": {"steps": []}}));
+        let empty = send(serde_json::json!({"command": "load", "program": {"steps": []}}));
+        // Drawn as big as a robot's part, not 1 mm: lengths are millimetres
+        // (`geop_ops::ui::EMPTY_EXTENT`).
+        assert_eq!(
+            empty["scene"]["part"]["extent"]["size"],
+            serde_json::json!(100.0)
+        );
         let started = send(serde_json::json!({"command": "new", "kind": "add_sketch"}));
         let step = &started["step"];
         assert_eq!(step["presentation"]["dialog"][0]["type"], "reference");
