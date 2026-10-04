@@ -1314,19 +1314,32 @@ fn trace_one_side<S: Scalar>(
         min_subdivision_size,
     )
     .with_context(&ctx)?;
+    // That vertex lies on both surfaces, so on the curve, on one side of `v`:
+    // the curve leaving that way ends there. The full step must not decide
+    // that side — it lands past the vertex, and where the half step was
+    // rejected because the curve runs along a boundary up to the vertex, it
+    // would carry the trace over the vertex and splice a duplicate of that
+    // boundary.
     let mut trials = Vec::with_capacity(2);
+    let mut toward_near = None;
     if let Some(w) = near {
-        let distance = model
-            .get_vertex(w)
-            .with_context(&ctx)?
-            .point
-            .sub(&point)
-            .norm();
-        trials.push(distance.div(S::TWO).with_context(&ctx)?);
+        let offset = model.get_vertex(w).with_context(&ctx)?.point.sub(&point);
+        trials.push((offset.norm().div(S::TWO).with_context(&ctx)?, None));
+        let along = offset.prod_dot(&axis);
+        toward_near = if along.definitely_greater(S::ZERO) {
+            Some(true)
+        } else if along.definitely_less(S::ZERO) {
+            Some(false)
+        } else {
+            None
+        };
     }
-    trials.push(first_step);
-    'trial: for trial in trials {
-        for sign in [S::ONE, S::ONE.neg()] {
+    trials.push((first_step, toward_near));
+    'trial: for (trial, not_toward) in trials {
+        for (forward, sign) in [(true, S::ONE), (false, S::ONE.neg())] {
+            if not_toward == Some(forward) {
+                continue;
+            }
             let dir = axis.prod_scalar(sign);
             // A step in the wrong direction leaves one of the two patches, so its
             // two projections land somewhere different and

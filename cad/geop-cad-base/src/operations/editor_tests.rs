@@ -393,3 +393,54 @@ fn examples_load_by_name() {
     assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
     assert_ne!(*editor.program(), Program::new());
 }
+
+/// Seeking back before a fillet and forward again runs the steps up to the
+/// marker each time, the fillet's part shown only once it runs.
+#[test]
+fn seeking_back_before_a_fillet() {
+    let (mut editor, _) = editor();
+    let before = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+    let rim = before
+        .topology()
+        .edges
+        .iter()
+        .find(|(_, e)| e.curve.as_arc().unwrap().is_some())
+        .map(|(&id, _)| before.name_of(id).unwrap().to_string())
+        .unwrap();
+    let mut program = editor.program().clone();
+    program.push(
+        "round",
+        geop_ops_fillet::FilletArgs {
+            edges: vec![rim],
+            radius: 0.1,
+        },
+    );
+    let steps = program.steps.len();
+    let update = editor.handle(Command::Load {
+        program,
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    for marker in [Some(steps - 1), Some(1), None, Some(steps - 1)] {
+        let update = editor.handle(Command::Seek { marker });
+        assert!(update.error.is_none(), "{marker:?}: {:?}", update.error);
+        let state = update.program.expect("the program is sent");
+        assert_eq!(state.marker, marker.unwrap_or(steps), "{marker:?}");
+        for (i, step) in state.steps.iter().enumerate() {
+            assert_eq!(step.runs, i < state.marker, "{marker:?}: step {i}");
+            assert!(
+                step.error.is_none(),
+                "{marker:?}: step {i}: {:?}",
+                step.error
+            );
+        }
+        let scene = update.scene.expect("the scene is sent anew");
+        let rounded = scene.part.solids.iter().any(|s| s.starts_with("fillet("));
+        assert_eq!(
+            rounded,
+            state.marker == steps,
+            "{marker:?}: {:?}",
+            scene.part.solids
+        );
+    }
+}

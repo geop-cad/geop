@@ -11,16 +11,27 @@ use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_fillet::{ChamferArgs, FilletArgs};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
+use super::regression_tests::names_mentioned;
 use crate::examples::{self, n};
 use crate::{Command, Editor, Program};
 
-fn assert_valid(part: &Part<S>) {
+/// Checks `part` is a valid manifold model, naming in the failure every
+/// entity the errors mention.
+pub(crate) fn assert_valid(part: &Part<S>) {
     let params = ValidationParameters::default();
-    if let Err(e) = validate(&params, part.topology()) {
-        panic!("{e:?}");
+    let report = |errors: Vec<geop_core_math::geop_error::GeopError>| {
+        let all = errors
+            .iter()
+            .map(|e| e.root_message())
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!("{all}\nwhere {}", names_mentioned(part, &all).join(", "));
+    };
+    if let Err(errors) = validate(&params, part.topology()) {
+        report(errors);
     }
-    if let Err(e) = validate_manifold(&params, part.topology()) {
-        panic!("{e:?}");
+    if let Err(errors) = validate_manifold(&params, part.topology()) {
+        report(errors);
     }
 }
 
@@ -361,4 +372,117 @@ fn new_fillet_picks_edges() {
         assert_eq!(step.presentation.pickable, [Role::Edge]);
         editor.handle(Command::Cancel);
     }
+}
+
+/// The straight edges of `part` from `a` to `b`, either way round.
+fn edges_from_to(part: &Part<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
+    let model = part.topology();
+    let at = |v: &geop_core_topology::VertexId, p: [f64; 3]| {
+        let q = model.vertices[v].point;
+        (0..3).all(|k| q[k].could_be_equal(S::from_f64(p[k])))
+    };
+    edges_where(part, |e| {
+        (at(&e.start_vertex, a) && at(&e.end_vertex, b))
+            || (at(&e.start_vertex, b) && at(&e.end_vertex, a))
+    })
+}
+
+/// A block of 2 x 2 x 1 with a step cut out along its corner at `x = 0`,
+/// `y = 2`: the step's ceiling at `z = 0.5`, its back wall at `y = 1.5`,
+/// its side wall at `x = 1`, open at the bottom, the front and the side.
+fn stepped_block() -> Program {
+    let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
+        let mut s = Sketch::new();
+        let p: Vec<_> = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            .iter()
+            .map(|c| s.add_point(n(c[0]), n(c[1])))
+            .collect();
+        for i in 0..4 {
+            s.add_line(p[i], p[(i + 1) % 4]);
+        }
+        s
+    };
+    let ground = || {
+        Some(EntityRef::datum_component(
+            ORIGIN,
+            DatumComponent::Plane(FrameAxis::Z),
+        ))
+    };
+    let mut program = Program::new();
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: ground(),
+            sketch: rectangle(0.0, 0.0, 2.0, 2.0),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "block",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(1.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "step_outline",
+        AddSketchArgs {
+            plane: ground(),
+            sketch: rectangle(-0.5, 1.5, 1.0, 2.5),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "step",
+        ExtrudeArgs {
+            sketch: "step_outline".into(),
+            extent: Extents::blind(0.5),
+            face: false,
+            combine: Combine::Difference {
+                target: "extrude(block)".into(),
+            },
+        },
+    );
+    program
+}
+
+/// Edges along the step that end where they run into one of its walls,
+/// rather than out of the solid, each rounded on its own: the blend stops
+/// flush with that wall. The ceiling's front edge (convex) and its edge
+/// along the back wall (concave) both run into the side wall at `x = 1`;
+/// the side wall's front edge (convex) runs up into the ceiling.
+#[test]
+fn fillet_edges_ending_at_a_wall() {
+    let before = stepped_block().build::<S>(&NoFiles).unwrap();
+    let cases = [
+        ([0.0, 2.0, 0.5], [1.0, 2.0, 0.5]),
+        ([0.0, 1.5, 0.5], [1.0, 1.5, 0.5]),
+        ([1.0, 2.0, 0.0], [1.0, 2.0, 0.5]),
+    ];
+    let mut failures = Vec::new();
+    for (a, b) in cases {
+        let edges = edges_from_to(&before, a, b);
+        assert_eq!(edges.len(), 1, "{a:?} to {b:?}: {edges:?}");
+        let mut program = stepped_block();
+        program.push("round", FilletArgs { edges, radius: 0.1 });
+        let checked = std::panic::catch_unwind(|| {
+            let part = program.build::<S>(&NoFiles).unwrap();
+            assert_valid(&part);
+            assert!(
+                edges_from_to(&part, a, b).is_empty(),
+                "the edge is still sharp"
+            );
+        });
+        if let Err(e) = checked {
+            let why = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            failures.push(format!("{a:?} to {b:?}: {why}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

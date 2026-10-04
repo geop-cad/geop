@@ -438,10 +438,9 @@ impl<S: Scalar> Editor<S> {
             self.redo.clear();
         }
         if !matches!(result, Ok(Changed::Nothing)) {
+            // Settling runs the whole program, so what is shown runs after.
+            self.settle();
             self.rerun();
-            if self.settle() {
-                self.rerun();
-            }
         }
         let step = self.step_state();
         let steps = self.shown_steps(step.as_ref());
@@ -883,8 +882,11 @@ impl<S: Scalar> Editor<S> {
     /// part it is mated to — and every part that is not fixed only where
     /// that is not enough. State no step declares any more go, and
     /// those declared but not given are kept at what the steps took for
-    /// them. Says whether the state changed.
-    fn settle(&mut self) -> bool {
+    /// them.
+    ///
+    /// It leaves the runner having run the whole program, not what is
+    /// shown: [`Self::rerun`] runs that.
+    fn settle(&mut self) {
         let library = library(&self.workspace, self.path.as_deref());
         let program = match &self.open {
             Some(open) => self.with_open(open),
@@ -943,13 +945,12 @@ impl<S: Scalar> Editor<S> {
             }
         }
         if state == program.state {
-            return false;
+            return;
         }
         match &mut self.open {
             Some(open) => open.editor.set_state(state),
             None => self.program.state = state,
         }
-        true
     }
 
     /// Runs what is shown: the program up to and including the step being

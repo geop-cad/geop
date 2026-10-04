@@ -38,7 +38,7 @@ fn assert_builds_valid(program: &Program) {
 
 /// The names of the vertices, edges and faces of `part` that `text` — a
 /// validation report, which knows only ids — mentions, as `id = name`.
-fn names_mentioned(part: &Part<S>, text: &str) -> Vec<String> {
+pub(crate) fn names_mentioned(part: &Part<S>, text: &str) -> Vec<String> {
     let model = part.topology();
     let mentioned = |forms: [String; 3]| forms.iter().any(|f| text.contains(f.as_str()));
     let mut names = Vec::new();

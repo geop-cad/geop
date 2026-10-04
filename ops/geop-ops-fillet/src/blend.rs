@@ -32,10 +32,13 @@
 //! The tool is the cross-section swept along the edge:
 //!
 //! - a **straight** edge between two planes is extruded along it. The edge
-//!   has to end at corners of exactly one more face, a plane the edge leaves
-//!   the solid through. A cut is run out past them, out of the solid; a
-//!   fill ends flush with them, which have to stand square to the edge.
-//!   Anything else is refused rather than blended wrongly.
+//!   has to end at corners of exactly one more face, a plane. Where the edge
+//!   leaves the solid through it, a cut is run out past it, out of the
+//!   solid, and a fill ends flush with it. Where the edge runs into it — a
+//!   wall the material goes on behind — cut and fill both end flush with
+//!   it, as running on would blend what lies behind. A flush end needs that
+//!   face square to the edge. Anything else is refused rather than blended
+//!   wrongly.
 //! - a **circular** edge between faces turning around its axis — planes
 //!   across the axis, cylinders and cones on it — is revolved a full turn.
 //!   So the edge has to be part of a whole circle of such edges (a circle
@@ -100,7 +103,7 @@ enum Sweep<S: Scalar> {
         end: Vector3<S>,
         e1: Vector3<S>,
         e2: Vector3<S>,
-        ends: Ends<S>,
+        ends: [End<S>; 2],
     },
     /// A full turn around the circle's axis: the section's `(x, y)` are
     /// `(r, z)`, `r` along `radial` from `center` and `z` along `axis`.
@@ -111,15 +114,17 @@ enum Sweep<S: Scalar> {
     },
 }
 
-/// How a tool along a straight edge ends.
+/// How a tool along a straight edge ends, at one end of the edge.
 #[derive(Clone, Debug)]
-enum Ends<S: Scalar> {
-    /// Run out past both ends — as far again as the tool is wide, over how
+enum End<S: Scalar> {
+    /// Run out past the end — as far again as the tool is wide, over how
     /// squarely the edge leaves the solid there: `d · n` of the face it
-    /// leaves through, `d` running on along the edge. What a cut does.
-    RunOut { squareness: [S; 2] },
-    /// Flush with the faces square to the edge at its ends: what material
-    /// added does, which must not stick out past them.
+    /// leaves through, `d` running on along the edge. What a cut does where
+    /// the edge leaves the solid.
+    RunOut { squareness: S },
+    /// Flush with the face square to the edge at the end: what material
+    /// added does, which must not stick out past it, and what a cut does
+    /// at a wall, which must not cut what lies behind it.
     Flush,
 }
 
@@ -279,27 +284,12 @@ fn straight_section<S: Scalar>(
     let into = [in_plane(&t_l, &e1, &e2), in_plane(&t_r, &e1, &e2)];
     let out = [in_plane(&n_l, &e1, &e2), in_plane(&n_r, &e1, &e2)];
     let bend = bend(&into, &out)?;
-    let leaving = [d.neg(), d];
-    let mut normals = Vec::new();
-    for (vertex, leaving) in [e.start_vertex, e.end_vertex].into_iter().zip(&leaving) {
-        normals.push(end_face(model, vertex, [left, right], leaving)?);
+    let mut ends = Vec::new();
+    for (vertex, leaving) in [(e.start_vertex, d.neg()), (e.end_vertex, d)] {
+        let ctx = with_context!("the edge's end at vertex {vertex}");
+        ends.push(tool_end(model, vertex, [left, right], &leaving, bend).with_context(ctx)?);
     }
-    let ends = match bend {
-        Bend::Convex => Ends::RunOut {
-            squareness: [0, 1].map(|i| leaving[i].prod_dot(&normals[i])),
-        },
-        Bend::Concave => {
-            if !normals
-                .iter()
-                .all(|n| n.prod_cross(&d).norm_sq().could_be_equal(S::ZERO))
-            {
-                return Err(GeopError::new(
-                    "a concave edge is filled in only between end faces square to it",
-                ));
-            }
-            Ends::Flush
-        }
-    };
+    let ends = [ends[0].clone(), ends[1].clone()];
     Ok(Section {
         sweep: Sweep::Straight {
             start,
@@ -316,17 +306,21 @@ fn straight_section<S: Scalar>(
     })
 }
 
-/// The unit normal of the face a straight edge between `faces` leaves the
-/// solid through at its end `vertex`, running on along `leaving`: the one
-/// other face meeting there, which has to be a plane `leaving` points out
-/// of. Anything else, and a tool along the edge would cut or fill what it
+/// How the tool of a straight edge between `faces`, bending `bend`, ends at
+/// the edge's end `vertex`, the edge running on along `leaving` (see the
+/// module docs). It is decided by the one other face meeting there, which
+/// has to be a plane: run out past it where the edge leaves the solid
+/// through it and the tool cuts, flush with it otherwise — where the tool
+/// fills, or the edge runs into it — which needs it square to the edge.
+/// Anything else, and a tool along the edge would cut or fill what it
 /// should not.
-fn end_face<S: Scalar>(
+fn tool_end<S: Scalar>(
     model: &Model<S>,
     vertex: VertexId,
     faces: [FaceId; 2],
     leaving: &Vector3<S>,
-) -> GeopResult<Vector3<S>> {
+    bend: Bend,
+) -> GeopResult<End<S>> {
     let mut others: Vec<FaceId> = Vec::new();
     for (&id, coedge) in &model.coedges {
         if coedge.edge().is_ok()
@@ -339,7 +333,7 @@ fn end_face<S: Scalar>(
     }
     let unsupported = |why: &str| {
         Err(GeopError::new(format!(
-            "the edge ends at vertex {vertex}, where {why}: only an edge ending at a corner of exactly three faces, the third a plane it leaves the solid through, is blended"
+            "the edge ends at vertex {vertex}, where {why}: only an edge ending at a corner of exactly three faces, the third a plane, is blended"
         )))
     };
     let [other] = others.as_slice() else {
@@ -349,10 +343,25 @@ fn end_face<S: Scalar>(
         return unsupported("the third face is not planar");
     };
     let normal = plane.normal.normalize()?;
-    if !leaving.prod_dot(&normal).definitely_greater(S::ZERO) {
-        return unsupported("the edge does not leave the solid through the third face");
+    let squareness = leaving.prod_dot(&normal);
+    let leaves = if squareness.definitely_greater(S::ZERO) {
+        true
+    } else if squareness.definitely_less(S::ZERO) {
+        false
+    } else {
+        return unsupported("the third face could run along the edge");
+    };
+    if leaves && bend == Bend::Convex {
+        return Ok(End::RunOut { squareness });
     }
-    Ok(normal)
+    if !normal.prod_cross(leaving).norm_sq().could_be_equal(S::ZERO) {
+        return unsupported(if leaves {
+            "the edge is filled in up to the third face, which does not stand square to it"
+        } else {
+            "the edge runs into the third face, which does not stand square to it"
+        });
+    }
+    Ok(End::Flush)
 }
 
 /// The circle `curve` is an arc of, if it is one.
@@ -706,15 +715,15 @@ fn sweep_tool<S: Scalar>(
             let d = end.sub(start);
             let length = d.norm();
             let plane = CoordinateSystem::try_new(*start, *e1, *e2, d.normalize()?)?;
-            let (from, to) = match ends {
-                Ends::RunOut { squareness } => {
-                    let width = reach(&tool.control, &section.corner);
-                    let run_out =
-                        |i: usize| S::from_f64(2.0 * width / squareness[i].lower().to_f64());
-                    (run_out(0).neg(), length.add(run_out(1)))
+            let width = reach(&tool.control, &section.corner);
+            let run_out = |end: &End<S>| match end {
+                End::RunOut { squareness } => {
+                    Some(S::from_f64(2.0 * width / squareness.lower().to_f64()))
                 }
-                Ends::Flush => (S::ZERO, length),
+                End::Flush => None,
             };
+            let from = run_out(&ends[0]).map_or(S::ZERO, |r| r.neg());
+            let to = run_out(&ends[1]).map_or(length, |r| length.add(r));
             extrude(part, namer, Some(&root), &plane, from, to, &loops)?
         }
         Sweep::Round {
