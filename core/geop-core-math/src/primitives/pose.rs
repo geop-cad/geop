@@ -543,7 +543,7 @@ impl<S: Scalar> Motion<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scalars::scal_in_f64::ScalInF64;
+    use crate::scalars::{Field, Ring, scal_in_f64::ScalInF64};
 
     type S = ScalInF64;
 
@@ -637,5 +637,54 @@ mod tests {
         let zero =
             serde_json::json!({"position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 0.0]});
         assert!(serde_json::from_value::<Pose<S>>(zero).is_err());
+    }
+
+    /// A quarter turn about the line through (1, 1, 0) along `z` keeps that
+    /// line where it is and takes (2, 1, 5) to (1, 2, 5).
+    #[test]
+    fn rotation_about_a_line_keeps_it() {
+        let turn = Pose::rotation_about(
+            &v([1.0, 1.0, 0.0]),
+            &v([0.0, 0.0, 1.0]),
+            S::PI.div(S::TWO).unwrap(),
+        )
+        .unwrap();
+        assert!(encloses(&turn.apply(&v([1.0, 1.0, 7.0])), [1.0, 1.0, 7.0]));
+        assert!(encloses(&turn.apply(&v([2.0, 1.0, 5.0])), [1.0, 2.0, 5.0]));
+        let motion = turn.motion();
+        assert!(motion.turns() && !motion.mirrors());
+        assert!(encloses(
+            &motion.apply(&v([2.0, 1.0, 5.0])),
+            [1.0, 2.0, 5.0]
+        ));
+    }
+
+    /// A pose that does not turn moves points by additions alone; a
+    /// mirror in a slanted plane is undone by itself and reverses
+    /// orientation.
+    #[test]
+    fn translations_and_mirrors() {
+        let shift = Pose::identity().with_position(v([0.1, 0.2, 0.3])).motion();
+        assert!(!shift.turns());
+        let p = v([1.0, 2.0, 3.0]);
+        assert_eq!(
+            format!("{:?}", shift.apply(&p)),
+            format!("{:?}", p.add(&v([0.1, 0.2, 0.3])))
+        );
+        let mirror = Motion::mirror(&v([1.0, 0.0, 2.0]), &v([1.0, -2.0, 0.5])).unwrap();
+        assert!(mirror.mirrors());
+        let q = v([0.3, -0.7, 4.0]);
+        assert!(mirror.apply(&mirror.apply(&q)).could_be_equal(&q));
+        assert!(encloses(
+            &mirror.apply(&v([1.0, 0.0, 2.0])),
+            [1.0, 0.0, 2.0]
+        ));
+        let (x, y, z) = (v([1.0, 0.0, 0.0]), v([0.0, 1.0, 0.0]), v([0.0, 0.0, 1.0]));
+        let handedness = mirror
+            .rotate(&x)
+            .prod_cross(&mirror.rotate(&y))
+            .prod_dot(&mirror.rotate(&z));
+        assert!(handedness.could_be_equal(S::ONE.neg()), "{handedness:?}");
+        assert!(mirror.apply_frame(&CoordinateSystem::world_at(q)).is_err());
     }
 }

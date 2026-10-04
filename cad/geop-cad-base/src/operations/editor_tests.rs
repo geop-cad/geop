@@ -611,3 +611,77 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A new linear pattern starts on the newest solid, along `x`: its
+/// spacing's handle, grabbed from above and pulled one further along `x`,
+/// spreads the copies two apart; a fourth is asked for in the dialog, and
+/// committed, the scene lists the drilled box and its three copies, the
+/// copies named after the step.
+#[test]
+fn new_linear_pattern_dragged_by_its_spacing_handle() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::New {
+        kind: "linear_pattern".into(),
+    });
+    let step = update.step.expect("the pattern is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    let (at, direction) = step
+        .presentation
+        .visuals
+        .iter()
+        .find_map(|v| match v.shape {
+            geop_ops::ui::Shape::Handle { at, direction } if v.key == "spacing" => {
+                Some((at, direction))
+            }
+            _ => None,
+        })
+        .expect("the spacing has a handle");
+    assert!(direction[0].could_be_equal(S::ONE), "{direction:?}");
+    let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
+    let above = |dx: f64| pointer([x + dx, y, z + 10.0], [0.0, 0.0, -1.0]);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: above(0.0),
+            shift: false,
+        },
+    });
+    assert!(update.step.unwrap().presentation.grab, "no grab");
+    editor.handle(Command::Event {
+        event: StepEditEvent::Drag {
+            from: above(0.0),
+            to: above(1.0),
+            done: true,
+            shift: false,
+        },
+    });
+    let update = editor.handle(dialog("count", Value::Number(4.0)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::LinearPattern(args) => {
+            assert_eq!(args.first.count, 4);
+            match args.first.spacing {
+                geop_ops_pattern::Spacing::Step(step) => {
+                    assert!((step - 2.0).abs() < 1e-9, "{step}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        other => panic!("{other:?}"),
+    }
+    let solids: Vec<String> = update
+        .scene
+        .expect("the scene changed")
+        .structure
+        .into_iter()
+        .filter(|item| item.kind == crate::editor::StructureKind::Solid)
+        .map(|item| item.name)
+        .collect();
+    assert_eq!(solids.len(), 4, "{solids:?}");
+    let id = editor.program().steps.last().unwrap().id.clone();
+    assert!(
+        solids.contains(&format!("linear_pattern({id},3,extrude(hole))")),
+        "{solids:?}"
+    );
+}
