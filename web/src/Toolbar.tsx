@@ -17,6 +17,8 @@ interface Props {
   onExportUrdf: () => void;
   /** Write the part shown as a STEP file and save it. */
   onExportStep: () => void;
+  /** Write every solid of the part shown as an STL mesh and save it. */
+  onExportStl: () => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
@@ -63,6 +65,7 @@ export function Toolbar({
   onExportDrawing,
   onExportUrdf,
   onExportStep,
+  onExportStl,
   onLoadFile,
   exampleNames,
   onLoadExample,
@@ -94,6 +97,7 @@ export function Toolbar({
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
         ] as MenuEntry[])),
     { kind: "item", label: "Download STEP", icon: "save", hint: "for other CAD", disabled: !hasSteps, onSelect: onExportStep },
+    { kind: "item", label: "Download STL", icon: "save", hint: "mesh, for 3-D printing", disabled: !hasSteps, onSelect: onExportStl },
     { kind: "separator" },
     { kind: "heading", label: "Drawing" },
     {
@@ -178,7 +182,15 @@ export function Toolbar({
         </button>
       </div>
       <div className="toolbar-divider desktop-only" />
-      <div className="desktop-only">{operationButtons}</div>
+      {/* More operations than fit: they scroll sideways — the wheel too — and the rest of the bar stays. */}
+      <div
+        className="desktop-only operation-strip"
+        onWheel={(e) => {
+          if (e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY;
+        }}
+      >
+        {operationButtons}
+      </div>
       <div className="toolbar-spacer" />
       {badge && <span className="mode-badge">{badge}</span>}
       {!busy && (

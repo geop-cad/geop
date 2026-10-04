@@ -34,3 +34,36 @@ npm install        # once
 npm run dev         # rebuilds the wasm pkg, then starts the Vite dev server
 npm run build        # rebuilds the wasm pkg, then produces a production build in dist/
 ```
+
+## End-to-end checks
+
+`web/e2e/` drives the real app in a headless Chrome through
+`playwright-core`, which downloads no browser: it uses `$CHROME`, or a
+Google Chrome or Chromium installed in the usual places, and skips (exit
+code 0, with a message) if there is none. WebGL is rendered in software.
+
+```sh
+npm run e2e          # the web app
+npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
+```
+
+- `npm run e2e` rebuilds `dist/` if any source is newer (`npm run build`),
+  serves it with `vite preview` on a free port, and checks that every
+  example of the File menu builds without an error shown or a failed step;
+  that every operation opens on an empty part and on a part, and cancels;
+  that a rectangle sketched by clicks extrudes, and the inspect panel weighs
+  it; and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
+  non-empty files of their kind.
+- `npm run e2e:vscode` builds the release CLI and the extension's page
+  (`build:vscode`), writes example workspaces with `geop examples
+  --out-dir`, and opens them through `e2e/bridge.mjs`, which stands in for
+  VS Code exactly as `vscode-extension/src/geopEditor.ts` talks to the page:
+  single parts, an assembly with standard parts (`bolted_plate`) and a
+  jointed one (`arm`). An edit, its undo and a moved joint must be written
+  back to the document, and exports must reach VS Code to be saved.
+
+Both exit non-zero if any check fails: a page error, an error shown, a
+step that fails, an example that does not build. A failing check leaves a
+screenshot in `e2e/out/` (gitignored). Flags: `--build` rebuilds even if
+the build looks current, `--only <text>` runs the checks whose name
+contains it, `--shots` keeps a screenshot of every check.

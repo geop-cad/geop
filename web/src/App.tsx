@@ -141,11 +141,14 @@ function App() {
   const fitView = () => setFit((f) => f + 1);
   const [projection, setProjection] = useState<Projection>("perspective");
   const poseRef = useRef<CameraPose>(DEFAULT_POSE);
+  /** How many commands wait for the kernel's answer: the app is busy (`aria-busy`) while any do. */
+  const [pending, setPending] = useState(0);
   /** Where the camera was before it turned to face the plane being worked in, to come back to. */
   const beforePlaneRef = useRef<CameraPose | null>(null);
 
   /** Send `command` to the kernel, and show what comes back. */
   async function dispatch(command: Command): Promise<Update | null> {
+    setPending((n) => n + 1);
     try {
       const update = await send(command);
       if (update.program) {
@@ -190,6 +193,8 @@ function App() {
     } catch (e) {
       setError(String(e));
       return null;
+    } finally {
+      setPending((n) => n - 1);
     }
   }
 
@@ -379,6 +384,16 @@ function App() {
     if (file?.text == null) return;
     if (host) host.saveFile(file);
     else download(file.name, file.text, "application/step");
+    trackFile("saved");
+  }
+
+  /** Write every solid of the part shown as an STL mesh, and save it. */
+  async function exportStl() {
+    const update = await dispatch({ command: "export_stl" });
+    const file = update?.export;
+    if (!file?.bytes) return;
+    if (host) host.saveFile(file);
+    else download(file.name, Uint8Array.from(atob(file.bytes), (c) => c.charCodeAt(0)), "model/stl");
     trackFile("saved");
   }
 
@@ -617,7 +632,7 @@ function App() {
   );
 
   return (
-    <div className="app">
+    <div className="app" aria-busy={!wasmReady || pending > 0}>
       <Toolbar
         busy={!wasmReady}
         hosted={host != null}
@@ -626,6 +641,7 @@ function App() {
         onExportDrawing={(format) => void exportDrawing(format)}
         onExportUrdf={() => void exportUrdf()}
         onExportStep={() => void exportStep()}
+        onExportStl={() => void exportStl()}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}

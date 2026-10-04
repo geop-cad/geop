@@ -1100,6 +1100,16 @@ button.inline {
   display: flex;
   gap: 2px;
 }
+.operation-strip {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
+}
+.toolbar > :not(.operation-strip):not(.toolbar-spacer) {
+  flex-shrink: 0;
+}
 .op-button.active,
 .toolbar .op-button.active {
   background: #5a4520;

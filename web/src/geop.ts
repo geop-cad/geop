@@ -429,6 +429,8 @@ export type Command =
   | { command: "export_urdf" }
   /** Write the part shown as a STEP file: the update's `export`. */
   | { command: "export_step" }
+  /** Write every solid of the part shown as a binary STL mesh: the update's `export`. */
+  | { command: "export_stl" }
   /** Write the bill of materials of the part shown as a CSV file: the update's `export`. */
   | { command: "export_bom"; structure: BomStructure };
 
@@ -591,7 +593,7 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
-  /** The file `export_drawing`, `export_urdf`, `export_step` or `export_bom` wrote, to save. */
+  /** The file `export_drawing`, `export_urdf`, `export_step`, `export_stl` or `export_bom` wrote, to save. */
   export: ExportedFile | null;
   /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
