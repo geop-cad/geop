@@ -390,3 +390,68 @@ fn d_shaft_fillet_top_corners() {
         }
     }
 }
+
+/// The D-shaft's flat side at `y > 0` bevelled, a straight edge between the
+/// flat and the cylinder: rolled, its sections chords `0.1` into each face
+/// in the plane square to the edge — on the flat `0.1` along it, on the
+/// cylinder `0.1` as the crow flies. The chamfer face is flat, and meets
+/// the top and bottom where the chords' ends are.
+#[test]
+fn d_shaft_chamfer_flat_side() {
+    let mut part = d_shaft();
+    let y = 0.16f64.sqrt();
+    let side = edges_where(&part, |p| {
+        (p[0] - 0.3).abs() < 1e-6 && (p[1] - y).abs() < 1e-6
+    });
+    assert_eq!(side.len(), 1, "{side:?}");
+    let d = 0.1;
+    blended(&mut part, &side, &BlendShape::Chamfer { distances: [d, d] });
+    let faces: Vec<&str> = part
+        .topology()
+        .faces
+        .keys()
+        .filter_map(|&f| part.name_of(f))
+        .filter(|n| n.ends_with(",chamfer)"))
+        .collect();
+    assert_eq!(faces.len(), 1, "{faces:?}");
+    // Where the chord meets the flat and the cylinder, at the top.
+    let on_flat = [0.3, y - d, 1.0];
+    // On the cylinder, `d` from the edge: `x^2 + y^2 = 0.25`, `|(x - 0.3,
+    // y' - y)| = d`.
+    let angle = (y / 0.3f64).atan() + 2.0 * (d / 2.0 / 0.5f64).asin();
+    let on_cylinder = [0.5 * angle.cos(), 0.5 * angle.sin(), 1.0];
+    for p in [on_flat, on_cylinder] {
+        let p = v::<S>(p[0], p[1], p[2]);
+        let near = part
+            .topology()
+            .vertices
+            .values()
+            .map(|vertex| vertex.point.sub(&p).norm().to_f64())
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            near <= 2.0 * DEVIATION * d,
+            "no vertex at {p:?}: {near:e} away"
+        );
+    }
+}
+
+/// The tee's saddle bevelled: a closed free-form edge, concave, so the
+/// chamfer fills in, its chords `0.1` into the branch and the pipe.
+#[test]
+fn tee_chamfer_around_the_saddle() {
+    let (mut part, saddle) = tee();
+    blended(
+        &mut part,
+        &saddle[..1],
+        &BlendShape::Chamfer {
+            distances: [0.1, 0.1],
+        },
+    );
+    let chamfered = part
+        .topology()
+        .faces
+        .keys()
+        .filter_map(|&f| part.name_of(f))
+        .any(|n| n.starts_with(&format!("fillet(F,{},chamfer", saddle[0])));
+    assert!(chamfered);
+}

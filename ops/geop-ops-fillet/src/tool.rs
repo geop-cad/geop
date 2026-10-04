@@ -66,6 +66,9 @@ pub(crate) struct Tool<S: Scalar> {
     /// What the walls rising from the first and the second contact are
     /// called: `a` and `b` after the faces on the edge's left and right.
     pub(crate) sides: [&'static str; 2],
+    /// What the blend's own wall, between the contacts, is called:
+    /// `fillet` or `chamfer`.
+    pub(crate) blend: &'static str,
 }
 
 /// The homogeneous point `h`'s coordinates in the plane `(origin, e1, e2)`,
@@ -344,7 +347,7 @@ pub(crate) fn build_tools<S: Scalar>(
             format!("t{}", tool.sides[1]),
             "q".to_string(),
         ];
-        let curve_names = ["fillet", tool.sides[1], tool.sides[0]];
+        let curve_names = [tool.blend, tool.sides[1], tool.sides[0]];
         let count = tool.stations.len();
         let next = |j: usize| (j + 1) % count;
         let qualified = |name: &str, span: &Option<String>| match span {

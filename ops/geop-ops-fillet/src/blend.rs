@@ -1038,6 +1038,7 @@ pub(crate) fn straight_tool<S: Scalar>(
             spans: vec![span],
             closed: false,
             sides: if swapped { ["b", "a"] } else { ["a", "b"] },
+            blend: "fillet",
         },
         swapped,
     ))
@@ -1132,12 +1133,7 @@ fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopR
             return Ok(planned);
         }
     }
-    match shape {
-        BlendShape::Chamfer { .. } => Err(GeopError::new(
-            "only a straight edge between two planes, and a whole circle between planes across its axis and cylinders and cones around it, are chamfered",
-        )),
-        BlendShape::Fillet { .. } => Ok(Planned::Rolled(chain)),
-    }
+    Ok(Planned::Rolled(chain))
 }
 
 /// Gives the one face of `solid` left of each of the tool's faces named
@@ -1339,13 +1335,15 @@ pub fn blend<S: Scalar>(
     let groups = mitre(part.topology(), &mut plans)?;
     let corners = corner::plan_corners(part, namer, &mut plans, &chains, &covered, shape)?;
     let mut rolled: Vec<(String, Rolled<S>)> = Vec::new();
-    if let BlendShape::Fillet { radii } = shape {
-        for ((name, chain), ends) in chains.into_iter().zip(corners.chains) {
-            let ctx = with_context!("edge {name:?}");
-            let r = rolling::plan_rolled(part, chain, radii, ends).with_context(ctx)?;
-            rolling::check_touches(part.topology(), &r).with_context(ctx)?;
-            rolled.push((name, r));
+    for ((name, chain), ends) in chains.into_iter().zip(corners.chains) {
+        let ctx = with_context!("edge {name:?}");
+        let r = match shape {
+            BlendShape::Fillet { radii } => rolling::plan_rolled(part, chain, radii, ends),
+            BlendShape::Chamfer { distances } => rolling::plan_chamfer(part, chain, *distances),
         }
+        .with_context(ctx)?;
+        rolling::check_touches(part.topology(), &r).with_context(ctx)?;
+        rolled.push((name, r));
     }
     refuse_rolled_corners(&plans, &rolled)?;
     let tools = Tools {
