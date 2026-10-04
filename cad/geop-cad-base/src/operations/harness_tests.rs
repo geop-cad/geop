@@ -5,18 +5,19 @@ use std::collections::BTreeMap;
 
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
-    scalars::ScalInF64 as S,
+    scalars::{Ring, ScalInF64 as S, Scalar},
 };
 use geop_ops::{
     EntityRef,
     assembly::{Mate, MateKind},
     part::{ParamValue, State, pose_parameter},
+    ui::{StepEditEvent, Value},
 };
 use geop_ops_assembly::AddPartArgs;
 use geop_ops_harness::{RouteArgs, Wire, WireSize};
 
 use crate::examples::pose;
-use crate::{Editor, Program};
+use crate::{Command, Editor, Program, examples};
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
 /// its `xy` plane mated onto `a`'s, so it slides in that plane — and a
