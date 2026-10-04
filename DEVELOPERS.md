@@ -20,12 +20,14 @@ core/geop-core-math          scalars, interval arithmetic, linear algebra,
                               convex hulls, error type, frames, rays, datums,
                               poses (dual quaternions), constrained least
                               squares and dual numbers for the solvers
-core/geop-core-geometry       NURBS curves/surfaces, containment, intersection
+core/geop-core-geometry       NURBS curves/surfaces, helices, compatible
+                               curves for lofts, containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation
 core/geop-core-solve          the constraint solver every system shares:
                                parameters, residuals, pulls, enclosure;
                                rigid bodies and mates, joints with limits
-                               and the couplings between them
+                               and the couplings between them, solved in
+                               groups no mate ties together
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
@@ -34,7 +36,9 @@ ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                edited (events, dialogs, visuals, hit tests),
                                parameters and the formulas reading them,
                                programs, the files they place parts from, and
-                               running them (+ `geop-ops-derive`)
+                               running them — a workspace rebuilds only what
+                               a changed file reaches, and a scene sends
+                               placed parts as changes (+ `geop-ops-derive`)
 ops/geop-ops-sketch           the sketch operation: drawing and constraint
                                tools, snapping, reference geometry and
                                projections of the part
@@ -44,44 +48,20 @@ ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),
                                the boolean operation
 ops/geop-ops-edit             edits of existing bodies: delete a body,
                                extract a face, project a sketch onto a face
-ops/geop-ops-extrude-revolve  extrude/revolve, sweeps along paths, lofts;
-                               their operations, and basic shapes for tests
+ops/geop-ops-extrude-revolve  extrude/revolve; sweeps along paths, with guide
+                               rails, twist and orientation; lofts, with
+                               guide curves and matched points; their
+                               operations, and basic shapes for tests
+ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
+                               as STL, and renders it for debugging
+ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
+                               and splines in space, placed on the part and
+                               constrained — paths and rails for sweeps
 ops/geop-ops-fillet           fillets and chamfers on straight and circular
                                edges, cut or filled in with a boolean
 ops/geop-ops-shell            shelling: a solid hollowed to walls of one
                                thickness, open at picked faces, the shell
                                operation
-ops/geop-ops-assembly         the part operation: place another file's part,
-                               mate it, joint it, drag it; patterns of
-                               placed parts
-ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
-                               and reliefs, the flat pattern; the sheet model
-                               recorded on the body and thickened into it
-ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
-ops/geop-ops-inspect          inspecting a part without changing it: mass
-                               properties of its solids and placed parts,
-                               measurements of picked entities, interference
-ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
-                               the editor, built as its Catmull-Clark limit
-                               surface, a solid of B-spline faces; the subd
-                               operation
-                               as STL, and renders it for debugging
-ops/geop-ops-harness          wire harnesses: wires routed through connectors
-                               and clips as lines and arcs, bend radius
-ops/geop-ops-plastic          housings: ribs grown up to the walls, lips and
-                               grooves along a rim, drafts on planar faces
-                               checked, the bundle swept, cut lengths; the
-                               route operation
-ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
-                               and splines in space, placed on the part and
-                               constrained — paths and rails for sweeps
-ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
-                               surfaces, offset, thicken, knit, trim and
-                               extend of faces standing on their own
-cad/geop-cad-base             the operations the editor offers, the editor engine,
-                               example programs
-cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
-cad/geop-cad-cli              the `geop` command-line tool
 ops/geop-ops-pattern          linear and circular patterns, mirrors and
                                moves of bodies, copied as new bodies or
                                combined with a solid; their operations
@@ -89,7 +69,40 @@ ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
                                countersink, tapped) and threads, cosmetic or
                                modelled along a helix; the hole and thread
                                operations
+ops/geop-ops-plastic          housings: ribs grown up to the walls, lips and
+                               grooves along a rim, drafts on planar faces
+ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
+                               surfaces, offset, thicken, knit, trim and
+                               extend of faces standing on their own
+ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
+                               the editor, built as its Catmull-Clark limit
+                               surface, a solid of B-spline faces; the subd
+                               operation
+ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
+                               and reliefs, the flat pattern; the sheet model
+                               recorded on the body and thickened into it
+ops/geop-ops-harness          wire harnesses: wires routed through connectors
+                               and clips as lines and arcs, bend radius
+                               checked, the bundle swept, cut lengths; the
+                               route operation
+ops/geop-ops-assembly         the part operation: place another file's part,
+                               mate it, joint it, drag it; patterns of
+                               placed parts
+ops/geop-ops-inspect          inspecting a part without changing it: mass
+                               properties of its solids and placed parts,
+                               measurements of picked entities, interference
+cad/geop-cad-base             the operations the editor offers, the editor engine,
+                               example programs, the standard parts (below)
+cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
+cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
+                               each placed component once
 ```
+
+The web app draws placed parts batched per component — one
+`InstancedMesh` each (`web/src/placed3d.ts`) — and takes the scene's
+changes rather than the whole scene. Its section view (`section.ts`)
+clips the part and the placed parts and caps what it cuts open from
+stencil counters drawn with them.
 
 Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball
 bearings, T-slot extrusions, a NEMA 17 motor) live in
