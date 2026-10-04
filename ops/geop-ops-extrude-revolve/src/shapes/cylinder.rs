@@ -319,4 +319,34 @@ mod tests {
     fn revolved_cylinder_along_axis_is_valid() {
         for_all_scalars!(check_revolved_cylinder_along_axis_is_valid);
     }
+
+    /// A clip-sized cylinder (radius 3, 10 long) standing 50 along its own
+    /// axis from the origin, along each axis, is valid. In fixed point its
+    /// two caps were reported overlapping: evaluated at the wide parameter
+    /// box that projecting a point near the axis onto a cap honestly gives,
+    /// each cap's height came out tens wide, as wide as its distance from
+    /// the origin (see `nurb_surface::evaluate`).
+    fn check_revolved_cylinder_far_along_its_axis_is_valid<S: Scalar>() {
+        let params = ValidationParameters::default();
+        let f = S::from_f64;
+        for (axis, k) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
+            let mut base = [f(0.0); 3];
+            base[k] = f(50.0);
+            let mut part = Part::<S>::new();
+            revolved_cylinder_along_axis(
+                &mut part,
+                "clip",
+                Vector3::from_array(base),
+                f(3.0),
+                f(10.0),
+                axis,
+            )
+            .unwrap();
+            validate(&params, part.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+        }
+    }
+    #[test]
+    fn revolved_cylinder_far_along_its_axis_is_valid() {
+        for_all_scalars!(check_revolved_cylinder_far_along_its_axis_is_valid);
+    }
 }

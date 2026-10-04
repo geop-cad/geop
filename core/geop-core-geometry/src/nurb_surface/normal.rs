@@ -8,7 +8,7 @@ use super::NurbSurface;
 use crate::{
     knot_insertion::is_clamped_at,
     nurb_curve::dehomogenize,
-    spline::{find_span, homogeneous_derivatives, rational_derivatives},
+    spline::{centered, find_span, homogeneous_derivatives, rational_derivatives},
 };
 
 impl<S: Scalar> NurbSurface<S, 4> {
@@ -18,7 +18,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// each is the curve case ([`homogeneous_derivatives`]) run across the
     /// local rows (columns), each first evaluated at `v` (`u`); the mixed one
     /// differentiates the rows once along `v`, then once across them along
-    /// `u`.
+    /// `u`. The `A` they start from is relative to a control point of the
+    /// span, so only the derivatives are meaningful.
     #[allow(clippy::type_complexity)]
     fn homogeneous_partials(
         &self,
@@ -31,17 +32,25 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let nv = self.num_v;
         let span_u = find_span(p, ku, self.num_u - 1, u)?;
         let span_v = find_span(q, kv, nv - 1, v)?;
-        let cp = &self.control_points;
-        let (rows, rows_v): (Vec<Vector<S, 4>>, Vec<Vector<S, 4>>) = (span_u - p..=span_u)
+        // Relative to a control point of the span (see [`centered`]): the
+        // derivatives do not depend on where the patch lies, and that way
+        // neither does their width.
+        let local: Vec<Vector<S, 4>> = (span_u - p..=span_u)
+            .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
+            .map(|k| self.control_points[k])
+            .collect();
+        let (cp, _) = centered(&local);
+        let at = |i: usize, j: usize| cp[i * (q + 1) + j];
+        let (rows, rows_v): (Vec<Vector<S, 4>>, Vec<Vector<S, 4>>) = (0..=p)
             .map(|i| {
-                let local: Vec<_> = (span_v - q..=span_v).map(|j| cp[i * nv + j]).collect();
+                let local: Vec<_> = (0..=q).map(|j| at(i, j)).collect();
                 let d = homogeneous_derivatives(q, kv, &local, span_v, v, 1);
                 (d[0], d[1])
             })
             .unzip();
-        let cols: Vec<Vector<S, 4>> = (span_v - q..=span_v)
+        let cols: Vec<Vector<S, 4>> = (0..=q)
             .map(|j| {
-                let local: Vec<_> = (span_u - p..=span_u).map(|i| cp[i * nv + j]).collect();
+                let local: Vec<_> = (0..=p).map(|i| at(i, j)).collect();
                 homogeneous_derivatives(p, ku, &local, span_u, u, 0)[0]
             })
             .collect();

@@ -82,6 +82,51 @@ pub(crate) fn find_span<S: Scalar>(
     Err(GeopError::new("could not find knot span"))
 }
 
+/// The homogeneous control points `local` moved so that the first one's
+/// Cartesian position sits at the origin, and that position (in the first
+/// `D − 1` components; the weight slot is zero).
+///
+/// Evaluating a rational spline at an interval parameter computes `A / W`
+/// from two enclosures that interval arithmetic cannot correlate, so the
+/// quotient's width grows with `|A|`: with the patch's distance from the
+/// origin, not with its size. A planar cap at height 50 came out spanning
+/// `[38, 94]` in height for a `u` box that it does not depend on at all.
+/// Evaluated relative to a point of its own, the spline's width depends on
+/// its extent only (and on nothing along a direction it is flat in), and
+/// adding the origin back costs a single rounding. Which point is a free
+/// choice; a sharp one costs nothing, and one of the points acting on the
+/// span keeps the shifted ones as small as the patch.
+pub(crate) fn centered<S: Scalar, const D: usize>(
+    local: &[Vector<S, D>],
+) -> (Vec<Vector<S, D>>, Vector<S, D>) {
+    let first = local[0];
+    let inv_w = S::ONE
+        .div(first[D - 1])
+        .expect("weights are definitely positive by construction");
+    let mut origin = Vector::<S, D>::zero();
+    for c in 0..D - 1 {
+        // A placeholder's coordinates are unbounded and have no middle:
+        // there the origin stays where it is.
+        let at = first[c].mul(inv_w);
+        origin[c] = if at.is_finite() {
+            at.sharpen()
+        } else {
+            S::ZERO
+        };
+    }
+    let moved = local
+        .iter()
+        .map(|p| {
+            let mut q = *p;
+            for c in 0..D - 1 {
+                q[c] = p[c].sub(p[D - 1].mul(origin[c]));
+            }
+            q
+        })
+        .collect();
+    (moved, origin)
+}
+
 /// De Boor triangular recursion over `points` at `t` in knot span `span`.
 pub(crate) fn de_boor<S: Scalar, const D: usize>(
     degree: usize,
