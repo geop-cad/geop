@@ -26,6 +26,7 @@ use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
 };
+use geop_ops_subd::{Cage, Mirror, SubdArgs};
 
 use crate::Program;
 
@@ -1344,6 +1345,38 @@ pub fn airfoil_wing() -> Program {
     program
 }
 
+/// A computer mouse, shaped as a subdivision surface: half a 1.2 x 2 x 0.8
+/// box cage, mirrored in `x = 0`, its back raised into a hump and the rim
+/// of its bottom creased, so that it stands on a flat sole with a sharp
+/// edge while everything above rounds off. The body is `subd(mouse)`.
+pub fn subd_mouse() -> Program {
+    let mut cage = Cage::cuboid([1.2, 2.0, 0.8]);
+    cage.halve(0).expect("the box reaches across x = 0");
+    let bottom = cage.face(8).expect("the box's bottom").vertices.clone();
+    let on_plane = |v: u32| cage.vertex(v).is_ok_and(|x| x.at[0] == 0.0);
+    let rim: Vec<[u32; 2]> = (0..bottom.len())
+        .map(|k| [bottom[k], bottom[(k + 1) % bottom.len()]])
+        .filter(|&[a, b]| !(on_plane(a) && on_plane(b)))
+        .collect();
+    cage.set_crease(&rim, true);
+    let back = cage
+        .vertices
+        .iter()
+        .filter(|v| v.at[1] > 0.0 && v.at[2] > 0.0)
+        .map(|v| v.id)
+        .collect();
+    cage.transform(&back, Mirror::X, |p| [p[0], p[1], p[2] + 0.3]);
+    let mut program = Program::new();
+    program.push(
+        "mouse",
+        SubdArgs {
+            cage,
+            mirror: Mirror::X,
+        },
+    );
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1358,6 +1391,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("link", link()),
         ("parametric_plate", parametric_plate()),
         ("airfoil_wing", airfoil_wing()),
+        ("subd_mouse", subd_mouse()),
     ]
 }
 
@@ -1715,5 +1749,17 @@ mod tests {
         ] {
             assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
         }
+    }
+
+    /// A mouse's sole is flat: the crease around its bottom keeps the
+    /// bottom face in the cage's bottom plane.
+    #[test]
+    fn subd_mouse_round_trips() {
+        let part = build_and_round_trip("subd_mouse", &subd_mouse());
+        assert_eq!(part.solid_names(), ["subd(mouse)"]);
+        let sole = part.face_id("subd(mouse,f8)").unwrap();
+        let surface = &part.topology().get_face(sole).unwrap().surface;
+        let p = surface.evaluate(S::from_f64(0.7), S::from_f64(1.2)).unwrap();
+        assert!(p[2].could_be_equal(S::from_f64(-0.4)), "{p:?}");
     }
 }

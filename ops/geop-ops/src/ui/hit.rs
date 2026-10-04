@@ -97,8 +97,9 @@ fn distance<S: Scalar>(
 
 /// The visual among those `accept` takes that the pointer is over: handles
 /// and labels first, then points, curves and areas — within each, the one
-/// nearest the pointer on screen. Placed parts are hit as `view` draws
-/// them.
+/// nearest the pointer on screen, and of those as near, the one nearest the
+/// eye: of two areas the pointer is over, the one in front. Placed parts
+/// are hit as `view` draws them.
 pub fn hit_visuals<'a, S: Scalar>(
     visuals: &'a [Visual<S>],
     pointer: &Pointer<S>,
@@ -109,7 +110,11 @@ pub fn hit_visuals<'a, S: Scalar>(
         .iter()
         .filter(|v| accept(v))
         .filter_map(|v| distance(pointer, v, view).map(|(rank, reaches, t)| (rank, reaches, t, v)))
-        .min_by(|a, b| a.0.cmp(&b.0).then(nearer(a.1, b.1)))
+        .min_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(nearer(a.1, b.1))
+                .then(nearer(a.2, b.2))
+        })
         .map(|(_, _, t, visual)| VisualHit { visual, t })
 }
 
@@ -161,6 +166,27 @@ mod tests {
         assert_eq!(key(0.95, 0.0).as_deref(), Some("end"));
         assert_eq!(key(0.5, 0.05).as_deref(), Some("line"));
         assert_eq!(key(0.5, 0.2), None);
+    }
+
+    /// Of two areas one behind the other, the one in front is hit, whichever
+    /// is listed first.
+    #[test]
+    fn the_area_in_front_is_hit() {
+        let square = |key: &str, z: f64| {
+            Visual::new(
+                key,
+                Shape::Triangles {
+                    triangles: vec![
+                        [v(-1.0, -1.0, z), v(1.0, -1.0, z), v(1.0, 1.0, z)],
+                        [v(-1.0, -1.0, z), v(1.0, 1.0, z), v(-1.0, 1.0, z)],
+                    ],
+                },
+                Style::Region,
+            )
+        };
+        let visuals = [square("below", -1.0), square("above", 1.0)];
+        let hit = hit_visuals(&visuals, &down(0.2, 0.3), None, |_| true);
+        assert_eq!(hit.map(|h| h.visual.key.as_str()), Some("above"));
     }
 
     /// A label is hit where it is drawn: moved from its point by its

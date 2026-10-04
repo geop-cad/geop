@@ -317,3 +317,114 @@ fn args_round_trip() {
     let back: SubdArgs = serde_json::from_str(&json).unwrap();
     assert_eq!(back, args);
 }
+
+/// The top and front of a box extruded together, the edge between them
+/// creased: the region leaves that edge behind for a new one, and the
+/// crease goes with it rather than naming an edge that is gone.
+#[test]
+fn extruding_across_a_crease_carries_it_along() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.set_crease(&[[4, 5]], true);
+    cage.extrude(&[9, 10].into(), 0.5, Mirror::None).unwrap();
+    let edges = cage.edges();
+    assert_eq!(cage.creases.len(), 1);
+    assert!(edges.contains(&cage.creases[0]), "{:?}", cage.creases);
+    assert_ne!(cage.creases[0], [4, 5]);
+    crate::cage::Mesh::new(&cage, Mirror::None)
+        .unwrap()
+        .topology()
+        .unwrap();
+}
+
+/// A small deterministic random number generator, for the sweep.
+struct Random(u64);
+
+impl Random {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    fn between(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * (self.next() % 1_000_000) as f64 / 1_000_000.0
+    }
+}
+
+/// One random edit of `cage`, as the editor makes them: a vertex nudged, a
+/// face extruded or shrunk about its centre, a loop inserted, an edge
+/// creased. Says what it did.
+fn random_edit(cage: &mut Cage, mirror: Mirror, random: &mut Random) -> String {
+    match random.below(5) {
+        0 => {
+            let v = cage.vertices[random.below(cage.vertices.len())].id;
+            let by = [0; 3].map(|_| random.between(-0.15, 0.15));
+            cage.transform(&[v].into(), mirror, |p| [0, 1, 2].map(|c| p[c] + by[c]));
+            format!("moved v{v} by {by:?}")
+        }
+        1 => {
+            let f = cage.faces[random.below(cage.faces.len())].id;
+            let d = random.between(0.2, 0.6);
+            match cage.extrude(&[f].into(), d, mirror) {
+                Ok(()) => format!("extruded f{f} by {d}"),
+                Err(e) => format!("could not extrude f{f}: {e}"),
+            }
+        }
+        2 => {
+            let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
+            let [a, b] = edges[random.below(edges.len())];
+            match cage.insert_loop(a, b) {
+                Ok(()) => format!("inserted a loop across e{a}-{b}"),
+                Err(e) => format!("could not insert a loop across e{a}-{b}: {e}"),
+            }
+        }
+        3 => {
+            let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
+            let [a, b] = edges[random.below(edges.len())];
+            let sharp = !cage.is_crease(a, b);
+            cage.set_crease(&[[a, b]], sharp);
+            format!("creased e{a}-{b}: {sharp}")
+        }
+        _ => {
+            let f = cage.faces[random.below(cage.faces.len())].id;
+            let s = random.between(0.6, 0.9);
+            let vertices = cage.vertices_of(&[crate::cage::face_key(f)]);
+            let c = cage.centre(&vertices).unwrap();
+            cage.transform(&vertices, mirror, |p| [0, 1, 2].map(|k| c[k] + s * (p[k] - c[k])));
+            format!("scaled f{f} by {s}")
+        }
+    }
+}
+
+/// Random sequences of edits of a box cage, whole and mirrored, each built
+/// and validated: every cage the edits leave builds a valid solid.
+#[test]
+#[ignore = "slow: builds and validates dozens of edited cages — run with `cargo test -- --ignored`"]
+fn random_cage_edits_build_valid_solids() {
+    type S = ScalInF64;
+    for seed in 1..=24u64 {
+        let mirror = if seed % 2 == 0 { Mirror::X } else { Mirror::None };
+        let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+        if let Some(axis) = mirror.axis() {
+            cage.halve(axis).unwrap();
+        }
+        let mut random = Random(0x9E37_79B9_7F4A_7C15 ^ seed);
+        let mut done = Vec::new();
+        for _ in 0..6 {
+            done.push(random_edit(&mut cage, mirror, &mut random));
+        }
+        let part = Subd
+            .apply(Part::<S>::new(), "s", &SubdArgs { cage: cage.clone(), mirror }, &NoFiles)
+            .unwrap_or_else(|e| panic!("seed {seed}, after {done:#?}: {e}"));
+        let params = ValidationParameters::default();
+        if let Err(errors) = validate(&params, part.topology()) {
+            let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
+            panic!("seed {seed}, after {done:#?}:\n{}", messages.join("\n"));
+        }
+    }
+}

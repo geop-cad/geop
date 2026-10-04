@@ -5,7 +5,8 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! subdivision surfaces in `geop_ops_subd`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -21,6 +22,7 @@ use geop_ops_extrude_revolve::{
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
+use geop_ops_subd::{Subd, SubdArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -51,6 +53,8 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod subd_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.
@@ -101,6 +105,10 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Shape a freeform body by dragging the vertices, edges and faces of a
+    /// control cage, built as its smooth subdivision surface.
+    #[operation(label = "SubD")]
+    Subd(SubdArgs),
 }
 
 /// A program of the editor's operations.

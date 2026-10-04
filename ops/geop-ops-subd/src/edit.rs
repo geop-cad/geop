@@ -409,6 +409,18 @@ impl Cage {
                 vertices: vec![a, b, moved[&b], moved[&a]],
             });
         }
+        // A crease whose edge only the region had — inside it, or open
+        // along the mirror plane — moves out with it; one on its rim stays
+        // where the region was.
+        let edges = self.edges();
+        let to = |v: u32| moved.get(&v).copied().unwrap_or(v);
+        for crease in &mut self.creases {
+            if !edges.contains(crease) {
+                let (a, b) = (to(crease[0]), to(crease[1]));
+                *crease = [a.min(b), a.max(b)];
+            }
+        }
+        self.tidy();
         Ok(())
     }
 
