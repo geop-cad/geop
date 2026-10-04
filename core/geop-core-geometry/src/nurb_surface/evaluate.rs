@@ -210,7 +210,12 @@ mod tests {
         let corners = [(1.0, 0.0, 1.0), (1.0, 1.0, h), (0.0, 1.0, 1.0)];
         let points = corners
             .iter()
-            .flat_map(|&(x, y, w)| [pt(0.0, 0.0, z * w, w), pt(3.0 * x * w, 3.0 * y * w, z * w, w)])
+            .flat_map(|&(x, y, w)| {
+                [
+                    pt(0.0, 0.0, z * w, w),
+                    pt(3.0 * x * w, 3.0 * y * w, z * w, w),
+                ]
+            })
             .collect();
         let s = NurbSurface::try_new(
             2,

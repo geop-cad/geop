@@ -13,6 +13,7 @@ fn style(layer: Layer) -> (f64, Option<&'static str>) {
         Layer::Dimension => (0.25, None),
         Layer::Hatch => (0.18, None),
         Layer::Border => (0.5, None),
+        Layer::Thread => (0.25, None),
     }
 }
 

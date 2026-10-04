@@ -353,6 +353,23 @@ fn seen<S: Scalar>(
     Ok(!behind_an_edge)
 }
 
+/// Whether `point` is seen through `frame` with the faces `faces` of
+/// `model` in front of it: what decides a line drawn that is no edge or
+/// silhouette of the faces, such as a cosmetic thread (see [`seen`]).
+pub(crate) fn point_seen<S: Scalar>(
+    model: &Model<S>,
+    faces: &[FaceId],
+    frame: &ViewFrame<S>,
+    point: Vector3<S>,
+) -> GeopResult<bool> {
+    let occluders = faces
+        .iter()
+        .map(|&f| Occluder::of(model, f))
+        .collect::<GeopResult<Vec<_>>>()?;
+    let length = ray_length(&occluders);
+    seen(model, &occluders, point, &frame.toward_eye(), length)
+}
+
 /// The ray length that clears every occluder from anywhere on them: twice
 /// the diagonal of their boxes' box.
 fn ray_length<S: Scalar>(occluders: &[Occluder<S>]) -> S {

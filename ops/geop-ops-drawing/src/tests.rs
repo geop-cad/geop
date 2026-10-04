@@ -123,3 +123,78 @@ fn cylinder_side_view_has_silhouettes() {
     );
     assert_extents(&top, [-1.0, -1.0, 1.0, 1.0]);
 }
+
+/// A shaft of radius 3, threaded M6 from its top 8 down, drawn as drafting
+/// draws an external thread: from the front two thin visible lines at the
+/// minor diameter, the length of the thread; from above three quarters of
+/// a thin circle at it; labelled once.
+#[test]
+fn a_threaded_shaft_draws_its_thread() {
+    use crate::{
+        DrawingArgs, compose,
+        sheet::{Layer, Shape, Stroke},
+    };
+    use geop_core_geometry::{nurb_curve::Handedness, shape::Axis};
+    use geop_ops::CosmeticThread;
+
+    let mut part = Part::<S>::new();
+    revolved_cylinder(
+        &mut part,
+        "shaft",
+        v(0.0, 0.0, 0.0),
+        S::from_f64(3.0),
+        S::from_f64(10.0),
+    )
+    .unwrap();
+    let minor = 4.917;
+    part.add_thread(
+        "thread",
+        CosmeticThread {
+            designation: "M6x1".into(),
+            face: "the shaft's side".into(),
+            axis: Axis::try_new(v(0.0, 0.0, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
+            radius: S::from_f64(3.0),
+            major_diameter: 6.0,
+            minor_diameter: minor,
+            pitch: 1.0,
+            length: 8.0,
+            internal: false,
+            handedness: Handedness::Right,
+        },
+    )
+    .unwrap();
+    let args = DrawingArgs {
+        views: vec![ViewKind::Front, ViewKind::Top],
+        scale: Some(1.0),
+        ..Default::default()
+    };
+    let sheet = compose(&part, &args, "").unwrap();
+    let thread = |s: &&Stroke| s.layer == Layer::Thread;
+    let lines: Vec<(f64, f64)> = sheet
+        .strokes
+        .iter()
+        .filter(thread)
+        .filter_map(|s| match s.shape {
+            Shape::Line(a, b) => Some((a[0], (a[1] - b[1]).abs())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines.iter().all(|(_, length)| (length - 8.0).abs() < 1e-9));
+    assert!(
+        ((lines[0].0 - lines[1].0).abs() - minor).abs() < 1e-9,
+        "{lines:?}"
+    );
+    let arcs: Vec<f64> = sheet
+        .strokes
+        .iter()
+        .filter(thread)
+        .filter_map(|s| match s.shape {
+            Shape::Arc { radius, .. } => Some(radius),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1, "{arcs:?}");
+    assert!((arcs[0] - minor / 2.0).abs() < 1e-9, "{arcs:?}");
+    assert_eq!(sheet.labels.iter().filter(|l| l.text == "M6x1").count(), 1);
+}
