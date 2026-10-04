@@ -157,7 +157,8 @@ impl Namer {
         self.name(&[])
     }
 
-    /// `kind(operation,arg,...)`.
+    /// `kind(operation,arg,...)`, an argument longer than
+    /// [`LONGEST_ARGUMENT`] given by its digest instead (see [`digest`]).
     pub fn name(&self, args: &[&str]) -> String {
         let mut name = format!("{}({}", self.kind, self.operation);
         for arg in self
@@ -167,9 +168,60 @@ impl Namer {
             .chain(args.iter().copied())
         {
             name.push(',');
-            name.push_str(arg);
+            if arg.len() > LONGEST_ARGUMENT {
+                name.push_str(&digest(arg));
+            } else {
+                name.push_str(arg);
+            }
         }
         name.push(')');
         name
+    }
+}
+
+/// The longest argument a name spells out (see [`Namer::name`]).
+///
+/// Names are built from names, and some of them repeat one: a boolean names
+/// the piece of an edge it splits after the edge and the vertex it starts
+/// at, and that vertex after the edge again. Cutting the same edge again
+/// and again — the teeth of a gear, one gap at a time — so doubles its
+/// name's length with every cut, and twenty of them made names of tens of
+/// megabytes.
+pub const LONGEST_ARGUMENT: usize = 160;
+
+/// A long argument of a name, as the name spells it: `#` and 32 hex
+/// digits, a 128-bit FNV-1a hash of it. A hash rather than a counter, so
+/// that a name still depends only on what the entity was made from; FNV
+/// written out here rather than the standard library's hasher, which may
+/// change between Rust versions, so that a saved program's names keep
+/// meaning the same entities.
+pub fn digest(text: &str) -> String {
+    const PRIME: u128 = 0x0000000001000000000000000000013B;
+    let mut hash: u128 = 0x6c62272e07bb014262b821756295c58d;
+    for byte in text.bytes() {
+        hash ^= u128::from(byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    format!("#{hash:032x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A long argument is spelled by its digest: the name stays short, and
+    /// the digest depends on the argument alone.
+    #[test]
+    fn long_arguments_are_digested() {
+        let namer = Namer::new("combine", "teeth").unwrap();
+        let long = "x".repeat(LONGEST_ARGUMENT + 1);
+        let name = namer.name(&["e1", &long]);
+        assert_eq!(name, format!("combine(teeth,e1,{})", digest(&long)));
+        assert_eq!(digest(&long).len(), 33);
+        assert_ne!(digest(&long), digest(&"x".repeat(LONGEST_ARGUMENT + 2)));
+        // Fixed for good: saved programs refer to entities by these names.
+        assert_eq!(digest(""), "#6c62272e07bb014262b821756295c58d");
+        let short = "x".repeat(LONGEST_ARGUMENT);
+        assert_eq!(namer.name(&[&short]), format!("combine(teeth,{short})"));
     }
 }

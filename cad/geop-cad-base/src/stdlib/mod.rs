@@ -26,7 +26,9 @@
 
 mod components;
 pub mod drawing;
+pub mod drive;
 mod fasteners;
+pub mod involute;
 pub mod steps;
 pub mod tables;
 
@@ -116,7 +118,7 @@ struct Entry {
 fn entries() -> Result<&'static [Entry], &'static str> {
     static ENTRIES: OnceLock<Result<Vec<Entry>, String>> = OnceLock::new();
     let built = ENTRIES.get_or_init(|| {
-        let families: [fn() -> GeopResult<StandardPart>; 14] = [
+        let families: [fn() -> GeopResult<StandardPart>; 19] = [
             fasteners::iso4762,
             fasteners::iso7380,
             fasteners::iso10642,
@@ -131,6 +133,11 @@ fn entries() -> Result<&'static [Entry], &'static str> {
             components::tslot_2020,
             components::tslot_2040,
             components::nema17,
+            drive::spur_gear,
+            drive::gt2_pulley,
+            drive::shaft_collar,
+            drive::flange_coupling,
+            drive::rack,
         ];
         families
             .iter()

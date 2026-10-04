@@ -41,6 +41,19 @@ fn expected(file: &str, value: impl Fn(&str) -> f64) -> [f64; 3] {
         "std:tslot_2020.geop" => [200f64.sqrt(), 0.0, value("length")],
         "std:tslot_2040.geop" => [500f64.sqrt(), 0.0, value("length")],
         "std:nema17_stepper.geop" => [21.15f64.hypot(17.15), -value("L"), 24.0],
+        "std:spur_gear.geop" => [
+            value("m") * (value("teeth.z") / 2.0 + 1.0),
+            0.0,
+            value("width"),
+        ],
+        "std:gt2_pulley.geop" => [
+            value("df") / 2.0,
+            0.0,
+            value("lh") + 2.0 * value("t") + value("w"),
+        ],
+        "std:shaft_collar.geop" => [value("D") / 2.0, 0.0, value("b")],
+        "std:flange_coupling.geop" => [value("F") / 2.0, 0.0, value("L")],
+        "std:gear_rack.geop" => [(value("b") / 2.0).hypot(value("h")), 0.0, value("length")],
         other => panic!("no dimensions are known for {other}"),
     }
 }
@@ -144,6 +157,11 @@ families_build! {
     tslot_2020_builds: "std:tslot_2020.geop",
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
+    spur_gears_build: "std:spur_gear.geop",
+    gt2_pulleys_build: "std:gt2_pulley.geop",
+    shaft_collars_build: "std:shaft_collar.geop",
+    flange_couplings_build: "std:flange_coupling.geop",
+    gear_racks_build: "std:gear_rack.geop",
 }
 
 /// The programs of `part` at every size it offers: a row of its table, or
@@ -241,4 +259,28 @@ fn the_bolted_plate_holds_together() {
             "{instance} {local:?} is at {got:?}, not {want:?}"
         );
     }
+}
+
+/// One gap of a 20-tooth gear of module 1 cut from its blank, turned
+/// `angle` degrees round: each is one boolean of building the gear.
+fn one_gap_cut(angle: f64) -> Result<(), String> {
+    use crate::operations::PartOperation;
+    use geop_ops_pattern::Spacing;
+
+    let mut program = super::part("std:spur_gear.geop").unwrap().program.clone();
+    let k = program.index_of("teeth").unwrap();
+    let PartOperation::CircularPattern(args) = &mut program.steps[k].operation else {
+        panic!("the teeth are a circular pattern");
+    };
+    args.count = 2.0.into();
+    args.angle = Spacing::step(angle);
+    let built = program
+        .build::<S>(&NoFiles)
+        .map_err(|e| format!("does not build: {e}"))?;
+    check_valid(&built).map_err(|e| format!("is not valid: {e}"))
+}
+
+#[test]
+fn a_gear_gap_turned_234_degrees_is_cut() {
+    one_gap_cut(234.0).unwrap();
 }

@@ -7,7 +7,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_sketch::{ConstraintId, CurveId, PointId};
+use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
 use geop_ops::{
     Design, EntityRef,
     parameters::{Parameters, evaluate, is_formula, number},
@@ -89,6 +89,23 @@ impl Drawing {
 
     pub fn line(&mut self, a: PointId, b: PointId) -> CurveId {
         self.sketch.add_line(a, b)
+    }
+
+    /// The Bézier curve of the control points `control`, of degree one
+    /// less than there are: a spline on one span, through its first and
+    /// last point.
+    pub fn bezier(&mut self, control: Vec<PointId>) -> CurveId {
+        let n = control.len();
+        let mut knots = vec![Design::ZERO; n];
+        knots.extend(vec![Design::ONE; n]);
+        self.sketch.add_curve(CurveKind::Spline {
+            control_points: control,
+            shape: Some(SplineShape {
+                degree: n - 1,
+                knots,
+                weights: vec![Design::ONE; n],
+            }),
+        })
     }
 
     /// A closed polygon through `corners`, each `[x, y]` formulas: its

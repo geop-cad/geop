@@ -486,6 +486,93 @@ pub fn nema17() -> Table {
     )
 }
 
+/// Gear modules, from ISO 54's first and second choice: module `m`.
+pub fn gear_modules() -> Table {
+    Table::of(
+        &["m"],
+        &[
+            ("m0.5", [0.5]),
+            ("m0.8", [0.8]),
+            ("m1", [1.0]),
+            ("m1.25", [1.25]),
+            ("m1.5", [1.5]),
+            ("m2", [2.0]),
+            ("m2.5", [2.5]),
+            ("m3", [3.0]),
+        ],
+        "m1",
+    )
+}
+
+/// Gear racks, as they are sold: module `m`, face width `b`, and height
+/// `h` from the back to the pitch line — the rack `b` square overall.
+pub fn racks() -> Table {
+    Table::of(
+        &["m", "b", "h"],
+        &[
+            ("m0.5", [0.5, 5.0, 4.5]),
+            ("m0.8", [0.8, 8.0, 7.2]),
+            ("m1", [1.0, 10.0, 9.0]),
+            ("m1.25", [1.25, 12.0, 10.75]),
+            ("m1.5", [1.5, 15.0, 13.5]),
+            ("m2", [2.0, 20.0, 18.0]),
+            ("m2.5", [2.5, 25.0, 22.5]),
+            ("m3", [3.0, 30.0, 27.0]),
+        ],
+        "m1",
+    )
+}
+
+/// GT2 timing pulleys for a 6 mm belt, of `z` teeth: bore `d`, flange
+/// diameter `df` and thickness `t`, hub diameter `dh` (less than the
+/// flanges') and length `lh`, toothed width `w`.
+pub fn gt2_pulleys() -> Table {
+    Table::of(
+        &["z", "d", "df", "dh", "lh", "t", "w"],
+        &[
+            ("16T", [16.0, 5.0, 13.0, 12.0, 6.0, 1.0, 7.0]),
+            ("20T", [20.0, 5.0, 16.0, 15.0, 7.0, 1.0, 7.0]),
+            ("36T", [36.0, 8.0, 26.0, 18.0, 7.0, 1.0, 7.0]),
+        ],
+        "20T",
+    )
+}
+
+/// Shaft collars after DIN 705 A: bore `d`, outside `D`, width `b`, set
+/// screw thread `ds`.
+pub fn shaft_collars() -> Table {
+    Table::of(
+        &["d", "D", "b", "ds"],
+        &[
+            ("3", [3.0, 7.0, 5.0, 3.0]),
+            ("4", [4.0, 8.0, 6.0, 3.0]),
+            ("5", [5.0, 10.0, 6.0, 3.0]),
+            ("6", [6.0, 12.0, 8.0, 4.0]),
+            ("8", [8.0, 16.0, 8.0, 4.0]),
+            ("10", [10.0, 20.0, 10.0, 5.0]),
+            ("12", [12.0, 22.0, 12.0, 6.0]),
+        ],
+        "5",
+    )
+}
+
+/// Rigid flange couplings, `d1` to a larger `d2`: hub diameter `D`, flange
+/// diameter `F`, length `L` and flanges' thickness together `f`.
+pub fn flange_couplings() -> Table {
+    Table::of(
+        &["d1", "d2", "D", "F", "L", "f"],
+        &[
+            ("5x6", [5.0, 6.0, 14.0, 25.0, 25.0, 8.0]),
+            ("5x8", [5.0, 8.0, 16.0, 28.0, 25.0, 8.0]),
+            ("6x8", [6.0, 8.0, 16.0, 28.0, 25.0, 8.0]),
+            ("6.35x8", [6.35, 8.0, 16.0, 28.0, 25.0, 8.0]),
+            ("8x10", [8.0, 10.0, 20.0, 32.0, 30.0, 10.0]),
+            ("8x12", [8.0, 12.0, 22.0, 35.0, 30.0, 10.0]),
+        ],
+        "5x8",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

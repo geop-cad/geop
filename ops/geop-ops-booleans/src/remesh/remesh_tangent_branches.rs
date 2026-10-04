@@ -204,6 +204,12 @@ fn tangent_branch_points<S: Scalar>(
 /// - **The same patch.** Where `g` and `f` are one surface, `g ∩ f` is that
 ///   surface, not branches leaving the edge; the overlap is imprinting's to
 ///   handle.
+/// - **Two planes.** Neither bends, so their curvature gap is zero all
+///   along the edge and no sign change can ever be found: the search would
+///   only confirm that, piece by piece. Coplanar ones are the common case —
+///   a boss extruded from the face it stands on, the teeth patterned round
+///   a gear's hub — and an edge of one lying in the other was the slowest
+///   boolean there was.
 /// - **Opposite sides.** Where the edge runs along a boundary edge of `f`
 ///   (the other solid's copy of it), `f` lies to one side of it, and a branch
 ///   leaving into both faces needs `g` on that same side. Material lies left
@@ -223,7 +229,9 @@ fn branch_can_leave<S: Scalar>(
     min_subdivision_size: S,
 ) -> GeopResult<bool> {
     let (face_g, face_f) = (model.get_face(g)?, model.get_face(f)?);
-    if face_g.surface.could_be_equal(&face_f.surface) {
+    if face_g.surface.could_be_equal(&face_f.surface)
+        || (face_g.surface.as_plane()?.is_some() && face_f.surface.as_plane()?.is_some())
+    {
         return Ok(false);
     }
 
