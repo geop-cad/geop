@@ -226,20 +226,26 @@ pub fn integrate<S: Scalar>(
         // rules smaller than their own enclosures' widths is rounding, not
         // truncation, and no halving reduces it.
         let width = total(&panels, |p| &p.width);
-        let done = (0..components)
-            .all(|c| error[c] <= quadrature.relative_tolerance * scale[c] || error[c] <= width[c]);
-        if done {
+        let pending: Vec<usize> = (0..components)
+            .filter(|&c| error[c] > quadrature.relative_tolerance * scale[c] && error[c] > width[c])
+            .collect();
+        if pending.is_empty() {
             break true;
         }
         if panels.len() >= quadrature.max_panels {
             break false;
         }
         // The panel contributing most to the component furthest from
-        // converging.
+        // converging — of those not converged yet. A converged component
+        // that is all rounding, its scale nearly zero (the `z` moments of a
+        // vertical wall), has relative errors far above any other's, and
+        // ranked with the rest it drew every halving to its noise while the
+        // panel holding a pending component's error was never halved.
         let worst = |p: &Panel<S>| {
-            (0..components)
-                .filter(|&c| scale[c] > 0.0)
-                .map(|c| p.error[c] / scale[c])
+            pending
+                .iter()
+                .filter(|&&c| scale[c] > 0.0)
+                .map(|&c| p.error[c] / scale[c])
                 .fold(0.0, f64::max)
         };
         let (index, _) = panels
@@ -270,6 +276,41 @@ mod tests {
         for_all_scalars,
         scalars::{Field, Ring, Scalar},
     };
+
+    /// A peak that needs halving, beside a component that is all rounding
+    /// — nearly zero, noisy, converged by its width — on the other half of
+    /// the range. The noise's relative errors are far above the peak's, and
+    /// ranked with them they drew every halving away from the peak: the
+    /// moments of a hole's wall did not converge.
+    #[test]
+    fn halving_follows_the_components_not_converged() {
+        type S = crate::scalars::ScalInF64;
+        let f = |x: S| {
+            let t = x.to_f64();
+            let peak = 1.0 / (1.0 + 1e4 * (t + 0.5) * (t + 0.5));
+            let noise = if t > 0.0 {
+                1e-18 * (1e7 * t).sin()
+            } else {
+                0.0
+            };
+            Ok(vec![
+                S::from_f64(peak),
+                S::from_f64(noise - 1e-15).union(S::from_f64(noise + 1e-15)),
+            ])
+        };
+        let quadrature = Quadrature {
+            relative_tolerance: 1e-10,
+            max_panels: 64,
+        };
+        let integral = integrate(f, &[S::from_f64(-1.0), S::ONE], 2, &quadrature).unwrap();
+        assert!(integral.converged, "{integral:?}");
+        // ∫ 1 / (1 + 10⁴ (x + ½)²) = (atan(50) + atan(150)) / 100.
+        let exact = (50.0_f64.atan() + 150.0_f64.atan()) / 100.0;
+        assert!(
+            integral.value[0].could_be_equal(S::from_f64(exact)),
+            "{integral:?}"
+        );
+    }
 
     fn check_polynomials_are_exact<S: Scalar>() {
         // x^5 - 2x^2 + 1 on [0, 2]: 64/6 - 16/3 + 2 = 22/3.
