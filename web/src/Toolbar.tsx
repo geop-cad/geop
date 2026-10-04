@@ -11,6 +11,8 @@ interface Props {
   hosted: boolean;
   hasSteps: boolean;
   onSave: () => void;
+  /** Write the part shown as a STEP file and save it. */
+  onExportStep: () => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
@@ -54,6 +56,7 @@ export function Toolbar({
   hosted,
   hasSteps,
   onSave,
+  onExportStep,
   onLoadFile,
   exampleNames,
   onLoadExample,
@@ -83,8 +86,9 @@ export function Toolbar({
       : ([
           { kind: "item", label: "Open file…", icon: "open", onSelect: () => fileInput.current?.click() },
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
-          { kind: "separator" },
         ] as MenuEntry[])),
+    { kind: "item", label: "Download STEP", icon: "save", hint: "for other CAD", disabled: !hasSteps, onSelect: onExportStep },
+    { kind: "separator" },
     { kind: "heading", label: "Example parts" },
     ...exampleNames.map(
       (name): MenuEntry => ({ kind: "item", label: title(name), icon: "example", onSelect: () => onLoadExample(name) }),

@@ -28,6 +28,7 @@ import {
   programText,
   saveWorkspace,
   type Workspace,
+  isStepFile,
 } from "./files";
 import { ParametersPanel } from "./ParametersPanel";
 import { JointsPanel } from "./JointsPanel";
@@ -51,7 +52,8 @@ const EDITS: Command["command"][] = ["commit", "remove", "move", "load", "load_e
 
 /** Download `text` as the file `name`. */
 function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const type = isStepFile(name) ? "application/step" : "application/json";
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
@@ -255,8 +257,12 @@ function App() {
 
   // ── the files (in the browser) ─────────────────────────────────────────
 
-  /** Edit the file `path`, whose program is `text`. */
+  /** Edit the file `path`, whose program is `text` — a STEP file is data, not opened. */
   function openFile(path: string, text = workspaceRef.current.files[path]) {
+    if (isStepFile(path)) {
+      setError(`${path} is a STEP file: import it into a program with "Import STEP"`);
+      return Promise.resolve(null);
+    }
     return dispatch({ command: "load", program: parseProgram(text), path });
   }
 
@@ -305,6 +311,14 @@ function App() {
     const added: Record<string, string> = {};
     const taken = { ...workspaceRef.current.files };
     for (const file of uploaded) {
+      if (isStepFile(file.name)) {
+        // Data for an import: kept as it is, next to the programs.
+        const text = await file.text();
+        const path = freePath(taken, file.name);
+        taken[path] = text;
+        added[path] = text;
+        continue;
+      }
       try {
         const text = await file.text();
         parseProgram(text);
@@ -319,8 +333,19 @@ function App() {
     const paths = Object.keys(added);
     if (paths.length === 0) return;
     await changeFiles(added);
-    await openFile(paths[0], added[paths[0]]);
+    const program = paths.find((p) => !isStepFile(p));
+    if (program) await openFile(program, added[program]);
     trackFile("loaded");
+  }
+
+  /** Write the part shown as a STEP file, and save it. */
+  async function exportStep() {
+    const update = await dispatch({ command: "export_step" });
+    const file = update?.export;
+    if (!file) return;
+    if (host) host.saveFile(file.name, file.text);
+    else download(file.name, file.text);
+    trackFile("saved");
   }
 
   function downloadFile(path: string) {
@@ -499,6 +524,7 @@ function App() {
         hosted={host != null}
         hasSteps={stepCount > 0}
         onSave={() => downloadFile(workspace.active)}
+        onExportStep={() => void exportStep()}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}

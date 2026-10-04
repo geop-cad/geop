@@ -396,7 +396,9 @@ export type Command =
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
   | { command: "drag_tool"; on: boolean }
   /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
-  | { command: "joint"; parameter: string; value: number };
+  | { command: "joint"; parameter: string; value: number }
+  /** Write the part shown as a STEP file: the update's `export`. */
+  | { command: "export_step" };
 
 /** A joint's coordinate — see `geop_ops::assembly::JointValue`. */
 export interface JointValue {
@@ -543,6 +545,8 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
+  /** The file the command wrote (`export_step`), to save. */
+  export: { name: string; text: string } | null;
 }
 
 /** Apply `command` in the kernel, and get back what to show now. */

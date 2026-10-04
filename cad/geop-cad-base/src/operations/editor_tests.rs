@@ -1428,3 +1428,47 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
     let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(sent, ["screw10"]);
 }
+
+/// "Download STEP" writes the part shown; dropped next to a new program,
+/// the file is offered by a new "Import STEP" step, which brings its solid
+/// back, named after the step.
+#[test]
+fn a_part_exported_as_step_is_imported_back() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::ExportStep);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let export = update.export.expect("a file is written");
+    assert!(export.name.ends_with(".step"), "{}", export.name);
+    assert!(export.text.contains("MANIFOLD_SOLID_BREP"));
+
+    let files = std::collections::BTreeMap::from([("box.step".to_string(), Some(export.text))]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("imported.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New {
+        kind: "import_step".into(),
+    });
+    let step = update.step.expect("a step is edited");
+    assert_eq!(step.label, "Import STEP");
+    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen from a list");
+    };
+    assert!(options.iter().any(|o| o.value == "box.step"), "{options:?}");
+    let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
+    assert!(update.step.unwrap().error.is_none());
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let id = editor.program().steps.last().unwrap().id.clone();
+    let solids: Vec<String> = update
+        .scene
+        .expect("the scene changed")
+        .structure
+        .into_iter()
+        .filter(|item| item.kind == crate::editor::StructureKind::Solid)
+        .map(|item| item.name)
+        .collect();
+    assert_eq!(solids, vec![format!("import({id},s0)")]);
+}
