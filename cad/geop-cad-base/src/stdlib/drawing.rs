@@ -176,14 +176,11 @@ impl Drawing {
         self.origin
     }
 
-    /// The sketch, on `plane`, solved.
-    pub fn on(mut self, plane: EntityRef) -> GeopResult<AddSketchArgs> {
-        let report = self.sketch.solve()?;
-        if !report.converged {
-            return Err(GeopError::new(format!(
-                "a standard part's sketch does not solve: {report:?}"
-            )));
-        }
+    /// The sketch, on `plane`: drawn where its dimensions put it, so it
+    /// needs no solving — and a build with the parameters as defined then
+    /// solves none (see `AddSketch`), which is what keeps a large profile, a
+    /// rack's teeth, cheap to place.
+    pub fn on(self, plane: EntityRef) -> GeopResult<AddSketchArgs> {
         Ok(AddSketchArgs {
             plane: Some(plane),
             sketch: self.sketch,

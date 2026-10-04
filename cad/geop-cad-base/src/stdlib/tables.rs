@@ -523,19 +523,26 @@ pub fn racks() -> Table {
     )
 }
 
-/// GT2 timing pulleys for a 6 mm belt, of `z` teeth: bore `d`, flange
-/// diameter `df` and thickness `t`, hub diameter `dh` (less than the
-/// flanges') and length `lh`, toothed width `w`.
-pub fn gt2_pulleys() -> Table {
-    Table::of(
-        &["z", "d", "df", "dh", "lh", "t", "w"],
-        &[
-            ("16T", [16.0, 5.0, 13.0, 12.0, 6.0, 1.0, 7.0]),
-            ("20T", [20.0, 5.0, 16.0, 15.0, 7.0, 1.0, 7.0]),
-            ("36T", [36.0, 8.0, 26.0, 18.0, 7.0, 1.0, 7.0]),
-        ],
-        "20T",
-    )
+/// GT2 timing pulleys of `z` teeth, by bore: bore `d`, hub diameter `dh`
+/// and length `lh` — rows `20T-5`, a 20-tooth pulley bored 5.
+pub fn gt2_pulleys(z: usize) -> Table {
+    let (rows, selected): (&[(&str, [f64; 3])], _) = match z {
+        16 => (&[("16T-5", [5.0, 12.0, 6.0])], "16T-5"),
+        20 => (
+            &[
+                ("20T-5", [5.0, 15.0, 7.0]),
+                ("20T-6.35", [6.35, 15.0, 7.0]),
+                ("20T-8", [8.0, 15.0, 7.0]),
+            ],
+            "20T-5",
+        ),
+        36 => (
+            &[("36T-6.35", [6.35, 18.0, 7.0]), ("36T-8", [8.0, 18.0, 7.0])],
+            "36T-8",
+        ),
+        _ => (&[], ""),
+    };
+    Table::of(&["d", "dh", "lh"], rows, selected)
 }
 
 /// Shaft collars after DIN 705 A: bore `d`, outside `D`, width `b`, set
@@ -570,6 +577,38 @@ pub fn flange_couplings() -> Table {
             ("8x12", [8.0, 12.0, 22.0, 35.0, 30.0, 10.0]),
         ],
         "5x8",
+    )
+}
+
+/// Miniature linear guide rails, MGN series: width `W` and height `H`.
+pub fn linear_rails() -> Table {
+    Table::of(
+        &["W", "H"],
+        &[("MGN9", [9.0, 6.5]), ("MGN12", [12.0, 8.0])],
+        "MGN12",
+    )
+}
+
+/// Miniature linear guide carriages, MGN series, `C` the standard block and
+/// `H` the long one: block width `W`, length `L`, height `H` and clearance
+/// `H1` over the rail's bottom, the rail's width `WR` and height `HR`, the
+/// mounting holes `B` apart across and `C` along, thread `M`.
+pub fn linear_carriages() -> Table {
+    Table::of(
+        &["W", "L", "H", "H1", "WR", "HR", "B", "C", "M"],
+        &[
+            ("MGN9C", [20.0, 28.9, 10.0, 2.0, 9.0, 6.5, 15.0, 10.0, 2.0]),
+            ("MGN9H", [20.0, 39.9, 10.0, 2.0, 9.0, 6.5, 15.0, 16.0, 2.0]),
+            (
+                "MGN12C",
+                [27.0, 34.7, 13.0, 3.0, 12.0, 8.0, 20.0, 15.0, 3.0],
+            ),
+            (
+                "MGN12H",
+                [27.0, 45.4, 13.0, 3.0, 12.0, 8.0, 20.0, 20.0, 3.0],
+            ),
+        ],
+        "MGN12C",
     )
 }
 

@@ -103,9 +103,10 @@ const MIN_TRACED_LEGS: usize = 8;
 /// and decides how wide the enclosure is, not whether it holds.
 const TRACE_DRIFT: f64 = 1e-5;
 
-/// The most pieces a marched stride is split into while refining a traced
-/// curve's fit: the budget `TRACE_DRIFT` is pursued with.
-const MAX_TRACE_PIECES: usize = 32;
+/// The most legs a traced curve's fit is refined to: the budget
+/// `TRACE_DRIFT` is pursued with, each leg a corrector and a row of the
+/// interpolation's system.
+const MAX_REFINED_LEGS: usize = 256;
 
 /// How many marching steps to spend on a full revolution of the tighter of
 /// the two surfaces' curvature. A step has to be short compared to how fast
@@ -313,9 +314,18 @@ fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Opti
 /// coincident (see [`find_coincident_pair`] instead), or only touches at an
 /// edge endpoint that's already a vertex (a normal shared corner, not an
 /// interior piercing).
+///
+/// `settled` are the pairs already found to have no piercing, which are
+/// not asked again, and every pair found so is added to it. That stays
+/// true while the search goes on: splitting an edge at a piercing keeps
+/// its id for the first piece, and a piece of a curve crosses nothing the
+/// whole did not — so the search is not started over from every pair
+/// after every split, which made a boolean of many crossings, a gear's
+/// teeth or a pulley's grooves, quadratic in them.
 #[allow(clippy::type_complexity)]
 fn find_piercing_crossing<S: Scalar>(
     model: &Model<S>,
+    settled: &mut std::collections::HashSet<(EdgeId, FaceId)>,
     edge_solid: Body,
     face_solid: Body,
     max_solutions: usize,
@@ -330,7 +340,9 @@ fn find_piercing_crossing<S: Scalar>(
 
     for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         for face_id in model.body_faces(face_solid).with_context(&ctx)? {
-            if edge_is_boundary_of_face(model, edge_id, face_id) {
+            if settled.contains(&(edge_id, face_id))
+                || edge_is_boundary_of_face(model, edge_id, face_id)
+            {
                 continue;
             }
 
@@ -413,6 +425,7 @@ fn find_piercing_crossing<S: Scalar>(
                 let vertex = find_vertex_at_point(model, &point);
                 return Ok(Some((edge_id, t, vertex, point, face_id)));
             }
+            settled.insert((edge_id, face_id));
         }
     }
     Ok(None)
@@ -433,8 +446,10 @@ fn split_piercing_crossings<S: Scalar>(
         ))
     };
 
+    let mut settled = std::collections::HashSet::new();
     while let Some((edge_id, t, vertex, point, face_id)) = find_piercing_crossing(
         part.topology(),
+        &mut settled,
         edge_solid,
         face_solid,
         max_solutions,
@@ -1681,6 +1696,7 @@ fn trace_one_side<S: Scalar>(
             let strides = points.len() - 1;
             let mut pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
             let marched = (&points, &params);
+            let mut best: Option<(NurbCurve<S, 4>, S)> = None;
             let curve = loop {
                 let (points, params) = marched;
                 let mut dense = vec![points[0]];
@@ -1719,10 +1735,21 @@ fn trace_one_side<S: Scalar>(
                     .iter()
                     .flat_map(|p| (0..3).map(move |k| p[k].width()))
                     .fold(S::ZERO, |a, w| if w.definitely_greater(a) { w } else { a });
-                if pieces >= MAX_TRACE_PIECES || !width.definitely_greater(S::from_f64(TRACE_DRIFT))
+                // Finer legs only help while the drift is what makes the
+                // curve wide: once halving them no longer halves the width,
+                // the width is the points' own, and the coarser fit is kept.
+                let halved = best
+                    .as_ref()
+                    .is_none_or(|(_, before)| before.definitely_greater(width.mul(S::TWO)));
+                if !halved {
+                    break best.expect("a fit to compare with").0;
+                }
+                if 2 * legs > MAX_REFINED_LEGS
+                    || !width.definitely_greater(S::from_f64(TRACE_DRIFT))
                 {
                     break curve;
                 }
+                best = Some((curve, width));
                 pieces *= 2;
             };
             let edge = part

@@ -36,9 +36,9 @@ use geop_ops::{
     EntityRef, ORIGIN,
     parameters::{Material, Parameter, ParameterKind, Parameters, Row},
 };
-use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
+use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_pattern::{CircularPatternArgs, Direction, LinearPatternArgs, Spacing};
+use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
 use super::{
     StandardPart,
@@ -218,77 +218,83 @@ pub fn spur_gear() -> GeopResult<StandardPart> {
     })
 }
 
+/// The most teeth a rack of the library has.
+pub const RACK_TEETH: usize = 30;
+
 /// A gear rack of module `size.m`, `size.b` wide, its pitch line `size.h`
-/// above its back, running `length` along `z` from the `xy` plane: its
-/// teeth face `+y`, its pitch plane is the `xz` plane, and it is centred
-/// on it across `x`. A bar up to the tip line, with a straight-sided gap
-/// — 20° to the teeth's centre lines, `π m / 2` wide on the pitch line —
-/// patterned every `π m` along it from `z = 0` and cut away, every gap
-/// reaching past both sides. Its datums: `axis`, the `z` axis on the pitch
-/// plane — a slider joint's connector — `pitch`, and `back`.
+/// above its back, with `teeth` teeth — at most [`RACK_TEETH`] — running
+/// `teeth · π m` along `z` from the `xy` plane: its teeth face `+y`, its
+/// pitch plane is the `xz` plane, and it is centred on it across `x`. The
+/// teeth are straight-sided, 20° to their centre lines, `π m / 2` thick on
+/// the pitch line, the first centred half a pitch up from `z = 0`.
+///
+/// One profile of all [`RACK_TEETH`] teeth and half a gap at either end,
+/// extruded across, then cut to length — through the middle of a gap — by
+/// a box: a single boolean, where cutting a gap per tooth would split the
+/// rack's long edges dozens of times over. Its datums: `axis`, the `z` axis
+/// on the pitch plane — a slider joint's connector — `pitch`, `back`, and
+/// `end`.
 pub fn rack() -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: steel(),
         color: Some("#9aa0a8".into()),
-        values: vec![size(tables::racks()), number("length", "100", 10.0, 1000.0)],
+        values: vec![
+            size(tables::racks()),
+            number("teeth", "20", 1.0, RACK_TEETH as f64),
+        ],
     };
     let (m, b, h) = (col("m"), col("b"), col("h"));
     // In the profile plane: `x` up the teeth, along `y`; `y` along `z`.
-    let mut bar = Drawing::new(&program.parameters)?;
-    bar.polygon(&[
-        [format!("-{h}"), "0".into()],
-        [m.clone(), "0".into()],
-        [m.clone(), "length".into()],
-        [format!("-{h}"), "length".into()],
-    ])?;
+    let half = |height: &str| format!("pi * {m} / 4 - {height} * tan(20)");
+    let (root, tip) = (format!("-1.25 * {m}"), m.clone());
+    let along = |k: usize, sign: &str, height: &str| {
+        format!("{}.5 * pi * {m} {sign} ({})", k, half(height))
+    };
+    let mut corners = vec![
+        [format!("-{h}"), "0".to_string()],
+        [root.clone(), "0".into()],
+    ];
+    for k in 0..=RACK_TEETH {
+        corners.push([root.clone(), along(k, "-", &root)]);
+        corners.push([tip.clone(), along(k, "-", &tip)]);
+        corners.push([tip.clone(), along(k, "+", &tip)]);
+        corners.push([root.clone(), along(k, "+", &root)]);
+    }
+    let end = format!("{} * pi * {m}", RACK_TEETH + 1);
+    corners.push([root.clone(), end.clone()]);
+    corners.push([format!("-{h}"), end]);
+    let mut profile = Drawing::new(&program.parameters)?;
+    profile.polygon(&corners)?;
     let across = |length: String| Extents {
         symmetric: true,
         ..Extents::blind(length)
     };
     extrude(
         &mut program,
-        "bar",
-        "bar_outline",
-        (bar, profile_plane()),
+        "teeth",
+        "profile",
+        (profile, profile_plane()),
         across(b.clone()),
         Combine::NewBody,
     )?;
-    let half = |height: &str| format!("pi * {m} / 4 + {height} * tan(20)");
-    let (root, past) = (format!("-1.25 * {m}"), format!("1.5 * {m}"));
-    let mut gap = Drawing::new(&program.parameters)?;
-    gap.polygon(&[
-        [root.clone(), format!("-({})", half(&root))],
-        [past.clone(), format!("-({})", half(&past))],
-        [past.clone(), half(&past)],
-        [root.clone(), half(&root)],
+    let mut length = Drawing::new(&program.parameters)?;
+    length.polygon(&[
+        [format!("-{h} - {m}"), format!("-{m}")],
+        [format!("2 * {m}"), format!("-{m}")],
+        [format!("2 * {m}"), format!("teeth * pi * {m}")],
+        [format!("-{h} - {m}"), format!("teeth * pi * {m}")],
     ])?;
     extrude(
         &mut program,
-        "gap",
-        "gap_outline",
-        (gap, profile_plane()),
+        "rack",
+        "length",
+        (length, profile_plane()),
         across(format!("{b} + 2 * {m}")),
-        Combine::NewBody,
-    )?;
-    program.push(
-        "teeth",
-        LinearPatternArgs {
-            bodies: vec![EntityRef::Solid {
-                name: "extrude(gap)".into(),
-            }],
-            first: Direction {
-                along: Some(z_axis()),
-                reversed: false,
-                count: format!("floor(length / (pi * {m})) + 1").into(),
-                spacing: Spacing::step(format!("pi * {m}")),
-            },
-            second: None,
-            combine: Combine::Difference {
-                target: "extrude(bar)".into(),
-            },
+        Combine::Intersection {
+            target: "extrude(teeth)".into(),
         },
-    );
+    )?;
     axis_datum(&mut program);
     let xz = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y));
     offset_datum(&mut program, "pitch", xz(), "0");
@@ -311,40 +317,43 @@ fn aluminium() -> Option<Material> {
     })
 }
 
-/// A GT2 timing pulley for a 6 mm belt, of `size.z` teeth: a hub `dh`
-/// across and `lh` long from its end on the `xy` plane, then the teeth `w`
-/// wide between two flanges `df` across and `t` thick, bored `d` through.
+/// The radius of a GT2 pulley's round groove, one per tooth of the belt.
+const GT2_GROOVE: f64 = 0.555;
+
+/// How deep a GT2 pulley's groove is, from its outside diameter.
+const GT2_DEPTH: f64 = 0.76;
+
+/// A GT2 timing pulley of `z` teeth for a 6 mm belt: a hub `dh` across and
+/// `lh` long from its end on the `xy` plane, then the teeth `w` wide
+/// between two flanges `df` across and `t` thick, bored `d` through — `d`,
+/// `dh` and `lh` from its table, by bore.
 ///
-/// The teeth are simplified: a ring of the outside diameter — the pitch
-/// diameter `2z / π` less twice the belt's pitch line offset, 0.254 —
-/// with a round groove 0.555 in radius and 0.76 deep for each tooth of
-/// the belt, cut by a pin patterned round it; the ring is then joined to
-/// the hub and flanges, turned in one profile. Its datums: `axis`, `end`,
-/// and the plane `belt` through the middle of the belt, on which the
-/// sketch `pitch` draws its pitch circle.
-pub fn gt2_pulley() -> GeopResult<StandardPart> {
+/// The teeth are simplified: the outside diameter is the pitch diameter
+/// `2z / π` less twice the belt's pitch line offset, 0.254, and a round
+/// groove [`GT2_GROOVE`] in radius and [`GT2_DEPTH`] deep is cut for each
+/// tooth of the belt. Their count fixes the outline, so each count is a
+/// family: a ring of that outline, drawn in one sketch, joined to the hub
+/// and flanges turned in one profile — one boolean. Its datums: `axis`,
+/// `end`, and the plane `belt` through the middle of the belt, on which
+/// the sketch `pitch` draws its pitch circle.
+fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: aluminium(),
         color: Some("#c8ccd2".into()),
-        values: vec![size(tables::gt2_pulleys())],
+        values: vec![size(bores)],
     };
-    let (z, d, df, dh, lh, t, w) = (
-        col("z"),
-        col("d"),
-        col("df"),
-        col("dh"),
-        col("lh"),
-        col("t"),
-        col("w"),
-    );
-    let outside = format!("({z} * 2 / pi - 0.508) / 2");
-    let core = format!("{outside} - 1");
-    let (bore, hub, flange) = (format!("{d} / 2"), format!("{dh} / 2"), format!("{df} / 2"));
+    let (d, dh, lh) = (col("d"), col("dh"), col("lh"));
+    let (t, w) = (1.0, 7.0);
+    let pitch = 2.0 * z as f64 / std::f64::consts::PI;
+    let outside = (pitch - 0.508) / 2.0;
+    let flange = format!("{}", outside + 2.0);
+    let core = format!("{}", outside - 1.0);
+    let (bore, hub) = (format!("{d} / 2"), format!("{dh} / 2"));
     let (inner_face, outer_face, end) = (
         format!("{lh} + {t}"),
-        format!("{lh} + {t} + {w}"),
-        format!("{lh} + 2 * {t} + {w}"),
+        format!("{lh} + {}", t + w),
+        format!("{lh} + {}", 2.0 * t + w),
     );
     let zero = || "0".to_string();
     let mut profile = Drawing::new(&program.parameters)?;
@@ -370,68 +379,58 @@ pub fn gt2_pulley() -> GeopResult<StandardPart> {
     )?;
 
     // The ring runs from the middle of one flange to the middle of the
-    // other, so that none of its faces lies on one of theirs.
-    plane_datum(&mut program, "ring_floor", &format!("{lh} + {t} / 2"));
+    // other, so that none of its faces lies on one of theirs: round, per
+    // tooth, a land on the outside circle and a groove, drawn as two arcs
+    // meeting at its bottom so that each is less than half a circle.
+    plane_datum(&mut program, "ring_floor", &format!("{lh} + {}", t / 2.0));
+    let centre = outside - GT2_DEPTH + GT2_GROOVE;
+    let half =
+        ((outside.powi(2) + centre.powi(2) - GT2_GROOVE.powi(2)) / (2.0 * outside * centre)).acos();
     let mut ring = Drawing::new(&program.parameters)?;
-    let centre = ring.origin();
-    ring.circle(centre, &format!("2 * ({outside})"))?;
-    ring.circle(centre, &format!("2 * ({outside}) - 3"))?;
+    let at = |r: f64, a: f64| [format!("{}", r * a.cos()), format!("{}", r * a.sin())];
+    let mut groove_ends = Vec::new();
+    for k in 0..z {
+        // Half a tooth round from `x`: no groove meets the seams of the
+        // turned flanks, which lie on the axes.
+        let a = 2.0 * std::f64::consts::PI * (k as f64 + 0.5) / z as f64;
+        let [x0, y0] = at(outside, a - half);
+        let [xb, yb] = at(outside - GT2_DEPTH, a);
+        let [x1, y1] = at(outside, a + half);
+        groove_ends.push([
+            ring.point(x0, y0)?,
+            ring.point(xb, yb)?,
+            ring.point(x1, y1)?,
+        ]);
+    }
+    let (groove, land) = (format!("{GT2_GROOVE}"), format!("{outside}"));
+    for k in 0..z {
+        let [start, bottom, end] = groove_ends[k];
+        ring.arc(start, bottom, &groove, false)?;
+        ring.arc(bottom, end, &groove, false)?;
+        ring.arc(end, groove_ends[(k + 1) % z][0], &land, true)?;
+    }
+    let centre_point = ring.origin();
+    ring.circle(centre_point, &format!("{}", 2.0 * (outside - 1.5)))?;
     extrude(
         &mut program,
         "ring",
         "ring_outline",
         (ring, EntityRef::datum("ring_floor")),
-        Extents::blind(format!("{w} + {t}")),
-        Combine::NewBody,
+        Extents::blind(t + w),
+        Combine::Union {
+            target: "revolve(body)".into(),
+        },
     )?;
-    // A groove reaches past both ends of the ring.
-    plane_datum(&mut program, "belt", &format!("{lh} + {t} + {w} / 2"));
-    let mut pin = Drawing::new(&program.parameters)?;
-    let centre = pin.point(format!("{outside} - 0.205"), "0")?;
-    pin.circle(centre, "1.11")?;
-    extrude(
-        &mut program,
-        "groove",
-        "groove_outline",
-        (pin, EntityRef::datum("belt")),
-        Extents {
-            symmetric: true,
-            ..Extents::blind(format!("{w} + 2 * {t}"))
-        },
-        Combine::NewBody,
-    )?;
-    program.push(
-        "grooves",
-        CircularPatternArgs {
-            bodies: vec![EntityRef::Solid {
-                name: "extrude(groove)".into(),
-            }],
-            axis: Some(z_axis()),
-            reversed: false,
-            count: z.as_str().into(),
-            angle: Spacing::extent(360.0),
-            combine: Combine::Difference {
-                target: "extrude(ring)".into(),
-            },
-        },
-    );
-    program.push(
-        "pulley",
-        BooleanArgs {
-            a: "revolve(body)".into(),
-            b: "circular_pattern(grooves)".into(),
-            op: BooleanOp::Union,
-        },
-    );
 
     axis_datum(&mut program);
     plane_datum(&mut program, "end", "0");
-    let mut pitch = Drawing::new(&program.parameters)?;
-    let centre = pitch.origin();
-    pitch.circle(centre, &format!("{z} * 2 / pi"))?;
-    program.push("pitch", pitch.on(EntityRef::datum("belt"))?);
+    plane_datum(&mut program, "belt", &format!("{lh} + {}", t + w / 2.0));
+    let mut circle = Drawing::new(&program.parameters)?;
+    let centre_point = circle.origin();
+    circle.circle(centre_point, &format!("{pitch}"))?;
+    program.push("pitch", circle.on(EntityRef::datum("belt"))?);
     Ok(StandardPart {
-        file: "std:gt2_pulley.geop",
+        file,
         title: "GT2 timing pulley, 6 mm belt",
         designation: "GT2 pulley",
         base: "end",
@@ -440,9 +439,23 @@ pub fn gt2_pulley() -> GeopResult<StandardPart> {
     })
 }
 
+pub fn gt2_pulley_16() -> GeopResult<StandardPart> {
+    gt2_pulley(16, "std:gt2_pulley_16t.geop", tables::gt2_pulleys(16))
+}
+
+pub fn gt2_pulley_20() -> GeopResult<StandardPart> {
+    gt2_pulley(20, "std:gt2_pulley_20t.geop", tables::gt2_pulleys(20))
+}
+
+pub fn gt2_pulley_36() -> GeopResult<StandardPart> {
+    gt2_pulley(36, "std:gt2_pulley_36t.geop", tables::gt2_pulleys(36))
+}
+
 /// A shaft collar after DIN 705 A: a ring bored `d`, `D` across and `b`
 /// wide, standing on the `xy` plane, with a set screw hole `ds` across
-/// through its wall along `+x`, half way up — where its thread goes.
+/// through its wall along `+x`, half way up: the thread's nominal
+/// diameter. The boolean cutting it names the hole's faces after what it
+/// crossed, so they are not listed as threaded.
 pub fn shaft_collar() -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
@@ -470,7 +483,7 @@ pub fn shaft_collar() -> GeopResult<StandardPart> {
     // `+x` from inside the bore.
     let mut hole = Drawing::new(&program.parameters)?;
     let centre = hole.point("0", format!("{b} / 2"))?;
-    let circle = hole.circle(centre, &col("ds"))?;
+    hole.circle(centre, &col("ds"))?;
     extrude(
         &mut program,
         "set_screw",
@@ -488,16 +501,13 @@ pub fn shaft_collar() -> GeopResult<StandardPart> {
     )?;
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
-    let threaded = ["", "#1", "#2", "#3"]
-        .map(|piece| format!("extrude(set_screw,set_screw_hole,{circle}{piece})"))
-        .to_vec();
     Ok(StandardPart {
         file: "std:shaft_collar.geop",
         title: "Shaft collar with set screw, DIN 705 A",
         designation: "DIN 705 A",
         base: "base",
         program,
-        threaded,
+        threaded: Vec::new(),
     })
 }
 

@@ -1,18 +1,25 @@
 //! Purchased components as envelopes: ball bearings, T-slot aluminium
-//! extrusions and a NEMA 17 stepper motor. Each stands on the `xy` plane
-//! around the `z` axis — its datums `axis` and, for the face it is mounted
-//! by, `side`, `end` or `face`.
+//! extrusions, a NEMA 17 stepper motor, miniature linear guides and hobby
+//! servos. Each stands on the `xy` plane around the `z` axis, or runs along
+//! it — its datums `axis` and, for the face it is mounted by, `side`,
+//! `end`, `face`, `base`, `top` or `mount`.
 
-use geop_core_math::geop_error::GeopResult;
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::{DatumComponent, FrameAxis},
+};
 use geop_ops::parameters::Material;
 use geop_ops::parameters::{Parameter, ParameterKind, Parameters};
+use geop_ops::{EntityRef, ORIGIN};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 
 use super::{
     StandardPart,
     drawing::Drawing,
-    steps::{Around, axis_datum, col, extrude, outline_plane, plane_datum, revolve, size},
+    steps::{
+        Around, axis_datum, col, extrude, offset_datum, outline_plane, plane_datum, revolve, size,
+    },
     tables,
 };
 use crate::Program;
@@ -293,4 +300,376 @@ pub fn nema17() -> GeopResult<StandardPart> {
         program,
         threaded: Vec::new(),
     })
+}
+
+/// The `xz` plane: what a part running along `z` sits on, beside its axis.
+fn xz_plane() -> EntityRef {
+    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y))
+}
+
+fn steel() -> Option<Material> {
+    Some(Material {
+        name: "Steel".into(),
+        density: 7850.0,
+    })
+}
+
+/// A miniature linear guide rail, MGN9 or MGN12 by its size, `length`
+/// long up `z` from the `xy` plane, standing on the `xz` plane — its datum
+/// `base` — centred on `x`: a `W` x `H` section with a groove down either
+/// side, where the carriage's balls run. Its datum `axis` is the `z` axis,
+/// along the middle of its bottom: a [`linear_carriage`] of the same size
+/// slides on it by a slider joint between the two `axis` datums. The
+/// mounting holes are not modelled.
+pub fn linear_rail() -> GeopResult<StandardPart> {
+    let mut program = Program::new();
+    program.parameters = Parameters {
+        material: steel(),
+        color: Some("#a9aeb6".into()),
+        values: vec![
+            size(tables::linear_rails()),
+            Parameter {
+                name: "length".into(),
+                kind: ParameterKind::Number {
+                    expression: "200".into(),
+                    min: Some(20.0),
+                    max: Some(1000.0),
+                },
+            },
+        ],
+    };
+    let (w, h) = (col("W"), col("H"));
+    let side = format!("{w} / 2");
+    let groove = format!("{w} / 2 - 0.8");
+    let (low, high) = (format!("{h} / 2"), format!("{h} / 2 + 1.2"));
+    let neg = |s: &str| format!("-({s})");
+    let zero = || "0".to_string();
+    let mut outline = Drawing::new(&program.parameters)?;
+    outline.polygon(&[
+        [neg(&side), zero()],
+        [side.clone(), zero()],
+        [side.clone(), low.clone()],
+        [groove.clone(), low.clone()],
+        [groove.clone(), high.clone()],
+        [side.clone(), high.clone()],
+        [side.clone(), h.clone()],
+        [neg(&side), h.clone()],
+        [neg(&side), high.clone()],
+        [neg(&groove), high],
+        [neg(&groove), low.clone()],
+        [neg(&side), low],
+    ])?;
+    extrude(
+        &mut program,
+        "rail",
+        "section",
+        (outline, outline_plane()),
+        Extents::blind("length"),
+        Combine::NewBody,
+    )?;
+    axis_datum(&mut program);
+    offset_datum(&mut program, "base", xz_plane(), "0");
+    offset_datum(&mut program, "top", xz_plane(), &h);
+    plane_datum(&mut program, "end", "0");
+    Ok(StandardPart {
+        file: "std:linear_rail.geop",
+        title: "Miniature linear guide rail, MGN series",
+        designation: "Linear rail",
+        base: "base",
+        program,
+        threaded: Vec::new(),
+    })
+}
+
+/// The carriage of a miniature linear guide as an envelope: a block `W`
+/// wide and `L` long, from `H1` above the rail's bottom to `H` — its top,
+/// the datum `top` — centred on the origin along `z`, with a channel over
+/// the rail and four holes `M` across and `M` + 1 deep in its top, `B`
+/// apart across and `C` along. It is drawn where it sits on its rail at
+/// `z = 0`: its datum `axis`, the `z` axis, is the rail's, and a slider
+/// joint between the two moves it along.
+pub fn linear_carriage() -> GeopResult<StandardPart> {
+    let mut program = Program::new();
+    program.parameters = Parameters {
+        material: steel(),
+        color: Some("#8e949c".into()),
+        values: vec![size(tables::linear_carriages())],
+    };
+    let (w, h, h1, wr, hr) = (col("W"), col("H"), col("H1"), col("WR"), col("HR"));
+    let side = format!("{w} / 2");
+    let channel = format!("{wr} / 2 + 0.5");
+    let roof = format!("{hr} + 0.3");
+    let neg = |s: &str| format!("-({s})");
+    let mut outline = Drawing::new(&program.parameters)?;
+    outline.polygon(&[
+        [neg(&side), h1.clone()],
+        [neg(&channel), h1.clone()],
+        [neg(&channel), roof.clone()],
+        [channel.clone(), roof],
+        [channel, h1.clone()],
+        [side.clone(), h1],
+        [side.clone(), h.clone()],
+        [neg(&side), h.clone()],
+    ])?;
+    extrude(
+        &mut program,
+        "block",
+        "section",
+        (outline, outline_plane()),
+        Extents {
+            symmetric: true,
+            ..Extents::blind(col("L"))
+        },
+        Combine::NewBody,
+    )?;
+    // The holes, drawn on the top — whose sketch runs along `x` and `-z` —
+    // and drilled down into it.
+    offset_datum(&mut program, "top", xz_plane(), &h);
+    let (b, c) = (format!("{} / 2", col("B")), format!("{} / 2", col("C")));
+    let mut target = "extrude(block)".to_string();
+    for (i, [x, y]) in [
+        [b.clone(), c.clone()],
+        [neg(&b), c.clone()],
+        [neg(&b), neg(&c)],
+        [b.clone(), neg(&c)],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut hole = Drawing::new(&program.parameters)?;
+        let centre = hole.point(x, y)?;
+        hole.circle(centre, &col("M"))?;
+        let id = format!("hole{}", i + 1);
+        extrude(
+            &mut program,
+            &id,
+            &format!("{id}_sketch"),
+            (hole, EntityRef::datum("top")),
+            Extents {
+                reversed: true,
+                ..Extents::blind(format!("{} + 1", col("M")))
+            },
+            Combine::Difference { target },
+        )?;
+        target = format!("extrude({id})");
+    }
+    axis_datum(&mut program);
+    Ok(StandardPart {
+        file: "std:linear_carriage.geop",
+        title: "Miniature linear guide carriage, MGN series",
+        designation: "Linear carriage",
+        base: "top",
+        program,
+        threaded: Vec::new(),
+    })
+}
+
+/// The dimensions of a hobby servo, in millimetres, and its mass in grams.
+struct Servo {
+    /// The body: length along `x`, width along `y`, and how far it reaches
+    /// below and above the mounting tabs' underside.
+    length: f64,
+    width: f64,
+    below: f64,
+    above: f64,
+    /// How far the body's middle is from the output shaft, along `-x`.
+    offset: f64,
+    /// The tabs: their span along `x` and thickness.
+    tabs: f64,
+    tab: f64,
+    /// The mounting holes: how far apart along `x`, along `y` (0 for one
+    /// hole per tab), and across.
+    holes: f64,
+    pair: f64,
+    hole: f64,
+    /// The round boss the shaft stands on and the splined shaft: diameter
+    /// and height each.
+    boss: [f64; 2],
+    spline: [f64; 2],
+    grams: f64,
+}
+
+/// A hobby servo as an envelope: its body standing up `z` around the
+/// output shaft, which is the `z` axis — the datum `axis`, a revolute
+/// joint's connector — with the mounting tabs' underside on the `xy`
+/// plane, the datum `mount`, and the top of the splined shaft the datum
+/// `output`. The body and tabs are one side profile extruded across, the
+/// boss and shaft one profile turned on its top; its material weighs what
+/// the servo does.
+fn servo(
+    dims: &Servo,
+    row: &'static str,
+    file: &'static str,
+    title: &'static str,
+) -> GeopResult<StandardPart> {
+    let Servo {
+        length,
+        width,
+        below,
+        above,
+        offset,
+        tabs,
+        tab,
+        holes,
+        pair,
+        hole,
+        boss,
+        spline,
+        grams,
+    } = *dims;
+    let volume = length * width * (below + above)
+        + (tabs - length) * width * tab
+        + std::f64::consts::PI / 4.0 * (boss[0].powi(2) * boss[1] + spline[0].powi(2) * spline[1]);
+    let mut program = Program::new();
+    program.parameters = Parameters {
+        material: Some(Material {
+            name: format!("Plastic, as heavy as the {row} ({grams} g)"),
+            density: grams * 1e6 / volume,
+        }),
+        color: Some("#2b5fa8".into()),
+        values: vec![size(tables::Table {
+            columns: &[],
+            rows: vec![(row.to_string(), Vec::new())],
+            selected: row,
+        })],
+    };
+    // Side on, in the `xz` plane — whose sketch runs along `x` and `-z`.
+    let n = |v: f64| format!("{v}");
+    let (x0, x1) = (-offset - length / 2.0, -offset + length / 2.0);
+    let (f0, f1) = (-offset - tabs / 2.0, -offset + tabs / 2.0);
+    let mut side = Drawing::new(&program.parameters)?;
+    side.polygon(&[
+        [n(x0), n(below)],
+        [n(x1), n(below)],
+        [n(x1), "0".into()],
+        [n(f1), "0".into()],
+        [n(f1), n(-tab)],
+        [n(x1), n(-tab)],
+        [n(x1), n(-above)],
+        [n(x0), n(-above)],
+        [n(x0), n(-tab)],
+        [n(f0), n(-tab)],
+        [n(f0), "0".into()],
+        [n(x0), "0".into()],
+    ])?;
+    extrude(
+        &mut program,
+        "body",
+        "side",
+        (side, xz_plane()),
+        Extents {
+            symmetric: true,
+            ..Extents::blind(width)
+        },
+        Combine::NewBody,
+    )?;
+    // The boss starts 1 inside the body, so that none of its faces lies on
+    // the body's top.
+    let top = above + boss[1] + spline[1];
+    let mut shaft = Drawing::new(&program.parameters)?;
+    let lines = shaft.polygon(&[
+        ["0".into(), n(above - 1.0)],
+        [n(boss[0] / 2.0), n(above - 1.0)],
+        [n(boss[0] / 2.0), n(above + boss[1])],
+        [n(spline[0] / 2.0), n(above + boss[1])],
+        [n(spline[0] / 2.0), n(top)],
+        ["0".into(), n(top)],
+    ])?;
+    revolve(
+        &mut program,
+        "shaft",
+        "profile",
+        shaft,
+        Around::Line(lines[5]),
+        Combine::Union {
+            target: "extrude(body)".into(),
+        },
+    )?;
+    let mut target = "revolve(shaft)".to_string();
+    let ys: &[f64] = if pair == 0.0 {
+        &[0.0]
+    } else {
+        &[-pair / 2.0, pair / 2.0]
+    };
+    let mut k = 0;
+    for x in [-offset - holes / 2.0, -offset + holes / 2.0] {
+        for &y in ys {
+            k += 1;
+            let mut circle = Drawing::new(&program.parameters)?;
+            let centre = circle.point(n(x), n(y))?;
+            circle.circle(centre, &n(hole))?;
+            let id = format!("hole{k}");
+            program.push(format!("{id}_sketch"), circle.on(outline_plane())?);
+            program.push(
+                &id,
+                ExtrudeArgs {
+                    sketch: format!("{id}_sketch"),
+                    extent: Extents {
+                        symmetric: true,
+                        ..Extents::blind(4.0 * tab)
+                    },
+                    face: false,
+                    combine: Combine::Difference { target },
+                },
+            );
+            target = format!("extrude({id})");
+        }
+    }
+    axis_datum(&mut program);
+    plane_datum(&mut program, "mount", "0");
+    plane_datum(&mut program, "output", &n(top));
+    Ok(StandardPart {
+        file,
+        title,
+        designation: "Servo",
+        base: "mount",
+        program,
+        threaded: Vec::new(),
+    })
+}
+
+pub fn servo_sg90() -> GeopResult<StandardPart> {
+    servo(
+        &Servo {
+            length: 22.8,
+            width: 12.2,
+            below: 15.9,
+            above: 6.8,
+            offset: 5.4,
+            tabs: 32.2,
+            tab: 2.5,
+            holes: 27.8,
+            pair: 0.0,
+            hole: 2.0,
+            boss: [11.4, 4.0],
+            spline: [4.8, 3.2],
+            grams: 9.0,
+        },
+        "SG90",
+        "std:servo_sg90.geop",
+        "Micro servo SG90",
+    )
+}
+
+pub fn servo_mg996r() -> GeopResult<StandardPart> {
+    servo(
+        &Servo {
+            length: 40.7,
+            width: 19.7,
+            below: 27.0,
+            above: 10.0,
+            offset: 10.2,
+            tabs: 54.0,
+            tab: 2.5,
+            holes: 49.5,
+            pair: 10.0,
+            hole: 4.2,
+            boss: [18.0, 5.0],
+            spline: [5.8, 4.0],
+            grams: 55.0,
+        },
+        "MG996R",
+        "std:servo_mg996r.geop",
+        "Standard servo MG996R",
+    )
 }

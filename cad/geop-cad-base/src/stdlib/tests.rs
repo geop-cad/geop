@@ -4,7 +4,7 @@
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops::{
-    NoFiles, Part,
+    NoFiles, Part, RefId,
     parameters::{ParameterKind, number},
     part::ParamValue,
 };
@@ -46,14 +46,26 @@ fn expected(file: &str, value: impl Fn(&str) -> f64) -> [f64; 3] {
             0.0,
             value("width"),
         ],
-        "std:gt2_pulley.geop" => [
-            value("df") / 2.0,
-            0.0,
-            value("lh") + 2.0 * value("t") + value("w"),
-        ],
+        "std:gt2_pulley_16t.geop" | "std:gt2_pulley_20t.geop" | "std:gt2_pulley_36t.geop" => {
+            let teeth: f64 = file[15..17].parse().unwrap();
+            let outside = (2.0 * teeth / std::f64::consts::PI - 0.508) / 2.0;
+            [outside + 2.0, 0.0, value("lh") + 9.0]
+        }
         "std:shaft_collar.geop" => [value("D") / 2.0, 0.0, value("b")],
         "std:flange_coupling.geop" => [value("F") / 2.0, 0.0, value("L")],
-        "std:gear_rack.geop" => [(value("b") / 2.0).hypot(value("h")), 0.0, value("length")],
+        "std:gear_rack.geop" => [
+            (value("b") / 2.0).hypot(value("h")),
+            0.0,
+            value("teeth") * std::f64::consts::PI * value("m"),
+        ],
+        "std:linear_rail.geop" => [(value("W") / 2.0).hypot(value("H")), 0.0, value("length")],
+        "std:linear_carriage.geop" => [
+            (value("W") / 2.0).hypot(value("H")),
+            -value("L") / 2.0,
+            value("L") / 2.0,
+        ],
+        "std:servo_sg90.geop" => [(5.4f64 + 16.1).hypot(6.1), -15.9, 6.8 + 4.0 + 3.2],
+        "std:servo_mg996r.geop" => [(10.2f64 + 27.0).hypot(9.85), -27.0, 10.0 + 5.0 + 4.0],
         other => panic!("no dimensions are known for {other}"),
     }
 }
@@ -82,9 +94,19 @@ fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>,
             .map_err(|_| format!("has no datum {datum}"))?;
     }
     for face in &part.threaded {
-        built
-            .face_id(face)
-            .map_err(|_| format!("has no threaded face {face}"))?;
+        built.face_id(face).map_err(|_| {
+            // What the step that cut it did name, to compare.
+            let step = face.split(',').next().unwrap_or(face);
+            let step = step.split('(').nth(1).unwrap_or(step);
+            let mut named: Vec<&str> = built
+                .names()
+                .iter()
+                .filter(|(id, name)| matches!(id, RefId::Face(_)) && name.contains(step))
+                .map(|(_, name)| name)
+                .collect();
+            named.sort();
+            format!("has no threaded face {face}: its step named the faces {named:?}")
+        })?;
     }
     let inputs = program.inputs();
     let want = expected(part.file, |name| {
@@ -158,10 +180,16 @@ families_build! {
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
     spur_gears_build: "std:spur_gear.geop",
-    gt2_pulleys_build: "std:gt2_pulley.geop",
+    gt2_16t_pulleys_build: "std:gt2_pulley_16t.geop",
+    gt2_20t_pulleys_build: "std:gt2_pulley_20t.geop",
+    gt2_36t_pulleys_build: "std:gt2_pulley_36t.geop",
     shaft_collars_build: "std:shaft_collar.geop",
     flange_couplings_build: "std:flange_coupling.geop",
     gear_racks_build: "std:gear_rack.geop",
+    linear_rails_build: "std:linear_rail.geop",
+    linear_carriages_build: "std:linear_carriage.geop",
+    sg90_servos_build: "std:servo_sg90.geop",
+    mg996r_servos_build: "std:servo_mg996r.geop",
 }
 
 /// The programs of `part` at every size it offers: a row of its table, or
