@@ -293,11 +293,12 @@ fn mass_properties_are_placed() {
 /// Two long bars overlapping along most of their length, on the scale of
 /// millimetres a real part has: their intersection curves run 40 long, and
 /// are traced all the way.
+///
+/// With the trace's stride fixed at 0.1 these took 400 steps each, and the
+/// cubic fitted through the marched points had so many spans that the
+/// overlap's volume, integrated along them, came out a thousand times
+/// wider than this test allows. The stride now scales with the faces.
 #[test]
-#[ignore = "known boolean defect: with a 200-step trace budget the first 40-long trace stopped at x=29.9; \
-with a larger budget (now 1000) it completes, but a later trace (trace_one_side v=VertexId(109), \
-face_a=FaceId(32), face_b=FaceId(99)) widens step by step to a point 1.1 wide in x near (48.5, 10, 5) and \
-never reaches its vertex — interval width compounding along the march, not the budget"]
 fn long_bars_overlap() {
     let mut part = Part::<S>::new();
     cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(50.0, 10.0, 10.0)).unwrap();

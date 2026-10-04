@@ -104,10 +104,24 @@ const MIN_TRACED_LEGS: usize = 8;
 /// makes a trace wander off instead of following the curve.
 const STEPS_PER_REVOLUTION: usize = 64;
 
-/// The marching step to use at `(u_a, v_a)` / `(u_b, v_b)`: `step_size`,
-/// shortened so a full turn of whichever surface is curving harder there
-/// would take [`STEPS_PER_REVOLUTION`] steps. A surface that's locally flat
-/// reports no curvature radius and so imposes no limit.
+/// How many marching steps to spend across the smaller of the two surfaces
+/// a trace runs between (see [`NurbSurface::size`]), where neither curves.
+/// The curve lies on both, so this is the scale of the features it can
+/// pass: the stride grows and shrinks with the part instead of being fixed
+/// in model units. A fixed 0.1 took 400 steps along a 40 mm cut, and the
+/// cubic fitted through them so many spans that integrating a face's area
+/// along it lost precision; it was also more than a cut 0.05 wide.
+/// Like [`STEPS_PER_REVOLUTION`] this bounds effort and the fit's width,
+/// not whether a trace finds its end — a stride reaches a vertex wherever
+/// one lies on it (see [`candidate_within`]).
+const STEPS_ACROSS_PATCH: usize = 16;
+
+/// The marching step to use at `(u_a, v_a)` / `(u_b, v_b)`: a
+/// [`STEPS_ACROSS_PATCH`]th of the smaller surface, shortened so a full
+/// turn of whichever surface is curving harder there would take
+/// [`STEPS_PER_REVOLUTION`] steps. A surface that's locally flat reports no
+/// curvature radius and so imposes no limit. Sharp: where a stride lands is
+/// a free choice.
 fn adaptive_step_size<S: Scalar>(
     surf_a: &NurbSurface3D<S>,
     surf_b: &NurbSurface3D<S>,
@@ -115,12 +129,15 @@ fn adaptive_step_size<S: Scalar>(
     v_a: S,
     u_b: S,
     v_b: S,
-    step_size: S,
 ) -> GeopResult<S> {
     let arc = S::TWO
         .mul(S::PI)
         .div(S::from_i64(STEPS_PER_REVOLUTION as i64))?;
-    let mut step = step_size;
+    let mut step = surf_a
+        .size()?
+        .min(surf_b.size()?)
+        .div(S::from_i64(STEPS_ACROSS_PATCH as i64))?
+        .sharpen();
     for radius in [
         surf_a.curvature_radius(u_a, v_a)?,
         surf_b.curvature_radius(u_b, v_b)?,
@@ -130,7 +147,7 @@ fn adaptive_step_size<S: Scalar>(
     {
         let limit = radius.abs().mul(arc);
         if limit.definitely_less(step) {
-            step = limit;
+            step = limit.sharpen();
         }
     }
     Ok(step)
@@ -142,10 +159,9 @@ fn adaptive_step_size<S: Scalar>(
 /// `max_solutions`/`max_nodes`/`min_subdivision_size` bound the
 /// `curve_surface_intersect` searches used to classify each pair (and the
 /// `curve_could_contain`/`surface_could_contain` single-shape searches used
-/// while tracing). `step_size` is the marching step length along a traced
-/// intersection curve; `max_trace_steps` bounds how many such steps a
+/// while tracing). `max_trace_steps` bounds how many marching steps a
 /// single trace may take before it's considered to have failed to find a
-/// terminating vertex.
+/// terminating vertex (see [`adaptive_step_size`] for how long each is).
 pub fn remesh_edges_x_faces<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
@@ -154,12 +170,11 @@ pub fn remesh_edges_x_faces<S: Scalar>(
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
-    step_size: S,
     max_trace_steps: usize,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
-            "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size}, step_size={step_size}, max_trace_steps={max_trace_steps})"
+            "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size}, max_trace_steps={max_trace_steps})"
         ))
     };
 
@@ -253,7 +268,6 @@ pub fn remesh_edges_x_faces<S: Scalar>(
             &candidates,
             max_nodes,
             min_subdivision_size,
-            step_size,
             max_trace_steps,
         )
         .with_context(&ctx)?;
@@ -1127,7 +1141,6 @@ fn trace_from_start_point<S: Scalar>(
     candidates: &[VertexId],
     max_nodes: usize,
     min_subdivision_size: S,
-    step_size: S,
     max_trace_steps: usize,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
@@ -1175,7 +1188,6 @@ fn trace_from_start_point<S: Scalar>(
             candidates,
             max_nodes,
             min_subdivision_size,
-            step_size,
             max_trace_steps,
         )
         .with_context(&|e: GeopError| e.with_context(format!("face_a={face_a}, face_b={face_b}")))
@@ -1272,7 +1284,6 @@ fn trace_one_side<S: Scalar>(
     candidates: &[VertexId],
     max_nodes: usize,
     min_subdivision_size: S,
-    step_size: S,
     max_trace_steps: usize,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
@@ -1337,7 +1348,7 @@ fn trace_one_side<S: Scalar>(
     // domain — a distinction the raw domain bounds can't make. Once a
     // direction is committed the march just follows the curve; re-testing
     // containment every step would only re-derive the same answer.
-    let first_step = adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0, step_size)
+    let first_step = adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0)
         .with_context(&ctx)?;
     let mut chosen = None;
     let mut last_rejection: Option<(PointClassification, PointClassification)> = None;
@@ -1479,7 +1490,7 @@ fn trace_one_side<S: Scalar>(
     // along `dir` that the corrector lands it on (see `candidate_within`).
     let mut hit_vertex = None;
     for _ in 0..max_trace_steps {
-        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, step_size)
+        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b)
             .with_context(&ctx)?;
         let reached = |radius: S| {
             candidate_within(
@@ -1808,7 +1819,6 @@ mod tests {
             MAX_EDGE_INTERSECTIONS,
             MAX_NODES,
             curve_curve_min_subdivision_size(),
-            ScalInF64::from_f64(0.1),
             200,
         )
         .unwrap();

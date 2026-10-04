@@ -131,14 +131,6 @@ fn example_mass_properties_are_consistent() {
                 continue;
             };
             check_mass(&name, summary, &mut failures);
-            // Cut across its 40 mm, the bracket needs a 40 long intersection
-            // curve, which the boolean's trace widens step by step until it
-            // misses its vertex — the defect `geop_ops_inspect`'s ignored
-            // `long_bars_overlap` isolates. Its mass properties are checked;
-            // its halves are not, until that is fixed.
-            if example == "bracket" {
-                continue;
-            }
             // The part of its box below a plane across x, a little beyond
             // it elsewhere. Not through the centre of mass: of a symmetric
             // part, that is where its circles' seams are, and a cut placed

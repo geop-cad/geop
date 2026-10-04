@@ -42,14 +42,12 @@ pub struct RemeshParams<S: Scalar> {
     /// within `max_nodes` at all — see `ValidationParameters`'s own doc
     /// comment.
     pub curve_curve_min_subdivision_size: S,
-    /// Marching step length along a traced face x face intersection curve.
-    pub trace_step_size: S,
     /// How many marching steps one traced curve may take before it's
     /// considered to have failed to reach a terminating vertex. An effort
     /// budget only: a trace that reaches its vertex does so in the same
-    /// steps whatever the budget, so this decides how long a curve can be
-    /// traced at all — `trace_step_size` times it. Generous, since parts are
-    /// drawn in millimetres: a 40 mm plate cut across traces 400 steps.
+    /// steps whatever the budget. The steps scale with the surfaces traced
+    /// between and their curvature, not with the model's units, so a curve
+    /// takes about 16 steps across a flat face and 64 around a turn.
     pub max_trace_steps: usize,
 }
 
@@ -60,7 +58,6 @@ impl<S: Scalar> Default for RemeshParams<S> {
             max_nodes: 20000,
             min_subdivision_size: S::from_f64(1e-7),
             curve_curve_min_subdivision_size: S::from_f64(1e-4),
-            trace_step_size: S::from_f64(0.1),
             max_trace_steps: 1_000,
         }
     }
@@ -176,7 +173,6 @@ pub fn remesh<S: Scalar>(
         params.max_edge_intersections,
         params.max_nodes,
         params.curve_curve_min_subdivision_size,
-        params.trace_step_size,
         params.max_trace_steps,
     )
     .with_context(&ctx)?;

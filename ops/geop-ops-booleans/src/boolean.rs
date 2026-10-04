@@ -28,8 +28,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{
-    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId, VertexId,
-    boundary::BoundaryType,
+    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
     contains::{
         face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
         shell::{PointClassification as ShellPoint, shell_contains},
