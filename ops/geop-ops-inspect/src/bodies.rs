@@ -103,13 +103,17 @@ fn collect<'p, S: Scalar>(
     Ok(())
 }
 
+/// An entity resolved: the part it belongs to, the entity as that part
+/// names it, and where that part is placed.
+pub type Resolved<'p, S> = (&'p Part<S>, EntityRef, Option<Pose<S>>);
+
 /// `entity`, named as `part` names it, resolved: the part it belongs to —
 /// `part` itself or one placed in it — the entity as that part names it,
 /// and where that part is placed.
 pub fn resolve<'p, S: Scalar>(
     part: &'p Part<S>,
     entity: &EntityRef,
-) -> GeopResult<(&'p Part<S>, EntityRef, Option<Pose<S>>)> {
+) -> GeopResult<Resolved<'p, S>> {
     let Some((name, inner)) = entity.split_instance() else {
         return Ok((part, entity.clone(), None));
     };

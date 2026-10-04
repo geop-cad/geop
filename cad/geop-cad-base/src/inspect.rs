@@ -31,6 +31,7 @@ pub enum Query {
 /// What the inspect tools found, as an update carries it.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", bound = "S: Scalar")]
+#[allow(clippy::large_enum_variant)]
 pub enum Inspection<S: Scalar> {
     /// What the measure tool's picks measure — sent with every update while
     /// it is in hand.

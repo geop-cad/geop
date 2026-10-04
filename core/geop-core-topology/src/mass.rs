@@ -95,6 +95,10 @@ pub struct PrincipalAxes<S: Scalar> {
 /// a reference point near the solid, so that the integrands do not cancel.
 const SOLID_COMPONENTS: usize = 11;
 
+/// What is integrated over a face: a function of the point `S(u, v)` and
+/// of `S_u × S_v`, of several components.
+type FaceIntegrand<'a, S> = dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>> + 'a;
+
 impl<S: Scalar> Model<S> {
     /// The area of the face `face`.
     pub fn face_area(&self, face: FaceId) -> GeopResult<(S, bool)> {
@@ -114,7 +118,7 @@ impl<S: Scalar> Model<S> {
         let ctx = |e: GeopError| e.with_context(format!("Model::mass_properties(solid={solid})"));
         let faces = self.solid_faces(solid).with_context(&ctx)?;
         let reference = self.reference_point(&faces).with_context(&ctx)?;
-        let mut total = vec![S::ZERO; SOLID_COMPONENTS];
+        let mut total = [S::ZERO; SOLID_COMPONENTS];
         let mut converged = true;
         for &face in &faces {
             let integral = self
@@ -204,7 +208,7 @@ impl<S: Scalar> Model<S> {
         &self,
         face_id: FaceId,
         components: usize,
-        g: &dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>>,
+        g: &FaceIntegrand<'_, S>,
     ) -> GeopResult<Integral<S>> {
         let face = self.get_face(face_id)?;
         let surface = &face.surface;

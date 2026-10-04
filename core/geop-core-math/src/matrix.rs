@@ -212,6 +212,7 @@ pub fn solve_linear_system<S: Scalar, const N: usize>(
 /// told apart, so each gets their hull. The vectors are the midpoint's:
 /// where eigenvalues coincide, as for a cylinder's two transverse moments,
 /// any vector of their plane is one, and these are a free choice of it.
+#[allow(clippy::needless_range_loop)]
 pub fn symmetric_eigen3<S: Scalar>(a: &Matrix<S, 3, 3>) -> GeopResult<([S; 3], [Vector<S, 3>; 3])> {
     let mut m = [[0.0f64; 3]; 3];
     for r in 0..3 {

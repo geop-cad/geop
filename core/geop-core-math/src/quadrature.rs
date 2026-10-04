@@ -34,6 +34,8 @@ use crate::{
 /// The Kronrod nodes in `[0, 1]` of the 15-point rule, largest first; the
 /// odd ones (`[1]`, `[3]`, `[5]`, `[7] = 0`) are the 7-point Gauss rule's.
 /// QUADPACK's `qk15` tables.
+// The tables as published: `around` encloses the real numbers they name.
+#[allow(clippy::excessive_precision)]
 const XGK: [f64; 8] = [
     0.991_455_371_120_812_639_206_854_697_526_329,
     0.949_107_912_342_758_524_526_189_684_047_851,
@@ -46,6 +48,8 @@ const XGK: [f64; 8] = [
 ];
 
 /// The 15-point Kronrod weights, for the nodes of [`XGK`].
+// The tables as published: `around` encloses the real numbers they name.
+#[allow(clippy::excessive_precision)]
 const WGK: [f64; 8] = [
     0.022_935_322_010_529_224_963_732_008_058_970,
     0.063_092_092_629_978_553_290_700_663_189_204,
@@ -59,6 +63,8 @@ const WGK: [f64; 8] = [
 
 /// The 7-point Gauss weights, for the nodes `XGK[1]`, `XGK[3]`, `XGK[5]`
 /// and `XGK[7]`.
+// The tables as published: `around` encloses the real numbers they name.
+#[allow(clippy::excessive_precision)]
 const WG: [f64; 4] = [
     0.129_484_966_168_869_693_270_611_432_679_082,
     0.279_705_391_489_276_667_901_467_771_423_780,
@@ -154,12 +160,12 @@ fn panel<S: Scalar>(
         }
         Ok(())
     };
-    for k in 0..XGK.len() {
-        if XGK[k] == 0.0 {
+    for (k, &node) in XGK.iter().enumerate() {
+        if node == 0.0 {
             add(&f(center)?, k)?;
             continue;
         }
-        let offset = half.mul(around(XGK[k]));
+        let offset = half.mul(around(node));
         add(&f(center.sub(offset))?, k)?;
         add(&f(center.add(offset))?, k)?;
     }

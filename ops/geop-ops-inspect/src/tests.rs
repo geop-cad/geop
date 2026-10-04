@@ -56,6 +56,7 @@ fn only(part: &Part<S>) -> MassSummary {
 
 /// The inertia tensor about the centre, against a diagonal one.
 #[track_caller]
+#[allow(clippy::needless_range_loop)]
 fn assert_diagonal(summary: &MassSummary, diagonal: [f64; 3], relative: f64) {
     let scale = diagonal.iter().fold(0.0f64, |a, b| a.max(b.abs()));
     for a in 0..3 {
