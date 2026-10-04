@@ -29,7 +29,7 @@ use geop_core_math::{
     scalars::{Ring, Scalar, as_f64},
     vector::Vector2,
 };
-use geop_core_solve::{Param, Phase, Pull, Residual, System, Value};
+use geop_core_solve::{Mobility, Param, Phase, Pull, Residual, System, Value};
 
 /// The most variables a single constraint may depend on. The largest
 /// constraints (tangency or equality between two arcs) touch two arcs of
@@ -593,7 +593,12 @@ impl<'a, S: Scalar> Problem<'a, S> {
     ) -> System<'r, S, MAX_LOCAL_VARS> {
         System {
             params: x.iter().map(|&v| Param::Scalar(v)).collect(),
-            free: self.layout.free.clone(),
+            free: self
+                .layout
+                .free
+                .iter()
+                .map(|&f| if f { Mobility::Held } else { Mobility::Fixed })
+                .collect(),
             residuals: residuals
                 .iter()
                 .map(|r| r as &dyn Residual<S, MAX_LOCAL_VARS>)

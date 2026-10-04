@@ -14,7 +14,7 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank};
+use crate::{Mobility, Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank};
 
 mod joints;
 
@@ -625,13 +625,27 @@ impl<S: Scalar> Assembly<S> {
                 center: b.center,
             })
             .collect();
-        let mut free: Vec<bool> = self.bodies.iter().map(|b| b.free).collect();
+        let mut free: Vec<Mobility> = self
+            .bodies
+            .iter()
+            .map(|b| {
+                if b.free {
+                    Mobility::Held
+                } else {
+                    Mobility::Fixed
+                }
+            })
+            .collect();
         for (joint, coordinates) in self.joints.iter().zip(&residuals.coordinates) {
             for (k, motion) in Motion::ALL.into_iter().enumerate() {
                 if coordinates[k].is_some() {
                     let c = joint.coordinate(motion);
                     params.push(Param::Scalar(to_variable(motion, c.value, self.scale)?));
-                    free.push(!c.held);
+                    free.push(if c.held {
+                        Mobility::Fixed
+                    } else {
+                        Mobility::Follows
+                    });
                 }
             }
         }

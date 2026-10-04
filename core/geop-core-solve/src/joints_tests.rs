@@ -567,37 +567,22 @@ fn drag_jointed_arm(targets: usize) -> Vec<SolveReport<S>> {
         .collect()
 }
 
-/// The drags of `reports` that did not converge in the constrained
-/// minimization itself, within its steps.
-fn stalled(reports: &[SolveReport<S>]) -> Vec<String> {
-    reports
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| {
-            !r.converged
-                || r.phases.len() > 1
-                || r.phases
-                    .first()
-                    .is_some_and(|p| p.stop == geop_core_math::least_squares::Stop::Budget)
-        })
-        .map(|(k, r)| format!("drag {k}: {r:?}"))
-        .collect()
-}
-
-/// A jointed 6-axis arm follows its tip dragged about, each drag converging
-/// by the constrained minimization within its steps.
+/// A jointed 6-axis arm follows its tip dragged about, every joint met by
+/// the constrained minimization itself. Before turns were well conditioned
+/// through a half turn and steps corrected onto the joints, nearly every
+/// drag ran out of steps and was rescued by the least-squares pass.
 #[test]
 fn a_jointed_arm_follows_its_tip() {
-    let stalled = stalled(&drag_jointed_arm(8));
-    assert!(stalled.is_empty(), "{}", stalled.join("\n"));
+    let unmet = unmet(&drag_jointed_arm(8));
+    assert!(unmet.is_empty(), "{}", unmet.join("\n"));
 }
 
 /// [`a_jointed_arm_follows_its_tip`], through 40 drags.
 #[test]
 #[ignore = "slow: a jointed arm dragged 40 times — run with `cargo test -- --ignored`"]
 fn a_jointed_arm_follows_its_tip_through_every_drag() {
-    let stalled = stalled(&drag_jointed_arm(40));
-    assert!(stalled.is_empty(), "{}", stalled.join("\n"));
+    let unmet = unmet(&drag_jointed_arm(40));
+    assert!(unmet.is_empty(), "{}", unmet.join("\n"));
 }
 
 fn joints_of(bodies: Vec<Body<S>>, joints: Vec<Joint<S>>) -> Assembly<S> {
