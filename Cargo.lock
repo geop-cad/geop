@@ -201,6 +201,7 @@ dependencies = [
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-rasterize",
+ "geop-ops-shell",
  "geop-ops-sketch",
  "serde",
  "serde_json",
@@ -343,6 +344,18 @@ dependencies = [
  "geop-core-topology",
  "geop-ops",
  "geop-ops-extrude-revolve",
+]
+
+[[package]]
+name = "geop-ops-shell"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-extrude-revolve",
+ "serde",
 ]
 
 [[package]]

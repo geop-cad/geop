@@ -2,6 +2,7 @@ mod curvature;
 mod evaluate;
 mod fit_pcurve;
 mod normal;
+mod offset;
 mod project;
 mod reverse;
 mod split;

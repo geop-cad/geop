@@ -20,6 +20,7 @@ fn every_operation_is_offered() {
             "revolve",
             "boolean",
             "split",
+            "shell",
             "add_datum",
             "add_part"
         ]
