@@ -200,6 +200,7 @@ dependencies = [
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-fillet",
  "geop-ops-rasterize",
  "geop-ops-sketch",
  "serde",
@@ -331,6 +332,19 @@ dependencies = [
  "geop-ops",
  "geop-ops-booleans",
  "geop-ops-rasterize",
+ "serde",
+]
+
+[[package]]
+name = "geop-ops-fillet"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-booleans",
+ "geop-ops-extrude-revolve",
  "serde",
 ]
 

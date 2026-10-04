@@ -3,15 +3,16 @@
 //!
 //! Every operation is defined by a crate of its own — placing sketches in
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
-//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, placed parts
-//! in `geop_ops_assembly`. Which of them
-//! an editor offers is the editor's choice, made here.
+//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
+//! chamfers in `geop_ops_fillet`, placed parts in `geop_ops_assembly`.
+//! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
 use geop_ops_extrude_revolve::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
+use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,8 @@ mod assembly_tests;
 mod datum_tests;
 #[cfg(test)]
 mod editor_tests;
+#[cfg(test)]
+mod fillet_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
@@ -53,6 +56,10 @@ pub enum PartOperation {
     Boolean(BooleanArgs),
     /// Cut a solid into pieces with a face standing on its own.
     Split(SplitArgs),
+    /// Round a solid's straight and circular edges.
+    Fillet(FilletArgs),
+    /// Bevel a solid's straight and circular edges.
+    Chamfer(ChamferArgs),
     /// Add reference geometry — a point, an axis, a plane or a coordinate
     /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]
