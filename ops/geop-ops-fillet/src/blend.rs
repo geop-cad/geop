@@ -871,15 +871,13 @@ pub(crate) fn straight_tool<S: Scalar>(
             "only the tool of a straight edge is built whole",
         ));
     };
-    // A fillet's arc; or a chamfer's chord between where it meets the
-    // faces, its middle of weight one — as a rolled chamfer's.
+    // A fillet's arc; or a chamfer's chord, extended past the faces as
+    // when it is swept — so that it crosses them rather than ending on
+    // them — its middle of weight one.
     let chord = tool.control.len() == 3;
     let (ta, e, tb, q) = match tool.control[..] {
         [ta, e, tb, q] => (ta, e, tb, q),
-        [_, _, q] => {
-            let [a, b] = tool.touches;
-            (a, Vector2::interpolate(&a, &b, S::ONE.div(S::TWO)?), b, q)
-        }
+        [a, b, q] => (a, Vector2::interpolate(&a, &b, S::ONE.div(S::TWO)?), b, q),
         _ => return Err(GeopError::new("a blend's section of no known shape")),
     };
     let along = end.sub(start).normalize()?;
