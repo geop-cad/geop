@@ -611,3 +611,82 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A 3-D sketch drawn the way the front end draws it: a new step, clicks
+/// that place points — at the origin, fixed there, and then in space —
+/// chained by lines, Enter to end; committed, a sweep along it pipes the
+/// section drawn before into a valid solid.
+#[test]
+fn a_3d_sketch_is_drawn_and_swept_along() {
+    let mut editor = Editor::<S>::new();
+    let mut program = examples::pipe();
+    program.steps.truncate(1);
+    let update = editor.handle(Command::Load {
+        program,
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    assert_eq!(update.step.unwrap().label, "3-D sketch");
+    let click = |editor: &mut Editor<S>, origin: [f64; 3], dir: [f64; 3]| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Click {
+                pointer: pointer(origin, dir),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        })
+    };
+    // On the origin's ball: a point fixed at the origin.
+    click(&mut editor, [0.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
+    // Then in the plane through the last point, facing the eye.
+    click(&mut editor, [2.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
+    click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let update = click(&mut editor, [-10.0, 2.0, 2.0], [1.0, 0.0, 0.0]);
+    let presentation = update.step.unwrap().presentation;
+    let points = presentation
+        .visuals
+        .iter()
+        .filter(|v| matches!(v.shape, geop_ops::ui::Shape::Point { .. }))
+        .count();
+    assert!(points >= 4, "{:?}", presentation.visuals);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Key {
+            key: "Enter".into(),
+        },
+    });
+    let step = update.step.unwrap();
+    assert!(step.error.is_none(), "{:?}", step.error);
+    match step.presentation.dialog.get("status") {
+        Some(Control::Text { text, .. }) => assert!(text.contains("1 chain"), "{text}"),
+        other => panic!("{other:?}"),
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let route = editor.program().steps.last().unwrap().clone();
+    let PartOperation::AddSketch3d(args) = &route.operation else {
+        panic!("{route:?}");
+    };
+    assert_eq!(args.sketch.curves.len(), 3);
+    assert_eq!(args.references.len(), 1, "the origin, as a fixed point");
+
+    editor.handle(Command::New {
+        kind: "sweep".into(),
+    });
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::Sweep(sweep) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a sweep");
+    };
+    assert_eq!(
+        (sweep.profile.as_str(), sweep.path.as_str()),
+        ("section", route.id.as_str())
+    );
+    let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+    assert_eq!(part.solid_names().len(), 1);
+    let params = geop_core_topology::validation::ValidationParameters::default();
+    geop_core_topology::validation::validate(&params, part.topology()).unwrap();
+}
