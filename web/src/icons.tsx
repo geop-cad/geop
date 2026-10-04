@@ -365,6 +365,12 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M8 7 L8 13 M12 7 L12 13" strokeDasharray="1.5 1.5" />
     </>
   ),
+  subd: (
+    <>
+      <path d="M4 5 L16 5 L16 15 L4 15 Z" strokeDasharray="1.5 1.5" />
+      <path d="M10 6.5 C14.5 6.5 14.5 13.5 10 13.5 C5.5 13.5 5.5 6.5 10 6.5 Z" />
+    </>
+  ),
   drag: (
     <>
       <path d="M10 2.5 L10 17.5 M2.5 10 L17.5 10" />

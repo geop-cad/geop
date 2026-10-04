@@ -20,6 +20,7 @@ members = [
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
+    "ops/geop-ops-subd",
     "ops/geop-ops-sheetmetal",
     "ops/geop-ops-plastic",
     "ops/geop-ops-sketch3d",
@@ -50,6 +51,7 @@ geop-ops-fillet = { path = "ops/geop-ops-fillet" }
 geop-ops-shell = { path = "ops/geop-ops-shell" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
 geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
+geop-ops-subd = { path = "ops/geop-ops-subd" }
 serde = { version = "1", features = ["derive"] }
 geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
 # `float_roundtrip`: without it, parsing a float may land one ULP off the

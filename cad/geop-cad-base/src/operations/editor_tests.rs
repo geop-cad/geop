@@ -1428,3 +1428,125 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
     let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(sent, ["screw10"]);
 }
+
+/// A new SubD step starts from a box cage, its vertices, edges and faces
+/// drawn to click. Clicked from above, the cage's top face is selected —
+/// not the bottom one behind it — and its centre's coordinates shown;
+/// Extrude pulls it out; dragged by its `z` handle and then by the face
+/// itself, it moves; and the limit body the editor shows is the solid the
+/// step builds.
+#[test]
+fn subd_cage_is_shaped_in_the_viewport() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the subd is edited");
+    for key in ["f9", "e4-5", "v6"] {
+        assert!(
+            step.presentation.visuals.iter().any(|v| v.key == key),
+            "{key} is not drawn"
+        );
+    }
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let number =
+        |step: &crate::editor::StepState<S>, key: &str| match step.presentation.dialog.get(key) {
+            Some(Control::Number(n)) => n.value,
+            other => panic!("{key}: {other:?}"),
+        };
+    let style = |step: &crate::editor::StepState<S>, key: &str| {
+        step.presentation
+            .visuals
+            .iter()
+            .find(|v| v.key == key)
+            .map(|v| v.style)
+    };
+    let update = editor.handle(click(pointer([0.3, 0.2, 10.0], [0.0, 0.0, -1.0])));
+    let step = update.step.expect("the subd is edited");
+    assert_eq!(style(&step, "f9"), Some(geop_ops::ui::Style::Selected));
+    assert_eq!(style(&step, "f8"), Some(geop_ops::ui::Style::Region));
+    assert_eq!(number(&step, "z"), 1.0);
+
+    let update = editor.handle(dialog("edit", Value::Choice("extrude".into())));
+    let step = update.step.expect("the subd is edited");
+    assert_eq!(step.error, None);
+    assert_eq!(number(&step, "z"), 1.5);
+
+    // The `z` handle, seen from the side, pulled up by a quarter.
+    let at = step
+        .presentation
+        .visuals
+        .iter()
+        .find_map(|v| match v.shape {
+            geop_ops::ui::Shape::Handle { at, .. } if v.key == "z" => Some(at),
+            _ => None,
+        })
+        .expect("z has a handle");
+    let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
+    let side = |dz: f64| pointer([x, y - 10.0, z + dz], [0.0, 1.0, 0.0]);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: side(0.0),
+            shift: false,
+        },
+    });
+    assert!(update.step.unwrap().presentation.grab);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Drag {
+            from: side(0.0),
+            to: side(0.25),
+            done: true,
+            shift: false,
+        },
+    });
+    let step = update.step.expect("the subd is edited");
+    assert!((number(&step, "z") - 1.75).abs() < 1e-9);
+
+    // The face itself, grabbed looking down at 45 degrees and dragged in
+    // the plane facing the eye: moving the eye up by `d` moves it by `d / 2`
+    // up and `d / 2` back.
+    let slanted = |dz: f64| pointer([0.3, -10.0, 11.75 + dz], [0.0, 1.0, -1.0]);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: slanted(0.0),
+            shift: false,
+        },
+    });
+    assert!(
+        update.step.unwrap().presentation.grab,
+        "the face offers a grab"
+    );
+    for (dz, done) in [(0.2, false), (0.5, true)] {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Drag {
+                from: slanted(0.0),
+                to: slanted(dz),
+                done,
+                shift: false,
+            },
+        });
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let last = program.steps.last().unwrap();
+    let PartOperation::Subd(args) = &last.operation else {
+        panic!("{:?}", last.operation);
+    };
+    let top = args.cage.face(9).unwrap();
+    for &v in &top.vertices {
+        let at = args.cage.vertex(v).unwrap().at;
+        assert!((at[2] - 2.0).abs() < 1e-9, "{at:?}");
+    }
+    assert_eq!(args.cage.faces.len(), 10);
+    let scene = update.scene.expect("the part changed");
+    assert_eq!(scene.part.solids, [format!("subd({})", last.id)]);
+}

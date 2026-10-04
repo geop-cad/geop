@@ -58,6 +58,10 @@ ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
                                and reliefs, the flat pattern; the sheet model
                                recorded on the body and thickened into it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
+ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
+                               the editor, built as its Catmull-Clark limit
+                               surface, a solid of B-spline faces; the subd
+                               operation
                                as STL, and renders it for debugging
 ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                and clips as lines and arcs, bend radius

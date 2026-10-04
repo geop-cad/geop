@@ -49,6 +49,7 @@ fn every_operation_is_offered() {
             "base_flange",
             "edge_flange",
             "flat_pattern",
+            "subd",
             "add_part",
             "part_pattern",
             "route"

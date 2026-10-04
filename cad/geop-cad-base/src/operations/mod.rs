@@ -10,7 +10,8 @@
 //! wire harness routes in `geop_ops_harness`,
 //! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
 //! 3-D sketches in `geop_ops_sketch3d`, ribs, lips, grooves and drafts in
-//! `geop_ops_plastic`, sheet metal in `geop_ops_sheetmetal`.
+//! `geop_ops_plastic`, sheet metal in `geop_ops_sheetmetal`,
+//! subdivision surfaces in `geop_ops_subd`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -37,6 +38,7 @@ use geop_ops_sheetmetal::{
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
+use geop_ops_subd::{Subd, SubdArgs};
 use geop_ops_surface::{
     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
@@ -79,6 +81,8 @@ mod sketch3d_tests;
 mod sketch_tests;
 #[cfg(test)]
 mod stress_tests;
+#[cfg(test)]
+mod subd_tests;
 #[cfg(test)]
 mod surface_tests;
 #[cfg(test)]
@@ -136,7 +140,6 @@ pub enum PartOperation {
     Draft(DraftArgs),
     /// Raise a lip along the rim of one half of an enclosure.
     Lip(LipArgs),
-    /// Cut the groove that takes a lip into the rim of the other half.
     Groove(GrooveArgs),
     /// Unite, intersect or subtract two solids.
     Boolean(BooleanArgs),
@@ -193,6 +196,11 @@ pub enum PartOperation {
     /// Unfold a sheet-metal body into its flat pattern.
     #[operation(label = "Flat pattern")]
     FlatPattern(FlatPatternArgs),
+    /// Cut the groove that takes a lip into the rim of the other half.
+    /// Shape a freeform body by dragging the vertices, edges and faces of a
+    /// control cage, built as its smooth subdivision surface.
+    #[operation(label = "SubD")]
+    Subd(SubdArgs),
     /// Place the part another program file builds, and mate it to what is
     /// already there.
     #[operation(label = "Part")]
