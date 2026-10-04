@@ -94,6 +94,10 @@ ops/geop-ops-assembly         the part operation: place another file's part,
 ops/geop-ops-inspect          inspecting a part without changing it: mass
                                properties of its solids and placed parts,
                                measurements of picked entities, interference
+ops/geop-ops-urdf             URDF export of an assembly: the tree of links
+                               and joints, mimics, inertia, STL meshes, a
+                               stored ZIP writer; `geop urdf`, the editor's
+                               export_urdf
 cad/geop-cad-base             the operations the editor offers, the editor engine,
                                example programs, the standard parts (below)
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)

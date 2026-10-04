@@ -162,14 +162,62 @@ pub enum Command<S: Scalar> {
         #[serde(default)]
         date: String,
     },
+    /// Write the assembly — as far as the program runs, where its parts
+    /// are — as a URDF robot (see [`geop_ops_urdf`]): a ZIP archive of
+    /// `robot.urdf` and its meshes, named after the program's file, as
+    /// [`Update::export`].
+    ExportUrdf,
 }
+
+/// How finely an exported robot's curved faces are meshed: as finely as
+/// the editor draws them.
+const URDF_QUALITY: usize = 24;
 
 /// A file the editor wrote for the front end to save.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Export {
     /// What to call it: after the program file, or `drawing`.
     pub name: String,
-    pub text: String,
+    #[serde(flatten)]
+    pub content: Content,
+}
+
+impl Export {
+    /// Its text, if it is a text file.
+    pub fn text(&self) -> Option<&str> {
+        match &self.content {
+            Content::Text(text) => Some(text),
+            Content::Bytes(_) => None,
+        }
+    }
+}
+
+/// What an exported file holds: text — sent as `text` — or bytes, sent as
+/// `bytes`, in base64.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Content {
+    Text(String),
+    #[serde(serialize_with = "base64")]
+    Bytes(Vec<u8>),
+}
+
+/// `bytes` as base64 text (RFC 4648, padded).
+fn base64<Ser: serde::Serializer>(bytes: &[u8], serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [0, 1, 2].map(|k| chunk.get(k).copied().unwrap_or(0) as u32);
+        let n = (b[0] << 16) | (b[1] << 8) | b[2];
+        for k in 0..4 {
+            text.push(if k <= chunk.len() {
+                ALPHABET[(n >> (18 - 6 * k) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    serializer.serialize_str(&text)
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -324,7 +372,8 @@ pub struct Update<S: Scalar> {
     pub step: Option<StepState<S>>,
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
-    /// The file [`Command::ExportDrawing`] wrote.
+    /// The file [`Command::ExportDrawing`] or [`Command::ExportUrdf`]
+    /// wrote.
     pub export: Option<Export>,
     /// What the drag tool or the measure tool shows, while it is in hand
     /// and no step is edited: the part it would drag lit, and whether a
@@ -1021,12 +1070,7 @@ impl<S: Scalar> Editor<S> {
             }
             Command::ExportDrawing { id, format, date } => {
                 let (index, mut args) = self.drawing(id.as_deref())?;
-                let stem = self
-                    .path
-                    .as_deref()
-                    .and_then(|p| p.rsplit('/').next())
-                    .map(|f| f.trim_end_matches(".geop").to_string())
-                    .filter(|s| !s.is_empty());
+                let stem = self.file_stem();
                 if args.name.is_empty() {
                     args.name = stem.clone().unwrap_or_default();
                 }
@@ -1037,11 +1081,24 @@ impl<S: Scalar> Editor<S> {
                 let base = stem.unwrap_or_else(|| "drawing".to_string());
                 self.exported = Some(Export {
                     name: format!("{base}.{}", format.extension()),
-                    text,
+                    content: Content::Text(text),
                 });
                 // Running only up to the drawing moved the runner: run again
                 // as far as the program is shown.
                 Changed::Run
+            }
+            Command::ExportUrdf => {
+                idle(self)?;
+                let index = self.marker.unwrap_or(self.program.steps.len());
+                let library = library(&self.workspace, self.path.as_deref());
+                self.runner.run(&self.program, Some(index), &library);
+                let name = self.file_stem().unwrap_or_else(|| "robot".to_string());
+                let robot = geop_ops_urdf::export(self.runner.part_at(index), &name, URDF_QUALITY)?;
+                self.exported = Some(Export {
+                    name: format!("{name}.zip"),
+                    content: Content::Bytes(robot.zip()?),
+                });
+                Changed::Nothing
             }
             Command::Undo | Command::Redo if self.open.is_some() => {
                 // While a step is edited, its own edits.
@@ -1492,6 +1549,16 @@ fn library<'w, S: Scalar>(workspace: &'w Workspace<S>, path: Option<&str>) -> im
 }
 
 impl<S: Scalar> Editor<S> {
+    /// The name of the program's file, without folders or `.geop` — what
+    /// an exported file is named after — once the editor has been told it.
+    fn file_stem(&self) -> Option<String> {
+        self.path
+            .as_deref()
+            .and_then(|p| p.rsplit('/').next())
+            .map(|f| f.trim_end_matches(".geop").to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     /// The drawing to export, and how many steps run before it: the step
     /// `id`, else the drawing being edited, else the program's last; the
     /// default drawing of the part as far as it runs if there is none.

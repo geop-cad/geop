@@ -95,6 +95,8 @@ mod sweep_loft_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod urdf_tests;
+#[cfg(test)]
 mod view_tests;
 
 /// An operation the editor offers, together with its arguments, not yet

@@ -5,6 +5,7 @@
 // replaces this file in the VS Code extension's build (see `vite.config.ts`),
 // where the kernel is a native process on the host. Both export the same
 // three things.
+import type { ExportedFile } from "./geop";
 import init, { handle, init_panic_hook } from "./wasm/pkg/geop.js";
 
 /**
@@ -27,8 +28,8 @@ export interface Host {
   onFiles(onFiles: (files: Record<string, string | null>) => void): void;
   /** The program is now this (a JSON value): write it to the document. */
   programChanged(program: unknown): void;
-  /** Offer to save `text` as a file called `name`, next to the document. */
-  saveFile(name: string, text: string): void;
+  /** Offer to save `file`, an exported file, next to the document. */
+  saveFile(file: ExportedFile): void;
 }
 
 export const host: Host | null = null;

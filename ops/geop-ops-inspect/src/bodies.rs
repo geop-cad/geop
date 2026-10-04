@@ -8,8 +8,10 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
-use geop_core_topology::SolidId;
+use geop_core_topology::{SolidId, mass::MassProperties};
 use geop_ops::{EntityRef, Part, operation::INSTANCE_SEPARATOR};
+
+use crate::mass::material_of;
 
 /// A solid of a part, or of a part placed in it: named as the part names
 /// it (`pin/extrude(pin)` for one of the part placed as `pin`), where it is.
@@ -23,6 +25,19 @@ pub struct PlacedSolid<'p, S: Scalar> {
 }
 
 impl<S: Scalar> PlacedSolid<'_, S> {
+    /// Its mass properties, where it is, of its part's material (see
+    /// [`material_of`]). Lengths are millimetres: a density in kg/m³ is
+    /// `1e-9` kg/mm³.
+    pub fn mass_properties(&self) -> GeopResult<MassProperties<S>> {
+        let (_, density, _) = material_of(self.part);
+        let per_mm3 = S::from_f64(density).div(S::from_f64(1e9))?;
+        let own = self.part.topology().mass_properties(self.solid, per_mm3)?;
+        match &self.pose {
+            Some(pose) => own.placed(pose),
+            None => Ok(own),
+        }
+    }
+
     /// The control point `cp` of one of its surfaces, as a point, where the
     /// solid is placed.
     pub fn place_control_point(&self, cp: &Vector<S, 4>) -> GeopResult<Vector3<S>> {

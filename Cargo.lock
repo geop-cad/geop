@@ -215,6 +215,7 @@ dependencies = [
  "geop-ops-sketch3d",
  "geop-ops-subd",
  "geop-ops-surface",
+ "geop-ops-urdf",
  "serde",
  "serde_json",
 ]
@@ -229,6 +230,7 @@ dependencies = [
  "geop-ops",
  "geop-ops-drawing",
  "geop-ops-rasterize",
+ "geop-ops-urdf",
  "serde_json",
 ]
 
@@ -543,6 +545,18 @@ dependencies = [
  "geop-ops-extrude-revolve",
  "geop-ops-shell",
  "serde",
+]
+
+[[package]]
+name = "geop-ops-urdf"
+version = "0.1.0"
+dependencies = [
+ "geop-core-math",
+ "geop-core-solve",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-inspect",
+ "geop-ops-rasterize",
 ]
 
 [[package]]

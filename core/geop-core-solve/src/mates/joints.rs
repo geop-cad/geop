@@ -335,7 +335,7 @@ impl<S: Scalar> CouplingKind<S> {
 
     /// The second coordinate per radian or unit of length of the first,
     /// both in natural units — radians and lengths.
-    fn factor(&self) -> GeopResult<S> {
+    pub fn factor(&self) -> GeopResult<S> {
         let (factor, reverse) = match *self {
             CouplingKind::Gear { ratio, reverse } => (S::ONE.div(ratio)?, reverse),
             CouplingKind::RackPinion { radius, reverse } => (radius, reverse),

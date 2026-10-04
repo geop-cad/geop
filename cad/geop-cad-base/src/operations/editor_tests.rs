@@ -1690,13 +1690,14 @@ fn a_drawing_is_made_and_exported() {
         date: "2026-10-04".into(),
     });
     assert!(exported.error.is_none(), "{:?}", exported.error);
-    let svg = exported.export.unwrap();
-    assert_eq!(svg.name, "drawing.svg");
-    assert!(svg.text.starts_with("<svg"));
-    assert!(svg.text.contains("Drilled box") && svg.text.contains(">2<"));
+    let file = exported.export.unwrap();
+    assert_eq!(file.name, "drawing.svg");
+    let svg = file.text().unwrap();
+    assert!(svg.starts_with("<svg"));
+    assert!(svg.contains("Drilled box") && svg.contains(">2<"));
     // The blind hole, seen from the front, is hidden.
-    assert!(svg.text.contains(r#"<g class="HIDDEN""#));
-    let hidden = &svg.text[svg.text.find(r#"<g class="HIDDEN""#).unwrap()..];
+    assert!(svg.contains(r#"<g class="HIDDEN""#));
+    let hidden = &svg[svg.find(r#"<g class="HIDDEN""#).unwrap()..];
     assert!(hidden[..hidden.find("</g>").unwrap()].contains("<line"));
 
     let dxf = editor.handle(Command::ExportDrawing {
@@ -1704,5 +1705,58 @@ fn a_drawing_is_made_and_exported() {
         format: geop_ops_drawing::Format::Dxf,
         date: String::new(),
     });
-    assert!(dxf.export.unwrap().text.ends_with("EOF\n"));
+    assert!(dxf.export.unwrap().text().unwrap().ends_with("EOF\n"));
+}
+
+/// The arm, exported as a URDF robot the way the front end asks — the
+/// command and the update as JSON: a ZIP archive named after the file, its
+/// bytes in base64, holding `robot.urdf` with the arm's joints. Refused
+/// while a step is edited, and for the four-bar, whose bars only mates
+/// hold: the error names them.
+#[test]
+fn an_assembly_is_exported_as_urdf() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "arm".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let json = editor.handle_json(r#"{"command": "export_urdf"}"#).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    let export = &update["export"];
+    assert_eq!(export["name"], "arm.zip");
+    assert!(export["text"].is_null());
+    // "PK\x03\x04", a ZIP archive's first local header, in base64.
+    let bytes = export["bytes"].as_str().unwrap();
+    assert!(bytes.starts_with("UEsDBA"), "{}", &bytes[..16]);
+    assert_eq!(bytes.len() % 4, 0);
+
+    let crate::editor::Content::Bytes(zip) =
+        editor.handle(Command::ExportUrdf).export.unwrap().content
+    else {
+        panic!("a binary file");
+    };
+    let text = String::from_utf8_lossy(&zip);
+    assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
+    assert!(text.contains(r#"<joint name="add_part(fore,m1)" type="revolute">"#));
+    assert!(text.contains(r#"<joint name="add_part(hand,m1)" type="revolute">"#));
+
+    editor.handle(Command::Open { id: "fore".into() });
+    let refused = editor.handle(Command::ExportUrdf);
+    assert!(refused.export.is_none());
+    assert!(refused.error.unwrap().contains("finish editing"));
+    editor.handle(Command::Cancel);
+
+    editor.handle(Command::LoadWorkspaceExample {
+        name: "four_bar".into(),
+        folder: None,
+    });
+    let refused = editor.handle(Command::ExportUrdf);
+    assert!(refused.export.is_none());
+    let error = refused.error.unwrap();
+    assert!(
+        error.contains("free to move") && error.contains("coupler"),
+        "{error}"
+    );
 }

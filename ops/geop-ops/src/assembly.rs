@@ -294,34 +294,44 @@ pub(crate) fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
 
 /// A rigid body of a solve: a part placed in the part — or, inside one
 /// placed flexibly, a part placed in that, however deep.
-struct Placed<'p, S: Scalar> {
+pub struct PlacedBody<'p, S: Scalar> {
     /// Its name in the part: `hinge/pin`.
-    name: String,
+    pub name: String,
     /// The parameter of the part its pose is — relative to `parent`'s
     /// frame: `hinge/pin.pose` — if it is one: a copy of a pattern goes
     /// where the pattern puts it.
-    parameter: Option<String>,
-    instance: &'p Instance<S>,
+    pub parameter: Option<String>,
+    pub instance: &'p Instance<S>,
     /// The body it is placed in, if it is placed in a flexible one.
-    parent: Option<usize>,
+    pub parent: Option<usize>,
     /// Where it is in the part.
-    world: Pose<S>,
+    pub world: Pose<S>,
 }
 
 /// The rigid bodies of a part and the mates between them: the assembly,
-/// the bodies as placed, the names of its mates — constraints, then
-/// joints, then couplings, as [`Assembly::solve`] reports them — and the
-/// coordinates its joints' parameters are, per joint and motion.
-struct Solvable<'p, S: Scalar> {
-    assembly: Assembly<S>,
-    bodies: Vec<Placed<'p, S>>,
-    names: Vec<String>,
+/// the bodies as placed — in the order of [`Assembly::bodies`] — and the
+/// names of its mates: constraints, then joints, then couplings, as
+/// [`Assembly::solve`] reports them.
+pub struct Mechanism<'p, S: Scalar> {
+    pub assembly: Assembly<S>,
+    pub bodies: Vec<PlacedBody<'p, S>>,
+    pub names: Vec<String>,
 }
 
-impl<S: Scalar> Solvable<'_, S> {
+impl<S: Scalar> Mechanism<'_, S> {
+    /// The name of the constraint `constraint`.
+    pub fn constraint_name(&self, constraint: usize) -> &str {
+        &self.names[constraint]
+    }
+
     /// The name of joint `joint`.
-    fn joint_name(&self, joint: usize) -> &str {
+    pub fn joint_name(&self, joint: usize) -> &str {
         &self.names[self.assembly.constraints.len() + joint]
+    }
+
+    /// The name of coupling `coupling`.
+    pub fn coupling_name(&self, coupling: usize) -> &str {
+        &self.names[self.assembly.constraints.len() + self.assembly.joints.len() + coupling]
     }
 }
 
@@ -334,12 +344,12 @@ fn placed<'p, S: Scalar>(
     prefix: &str,
     parent: Option<usize>,
     frame: &Pose<S>,
-    out: &mut Vec<Placed<'p, S>>,
+    out: &mut Vec<PlacedBody<'p, S>>,
 ) {
     for (id, instance) in part.instances() {
         let name = format!("{prefix}{}", part.name_of(id).unwrap_or_default());
         let world = frame.compose(&instance.pose);
-        out.push(Placed {
+        out.push(PlacedBody {
             name: name.clone(),
             parameter: instance.parameter.as_ref().map(|p| format!("{prefix}{p}")),
             instance,
@@ -364,7 +374,7 @@ impl<S: Scalar> Part<S> {
     /// the part names them: those of a part placed flexibly hold its parts
     /// as they held them in it, named — and the joints a coupling of it
     /// ties named — behind its name.
-    fn all_mates(&self, bodies: &[Placed<'_, S>]) -> Vec<(String, Mate)> {
+    fn all_mates(&self, bodies: &[PlacedBody<'_, S>]) -> Vec<(String, Mate)> {
         let mut mates: Vec<(String, Mate)> = self
             .mates()
             .map(|(name, mate)| (name.to_string(), mate.clone()))
@@ -389,6 +399,14 @@ impl<S: Scalar> Part<S> {
         mates
     }
 
+    /// The part's mechanism where its parts are now: every mate, each
+    /// joint's coordinates where the state has them — or measured where
+    /// their parts are — and every free body free (see
+    /// [`Part::solve_mates`]).
+    pub fn mechanism(&self) -> GeopResult<Mechanism<'_, S>> {
+        self.assembly(None, &[], &|_| true)
+    }
+
     /// The mates as constraints, joints and couplings between rigid bodies
     /// — its instances, and the instances of every part placed flexibly in
     /// it, however deep (see [`placed`]) — each free unless fixed, a copy
@@ -402,7 +420,7 @@ impl<S: Scalar> Part<S> {
         only: Option<&str>,
         held: &[String],
         named: &dyn Fn(&str) -> bool,
-    ) -> GeopResult<Solvable<'_, S>> {
+    ) -> GeopResult<Mechanism<'_, S>> {
         let mut bodies_of = Vec::new();
         placed(self, "", None, &Pose::identity(), &mut bodies_of);
         let mut scale = S::ONE;
@@ -561,7 +579,7 @@ impl<S: Scalar> Part<S> {
         let mut names = constraint_names;
         names.extend(joint_names);
         names.extend(coupling_names);
-        Ok(Solvable {
+        Ok(Mechanism {
             assembly,
             bodies: bodies_of,
             names,
@@ -584,11 +602,11 @@ impl<S: Scalar> Part<S> {
         held: &[String],
         drags: &[Drag<S>],
     ) -> GeopResult<(State, MateReport)> {
-        let mut solvable = self.assembly(only, held, &|_| true)?;
+        let mut mechanism = self.assembly(only, held, &|_| true)?;
         let pulls = drags
             .iter()
             .map(|drag| {
-                let body = solvable
+                let body = mechanism
                     .bodies
                     .iter()
                     .position(|b| b.parameter.as_ref() == Some(&drag.parameter))
@@ -602,13 +620,13 @@ impl<S: Scalar> Part<S> {
                 })
             })
             .collect::<GeopResult<Vec<_>>>()?;
-        let report = solvable.assembly.solve(&pulls)?;
-        let assembly = &solvable.assembly;
+        let report = mechanism.assembly.solve(&pulls)?;
+        let assembly = &mechanism.assembly;
         // Only those the solve may have moved: the others are where the
         // state has them already, and written back they would only pick
         // up the rounding of composing their poses.
         let mut moved = State::new();
-        for (b, (placed, body)) in solvable.bodies.iter().zip(&assembly.bodies).enumerate() {
+        for (b, (placed, body)) in mechanism.bodies.iter().zip(&assembly.bodies).enumerate() {
             if let (true, Some(parameter)) = (
                 body.free && report.moved.binary_search(&b).is_ok(),
                 &placed.parameter,
@@ -623,7 +641,7 @@ impl<S: Scalar> Part<S> {
         for (i, joint) in assembly.joints.iter().enumerate() {
             for motion in joint.kind.motions() {
                 moved.insert(
-                    joint_parameter(solvable.joint_name(i), motion),
+                    joint_parameter(mechanism.joint_name(i), motion),
                     ParamValue::Number(joint.coordinate(motion).value.cast()),
                 );
             }
@@ -635,12 +653,12 @@ impl<S: Scalar> Part<S> {
                 failed: report
                     .failed
                     .iter()
-                    .map(|&i| solvable.names[i].clone())
+                    .map(|&i| mechanism.names[i].clone())
                     .collect(),
                 at_limit: report
                     .at_limit
                     .iter()
-                    .map(|&(j, m)| joint_parameter(solvable.joint_name(j), m))
+                    .map(|&(j, m)| joint_parameter(mechanism.joint_name(j), m))
                     .collect(),
                 iterations: report.iterations,
                 phases: report
@@ -681,14 +699,14 @@ impl<S: Scalar> Part<S> {
     /// instances are now: `|_| true` for all of them. Checking only some
     /// costs only theirs.
     pub fn check_mates(&self, named: impl Fn(&str) -> bool) -> GeopResult<MateReport> {
-        let solvable = self.assembly(None, &[], &named)?;
-        let report = solvable.assembly.report()?;
+        let mechanism = self.assembly(None, &[], &named)?;
+        let report = mechanism.assembly.report()?;
         Ok(MateReport {
             converged: report.converged,
             failed: report
                 .failed
                 .iter()
-                .map(|&i| solvable.names[i].clone())
+                .map(|&i| mechanism.names[i].clone())
                 .collect(),
             at_limit: Vec::new(),
             iterations: 0,
@@ -699,14 +717,14 @@ impl<S: Scalar> Part<S> {
     /// Every joint of the part and of the parts placed flexibly in it, with
     /// where its coordinates are and their limits.
     pub fn joints(&self) -> GeopResult<Vec<JointInfo>> {
-        let solvable = self.assembly(None, &[], &|_| true)?;
-        Ok(solvable
+        let mechanism = self.assembly(None, &[], &|_| true)?;
+        Ok(mechanism
             .assembly
             .joints
             .iter()
             .enumerate()
             .map(|(i, joint)| {
-                let name = solvable.joint_name(i).to_string();
+                let name = mechanism.joint_name(i).to_string();
                 let values = joint
                     .kind
                     .motions()
@@ -736,20 +754,20 @@ impl<S: Scalar> Part<S> {
     /// `geop_core_solve::mates::Assembly::conflicting`): as many solves as
     /// there are mates, so for a dialog to show, not for every drag.
     pub fn mate_freedom(&self) -> GeopResult<MateFreedom> {
-        let solvable = self.assembly(None, &[], &|_| true)?;
-        let freedom = solvable.assembly.freedom()?;
-        let conflicting = if solvable.assembly.report()?.converged {
+        let mechanism = self.assembly(None, &[], &|_| true)?;
+        let freedom = mechanism.assembly.freedom()?;
+        let conflicting = if mechanism.assembly.report()?.converged {
             Vec::new()
         } else {
-            solvable
+            mechanism
                 .assembly
                 .conflicting()?
                 .into_iter()
-                .map(|i| solvable.names[i].clone())
+                .map(|i| mechanism.names[i].clone())
                 .collect()
         };
         Ok(MateFreedom {
-            parts: solvable
+            parts: mechanism
                 .bodies
                 .iter()
                 .zip(freedom.bodies)
