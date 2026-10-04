@@ -24,7 +24,8 @@ core/geop-core-geometry       NURBS curves/surfaces, containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation
 core/geop-core-solve          the constraint solver every system shares:
                                parameters, residuals, pulls, enclosure;
-                               rigid bodies and mates
+                               rigid bodies and mates, joints with limits
+                               and the couplings between them
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
@@ -51,7 +52,8 @@ ops/geop-ops-shell            shelling: a solid hollowed to walls of one
                                thickness, open at picked faces, the shell
                                operation
 ops/geop-ops-assembly         the part operation: place another file's part,
-                               mate it, drag it
+                               mate it, joint it, drag it; patterns of
+                               placed parts
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
 cad/geop-cad-base             the operations the editor offers, the editor engine,
