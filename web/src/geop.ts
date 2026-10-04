@@ -165,7 +165,15 @@ export type Parameter = { name: string } & ParameterKind;
 /** A program's parameters: the part's colour, and its named values, in order. */
 export interface Parameters {
   color?: string | null;
+  /** What the part is made of — its density in kg/m³ — none for one not given (weighed as water). */
+  material?: Material | null;
   values?: Parameter[];
+}
+
+/** A material: a name, and its density in kg/m³ — see `geop_ops::parameters::Material`. */
+export interface Material {
+  name: string;
+  density: number;
 }
 
 /** What a parameter resolves to: a number, a pose, or text (a table's row, a colour). */
@@ -396,7 +404,11 @@ export type Command =
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
   | { command: "drag_tool"; on: boolean }
   /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
-  | { command: "joint"; parameter: string; value: number };
+  | { command: "joint"; parameter: string; value: number }
+  /** Take the measure tool in hand, or put it down: with no step edited, clicks pick up to two entities to measure. */
+  | { command: "measure_tool"; on: boolean }
+  /** Ask a question of the part as drawn, answered in [[Update]] `inspection`; changes nothing. */
+  | { command: "inspect"; query: "mass_properties" | "interference" };
 
 /** A joint's coordinate — see `geop_ops::assembly::JointValue`. */
 export interface JointValue {
@@ -446,6 +458,10 @@ export interface ProgramState {
   can_redo: boolean;
   /** Whether the drag tool is in hand. */
   drag_tool: boolean;
+  /** Whether the measure tool is in hand. */
+  measure_tool: boolean;
+  /** The materials a part's can be picked from. */
+  materials: Material[];
   /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
   parameters: { values: Record<string, ParamValue>; errors: Record<string, string> };
   operations: OperationInfo[];
@@ -541,9 +557,70 @@ export interface Update {
   step: StepState | null;
   /** The program files the command added, the one now edited first. */
   files: { path: string; program: Program }[] | null;
-  /** What the drag tool shows, while it is in hand and no step is edited. */
+  /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
+  /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
+  inspection: Inspection | null;
 }
+
+// ── inspecting — see `geop_ops_inspect` ──────────────────────────────────────
+
+/** A number and how far the truth may be from it. */
+export interface Bounded {
+  value: number;
+  error: number;
+}
+
+/** One number a measurement shows: `mm`, `mm²`, `mm³`, `kg` or `°`. */
+export type Measured = { label: string; unit: string } & Bounded;
+
+export interface Measurement {
+  entities: EntityRef[];
+  values: Measured[];
+  /** Where the least distance between two entities is attained. */
+  witness: [Vec3, Vec3] | null;
+  /** The plane of one planar entity picked alone, to cut a section with. */
+  plane: Frame | null;
+  error: string | null;
+}
+
+/** Mass properties in mm and kg: volume mm³, area mm², mass kg, centre mm, inertia about the centre kg·mm². */
+export interface MassSummary {
+  volume: Bounded;
+  area: Bounded;
+  mass: Bounded;
+  center: [Bounded, Bounded, Bounded];
+  inertia: Bounded[][];
+  principal_moments: [Bounded, Bounded, Bounded];
+  principal_axes: [Vec3, Vec3, Vec3];
+  converged: boolean;
+}
+
+export interface BodyMass {
+  name: string;
+  material: string;
+  density: number;
+  /** Whether no material was given, and water assumed. */
+  assumed: boolean;
+  properties: MassSummary | null;
+  error: string | null;
+}
+
+export interface MassReport {
+  bodies: BodyMass[];
+  total: MassSummary | null;
+}
+
+export interface InterferenceReport {
+  solids: number;
+  found: { a: string; b: string; contact: "overlap" | "touch"; volume: Bounded | null }[];
+  unchecked: { a: string; b: string; error: string }[];
+}
+
+export type Inspection =
+  | ({ kind: "measure" } & Measurement)
+  | ({ kind: "mass_properties" } & MassReport)
+  | ({ kind: "interference" } & InterferenceReport);
 
 /** Apply `command` in the kernel, and get back what to show now. */
 export async function send(command: Command): Promise<Update> {

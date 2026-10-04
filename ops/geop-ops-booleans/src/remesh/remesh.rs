@@ -45,7 +45,11 @@ pub struct RemeshParams<S: Scalar> {
     /// Marching step length along a traced face x face intersection curve.
     pub trace_step_size: S,
     /// How many marching steps one traced curve may take before it's
-    /// considered to have failed to reach a terminating vertex.
+    /// considered to have failed to reach a terminating vertex. An effort
+    /// budget only: a trace that reaches its vertex does so in the same
+    /// steps whatever the budget, so this decides how long a curve can be
+    /// traced at all — `trace_step_size` times it. Generous, since parts are
+    /// drawn in millimetres: a 40 mm plate cut across traces 400 steps.
     pub max_trace_steps: usize,
 }
 
@@ -57,7 +61,7 @@ impl<S: Scalar> Default for RemeshParams<S> {
             min_subdivision_size: S::from_f64(1e-7),
             curve_curve_min_subdivision_size: S::from_f64(1e-4),
             trace_step_size: S::from_f64(0.1),
-            max_trace_steps: 200,
+            max_trace_steps: 1_000,
         }
     }
 }

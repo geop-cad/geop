@@ -4,6 +4,7 @@
 //! by, `side`, `end` or `face`.
 
 use geop_core_math::geop_error::GeopResult;
+use geop_ops::parameters::Material;
 use geop_ops::parameters::{Parameter, ParameterKind, Parameters};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
@@ -23,6 +24,10 @@ use crate::Program;
 pub fn ball_bearing() -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
+        material: Some(Material {
+            name: "Steel".into(),
+            density: 7850.0,
+        }),
         color: Some("#b8bcc4".into()),
         values: vec![size(tables::ball_bearings())],
     };
@@ -96,6 +101,10 @@ const SLOT: [[i32; 2]; 10] = [
 fn tslot(cells: i32, file: &'static str, title: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
+        material: Some(Material {
+            name: "Aluminium 6061".into(),
+            density: 2700.0,
+        }),
         color: Some("#c8ccd2".into()),
         values: vec![Parameter {
             name: "length".into(),
@@ -203,6 +212,10 @@ pub fn tslot_2040() -> GeopResult<StandardPart> {
 pub fn nema17() -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
+        material: Some(Material {
+            name: "Steel".into(),
+            density: 7850.0,
+        }),
         color: Some("#3a3d42".into()),
         values: vec![size(tables::nema17())],
     };

@@ -1550,3 +1550,93 @@ fn subd_cage_is_shaped_in_the_viewport() {
     let scene = update.scene.expect("the part changed");
     assert_eq!(scene.part.solids, [format!("subd({})", last.id)]);
 }
+
+/// The measure tool, used as the viewer uses it: taken in hand, the box's
+/// top hovered and clicked — its area, its plane — then its bottom clicked
+/// from below: one unit apart, parallel, the least distance drawn between
+/// them. Then the mass properties and the interference of the part asked
+/// for. None of it changes the program, and the tool put down shows nothing.
+#[test]
+fn measure_tool_measures_what_is_clicked() {
+    use crate::inspect::{Inspection, Query};
+    let (mut editor, _) = editor();
+    let before = editor.program().clone();
+    let update = editor.handle(Command::MeasureTool { on: true });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert!(update.program.unwrap().measure_tool);
+    let top = EntityRef::Face {
+        name: "extrude(box,end)".into(),
+    };
+    let bottom = EntityRef::Face {
+        name: "extrude(box,start)".into(),
+    };
+    let from_above = pointer([0.5, 0.5, 10.0], [0.0, 0.0, -1.0]);
+    let from_below = pointer([0.5, 0.5, -10.0], [0.0, 0.0, 1.0]);
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let measured = |update: &Update<S>| match &update.inspection {
+        Some(Inspection::Measure(m)) => m.clone(),
+        other => panic!("no measurement: {other:?}"),
+    };
+    let value = |m: &geop_ops_inspect::Measurement<S>, label: &str| {
+        m.values
+            .iter()
+            .find(|v| v.label == label)
+            .unwrap_or_else(|| panic!("no {label}: {m:?}"))
+            .value
+    };
+
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: from_above.clone(),
+            shift: false,
+        },
+    });
+    assert_eq!(update.tool.unwrap().highlights, vec![top.clone()]);
+
+    let update = editor.handle(click(from_above));
+    assert!(update.program.is_none(), "measuring changes no program");
+    let m = measured(&update);
+    assert_eq!(m.entities, vec![top.clone()]);
+    let hole = std::f64::consts::PI * 0.4 * 0.4;
+    assert!(value(&m, "Area").contains(4.0 - hole), "{m:?}");
+    assert!(m.plane.is_some());
+
+    let update = editor.handle(click(from_below));
+    let m = measured(&update);
+    assert_eq!(m.entities, vec![top, bottom]);
+    assert!(value(&m, "Distance").contains(1.0), "{m:?}");
+    assert!(value(&m, "Angle").contains(0.0), "{m:?}");
+    let tool = update.tool.unwrap();
+    assert!(tool.visuals.iter().any(|v| v.key == "distance"));
+
+    let update = editor.handle(Command::Inspect {
+        query: Query::MassProperties,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let Some(Inspection::MassProperties(report)) = update.inspection else {
+        panic!("no mass properties: {:?}", update.inspection);
+    };
+    assert_eq!(report.bodies.len(), 1);
+    let volume = report.total.unwrap().volume;
+    assert!(volume.contains(4.0 - hole * 0.5), "{volume:?}");
+
+    let update = editor.handle(Command::Inspect {
+        query: Query::Interference,
+    });
+    let Some(Inspection::Interference(report)) = update.inspection else {
+        panic!("no interference: {:?}", update.inspection);
+    };
+    assert_eq!(report.solids, 1);
+    assert!(report.found.is_empty());
+
+    let update = editor.handle(Command::MeasureTool { on: false });
+    assert!(update.tool.is_none() && update.inspection.is_none());
+    assert_eq!(*editor.program(), before);
+}

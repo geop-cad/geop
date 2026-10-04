@@ -13,28 +13,8 @@ use super::NurbCurve;
 use crate::{
     aabb::compute_aabb,
     knot_insertion::{insert, is_clamped_at},
+    spline::interior_knots,
 };
-
-/// The distinct knots strictly inside the domain of a curve of `degree`
-/// with `num_points` control points, each with its multiplicity — knots
-/// that could be equal counted as one, their enclosures united.
-fn interior_knots<S: Scalar>(knots: &[S], degree: usize, num_points: usize) -> Vec<(S, usize)> {
-    let (start, end) = (knots[degree], knots[num_points]);
-    let mut out: Vec<(S, usize)> = Vec::new();
-    for &k in &knots[degree + 1..num_points] {
-        if !(k.definitely_greater(start) && k.definitely_less(end)) {
-            continue;
-        }
-        match out.last_mut() {
-            Some((u, m)) if u.could_be_equal(k) => {
-                *u = u.union(k);
-                *m += 1;
-            }
-            _ => out.push((k, 1)),
-        }
-    }
-    out
-}
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// The same curve reparametrized from its domain onto `[0, 1]`: its

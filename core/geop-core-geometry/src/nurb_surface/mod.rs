@@ -1,3 +1,4 @@
+mod closest;
 mod curvature;
 mod evaluate;
 mod fit_pcurve;
@@ -124,6 +125,17 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
             self.knot_vector_v[self.degree_v],
             self.knot_vector_v[self.num_v],
         )
+    }
+
+    /// Where the surface stops being one polynomial piece along `u`: the
+    /// ends of its domain and every distinct knot between them.
+    pub fn breakpoints_u(&self) -> Vec<S> {
+        crate::spline::breakpoints(&self.knot_vector_u, self.degree_u, self.num_u)
+    }
+
+    /// Like [`Self::breakpoints_u`], along `v`.
+    pub fn breakpoints_v(&self) -> Vec<S> {
+        crate::spline::breakpoints(&self.knot_vector_v, self.degree_v, self.num_v)
     }
 
     /// Whether `other` could be the very same patch: equal degrees, and

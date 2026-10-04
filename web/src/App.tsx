@@ -7,6 +7,10 @@ import {
   type Command,
   type EditEvent,
   type Placed,
+  type EntityRef,
+  type InterferenceReport,
+  type MassReport,
+  type Measurement,
   type OperationInfo,
   type PartView,
   type Presentation,
@@ -29,6 +33,8 @@ import {
   saveWorkspace,
   type Workspace,
 } from "./files";
+import { InspectPanel } from "./InspectPanel";
+import { sectionPlane, type Section } from "./section";
 import { ParametersPanel } from "./ParametersPanel";
 import { JointsPanel } from "./JointsPanel";
 import { SceneViewer } from "./SceneViewer";
@@ -92,6 +98,16 @@ function App() {
   const [tool, setTool] = useState<Presentation | null>(null);
   /** Why the last command was refused, if it was. */
   const [error, setError] = useState<string | null>(null);
+  /** What the measure tool's picks measure, while it is in hand. */
+  const [measurement, setMeasurement] = useState<Measurement | null>(null);
+  /** The last answers to the inspect questions — until the part changes. */
+  const [mass, setMass] = useState<MassReport | null>(null);
+  const [interference, setInterference] = useState<InterferenceReport | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  /** The section view, if one is on: the view only, never the model. */
+  const [section, setSection] = useState<Section | null>(null);
+  /** What the inspect panel lights, beyond what the kernel does. */
+  const [lights, setLights] = useState<EntityRef[]>([]);
 
   /** Which panel the bottom half shows on a narrow (mobile) screen — irrelevant on desktop, where all three show at once. */
   const [mobileTab, setMobileTab] = useState<MobileTab>("buttons");
@@ -144,11 +160,18 @@ function App() {
       }
       if (update.scene) {
         setScene(update.scene);
+        // The answers were about the part as it was.
+        setMass(null);
+        setInterference(null);
         placedRef.current = applyScene(placedRef.current, update.scene);
         setPlaced(placedRef.current);
       }
       setStep(update.step);
       setTool(update.tool);
+      const inspection = update.inspection;
+      setMeasurement(inspection?.kind === "measure" ? inspection : null);
+      if (inspection?.kind === "mass_properties") setMass(inspection);
+      if (inspection?.kind === "interference") setInterference(inspection);
       setError(update.error);
       if (!update.error && EDITS.includes(command.command)) {
         trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
@@ -431,6 +454,7 @@ function App() {
         parameters={program?.program.parameters ?? {}}
         resolved={program?.parameters ?? { values: {}, errors: {} }}
         enabled={wasmReady}
+        materials={program?.materials ?? []}
         onChange={(parameters) => dispatch({ command: "parameters", parameters })}
       />
       {(program?.joints.length ?? 0) > 0 && (
@@ -457,15 +481,41 @@ function App() {
     </section>
   );
 
+  /** Ask a question of the part as drawn; the answer replaces the last. */
+  async function inspect(query: "mass_properties" | "interference") {
+    setInspecting(true);
+    await dispatch({ command: "inspect", query });
+    setInspecting(false);
+  }
+
   const structurePanel = (
-    <section className="panel structure-panel">
-      <h2>Part</h2>
-      <StructurePanel
-        items={scene?.structure ?? []}
-        enabled={wasmReady}
-        onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
-      />
-    </section>
+    <>
+      <section className="panel structure-panel">
+        <h2>Part</h2>
+        <StructurePanel
+          items={scene?.structure ?? []}
+          enabled={wasmReady}
+          onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
+        />
+      </section>
+      <section className="panel inspect-panel">
+        <h2>Inspect</h2>
+        <InspectPanel
+          enabled={wasmReady && step == null}
+          measuring={program?.measure_tool ?? false}
+          onMeasure={(on) => dispatch({ command: "measure_tool", on })}
+          measurement={measurement}
+          mass={mass}
+          interference={interference}
+          busy={inspecting}
+          onQuery={(query) => void inspect(query)}
+          section={section}
+          onSection={setSection}
+          size={scene?.part.extent.size ?? 1}
+          onLight={setLights}
+        />
+      </section>
+    </>
   );
 
   const explorer = !host && (
@@ -552,7 +602,8 @@ function App() {
                 instances={instances}
                 components={components}
                 visuals={presentation?.visuals}
-                highlights={presentation?.highlights}
+                highlights={[...(presentation?.highlights ?? []), ...lights]}
+                section={section && sectionPlane(section, scene.part.extent.center)}
                 pickable={presentation?.pickable}
                 hidden={scene.hidden}
                 plane={plane}

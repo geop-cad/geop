@@ -1426,3 +1426,79 @@ button.danger:hover:not(:disabled) {
 .parameter-add {
   margin-bottom: 0.5rem;
 }
+
+/* ── inspecting ────────────────────────────────────────────────────────── */
+
+.inspect-panel {
+  margin-top: 0.6rem;
+}
+.inspect-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.inspect-result {
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.inspect-result summary {
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspect-entity {
+  font-family: ui-monospace, monospace;
+  color: #ffc94a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspect-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.inspect-table th {
+  text-align: left;
+  font-weight: normal;
+  color: #aaa;
+  padding-right: 0.5rem;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.inspect-table td {
+  font-family: ui-monospace, monospace;
+  color: #e8e8e8;
+}
+.inspect-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.inspect-row button.active {
+  background: #3a5a8a;
+}
+.inspect-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.inspect-list li {
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+}
+.inspect-list li:hover {
+  background: #232323;
+}
+.inspect-list li.overlap {
+  color: #ff8c8c;
+}
+.inspect-list li.touch {
+  color: #ffd27a;
+}
+.inspect-list li.unchecked {
+  color: #888;
+}

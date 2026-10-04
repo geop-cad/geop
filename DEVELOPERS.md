@@ -58,6 +58,9 @@ ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
                                and reliefs, the flat pattern; the sheet model
                                recorded on the body and thickened into it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
+ops/geop-ops-inspect          inspecting a part without changing it: mass
+                               properties of its solids and placed parts,
+                               measurements of picked entities, interference
 ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
                                the editor, built as its Catmull-Clark limit
                                surface, a solid of B-spline faces; the subd

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    primitives::Pose,
     scalars::Scalar,
     vector::Vector3,
 };
@@ -123,6 +124,33 @@ impl<S: Scalar> FaceSpec<S> {
 }
 
 impl<S: Scalar> BodySpec<S> {
+    /// The same body moved by the rigid motion `pose`: its vertices, edge
+    /// curves and surfaces moved, its pcurves — on surfaces moved with the
+    /// same parametrization — as they are.
+    pub fn placed(&self, pose: &Pose<S>) -> Self {
+        Self {
+            vertices: self.vertices.iter().map(|p| pose.apply(p)).collect(),
+            edges: self
+                .edges
+                .iter()
+                .map(|e| EdgeSpec {
+                    curve: e.curve.transform(&pose.motion()),
+                    ..e.clone()
+                })
+                .collect(),
+            faces: self
+                .faces
+                .iter()
+                .map(|f| FaceSpec {
+                    surface: f.surface.transform(&pose.motion()),
+                    ..f.clone()
+                })
+                .collect(),
+            shells: self.shells.clone(),
+            solid: self.solid,
+        }
+    }
+
     /// The vertex a coedge starts at, and the one it ends at.
     fn ends(&self, coedge: &CoedgeSpec<S>) -> GeopResult<(usize, usize)> {
         match coedge.on {

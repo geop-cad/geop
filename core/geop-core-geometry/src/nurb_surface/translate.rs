@@ -150,4 +150,36 @@ mod tests {
     fn translate_shifts_evaluated_points() {
         for_all_scalars!(check_translate_shifts_evaluated_points);
     }
+
+    /// A placed surface evaluates to the placed points of the original.
+    #[test]
+    fn place_moves_evaluated_points() {
+        use geop_core_math::{primitives::Pose, scalars::ScalInF64 as S};
+        let p = |x: f64, y: f64, z: f64, w: f64| {
+            geop_core_math::vector::Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
+        };
+        let surface = NurbSurface3D::try_new(
+            1,
+            1,
+            vec![
+                p(0.0, 0.0, 0.0, 1.0),
+                p(0.0, 1.0, 0.0, 2.0),
+                p(1.0, 0.0, 1.0, 1.0),
+                p(1.0, 1.0, 0.0, 1.0),
+            ],
+            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+        )
+        .unwrap();
+        let pose = Pose::from_euler(
+            Vector3::from_array([1.0, -2.0, 0.5].map(S::from_f64)),
+            [30.0, 10.0, -45.0].map(S::from_f64),
+        )
+        .unwrap();
+        let placed = surface.transform(&pose.motion());
+        let (u, v) = (S::from_f64(0.3), S::from_f64(0.7));
+        let a = placed.evaluate(u, v).unwrap();
+        let b = pose.apply(&surface.evaluate(u, v).unwrap());
+        assert!(a.could_be_equal(&b));
+    }
 }

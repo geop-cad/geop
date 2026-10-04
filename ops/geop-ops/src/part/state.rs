@@ -114,6 +114,12 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
         }
     }
 
+    /// What the part is made of, if it is given (see
+    /// [`crate::parameters::Material`]).
+    pub fn material(&self) -> Option<&crate::parameters::Material> {
+        self.parameters.material.as_ref()
+    }
+
     /// Every parameter the part's steps declared, with the value it was
     /// built with.
     pub fn state(&self) -> &State {

@@ -62,6 +62,8 @@ mod harness_tests;
 #[cfg(test)]
 mod hole_tests;
 #[cfg(test)]
+mod inspect_tests;
+#[cfg(test)]
 mod pattern_tests;
 #[cfg(test)]
 mod plastic_tests;

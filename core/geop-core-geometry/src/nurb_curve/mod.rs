@@ -1,9 +1,11 @@
+mod closest;
 mod compatible;
 mod evaluate;
 mod extend;
 mod helix;
 pub use helix::{Handedness, HelixRow, cos_sin, helix_rows};
 mod interpolate;
+mod length;
 mod refine;
 pub use interpolate::true_point_fractions;
 pub use refine::ParameterRefinable;
@@ -129,6 +131,13 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let p = self.degree;
         let n = self.control_points.len() - 1;
         (self.knot_vector[p], self.knot_vector[n + 1])
+    }
+
+    /// Where the curve stops being one polynomial piece: the ends of its
+    /// domain and every distinct knot between them (see
+    /// [`crate::spline::breakpoints`]).
+    pub fn breakpoints(&self) -> Vec<S> {
+        crate::spline::breakpoints(&self.knot_vector, self.degree, self.control_points.len())
     }
 
     pub fn domain_as_scalar(&self) -> S {

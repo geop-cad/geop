@@ -35,7 +35,9 @@ use geop_ops::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    PartOperation, Program, ProgramRunner, Workspace, examples, stdlib::WithStandardParts,
+    PartOperation, Program, ProgramRunner, Workspace, examples,
+    inspect::{self, Inspection, MeasureTool, Query},
+    stdlib::WithStandardParts,
 };
 
 /// Something the user did.
@@ -134,6 +136,20 @@ pub enum Command<S: Scalar> {
         parameter: String,
         value: f64,
     },
+    /// Take the measure tool in hand, or put it down: with no step being
+    /// edited, a click picks a vertex, an edge, a face or a datum to
+    /// measure — up to two (see [`MeasureTool::handle`]) — and every update
+    /// says what they measure ([`Update::inspection`]). Measuring is no
+    /// edit: it changes nothing, and adds no step.
+    MeasureTool {
+        on: bool,
+    },
+    /// Ask a question of the part as drawn — its mass properties, which of
+    /// its solids interfere — answered once, in [`Update::inspection`].
+    /// Changes nothing.
+    Inspect {
+        query: Query,
+    },
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -166,6 +182,11 @@ pub struct ProgramState {
     pub can_redo: bool,
     /// Whether the drag tool is in hand.
     pub drag_tool: bool,
+    /// Whether the measure tool is in hand.
+    pub measure_tool: bool,
+    /// The materials a part's can be picked from (see
+    /// [`geop_ops::parameters::Material`]).
+    pub materials: Vec<geop_ops::parameters::Material>,
     /// What the program's parameters resolve to, and why those that do
     /// not resolve fail.
     pub parameters: Resolved,
@@ -283,9 +304,13 @@ pub struct Update<S: Scalar> {
     pub step: Option<StepState<S>>,
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
-    /// What the drag tool shows, while it is in hand and no step is
-    /// edited: the part it would drag lit, and whether a press grabs it.
+    /// What the drag tool or the measure tool shows, while it is in hand
+    /// and no step is edited: the part it would drag lit, and whether a
+    /// press grabs it; what is picked to measure, and the least distance.
     pub tool: Option<Presentation<S>>,
+    /// What the measure tool's picks measure, while it is in hand — or the
+    /// answer to [`Command::Inspect`].
+    pub inspection: Option<Inspection<S>>,
 }
 
 /// The drag tool, in hand: the placed part the pointer is over, and the one
@@ -383,6 +408,10 @@ pub struct Editor<S: Scalar> {
     placed: Option<HashMap<String, (String, [f64; 12])>>,
     /// The drag tool, while in hand.
     drag_tool: Option<DragTool<S>>,
+    /// The measure tool, while in hand.
+    measure_tool: Option<MeasureTool<S>>,
+    /// The question the last command asked, to answer once it has run.
+    query: Option<Query>,
     /// The part as last drawn: what the drag tool picks from.
     drawn: Option<PartView<S>>,
     /// What the user chose to show or hide, by name, over what the editor
@@ -420,6 +449,8 @@ impl<S: Scalar> Editor<S> {
             added: None,
             placed: None,
             drag_tool: None,
+            measure_tool: None,
+            query: None,
             drawn: None,
             visibility: BTreeMap::new(),
         }
@@ -533,19 +564,41 @@ impl<S: Scalar> Editor<S> {
                 components,
             }
         });
+        let mut error = result.as_ref().err().map(|e| e.to_string());
+        let shown_part = self.runner.part_at(steps);
+        let inspection = match self.query.take() {
+            Some(query) => inspect::answer(query, shown_part)
+                .map_err(|e| error = Some(e.to_string()))
+                .ok(),
+            None => self
+                .measure_tool
+                .as_mut()
+                .filter(|_| step.is_none())
+                .map(|tool| {
+                    if !matches!(result, Ok(Changed::Nothing)) {
+                        tool.remeasure(shown_part);
+                    }
+                    Inspection::Measure(tool.measurement().clone())
+                }),
+        };
         Update {
-            error: result.as_ref().err().map(|e| e.to_string()),
+            error,
             program: matches!(result, Ok(Changed::Program | Changed::Run))
                 .then(|| self.program_state()),
             scene,
             tool: self.tool_presentation(step.is_none()),
             step,
             files: self.added.take(),
+            inspection,
         }
     }
 
-    /// What the drag tool shows, if it is in hand and no step is edited.
+    /// What the drag tool or the measure tool shows, if one is in hand and
+    /// no step is edited.
     fn tool_presentation(&self, idle: bool) -> Option<Presentation<S>> {
+        if let Some(measure) = self.measure_tool.as_ref().filter(|_| idle) {
+            return Some(measure.presentation());
+        }
         let tool = self.drag_tool.as_ref().filter(|_| idle)?;
         let lit = tool.grab.as_ref().map(|g| &g.name).or(tool.hover.as_ref());
         Some(Presentation {
@@ -657,6 +710,7 @@ impl<S: Scalar> Editor<S> {
             Command::New { kind } => {
                 idle(self)?;
                 self.drag_tool = None;
+                self.measure_tool = None;
                 let index = self.marker.unwrap_or(self.program.steps.len());
                 let library = library(&self.workspace, self.path.as_deref());
                 self.runner.run(&self.program, Some(index), &library);
@@ -680,6 +734,7 @@ impl<S: Scalar> Editor<S> {
             Command::Open { id } => {
                 idle(self)?;
                 self.drag_tool = None;
+                self.measure_tool = None;
                 let index = self.program.index_of(&id)?;
                 let library = library(&self.workspace, self.path.as_deref());
                 self.runner.run(&self.program, Some(index), &library);
@@ -701,10 +756,13 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Event { event } => {
                 let Some(open) = &mut self.open else {
-                    return Ok(match self.drag_tool.take() {
-                        Some(tool) => self.drag(tool, &event),
-                        None => Changed::Nothing,
-                    });
+                    if let Some(tool) = self.drag_tool.take() {
+                        return Ok(self.drag(tool, &event));
+                    }
+                    if let (Some(tool), Some(view)) = (&mut self.measure_tool, &self.drawn) {
+                        tool.handle(view, self.runner.part(), &event);
+                    }
+                    return Ok(Changed::Nothing);
                 };
                 let library = library(&self.workspace, self.path.as_deref());
                 let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
@@ -918,7 +976,22 @@ impl<S: Scalar> Editor<S> {
             Command::DragTool { on } => {
                 idle(self)?;
                 self.drag_tool = on.then(DragTool::default);
+                if on {
+                    self.measure_tool = None;
+                }
                 Changed::Run
+            }
+            Command::MeasureTool { on } => {
+                idle(self)?;
+                self.measure_tool = on.then(|| MeasureTool::new(self.runner.part()));
+                if on {
+                    self.drag_tool = None;
+                }
+                Changed::Run
+            }
+            Command::Inspect { query } => {
+                self.query = Some(query);
+                Changed::Nothing
             }
             Command::Undo | Command::Redo if self.open.is_some() => {
                 // While a step is edited, its own edits.
@@ -1342,6 +1415,14 @@ impl<S: Scalar> Editor<S> {
                 None => !self.redo.is_empty(),
             },
             drag_tool: self.drag_tool.is_some(),
+            measure_tool: self.measure_tool.is_some(),
+            materials: geop_ops::parameters::MATERIALS
+                .iter()
+                .map(|&(name, density)| geop_ops::parameters::Material {
+                    name: name.into(),
+                    density,
+                })
+                .collect(),
             parameters: self.program.parameters.resolve(&self.program.state),
             operations: PartOperation::infos(),
             examples: self.examples.clone(),

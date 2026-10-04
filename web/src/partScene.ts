@@ -127,6 +127,42 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
   return scene;
 }
 
+/** The colour a section view caps cut solids with. */
+export const CAP_COLOR = 0xc86464;
+
+/**
+ * Two copies of a solid's triangles that draw nothing but count, in the
+ * stencil buffer, how often the eye's ray through each pixel enters and
+ * leaves the solid — back faces up, front faces down — so that where a
+ * section has cut the solid open, the count is not zero and the cap is drawn
+ * (see the cap in [[SceneViewer]]). Hidden until a section is on.
+ */
+function stencilCounters(geometry: THREE.BufferGeometry): THREE.Mesh[] {
+  return (
+    [
+      [THREE.BackSide, THREE.IncrementWrapStencilOp],
+      [THREE.FrontSide, THREE.DecrementWrapStencilOp],
+    ] as const
+  ).map(([side, op]) => {
+    const material = new THREE.MeshBasicMaterial({
+      side,
+      colorWrite: false,
+      depthWrite: false,
+      depthTest: false,
+      stencilWrite: true,
+      stencilFunc: THREE.AlwaysStencilFunc,
+      stencilFail: op,
+      stencilZFail: op,
+      stencilZPass: op,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 1;
+    mesh.visible = false;
+    mesh.userData.stencil = true;
+    return mesh;
+  });
+}
+
 /** The color a highlighted entity is drawn in. */
 export const HIGHLIGHT = new THREE.Color(0xffc94a);
 
@@ -171,6 +207,7 @@ export function buildSceneGroup(scene: Scene): THREE.Group {
     });
     const mesh = new THREE.Mesh(geometry, material);
     group.add(mesh);
+    group.add(...stencilCounters(geometry));
     group.userData.triangles = {
       mesh,
       base: colors.slice(),

@@ -9,6 +9,7 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{CurveId, PointId};
+use geop_ops::parameters::Material;
 use geop_ops::parameters::Parameters;
 use geop_ops_booleans::Combine;
 
@@ -27,6 +28,10 @@ use crate::Program;
 fn sized(table: Table) -> Program {
     let mut program = Program::new();
     program.parameters = Parameters {
+        material: Some(Material {
+            name: "Steel".into(),
+            density: 7850.0,
+        }),
         color: None,
         values: vec![size(table)],
     };
