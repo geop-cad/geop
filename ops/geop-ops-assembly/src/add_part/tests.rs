@@ -246,7 +246,7 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
         ],
     );
     let part = place(with_a(&library), "b", at([5.0, 4.0, 3.0]), &mates, &library);
-    assert!(!part.check_mates().unwrap().converged);
+    assert!(!part.check_mates(|_| true).unwrap().converged);
     let (moved, report) = part.solve_mates(None, &[]).unwrap();
     assert!(report.converged, "{report:?} {moved:?}");
     assert_eq!(moved.keys().collect::<Vec<_>>(), ["b.pose"], "a is fixed");
@@ -257,7 +257,7 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
         &mates,
         &library,
     );
-    assert!(solved.check_mates().unwrap().converged);
+    assert!(solved.check_mates(|_| true).unwrap().converged);
     assert_close(point(&solved, &origin("b", None)), [0.0, 0.0, 1.5], SOLVED);
 }
 

@@ -210,15 +210,6 @@ impl FilesMut for Counted {
     }
 }
 
-/// Builds the robot from `workspace`, and checks every mate holds.
-fn build(workspace: &Workspace<S, Counted>) -> geop_ops::Part<S> {
-    let text = workspace.files().files["robot.geop"].clone();
-    let program = Program::from_json(&text).unwrap();
-    let part = program.build(&workspace.scope("robot.geop")).unwrap();
-    assert!(part.check_mates().unwrap().converged);
-    part
-}
-
 /// Editing one file builds again only it and the files placing it,
 /// however deep; the others' parts are placed as they were. Saving a file
 /// unchanged builds nothing again.
@@ -235,7 +226,7 @@ fn editing_a_file_rebuilds_only_what_places_it() {
     let built = |workspace: &Workspace<S, Counted>| {
         let program = Program::from_json(&robot).unwrap();
         let part = program.build(&workspace.scope("robot.geop")).unwrap();
-        assert!(part.check_mates().unwrap().converged);
+        assert!(part.check_mates(|_| true).unwrap().converged);
         part
     };
     built(&workspace);
@@ -300,14 +291,31 @@ fn editing_a_file_rebuilds_only_what_places_it() {
     assert_eq!(workspace.files().take(), rebuilt);
 }
 
-/// What the editor sends, as the front end gets it: its size in bytes.
-fn size(update: &Update<S>) -> usize {
+/// What the editor sends, as the front end gets it: its size in bytes,
+/// and of what in it.
+fn size(update: &Update<S>) -> String {
     assert!(update.error.is_none(), "{:?}", update.error);
-    serde_json::to_string(update).unwrap().len()
+    let json = serde_json::to_value(update).unwrap();
+    let len = |v: &serde_json::Value| v.to_string().len();
+    let mut parts: Vec<String> = json
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, v)| !v.is_null())
+        .flat_map(|(k, v)| match (k.as_str(), v.as_object()) {
+            ("scene", Some(scene)) => scene
+                .iter()
+                .map(|(k, v)| format!("scene.{k} {}", len(v)))
+                .collect(),
+            _ => vec![format!("{k} {}", len(v))],
+        })
+        .collect();
+    parts.sort();
+    format!("{} bytes ({})", len(&json), parts.join(", "))
 }
 
 /// A pointer straight down onto `(x, y)`.
-fn down_onto(x: f64, y: f64) -> Pointer<S> {
+pub(super) fn down_onto(x: f64, y: f64) -> Pointer<S> {
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     Pointer {
         ray: Ray::try_new(v([x, y, 50.0]), v([0.0, 0.0, -1.0])).unwrap(),
@@ -319,7 +327,7 @@ fn down_onto(x: f64, y: f64) -> Pointer<S> {
 
 /// The editor editing the robot of `boards` boards and `screws` screws,
 /// with every file sent.
-fn robot_editor(boards: usize, screws: usize) -> (Editor<S>, Update<S>) {
+pub(super) fn robot_editor(boards: usize, screws: usize) -> (Editor<S>, Update<S>) {
     let mut files = robot(boards, screws);
     let robot = Program::from_json(&files.remove("robot.geop").unwrap()).unwrap();
     let mut editor = Editor::new();
@@ -343,7 +351,7 @@ fn a_changed_leaf_is_sent_once() {
     let scene = update.scene.expect("the robot is drawn");
     // The plate, the board and its 53 (its plate, 4 standoffs, 4 modules of
     // a plate and 10 screws each), and 20 screws.
-    assert_eq!(scene.part.instances.len(), 1 + 1 + 53 + 20);
+    assert_eq!(scene.instances.len(), 1 + 1 + 53 + 20);
     assert_eq!(scene.components.len(), 5, "{:?}", scene.components.keys());
 
     let longer = round("screw", 0.15, 1.5).to_json().unwrap();
@@ -351,6 +359,10 @@ fn a_changed_leaf_is_sent_once() {
         files: BTreeMap::from([("screw.geop".into(), Some(longer.clone()))]),
     });
     let scene = update.scene.expect("the screws changed");
+    // Every placed part is drawn from a new component — but the plates
+    // and standoffs.
+    assert!(!scene.all && scene.removed.is_empty());
+    assert_eq!(scene.instances.len(), 1 + 4 + 4 * 10 + 20);
     let sent: BTreeSet<&str> = scene
         .components
         .keys()
@@ -383,7 +395,7 @@ fn robot_timings() {
         let parts = 44 * boards + screws;
         let (load, (mut editor, update)) = timed(|| robot_editor(boards, screws));
         println!(
-            "robot of {parts} parts: load {load:.3} s, {} bytes",
+            "robot of {parts} parts: load {load:.3} s, {}",
             size(&update)
         );
 
@@ -393,18 +405,18 @@ fn robot_timings() {
                 files: BTreeMap::from([("screw.geop".into(), Some(longer.clone()))]),
             })
         });
-        println!("  leaf edit {leaf:.3} s, {} bytes", size(&update));
+        println!("  leaf edit {leaf:.3} s, {}", size(&update));
 
         let (same, update) = timed(|| {
             editor.handle(Command::Files {
                 files: BTreeMap::from([("screw.geop".into(), Some(longer.clone()))]),
             })
         });
-        println!("  unchanged save {same:.3} s, {} bytes", size(&update));
+        println!("  unchanged save {same:.3} s, {}", size(&update));
 
         let last = editor.program().steps.last().unwrap().id.clone();
         let (top, update) = timed(|| editor.handle(Command::Remove { id: last }));
-        println!("  top-level edit {top:.3} s, {} bytes", size(&update));
+        println!("  top-level edit {top:.3} s, {}", size(&update));
 
         editor.handle(Command::DragTool { on: true });
         let (hover, update) = timed(|| {
@@ -415,7 +427,7 @@ fn robot_timings() {
                 },
             })
         });
-        println!("  hover {hover:.4} s, {} bytes", size(&update));
+        println!("  hover {hover:.4} s, {}", size(&update));
 
         let (drag, update) = timed(|| {
             editor.handle(Command::Event {
@@ -427,6 +439,6 @@ fn robot_timings() {
                 },
             })
         });
-        println!("  drag {drag:.3} s, {} bytes", size(&update));
+        println!("  drag {drag:.3} s, {}", size(&update));
     }
 }

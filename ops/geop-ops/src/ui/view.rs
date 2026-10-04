@@ -231,7 +231,10 @@ pub struct PartView<S: Scalar> {
     pub datums: Vec<ViewDatum<S>>,
     /// The part's solids, oldest first.
     pub solids: Vec<String>,
-    /// Every part placed in it, and in those, however deep.
+    /// Every part placed in it, and in those, however deep. Not
+    /// serialized: a viewer is sent them apart, as they change, by name
+    /// (see `geop_cad_base::editor::SceneState`).
+    #[serde(skip)]
     pub instances: Vec<ViewInstance<S>>,
     pub extent: Extent<S>,
     /// The part's colour, `#rrggbb` (see [`crate::parameters::COLOR`]);
@@ -244,6 +247,11 @@ pub struct PartView<S: Scalar> {
 struct Layer<'v, S: Scalar> {
     view: &'v PartView<S>,
     pointer: Pointer<S>,
+    /// Whether the pointer comes near enough the box around its view
+    /// ([`PartView::extent`]) to hit any of its vertices, edges or faces:
+    /// only its datums can be hit otherwise — a frame is drawn at a size of
+    /// its own, a plane or an axis as large as the whole drawing.
+    near: bool,
     /// Where it is, and back; `None` for the part drawn itself.
     motion: Option<(Motion<S>, Motion<S>)>,
     /// The instance's name, for a placed part.
@@ -537,12 +545,29 @@ impl<S: Scalar> PartView<S> {
         Ok(())
     }
 
+    /// Whether `pointer` could hit any of its vertices, edges or faces —
+    /// within one reach of them, as a pick asks: whether it passes within
+    /// one reach of the ball around the box of everything drawn
+    /// ([`Extent`]), the reach taken where the ball ends furthest along
+    /// the ray. A pick tests every triangle of a part it comes near, so for
+    /// a part placed hundreds of times, this is what it can skip.
+    fn near(&self, pointer: &Pointer<S>) -> bool {
+        let Ok(radius) = self.extent.size.div(S::TWO) else {
+            return true;
+        };
+        let (dist, t) = pointer.ray.distance_to_point(&self.extent.center);
+        !dist
+            .sub(radius)
+            .definitely_greater(pointer.reach_at(1.0, t.add(radius)))
+    }
+
     /// The part drawn itself, then every placed part, each with `pointer`
     /// moved into its frame.
     fn layers(&self, pointer: &Pointer<S>) -> GeopResult<Vec<Layer<'_, S>>> {
         let mut layers = vec![Layer {
             view: self,
             pointer: *pointer,
+            near: true,
             motion: None,
             instance: None,
         }];
@@ -552,12 +577,15 @@ impl<S: Scalar> PartView<S> {
             let Ok(ray) = Ray::try_new(back.apply(ray.origin()), back.rotate(ray.dir())) else {
                 continue;
             };
+            let view = instance.source.view()?;
+            let pointer = Pointer {
+                ray,
+                reach: pointer.reach,
+            };
             layers.push(Layer {
-                view: instance.source.view()?,
-                pointer: Pointer {
-                    ray,
-                    reach: pointer.reach,
-                },
+                near: view.near(&pointer),
+                view,
+                pointer,
                 motion: Some((instance.pose.motion(), back)),
                 instance: Some(&instance.name),
             });
@@ -575,6 +603,7 @@ impl<S: Scalar> PartView<S> {
         // The part's own faces hide what is behind them too.
         let (t, hit) = layers
             .iter()
+            .filter(|l| l.near)
             .filter_map(|l| Some((l.view.pick_face(&l.pointer)?.0, l.instance)))
             .min_by(|a, b| nearer(a.0, b.0))?;
         let hit = hit?;
@@ -594,7 +623,10 @@ impl<S: Scalar> PartView<S> {
     pub fn pick_instance(&self, instance: &str, pointer: &Pointer<S>) -> Option<S> {
         let layers = self.layers(pointer).ok()?;
         let layer = layers.iter().find(|l| l.instance == Some(instance))?;
-        layer.view.pick_face(&layer.pointer).map(|(t, _)| t)
+        layer
+            .near
+            .then(|| layer.view.pick_face(&layer.pointer))?
+            .map(|(t, _)| t)
     }
 
     /// The box around everything drawn: the union of every point of it,
@@ -706,6 +738,7 @@ impl<S: Scalar> PartView<S> {
         // along the ray, so every layer's `t` is the part drawn's.
         let face = layers
             .iter()
+            .filter(|l| l.near)
             .filter_map(|l| l.view.pick_face(&l.pointer).map(|(t, f)| (t, l, f)))
             .min_by(|a, b| nearer(a.0, b.0));
         // In front of the face hit, give or take the reach — or on its
@@ -722,7 +755,7 @@ impl<S: Scalar> PartView<S> {
         };
 
         let mut points = Vec::new();
-        for l in &layers {
+        for l in layers.iter().filter(|l| l.near) {
             let ray = &l.pointer.ray;
             let near = |(dist, t): (S, S), faces: &[String]| {
                 (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
@@ -759,7 +792,7 @@ impl<S: Scalar> PartView<S> {
         }
 
         let mut curves = Vec::new();
-        for l in &layers {
+        for l in layers.iter().filter(|l| l.near) {
             let ray = &l.pointer.ray;
             let near = |(dist, t): (S, S), faces: &[String]| {
                 (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)

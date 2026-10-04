@@ -124,10 +124,10 @@ pub struct MateReport {
 /// The box around every vertex of `part` and of the parts placed in it, as
 /// placed — what a body turns about and how large a solve is are free
 /// choices made from it, so its corners are sharp.
-fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
+pub(crate) fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
     let own = part.topology().vertices.values().map(|v| v.point.sharpen());
     let placed = part.instances().flat_map(|(_, instance)| {
-        let corners = bounds(instance.part()).map(|[lo, hi]| {
+        let corners = instance.component.bounds().map(|[lo, hi]| {
             (0..8).map(move |i| {
                 let corner = Vector3::from_array(
                     [0, 1, 2].map(|k| if i >> k & 1 == 0 { lo[k] } else { hi[k] }),
@@ -206,14 +206,19 @@ impl<S: Scalar> Part<S> {
     /// one whose pose is that parameter — those bodies, and the names of
     /// the mates the constraints are, in order. The mates of a part placed
     /// flexibly hold its parts as they held them in it, named behind its
-    /// name. Mates still missing an entity hold nothing, and are left out.
-    fn assembly(&self, only: Option<&str>) -> GeopResult<Solvable<'_, S>> {
+    /// name. Mates still missing an entity hold nothing, and are left out,
+    /// and so are those `named` does not pick.
+    fn assembly(
+        &self,
+        only: Option<&str>,
+        named: &dyn Fn(&str) -> bool,
+    ) -> GeopResult<Solvable<'_, S>> {
         let mut bodies_of = Vec::new();
         placed(self, "", None, &Pose::identity(), &mut bodies_of);
         let mut scale = S::ONE;
         let mut bodies = Vec::new();
         for body in &bodies_of {
-            let center = match bounds(body.instance.part()) {
+            let center = match body.instance.component.bounds() {
                 Some([lo, hi]) => {
                     let diagonal = hi.sub(&lo).norm().sharpen();
                     if diagonal.definitely_greater(scale) {
@@ -259,7 +264,7 @@ impl<S: Scalar> Part<S> {
         let mut constraints = Vec::new();
         let mut names = Vec::new();
         for (name, mate) in &mates {
-            let Some([a, b]) = mate.pair() else {
+            let Some([a, b]) = mate.pair().filter(|_| named(name)) else {
                 continue;
             };
             let ctx = with_context!("mate {name:?}");
@@ -316,7 +321,7 @@ impl<S: Scalar> Part<S> {
         only: Option<&str>,
         drags: &[Drag<S>],
     ) -> GeopResult<(State, MateReport)> {
-        let (mut assembly, bodies_of, names) = self.assembly(only)?;
+        let (mut assembly, bodies_of, names) = self.assembly(only, &|_| true)?;
         let pulls = drags
             .iter()
             .map(|drag| {
@@ -359,9 +364,11 @@ impl<S: Scalar> Part<S> {
         ))
     }
 
-    /// Which mates hold where the instances are now.
-    pub fn check_mates(&self) -> GeopResult<MateReport> {
-        let (assembly, _, names) = self.assembly(None)?;
+    /// Which of the mates `named` picks — by name — hold where the
+    /// instances are now: `|_| true` for all of them. Checking only some
+    /// costs only theirs.
+    pub fn check_mates(&self, named: impl Fn(&str) -> bool) -> GeopResult<MateReport> {
+        let (assembly, _, names) = self.assembly(None, &named)?;
         let report = assembly.report()?;
         Ok(MateReport {
             converged: report.converged,

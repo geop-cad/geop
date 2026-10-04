@@ -189,7 +189,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     let mut part = program.build(&library)?;
     // State stale — a file it places changed since it was saved — are
     // solved for here, not in the file: that is the editor's to write.
-    let report = part.check_mates()?;
+    let report = part.check_mates(|_| true)?;
     if !report.converged {
         let (moved, _) = part.solve_mates(None, &[])?;
         program.state.extend(moved);

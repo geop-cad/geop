@@ -292,11 +292,15 @@ pub(crate) fn form<'a, S: Scalar>(
     }
 
     f.heading("mates_heading", "Mates");
+    // Its own mates — named after the step — not every mate of the part.
+    let namer_prefix = format!("add_part({},", context.id);
     let failed = built
-        .and_then(|(part, _)| part.check_mates().ok())
+        .and_then(|(part, _)| {
+            part.check_mates(|name| name.starts_with(&namer_prefix))
+                .ok()
+        })
         .map(|report| report.failed)
         .unwrap_or_default();
-    let namer_prefix = format!("add_part({},", context.id);
     let items = args
         .mates
         .iter()
