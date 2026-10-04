@@ -1,7 +1,9 @@
 //! Rigid bodies and the constraints between them — mates — as a
 //! [`System`]: a body is a pose parameter, a constraint a residual between
 //! a point, a line or a plane attached to each of two bodies, or to the
-//! ground, which never moves. [`Assembly`] puts them together.
+//! ground, which never moves. Joints, and the couplings between them, are
+//! mates too (see [`joints`]): their coordinates are numbers of the system.
+//! [`Assembly`] puts them together.
 
 use geop_core_math::{
     dual,
@@ -12,13 +14,21 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Param, Placed, Pull as ParamPull, Residual, System, Value};
+use crate::{Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank};
+
+mod joints;
+
+pub use joints::{
+    Connector, Coordinate, Coupling, CouplingKind, Joint, JointEnd, JointKind, Motion,
+};
+use joints::{CouplingResidual, JointResidual, from_variable, to_variable};
 
 /// Variables per body: a translation and a turn.
 const BODY_VARS: usize = 6;
 
-/// The dual numbers of a mate: two bodies' worth of variables.
-pub const MATE_VARS: usize = 2 * BODY_VARS;
+/// The dual numbers of a mate: two bodies' worth of variables, and a
+/// joint's two coordinates.
+pub const MATE_VARS: usize = 2 * BODY_VARS + 2;
 
 type Dual<S> = dual::Dual<S, MATE_VARS>;
 type V<S> = Vector3<Dual<S>>;
@@ -183,25 +193,44 @@ pub enum Pull<S: Scalar> {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct SolveReport<S: Scalar> {
-    /// Every constraint holds (to [`crate::RELATIVE_TOLERANCE`] of the size).
+    /// Every mate holds (to [`crate::RELATIVE_TOLERANCE`] of the size).
     pub converged: bool,
-    /// The largest remaining constraint residual, in units of length: an
-    /// upper bound.
+    /// The largest remaining mate residual, in units of length: an upper
+    /// bound.
     #[serde(with = "as_f64")]
     pub max_residual: S,
     pub iterations: usize,
     /// Each minimization of the solve.
     pub phases: Vec<crate::Phase<S>>,
-    /// The constraints left unsatisfied — conflicting, or unreachable from
-    /// where the bodies started — by index; empty when `converged`.
+    /// The mates left unsatisfied — conflicting, or unreachable from where
+    /// the bodies started — by index among the constraints, then the
+    /// joints, then the couplings (see [`Assembly::mates`]); empty when
+    /// `converged`.
     pub failed: Vec<usize>,
+    /// The joints' coordinates the solve stopped at one of their limits.
+    pub at_limit: Vec<(usize, Motion)>,
 }
 
-/// Bodies and the constraints between them.
+/// How free the bodies of an assembly are, where they are now, to first
+/// order.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Freedom {
+    /// Per body, how many independent ways it can still move, the others
+    /// moving with it as the mates need: 6 for one nothing holds, 1 for a
+    /// crank, 0 for one held fast — or fixed.
+    pub bodies: Vec<usize>,
+    /// How many independent ways the assembly as a whole can move.
+    pub total: usize,
+}
+
+/// Bodies, the constraints and joints between them, and the couplings
+/// between the joints.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assembly<S: Scalar> {
     pub bodies: Vec<Body<S>>,
     pub constraints: Vec<Constraint<S>>,
+    pub joints: Vec<Joint<S>>,
+    pub couplings: Vec<Coupling<S>>,
     /// Its characteristic size: what turns angles into lengths, and what
     /// the tolerance constraints are held to is relative to. At least 1.
     pub scale: S,
@@ -402,63 +431,302 @@ impl<S: Scalar> Residual<S, MATE_VARS> for Mate<S> {
     }
 }
 
+/// The largest turn, in degrees, a held joint is driven by in one solve
+/// (see [`Assembly::drive`]): how hard a solve tries, never what its answer
+/// means.
+const TURN_STEP: f64 = 30.0;
+
+/// The residuals of an assembly, kept alive for a [`System`] borrowing
+/// them, and where each joint's coordinates are among its parameters.
+struct Residuals<S: Scalar> {
+    mates: Vec<Mate<S>>,
+    joints: Vec<JointResidual<S>>,
+    couplings: Vec<CouplingResidual<S>>,
+    /// Per joint and motion: the parameter its coordinate is, if its kind
+    /// frees that motion.
+    coordinates: Vec<[Option<usize>; 2]>,
+}
+
 impl<S: Scalar> Assembly<S> {
-    /// Checks every constraint can hold between its features at all, and
-    /// refers to bodies there are.
+    /// An assembly of `bodies` and `constraints` alone, of size `scale`.
+    pub fn new(bodies: Vec<Body<S>>, constraints: Vec<Constraint<S>>, scale: S) -> Self {
+        Assembly {
+            bodies,
+            constraints,
+            joints: Vec::new(),
+            couplings: Vec::new(),
+            scale,
+        }
+    }
+
+    /// How many mates there are: constraints, joints and couplings — what
+    /// [`SolveReport::failed`] counts in.
+    pub fn mates(&self) -> usize {
+        self.constraints.len() + self.joints.len() + self.couplings.len()
+    }
+
+    /// Checks every mate can hold between its features at all, and refers
+    /// to bodies and joints there are.
     pub fn validate(&self) -> GeopResult<()> {
+        let body_ok = |what: &str, i: usize, body: Option<usize>| match body {
+            Some(b) if b >= self.bodies.len() => Err(GeopError::new(format!(
+                "{what} {i} refers to body {b}, but there are {} bodies",
+                self.bodies.len()
+            ))),
+            _ => Ok(()),
+        };
         for (i, c) in self.constraints.iter().enumerate() {
-            for body in [c.a.body, c.b.body].into_iter().flatten() {
-                if body >= self.bodies.len() {
-                    return Err(GeopError::new(format!(
-                        "constraint {i} refers to body {body}, but there are {} bodies",
-                        self.bodies.len()
-                    )));
-                }
+            for body in [c.a.body, c.b.body] {
+                body_ok("constraint", i, body)?;
             }
             c.validate()
                 .map_err(|e| e.with_context(format!("constraint {i}")))?;
         }
+        for (i, j) in self.joints.iter().enumerate() {
+            for body in [j.a.body, j.b.body] {
+                body_ok("joint", i, body)?;
+            }
+            j.validate()
+                .map_err(|e| e.with_context(format!("joint {i}")))?;
+        }
+        for (i, c) in self.couplings.iter().enumerate() {
+            c.validate(&self.joints)
+                .map_err(|e| e.with_context(format!("coupling {i}")))?;
+        }
         Ok(())
     }
 
-    fn mates(&self) -> Vec<Mate<S>> {
-        self.constraints
+    /// The residuals of every mate. The coordinates its joints' kinds free
+    /// are parameters after the bodies', in order.
+    fn residuals(&self) -> GeopResult<Residuals<S>> {
+        let mut next = self.bodies.len();
+        let coordinates: Vec<[Option<usize>; 2]> = self
+            .joints
             .iter()
-            .map(|&c| Mate::new(c, self.scale))
-            .collect()
+            .map(|j| {
+                Motion::ALL.map(|m| {
+                    j.kind.moves(m).then(|| {
+                        next += 1;
+                        next - 1
+                    })
+                })
+            })
+            .collect();
+        let joints = self
+            .joints
+            .iter()
+            .zip(&coordinates)
+            .map(|(j, c)| JointResidual::new(*j, *c, self.scale))
+            .collect::<GeopResult<_>>()?;
+        let param = |joint: usize, motion: Motion| coordinates[joint][motion as usize];
+        let couplings = self
+            .couplings
+            .iter()
+            .map(|c| CouplingResidual::new(c, &self.joints, &param, self.scale))
+            .collect::<GeopResult<_>>()?;
+        Ok(Residuals {
+            mates: self
+                .constraints
+                .iter()
+                .map(|&c| Mate::new(c, self.scale))
+                .collect(),
+            joints,
+            couplings,
+            coordinates,
+        })
     }
 
-    /// The system of the bodies and `mates`.
-    fn system<'m>(&self, mates: &'m [Mate<S>]) -> System<'m, S, MATE_VARS> {
-        System {
-            params: self
-                .bodies
+    /// The system of the bodies and the joints' coordinates, and the
+    /// residuals of every mate.
+    fn system<'m>(&self, residuals: &'m Residuals<S>) -> GeopResult<System<'m, S, MATE_VARS>> {
+        let mut params: Vec<Param<S>> = self
+            .bodies
+            .iter()
+            .map(|b| Param::Pose {
+                pose: b.pose,
+                center: b.center,
+            })
+            .collect();
+        let mut free: Vec<bool> = self.bodies.iter().map(|b| b.free).collect();
+        for (joint, coordinates) in self.joints.iter().zip(&residuals.coordinates) {
+            for (k, motion) in Motion::ALL.into_iter().enumerate() {
+                if coordinates[k].is_some() {
+                    let c = joint.coordinate(motion);
+                    params.push(Param::Scalar(to_variable(motion, c.value, self.scale)?));
+                    free.push(!c.held);
+                }
+            }
+        }
+        let mut all: Vec<&dyn Residual<S, MATE_VARS>> = Vec::new();
+        all.extend(residuals.mates.iter().map(|m| m as &dyn Residual<S, MATE_VARS>));
+        all.extend(residuals.joints.iter().map(|m| m as &dyn Residual<S, MATE_VARS>));
+        all.extend(
+            residuals
+                .couplings
                 .iter()
-                .map(|b| Param::Pose {
-                    pose: b.pose,
-                    center: b.center,
-                })
-                .collect(),
-            free: self.bodies.iter().map(|b| b.free).collect(),
-            residuals: mates
-                .iter()
-                .map(|m| m as &dyn Residual<S, MATE_VARS>)
-                .collect(),
+                .map(|m| m as &dyn Residual<S, MATE_VARS>),
+        );
+        Ok(System {
+            params,
+            free,
+            residuals: all,
             scale: self.scale,
+        })
+    }
+
+    /// Moves the free bodies, and the joints' coordinates that are not
+    /// held, so every mate holds, changing them as little as the mates
+    /// allow — pulled as `pulls` ask (see the crate docs) — and keeping
+    /// every coordinate within its limits.
+    ///
+    /// A limit is an inequality, which the solve keeps by an active set:
+    /// solved without them first, every coordinate that ends up beyond one
+    /// of its limits is held at that limit, and the solve starts over from
+    /// where the bodies were — so a drag past a joint's limit stops the
+    /// joint at it, and the rest of the drag moves what else can move. A
+    /// coordinate held at a limit stays held for the rest of the solve; the
+    /// next solve starts with it free again.
+    ///
+    /// The bodies are moved even if the solve does not converge, to the
+    /// closest configuration found — the report says which mates could not
+    /// be met.
+    pub fn solve(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
+        self.validate()?;
+        self.seed()?;
+        let start = self.clone();
+        let mut at_limit: Vec<(usize, Motion, S)> = Vec::new();
+        loop {
+            *self = start.clone();
+            for &(joint, motion, bound) in &at_limit {
+                *self.joints[joint].coordinate_mut(motion) = Coordinate {
+                    value: bound,
+                    held: true,
+                };
+            }
+            let report = self.drive(pulls)?;
+            let beyond = self.beyond_limits();
+            if beyond.is_empty() {
+                // Held at a limit for this solve only.
+                for &(joint, motion, _) in &at_limit {
+                    self.joints[joint].coordinate_mut(motion).held =
+                        start.joints[joint].coordinate(motion).held;
+                }
+                return Ok(SolveReport {
+                    at_limit: at_limit.iter().map(|&(j, m, _)| (j, m)).collect(),
+                    ..report
+                });
+            }
+            at_limit.extend(beyond);
         }
     }
 
-    /// Moves the free bodies so every constraint holds, changing the poses
-    /// as little as the constraints allow — pulled as `pulls` ask (see the
-    /// crate docs).
-    ///
-    /// The bodies are moved even if the solve does not converge, to the
-    /// closest configuration found — the report says which constraints
-    /// could not be met.
-    pub fn solve(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
-        self.validate()?;
-        let mates = self.mates();
-        let mut system = self.system(&mates);
+    /// The pose of `body`, or the ground's.
+    fn pose_of(&self, body: Option<usize>) -> Pose<S> {
+        body.map_or(Pose::identity(), |b| self.bodies[b].pose)
+    }
+
+    /// The angle a joint is turned to, measured (see [`Joint::measure`]) —
+    /// of the angles a whole number of turns apart that put its bodies
+    /// there, the one nearest `near`, in degrees.
+    fn measured_turn(&self, joint: &Joint<S>, near: f64) -> f64 {
+        let measured = joint.measure(|b| self.pose_of(b))[0];
+        measured + 360.0 * ((near - measured) / 360.0).round()
+    }
+
+    /// Starts the free coordinates of every joint that does not hold where
+    /// its bodies are (see [`Joint::measure`]) — an angle at the turn
+    /// nearest its value. Where the bodies are is what the poses say; a
+    /// coordinate nothing holds only follows them. A seed, so a free choice:
+    /// the solve finds the exact values. A joint that holds is left exactly
+    /// as it is.
+    fn seed(&mut self) -> GeopResult<()> {
+        let failed = self.report()?.failed;
+        let nc = self.constraints.len();
+        for i in 0..self.joints.len() {
+            if !failed.contains(&(nc + i)) {
+                continue;
+            }
+            let joint = self.joints[i];
+            let [_, distance] = joint.measure(|b| self.pose_of(b));
+            let turn = self.measured_turn(&joint, joint.angle.value.to_f64());
+            for motion in joint.kind.motions() {
+                let c = self.joints[i].coordinate_mut(motion);
+                if !c.held {
+                    c.value = S::from_f64(match motion {
+                        Motion::Turn => turn,
+                        Motion::Slide => distance,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A solve (see [`Assembly::solve_once`]) that drives every held angle
+    /// further than [`TURN_STEP`] from where its bodies are there in steps
+    /// no larger, the rest of the mechanism following each — a joint set
+    /// half a turn away cannot be reached in one (see [`Joint::measure`]),
+    /// and a linkage jumping there could fold over into another of its
+    /// configurations. The pulls pull in the last step only.
+    fn drive(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
+        let targets: Vec<(usize, f64, S)> = self
+            .joints
+            .iter()
+            .enumerate()
+            .filter(|(_, j)| j.kind.moves(Motion::Turn) && j.angle.held)
+            .map(|(i, j)| {
+                let to = j.angle.value.to_f64();
+                (i, self.measured_turn(j, to), j.angle.value)
+            })
+            .collect();
+        let steps = targets
+            .iter()
+            .map(|&(_, from, to)| ((to.to_f64() - from).abs() / TURN_STEP).ceil() as usize)
+            .max()
+            .unwrap_or(0);
+        for k in 1..steps {
+            for &(i, from, to) in &targets {
+                // Where a step goes is a free choice: any angle between.
+                let at = from + (to.to_f64() - from) * k as f64 / steps as f64;
+                self.joints[i].angle.value = S::from_f64(at);
+            }
+            self.solve_once(&[])?;
+        }
+        for &(i, _, to) in &targets {
+            self.joints[i].angle.value = to;
+        }
+        self.solve_once(pulls)
+    }
+
+    /// The free coordinates beyond one of their limits, each with that
+    /// limit.
+    fn beyond_limits(&self) -> Vec<(usize, Motion, S)> {
+        let mut beyond = Vec::new();
+        for (i, joint) in self.joints.iter().enumerate() {
+            for motion in joint.kind.motions() {
+                let c = joint.coordinate(motion);
+                if c.held {
+                    continue;
+                }
+                match joint.kind.limits(motion) {
+                    [Some(min), _] if c.value.definitely_less(min) => {
+                        beyond.push((i, motion, min))
+                    }
+                    [_, Some(max)] if c.value.definitely_greater(max) => {
+                        beyond.push((i, motion, max))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        beyond
+    }
+
+    /// One solve, limits left out (see [`Assembly::solve`]).
+    fn solve_once(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
+        let residuals = self.residuals()?;
+        let mut system = self.system(&residuals)?;
+        let before = system.params.clone();
         let pulls: Vec<ParamPull<S>> = pulls
             .iter()
             .map(|p| match *p {
@@ -483,26 +751,134 @@ impl<S: Scalar> Assembly<S> {
                 body.pose = *pose;
             }
         }
+        for (joint, coordinates) in self.joints.iter_mut().zip(&residuals.coordinates) {
+            for (k, motion) in Motion::ALL.into_iter().enumerate() {
+                let Some(p) = coordinates[k] else {
+                    continue;
+                };
+                // Moved only if the solve moved it: a coordinate it left
+                // keeps its value exactly, not converted there and back.
+                if let (Param::Scalar(v), Param::Scalar(was)) = (system.params[p], before[p])
+                    && !(v.is_sharp() && was.is_sharp() && v.could_be_equal(was))
+                {
+                    // Where the solve put it is state, a free choice (see
+                    // `System::minimize`): sharp.
+                    joint.coordinate_mut(motion).value =
+                        from_variable(motion, v, self.scale)?.sharpen();
+                }
+            }
+        }
         Ok(SolveReport {
             converged: report.converged,
             max_residual: report.max_residual,
             iterations: report.iterations,
             phases: report.phases,
             failed: report.failed,
+            at_limit: Vec::new(),
         })
     }
 
-    /// Which constraints hold where the bodies are now.
+    /// Which mates hold where the bodies are now.
     pub fn report(&self) -> GeopResult<SolveReport<S>> {
-        let mates = self.mates();
-        let report = self.system(&mates).report()?;
+        let residuals = self.residuals()?;
+        let report = self.system(&residuals)?.report()?;
         Ok(SolveReport {
             converged: report.converged,
             max_residual: report.max_residual,
             iterations: 0,
             phases: Vec::new(),
             failed: report.failed,
+            at_limit: Vec::new(),
         })
+    }
+
+    /// How free every body is where the bodies are now (see [`Freedom`]):
+    /// the directions in which every mate's residuals stay put to first
+    /// order — the Jacobian's null space — and of those, how many move each
+    /// body.
+    pub fn freedom(&self) -> GeopResult<Freedom> {
+        self.validate()?;
+        let residuals = self.residuals()?;
+        let system = self.system(&residuals)?;
+        let basis = system.null_space();
+        let bodies = (0..self.bodies.len())
+            .map(|body| match system.variables(body) {
+                Some(vars) => rank(
+                    basis.iter().map(|v| v[vars.clone()].to_vec()).collect(),
+                    vars.len(),
+                ),
+                None => 0,
+            })
+            .collect();
+        Ok(Freedom {
+            bodies,
+            total: basis.len(),
+        })
+    }
+
+    /// The mates that cannot all hold together, by index as
+    /// [`SolveReport::failed`] counts them: a smallest set — leave out any
+    /// one, and the others hold — found by leaving out each mate in turn
+    /// and keeping it out wherever the rest still conflict. Empty if every
+    /// mate holds once solved.
+    ///
+    /// Each test is a solve from where the bodies are, so it costs as many
+    /// solves as there are mates: for reporting a conflict, not for every
+    /// drag.
+    pub fn conflicting(&self) -> GeopResult<Vec<usize>> {
+        self.validate()?;
+        let holds = |keep: &[bool]| -> GeopResult<bool> {
+            let mut subset = self.subset(keep);
+            Ok(subset.solve(&[])?.converged)
+        };
+        let mut keep = vec![true; self.mates()];
+        if holds(&keep)? {
+            return Ok(Vec::new());
+        }
+        for i in 0..keep.len() {
+            keep[i] = false;
+            if holds(&keep)? {
+                keep[i] = true;
+            }
+        }
+        Ok((0..keep.len()).filter(|&i| keep[i]).collect())
+    }
+
+    /// The assembly with only the mates `keep` says — by index as
+    /// [`SolveReport::failed`] counts them. A coupling of a joint left out
+    /// is left out too.
+    fn subset(&self, keep: &[bool]) -> Self {
+        let (nc, nj) = (self.constraints.len(), self.joints.len());
+        let mut index = vec![None; nj];
+        let mut joints = Vec::new();
+        for (i, joint) in self.joints.iter().enumerate() {
+            if keep[nc + i] {
+                index[i] = Some(joints.len());
+                joints.push(*joint);
+            }
+        }
+        Assembly {
+            bodies: self.bodies.clone(),
+            constraints: (0..nc)
+                .filter(|&i| keep[i])
+                .map(|i| self.constraints[i])
+                .collect(),
+            couplings: self
+                .couplings
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| keep[nc + nj + i])
+                .filter_map(|(_, c)| {
+                    Some(Coupling {
+                        kind: c.kind,
+                        a: index[c.a]?,
+                        b: index[c.b]?,
+                    })
+                })
+                .collect(),
+            joints,
+            scale: self.scale,
+        }
     }
 }
 

@@ -98,6 +98,15 @@ fn pivot(
     }]
 }
 
+/// A joint's end on `body` (or the ground), at `origin` along `axis`, its
+/// turns measured from the body's own axis least along it.
+fn end(body: Option<usize>, origin: [f64; 3], axis: [f64; 3]) -> JointEnd<S> {
+    JointEnd {
+        body,
+        connector: Connector::new(v(origin), v(axis), None).unwrap(),
+    }
+}
+
 fn flat(b: usize) -> Constraint<S> {
     Constraint {
         kind: Kind::Coincident,
@@ -117,6 +126,8 @@ fn a_body_moves_onto_its_mate() {
             a: on(0, point([1.0, 0.0, 0.0])),
             b: ground(point([0.0, 0.0, 2.0])),
         }],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let report = assembly.solve(&[]).unwrap();
@@ -147,6 +158,8 @@ fn a_peg_seats_in_its_hole() {
                 b: ground(plane([0.0, 0.0, 1.0], Z)),
             },
         ],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let report = assembly.solve(&[]).unwrap();
@@ -164,6 +177,8 @@ fn a_free_body_follows_a_drag_without_turning() {
     let mut assembly = Assembly {
         bodies: vec![body([0.0; 3])],
         constraints: vec![],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     assembly
@@ -180,6 +195,8 @@ fn a_crank_turns_when_dragged() {
     let mut assembly = Assembly {
         bodies: vec![body([0.0; 3])],
         constraints: [pivot(0, [0.0; 3], None, [0.0; 3]).to_vec(), vec![flat(0)]].concat(),
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let report = assembly
@@ -208,6 +225,8 @@ fn a_four_bar_linkage_follows_its_crank() {
             vec![flat(0), flat(1), flat(2)],
         ]
         .concat(),
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(3.0),
     };
     assert!(assembly.report().unwrap().converged);
@@ -236,6 +255,8 @@ fn a_pose_pull_makes_the_others_give_way() {
             a: on(0, point([1.0, 0.0, 0.0])),
             b: on(1, point([0.0; 3])),
         }],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let target = assembly.bodies[1].pose;
@@ -266,6 +287,8 @@ fn an_under_constrained_body_stays_near_where_it_was() {
             a: on(0, plane([0.0, 0.0, 1.0], Z)),
             b: on(1, point([0.0; 3])),
         }],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     assert!(assembly.report().unwrap().converged);
@@ -308,6 +331,8 @@ fn conflicting_constraints_are_reported() {
                 b: ground(point([0.0; 3])),
             },
         ],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let report = assembly.solve(&[]).unwrap();
@@ -336,6 +361,8 @@ fn distances_and_angles_hold() {
                 b: ground(line([0.0; 3], [1.0, 0.0, 0.0])),
             },
         ],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let report = assembly.solve(&[]).unwrap();
@@ -356,6 +383,8 @@ fn an_angle_at_a_point_is_refused() {
             a: on(0, point([0.0; 3])),
             b: ground(line([0.0; 3], Z)),
         }],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     assert!(assembly.validate().is_err());
@@ -373,6 +402,8 @@ fn a_pose_pull_leaves_a_turned_body_where_it_is() {
             center: v([0.5; 3]),
         }],
         constraints: vec![],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     assembly
@@ -395,6 +426,8 @@ fn a_drag_converges_quickly() {
     let mut assembly = Assembly {
         bodies: vec![body([0.0; 3])],
         constraints: [pivot(0, [0.0; 3], None, [0.0; 3]).to_vec(), vec![flat(0)]].concat(),
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.0),
     };
     let report = assembly
@@ -431,6 +464,21 @@ fn jacobians_match_finite_differences() {
                 b: ground(plane([0.0; 3], Z)),
             },
         ],
+        joints: vec![Joint {
+            kind: JointKind::Cylindrical,
+            a: end(Some(0), [0.2, 0.1, 0.0], [0.0, 1.0, 1.0]),
+            b: end(Some(1), [0.0, -0.3, 0.4], [1.0, 0.0, 0.5]),
+            angle: Coordinate::free(n(25.0)),
+            distance: Coordinate::free(n(0.3)),
+        }],
+        couplings: vec![Coupling {
+            kind: CouplingKind::Screw {
+                lead: n(0.4),
+                reverse: true,
+            },
+            a: 0,
+            b: 0,
+        }],
         scale: n(2.0),
     };
     let pulls = [(
@@ -441,8 +489,8 @@ fn jacobians_match_finite_differences() {
         },
         n(0.1),
     )];
-    let mates = assembly.mates();
-    let system = assembly.system(&mates);
+    let residuals = assembly.residuals().unwrap();
+    let system = assembly.system(&residuals).unwrap();
     let evaluate = |x: &[f64]| {
         let x: Vec<S> = x.iter().map(|&v| S::from_f64(v)).collect();
         let e = system.evaluate(&x, &pulls, false).unwrap();
@@ -453,11 +501,11 @@ fn jacobians_match_finite_differences() {
         )
     };
     for x in [
-        vec![0.0; 12],
-        (0..12).map(|i| 0.05 * (i as f64 - 6.0)).collect(),
+        vec![0.0; 14],
+        (0..14).map(|i| 0.05 * (i as f64 - 6.0)).collect(),
     ] {
         let (_, jacobian) = evaluate(&x);
-        for i in 0..12 {
+        for i in 0..14 {
             let h = 1e-6;
             let mut plus = x.clone();
             plus[i] += h;
@@ -499,6 +547,8 @@ fn a_far_body_is_not_turned_over() {
                 b: ground(plane([0.0; 3], Z)),
             },
         ],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(1.7),
     };
     let report = assembly.solve(&[]).unwrap();
@@ -515,6 +565,8 @@ fn a_free_body_goes_where_it_is_dragged() {
     let mut assembly = Assembly {
         bodies: vec![body([3.5, 1.0, 0.0])],
         constraints: vec![],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(10.0),
     };
     let report = assembly
@@ -559,6 +611,8 @@ fn a_folded_chain_is_dragged_in_few_steps() {
             pin(0, [0.0; 3], None, [3.0, 0.0, 0.0]),
             pin(1, [0.0; 3], Some(0), [3.0, 0.0, 0.0]),
         ],
+        joints: Vec::new(),
+        couplings: Vec::new(),
         scale: n(4.0),
     };
     assembly.bodies[0].center = v([1.5, 0.0, 0.1]);
@@ -569,3 +623,6 @@ fn a_folded_chain_is_dragged_in_few_steps() {
     assert!(report.converged, "{report:?}");
     assert!(report.iterations < 20, "{report:?}");
 }
+
+#[path = "joints_tests.rs"]
+mod joints;

@@ -241,6 +241,29 @@ pub mod as_f64 {
                 .map(|xs| xs.into_iter().map(S::from_f64).collect())
         }
     }
+
+    /// `#[serde(with = "geop_core_math::scalars::as_f64::option")]`: a
+    /// scalar that may be missing, as [`super::as_f64`] has it, or `null`.
+    pub mod option {
+        use super::super::Scalar;
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S: Scalar, Ser: Serializer>(
+            x: &Option<S>,
+            serializer: Ser,
+        ) -> Result<Ser::Ok, Ser::Error> {
+            match x {
+                Some(x) => serializer.serialize_some(&x.to_f64()),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, S: Scalar, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<S>, D::Error> {
+            Option::<f64>::deserialize(deserializer).map(|x| x.map(S::from_f64))
+        }
+    }
 }
 
 // ── Test helper trait ─────────────────────────────────────────────────────────
