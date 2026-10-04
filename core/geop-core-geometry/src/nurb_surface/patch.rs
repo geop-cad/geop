@@ -249,6 +249,61 @@ impl<S: Scalar> NurbSurface3D<S> {
         }
     }
 
+    /// The same surface carried on by `by` of its `u` (`along_u`) or `v`
+    /// parameter past the end (`at_end`) or before the start of that
+    /// domain: each row of control points along that direction continued
+    /// as a curve (see [`NurbCurve::extended`]), so the surface goes on as
+    /// the polynomial it is there, as smooth as it was.
+    pub fn extended(&self, along_u: bool, at_end: bool, by: S) -> GeopResult<Self> {
+        let (nu, nv) = (self.num_u, self.num_v);
+        let (degree, knots, rows, len) = if along_u {
+            (self.degree_u, &self.knot_vector_u, nv, nu)
+        } else {
+            (self.degree_v, &self.knot_vector_v, nu, nv)
+        };
+        let index = |row: usize, k: usize| if along_u { k * nv + row } else { row * nv + k };
+        let longer = (0..rows)
+            .map(|row| {
+                let points = (0..len).map(|k| self.control_points[index(row, k)]).collect();
+                NurbCurve::try_new(degree, points, knots.clone())?.extended(at_end, by)
+            })
+            .collect::<GeopResult<Vec<_>>>()?;
+        let new_len = longer[0].control_points.len();
+        let new_knots = longer[0].knot_vector.clone();
+        let (num_u, num_v) = if along_u {
+            (new_len, nv)
+        } else {
+            (nu, new_len)
+        };
+        let control_points = (0..num_u)
+            .flat_map(|i| (0..num_v).map(move |j| (i, j)))
+            .map(|(i, j)| {
+                if along_u {
+                    longer[j].control_points[i]
+                } else {
+                    longer[i].control_points[j]
+                }
+            })
+            .collect();
+        if along_u {
+            NurbSurface3D::try_new(
+                degree,
+                self.degree_v,
+                control_points,
+                new_knots,
+                self.knot_vector_v.clone(),
+            )
+        } else {
+            NurbSurface3D::try_new(
+                self.degree_u,
+                degree,
+                control_points,
+                self.knot_vector_u.clone(),
+                new_knots,
+            )
+        }
+    }
+
     /// The same patch made tangent along each side `k` (numbered as
     /// [`NurbSurface3D::coons`] numbers them) that has a `planes[k] =
     /// Some((plane, away))` to that plane, the patch leaving the side

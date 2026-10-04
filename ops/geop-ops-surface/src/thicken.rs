@@ -170,4 +170,4 @@ impl Operation for Thicken {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

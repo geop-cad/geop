@@ -19,18 +19,18 @@
 //! ([`geop_ops_shell::shell`]): a sheet thickened is a sheet shelled.
 
 pub mod boundary;
-//pub mod extend;
+pub mod extend;
 pub mod knit;
 pub mod offset;
 pub mod thicken;
-//pub mod trim;
+pub mod trim;
 
 pub use boundary::{BoundarySurface, BoundarySurfaceArgs};
-//pub use extend::{ExtendSurface, ExtendSurfaceArgs};
+pub use extend::{ExtendSurface, ExtendSurfaceArgs};
 pub use knit::{Knit, KnitArgs};
 pub use offset::{OffsetSurface, OffsetSurfaceArgs};
 pub use thicken::{Thicken, ThickenArgs, ThickenSide};
-//pub use trim::{TrimSurface, TrimSurfaceArgs};
+pub use trim::{TrimKeep, TrimSurface, TrimSurfaceArgs};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
