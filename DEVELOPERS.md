@@ -81,7 +81,8 @@ ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
                                extend of faces standing on their own
 ops/geop-ops-drawing          2-D drawings: projected views with hidden
                                lines and silhouettes, sections, dimensions,
-                               title block, SVG and DXF; the drawing step
+                               title block, bill of materials, SVG and DXF;
+                               the drawing step
 ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
                                the editor, built as its Catmull-Clark limit
                                surface, a solid of B-spline faces; the subd
@@ -117,7 +118,8 @@ ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
                                occurrences; the import operation
 ops/geop-ops-bom              bills of materials: placed parts grouped by
                                file and parameter values, flat or indented,
-                               with designations, materials, masses, sheet
+                               with designations (a part's own, see
+                               `Parameters::designation`), materials, masses, sheet
                                thickness and harness wires cut to length;
                                CSV; `geop bom`, the editor's BOM query
 ```

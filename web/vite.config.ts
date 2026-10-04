@@ -10,7 +10,9 @@ import react from '@vitejs/plugin-react'
 // result goes to the extension's `media/` folder, with relative asset URLs
 // so the extension can point them at the webview's own origin.
 export default defineConfig(({ mode }) => {
-  if (mode !== 'vscode') return { plugins: [react()] }
+  // The kernel's worker (`src/kernel.worker.ts`) is a module: it imports the
+  // wasm module's glue.
+  if (mode !== 'vscode') return { plugins: [react()], worker: { format: 'es' } }
   return {
     plugins: [react()],
     base: './',

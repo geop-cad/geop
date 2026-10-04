@@ -104,7 +104,7 @@ fn dimensions_by_name_are_drawn() {
         ],
         ..Default::default()
     };
-    let dxf = to_dxf(&compose(&part, &args, "2026-10-04").unwrap());
+    let dxf = to_dxf(&compose(&part, &args, "2026-10-04", &[]).unwrap());
     // The front view sees the diagonal of the 40 x 10 face truly.
     assert!(dxf.contains("\n41.23\n"), "the diagonal");
     assert!(dxf.contains("\n%%c6\n"), "the diameter");
@@ -114,7 +114,7 @@ fn dimensions_by_name_are_drawn() {
         dimensions: vec![Dimension::Radius { edge: circle }],
         ..Default::default()
     };
-    let err = compose(&part, &skew, "").unwrap_err().to_string();
+    let err = compose(&part, &skew, "", &[]).unwrap_err().to_string();
     assert!(err.contains("round"), "{err}");
 }
 
@@ -141,7 +141,7 @@ fn section_through_a_blind_hole_is_hatched() {
         section: Some(EntityRef::datum("middle")),
         ..Default::default()
     };
-    let dxf = to_dxf(&compose(&part, &args, "").unwrap());
+    let dxf = to_dxf(&compose(&part, &args, "", &[]).unwrap());
     let hatch = dxf.matches("\nHATCH\n").count();
     assert!(hatch > 10, "{hatch} hatch lines");
     assert!(dxf.contains("SECTION A-A"));
@@ -162,7 +162,7 @@ fn a_tapped_hole_draws_its_thread() {
         scale: Some(2.0),
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "").unwrap();
+    let sheet = compose(&part, &args, "", &[]).unwrap();
     let arcs: Vec<f64> = sheet
         .strokes
         .iter()
@@ -231,7 +231,7 @@ fn a_tapped_hole_draws_its_thread() {
         hidden_lines: false,
         ..args
     };
-    let sheet = compose(&part, &without, "").unwrap();
+    let sheet = compose(&part, &without, "", &[]).unwrap();
     assert!(!sheet.strokes.iter().any(|s| s.layer == Layer::Hidden));
     assert_eq!(
         sheet
@@ -332,7 +332,7 @@ fn every_example_draws() {
         }
         // The whole default sheet, too, of every example whose views build.
         if !KNOWN_TO_FAIL.iter().any(|(n, _)| *n == name)
-            && let Err(e) = compose(&part, &DrawingArgs::default(), "")
+            && let Err(e) = compose(&part, &DrawingArgs::default(), "", &[])
         {
             failures.push(format!("{name}, the sheet: {}", named(&part, &e)));
         }

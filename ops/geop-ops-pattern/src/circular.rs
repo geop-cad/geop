@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, ORIGIN, Part,
     operation::{EntityRef, Operation, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Form, Number, Unit},
 };
 use geop_ops_booleans::Combine;
@@ -95,6 +95,10 @@ impl CircularPatternArgs {
 impl Operation for CircularPattern {
     type Args = CircularPatternArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut CircularPatternArgs) -> Vec<&'a mut String> {
+        expressions([&mut args.count, args.angle.value_mut()])
+    }
 
     /// The newest solid, four times around the origin's `z` axis, kept as
     /// new bodies.

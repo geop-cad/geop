@@ -207,8 +207,14 @@ fn thread_polyline<S: Scalar>(thread: &crate::CosmeticThread<S>) -> GeopResult<V
 }
 
 /// Where the drawing is and how big: the center and diagonal (at least 1)
-/// of the box around it. Datum planes and axes, which are endless, are
-/// drawn this big around the point of them nearest the center.
+/// of the box around it — for an empty part, [`EMPTY_EXTENT`] around the
+/// origin. Datum planes and axes, which are endless, are drawn this big
+/// around the point of them nearest the center.
+/// How big an empty part's drawing is: what a viewer frames, and its datum
+/// planes' size, before anything is drawn. Lengths are millimetres, and
+/// the parts of a robot are 10 to 500 mm.
+pub const EMPTY_EXTENT: f64 = 100.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Extent<S: Scalar> {
@@ -795,7 +801,7 @@ impl<S: Scalar> PartView<S> {
         let Some(hull) = hull else {
             return Ok(Extent {
                 center: Vector3::zero(),
-                size: S::ONE,
+                size: S::from_f64(EMPTY_EXTENT),
             });
         };
         let size = Vector3::from_array([0, 1, 2].map(|k| hull[k].width())).norm();

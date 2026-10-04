@@ -167,6 +167,10 @@ export interface Parameters {
   color?: string | null;
   /** What the part is made of — its density in kg/m³ — none for one not given (weighed as water). */
   material?: Material | null;
+  /** What the part is, in words, where it is listed: `ISO 4762 socket head cap screw`. */
+  title?: string | null;
+  /** What it is ordered as, before the values it is built with: `ISO 4762`, for `ISO 4762 M4x12`. */
+  designation?: string | null;
   values?: Parameter[];
 }
 
@@ -415,6 +419,8 @@ export type Command =
   | { command: "visibility"; name: string; visible: boolean }
   /** The program's parameters are now these. */
   | { command: "parameters"; parameters: Parameters }
+  /** Rename the parameter `from` to `to`, and every formula reading it. */
+  | { command: "rename_parameter"; from: string; to: string }
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
   | { command: "drag_tool"; on: boolean }
   /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
@@ -434,7 +440,9 @@ export type Command =
   /** Write the bill of materials of the part shown as a CSV file: the update's `export`. */
   | { command: "export_bom"; structure: BomStructure }
   /** Write the flat pattern of a sheet-metal body — `solid`, else the newest — as DXF for cutting: the update's `export`. */
-  | { command: "export_flat_pattern"; solid?: string };
+  | { command: "export_flat_pattern"; solid?: string }
+  /** Panic, on purpose: how recovering from a kernel that crashed is checked (`e2e/`). */
+  | { command: "crash" };
 
 /** A question asked of the part as drawn — see `geop_cad_base::inspect::Query`. */
 export type Query = "mass_properties" | "interference" | { bom: { structure: BomStructure } };
@@ -500,6 +508,8 @@ export interface ProgramState {
   materials: Material[];
   /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
   parameters: { values: Record<string, ParamValue>; errors: Record<string, string> };
+  /** What reads each parameter, by name: the steps and other parameters whose formulas do — what fails if it goes. */
+  parameter_uses: Record<string, string[]>;
   operations: OperationInfo[];
   examples: string[];
   /** Examples of several files, for [[Command]] `load_workspace_example`. */

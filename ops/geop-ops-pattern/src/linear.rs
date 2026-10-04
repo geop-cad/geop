@@ -10,7 +10,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, ORIGIN, Part,
     operation::{EntityRef, Operation, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Form, Number, Unit},
 };
 use geop_ops_booleans::Combine;
@@ -200,6 +200,14 @@ impl Direction {
 impl Operation for LinearPattern {
     type Args = LinearPatternArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut LinearPatternArgs) -> Vec<&'a mut String> {
+        expressions(
+            std::iter::once(&mut args.first)
+                .chain(args.second.as_mut())
+                .flat_map(|d| [&mut d.count, d.spacing.value_mut()]),
+        )
+    }
 
     /// The newest solid, three times a unit apart along the origin's `x`
     /// axis, kept as new bodies.

@@ -114,6 +114,18 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
         }
     }
 
+    /// What the part is, in words, if it is given (see
+    /// [`crate::parameters::Parameters::title`]).
+    pub fn title(&self) -> Option<&str> {
+        self.parameters.title.as_deref()
+    }
+
+    /// What the part, as built, is ordered as, if it is given: `ISO 4762
+    /// M4x12` (see [`crate::parameters::Parameters::designate`]).
+    pub fn designation(&self) -> Option<String> {
+        self.parameters.designate(&self.inputs)
+    }
+
     /// What the part is made of, if it is given (see
     /// [`crate::parameters::Material`]).
     pub fn material(&self) -> Option<&crate::parameters::Material> {

@@ -13,7 +13,7 @@ pub mod silhouette;
 pub mod svg;
 pub mod view;
 
-pub use drawing::{Dimension, DrawingArgs, Projection, SheetSize, compose};
+pub use drawing::{Dimension, DrawingArgs, PartsListLine, Projection, SheetSize, compose};
 pub use dxf::to_dxf;
 pub use hidden_lines::{LineKind, ProjectedView, ViewLine, ViewOptions, project_view};
 pub use operation::Drawing;
@@ -58,15 +58,16 @@ impl Format {
     }
 }
 
-/// `part`'s drawing as `args` describe it, dated `date`, written as
-/// `format`.
+/// `part`'s drawing as `args` describe it, dated `date`, with `parts` its
+/// bill of materials if `args` asks for one, written as `format`.
 pub fn render<S: Scalar>(
     part: &geop_ops::Part<S>,
     args: &DrawingArgs,
     date: &str,
+    parts: &[PartsListLine],
     format: Format,
 ) -> geop_core_math::geop_error::GeopResult<String> {
-    let sheet = compose(part, args, date)?;
+    let sheet = compose(part, args, date, parts)?;
     Ok(match format {
         Format::Svg => to_svg(&sheet),
         Format::Dxf => to_dxf(&sheet),

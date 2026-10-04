@@ -17,6 +17,7 @@ use geop_core_topology::Body;
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{Aspects, EntityRef, Operation, Role, frame_along},
+    parameters::expressions,
     ui::{Choice, Form, Number, Shape, Style, Tone, Unit, Visual},
 };
 use geop_ops_booleans::{Combine, Tool, boolean::NOTHING_STOPS};
@@ -314,6 +315,10 @@ fn size_choices() -> Vec<Choice> {
 impl Operation for Hole {
     type Args = HoleArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut HoleArgs) -> Vec<&'a mut String> {
+        expressions(args.end.length_mut())
+    }
 
     /// No face or point yet; a simple M6 clearance hole, 10 deep.
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> HoleArgs {

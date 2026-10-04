@@ -21,6 +21,8 @@ import { Checks, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale
 
 const browser = await launch();
 run("cargo", ["build", "--release", "-p", "geop-cad-cli"], ROOT);
+// The bridge runs the kernel with the extension's own code (`bridge.mjs`).
+run("npm", ["run", "compile"], path.join(ROOT, "vscode-extension"));
 const media = path.join(ROOT, "vscode-extension", "media");
 if (stale(path.join(media, "index.html"))) run("npm", ["run", "build:vscode"]);
 const exe = path.join(ROOT, "target", "release", process.platform === "win32" ? "geop.exe" : "geop");
@@ -143,6 +145,28 @@ await check("a jointed assembly opens, and moving a joint is written back", asyn
   const state = Object.values(moved.state ?? {}).map((v) => JSON.stringify(v));
   expect(state.some((v) => v.includes(String(value))), `no joint is at ${value} in the program written back: ${state.join(", ")}`);
   return stats;
+});
+
+await check("a kernel that crashes is restarted with the document", async () => {
+  const doc = "bolted_plate/bolted_plate.geop";
+  const before = await open(doc);
+  const text = fs.readFileSync(path.join(folder, doc), "utf8");
+  const logged = errors.length;
+  // As a bug would: `geop serve` panics, says so, and ends.
+  await page.evaluate(() => window.geopCommand({ command: "crash" }));
+  const after = await settle(page);
+  const shown = (await shownErrors(page)).join(" | ");
+  expect(/kernel crashed/.test(shown) && /asked to crash/.test(shown), `the crash was not shown: ${shown || "nothing shown"}`);
+  expect(after === before, `the document came back as ${after}, not ${before}`);
+  expect(fs.readFileSync(path.join(folder, doc), "utf8") === text, "the document was changed");
+  errors.push(...errors.splice(logged).filter((e) => !/crashed/.test(e)));
+  // The standard parts are placed again — the files came back too — and it still edits.
+  const placed = await page.locator(".structure-panel .structure-name").allInnerTexts();
+  expect(placed.includes("screw"), `the standard parts are gone: ${placed.join(", ")}`);
+  await page.locator(".desktop-only .operation-tools button.op-button", { hasText: /^Sketch$/ }).click();
+  await settle(page);
+  expect((await page.locator(".desktop-only .popup").count()) === 1, "Sketch did not open after the crash");
+  return after;
 });
 
 checks.report();

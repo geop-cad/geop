@@ -11,7 +11,7 @@ use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops::{
     Context, Library, Namer, Part, PlacedSketch,
     operation::{EntityRef, Operation, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Choice, Form, Number, Tone, Unit},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
@@ -69,6 +69,10 @@ pub struct BaseFlangeArgs {
 impl Operation for BaseFlange {
     type Args = BaseFlangeArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut BaseFlangeArgs) -> Vec<&'a mut String> {
+        expressions([&mut args.depth])
+    }
 
     /// The newest sketch, with the default rules, a unit deep.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> BaseFlangeArgs {

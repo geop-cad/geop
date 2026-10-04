@@ -61,13 +61,13 @@ geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
 geop-ops-subd = { path = "ops/geop-ops-subd" }
 serde = { version = "1", features = ["derive"] }
 geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
-# `float_roundtrip`: without it, parsing a float may land one ULP off the
 geop-ops-plastic = { path = "ops/geop-ops-plastic" }
-# value that was written, and a program read back from JSON would no longer
 geop-ops-step = { path = "ops/geop-ops-step" }
 geop-ops-sketch3d = { path = "ops/geop-ops-sketch3d" }
-# build the very same part.
 geop-ops-surface = { path = "ops/geop-ops-surface" }
+# `float_roundtrip`: without it, parsing a float may land one ULP off the
+# value that was written, and a program read back from JSON would no longer
+# build the very same part.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"

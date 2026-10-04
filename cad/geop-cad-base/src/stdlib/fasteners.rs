@@ -23,6 +23,7 @@ use super::{
         revolve, size, swept,
     },
     tables::{self, Table},
+    titled,
 };
 use crate::Program;
 
@@ -36,6 +37,7 @@ fn sized(table: Table) -> Program {
         }),
         color: None,
         values: vec![size(table)],
+        ..Parameters::default()
     };
     program
 }
@@ -193,10 +195,8 @@ pub fn iso4762(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Cylinder, tables::iso4762())?;
     Ok(StandardPart {
         file,
-        title: "ISO 4762 socket head cap screw",
-        designation: "ISO 4762",
         base: "seat",
-        program,
+        program: titled(program, "ISO 4762 socket head cap screw", "ISO 4762"),
         threaded,
     })
 }
@@ -205,10 +205,8 @@ pub fn iso7380(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Dome, tables::iso7380())?;
     Ok(StandardPart {
         file,
-        title: "ISO 7380 button head screw",
-        designation: "ISO 7380",
         base: "seat",
-        program,
+        program: titled(program, "ISO 7380 button head screw", "ISO 7380"),
         threaded,
     })
 }
@@ -217,10 +215,8 @@ pub fn iso10642(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Countersunk, tables::iso10642())?;
     Ok(StandardPart {
         file,
-        title: "ISO 10642 countersunk screw",
-        designation: "ISO 10642",
         base: "top",
-        program,
+        program: titled(program, "ISO 10642 countersunk screw", "ISO 10642"),
         threaded,
     })
 }
@@ -229,10 +225,8 @@ pub fn iso4017(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Hex, tables::iso4017())?;
     Ok(StandardPart {
         file,
-        title: "ISO 4017 hex head screw",
-        designation: "ISO 4017",
         base: "seat",
-        program,
+        program: titled(program, "ISO 4017 hex head screw", "ISO 4017"),
         threaded,
     })
 }
@@ -292,10 +286,8 @@ pub fn iso4032(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = nut(tables::iso4032(), false)?;
     Ok(StandardPart {
         file,
-        title: "ISO 4032 hex nut",
-        designation: "ISO 4032",
         base: "base",
-        program,
+        program: titled(program, "ISO 4032 hex nut", "ISO 4032"),
         threaded,
     })
 }
@@ -304,10 +296,8 @@ pub fn iso10511(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = nut(tables::iso10511(), true)?;
     Ok(StandardPart {
         file,
-        title: "ISO 10511 nylon insert lock nut",
-        designation: "ISO 10511",
         base: "base",
-        program,
+        program: titled(program, "ISO 10511 nylon insert lock nut", "ISO 10511"),
         threaded,
     })
 }
@@ -347,10 +337,12 @@ fn washer(table: Table, chamfered: bool) -> GeopResult<Program> {
 pub fn iso7089(file: &'static str) -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file,
-        title: "ISO 7089 plain washer",
-        designation: "ISO 7089",
         base: "base",
-        program: washer(tables::iso7089(), false)?,
+        program: titled(
+            washer(tables::iso7089(), false)?,
+            "ISO 7089 plain washer",
+            "ISO 7089",
+        ),
         threaded: Vec::new(),
     })
 }
@@ -358,10 +350,12 @@ pub fn iso7089(file: &'static str) -> GeopResult<StandardPart> {
 pub fn iso7090(file: &'static str) -> GeopResult<StandardPart> {
     Ok(StandardPart {
         file,
-        title: "ISO 7090 chamfered washer",
-        designation: "ISO 7090",
         base: "base",
-        program: washer(tables::iso7090(), true)?,
+        program: titled(
+            washer(tables::iso7090(), true)?,
+            "ISO 7090 chamfered washer",
+            "ISO 7090",
+        ),
         threaded: Vec::new(),
     })
 }
@@ -391,10 +385,8 @@ pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
     plane_datum(&mut program, "base", "0");
     Ok(StandardPart {
         file,
-        title: "ISO 8734 dowel pin",
-        designation: "ISO 8734",
         base: "base",
-        program,
+        program: titled(program, "ISO 8734 dowel pin", "ISO 8734"),
         threaded: Vec::new(),
     })
 }
@@ -422,10 +414,8 @@ pub fn hex_standoff(file: &'static str) -> GeopResult<StandardPart> {
         .to_vec();
     Ok(StandardPart {
         file,
-        title: "Hex standoff, female",
-        designation: "Hex standoff",
         base: "base",
-        program,
+        program: titled(program, "Hex standoff, female", "Hex standoff"),
         threaded,
     })
 }

@@ -2365,3 +2365,164 @@ fn sketch_tools_draw_profiles_that_extrude() {
     editor.handle(Command::Open { id });
     extruded(&mut editor);
 }
+
+/// What reads each parameter is sent with the program, for the parameters
+/// panel to warn before one is removed; and renaming one, as its dialog's
+/// name field does, renames it in every formula — the other parameters',
+/// a sketch's dimensions, an extrude's length, a table's columns — so
+/// nothing fails and the part is the same. A name taken, and a rename
+/// while a step is edited, are refused; undo takes a rename back.
+#[test]
+fn renaming_a_parameter_renames_what_reads_it() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadExample {
+        name: "parametric_plate".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let uses = update.program.expect("the program is sent").parameter_uses;
+    let readers = |name: &str| uses.get(name).cloned().unwrap_or_default();
+    assert_eq!(readers("width"), ["depth", "outline"]);
+    assert_eq!(readers("depth"), ["outline"]);
+    assert_eq!(readers("thickness"), ["plate"]);
+    assert_eq!(readers("screw"), ["hole_sketch"]);
+    let volume = |editor: &Editor<S>| {
+        let part = editor.part();
+        let [name] = part.solid_names().try_into().expect("one solid");
+        geop_ops_inspect::bodies::PlacedSolid {
+            solid: part.solid_id(&name).unwrap(),
+            name,
+            part,
+            component: None,
+            pose: None,
+        }
+        .mass_properties()
+        .unwrap()
+        .volume
+        .to_f64()
+    };
+    let before = volume(&editor);
+
+    for (from, to) in [
+        ("width", "plate_width"),
+        ("screw", "bolt"),
+        ("thickness", "t"),
+    ] {
+        let update = editor.handle(Command::RenameParameter {
+            from: from.into(),
+            to: to.into(),
+        });
+        assert!(update.error.is_none(), "{from} -> {to}: {:?}", update.error);
+        let program = update.program.expect("the program is sent");
+        assert!(
+            program.steps.iter().all(|s| s.error.is_none()),
+            "{:?}",
+            program.steps
+        );
+        assert!(
+            program.parameters.errors.is_empty(),
+            "{:?}",
+            program.parameters.errors
+        );
+        assert!(
+            !program.parameter_uses.contains_key(from),
+            "{from} is still read"
+        );
+    }
+    let program = editor.program();
+    let json = program.to_json().unwrap();
+    for (old, new) in [
+        ("\"width / 2\"", "\"plate_width / 2\""),
+        ("\"screw.clearance\"", "\"bolt.clearance\""),
+        ("{\"blind\":\"thickness\"}", "{\"blind\":\"t\"}"),
+    ] {
+        let compact: String = json.split_whitespace().collect();
+        assert!(
+            !compact.contains(&old.replace(' ', "")),
+            "{old} is left in {json}"
+        );
+        assert!(
+            compact.contains(&new.replace(' ', "")),
+            "{new} is not in {json}"
+        );
+    }
+    assert_eq!(volume(&editor), before);
+
+    let taken = editor.handle(Command::RenameParameter {
+        from: "depth".into(),
+        to: "t".into(),
+    });
+    let error = taken.error.expect("a name taken is refused");
+    assert!(
+        error.contains(r#"there is a parameter "t" already"#),
+        "{error}"
+    );
+    editor.handle(Command::Open { id: "plate".into() });
+    let editing = editor.handle(Command::RenameParameter {
+        from: "depth".into(),
+        to: "plate_depth".into(),
+    });
+    assert!(editing.error.is_some(), "renamed while a step is edited");
+    editor.handle(Command::Cancel);
+
+    editor.handle(Command::Undo);
+    assert!(editor.program().parameters.get("thickness").is_some());
+    assert!(editor.program().parameters.get("t").is_none());
+}
+
+/// The bolted plate's drawing with its bill of materials, as the front end
+/// makes it: a new drawing step, "Bill of materials" ticked, committed and
+/// exported. The assembly places all it has, so the sheet is its bill
+/// alone: the plate, and the standard screw and nut by the titles and
+/// designations their own programs carry — which name their products in
+/// a STEP file too.
+#[test]
+fn an_assembly_drawing_lists_its_parts() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "bolted_plate".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    let step = update.step.expect("a drawing is edited");
+    assert!(matches!(
+        step.presentation.dialog.get("bom"),
+        Some(Control::Checkbox { value: false, .. })
+    ));
+    editor.handle(dialog("bom", Value::Bool(true)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let exported = editor.handle(Command::ExportDrawing {
+        id: None,
+        format: geop_ops_drawing::Format::Svg,
+        date: "2026-10-04".into(),
+    });
+    assert!(exported.error.is_none(), "{:?}", exported.error);
+    let svg = exported.export.unwrap().text().unwrap().to_string();
+    for text in [
+        ">ITEM<",
+        ">DESIGNATION<",
+        ">ISO 4762 M4x12<",
+        ">ISO 4032 M4<",
+        ">plate<",
+        ">Steel<",
+    ] {
+        assert!(svg.contains(text), "{text} is not on the sheet");
+    }
+    // A STEP file names them so too: one product per size.
+    let step = editor.handle(Command::ExportStep);
+    let text = step
+        .export
+        .expect("a STEP file")
+        .text()
+        .unwrap()
+        .to_string();
+    assert!(
+        text.contains("PRODUCT('ISO 4762 M4x12'"),
+        "the screw's product"
+    );
+    assert!(text.contains("PRODUCT('plate'"), "the plate's product");
+}

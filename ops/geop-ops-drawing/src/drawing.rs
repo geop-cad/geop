@@ -2,7 +2,8 @@
 //! ([`compose`]): the views laid out in third- or first-angle projection,
 //! each with its visible and hidden lines, centre marks on its circles and
 //! its overall size dimensioned, the dimensions asked for, a section view
-//! with its cut hatched, a border and a title block.
+//! with its cut hatched, a border and a title block — and, if asked for,
+//! the parts list of the parts placed in it above the title block.
 
 use geop_core_geometry::{
     intersection::curve_curve_overlaps_and_crossings, nurb_curve::NurbCurve2D,
@@ -133,6 +134,24 @@ pub struct DrawingArgs {
     /// What it is made of, for the title block.
     #[serde(default)]
     pub material: String,
+    /// A bill of materials of the parts placed in it, as a table above the
+    /// title block: each part's item number, quantity, name, designation
+    /// and material (see [`PartsListLine`]).
+    #[serde(default)]
+    pub bom: bool,
+}
+
+/// A line of a drawing's bill of materials: a kind of part placed — its
+/// item number, how many there are, what it is called, what it is ordered
+/// as (`ISO 4762 M4x12`, empty for a part that is made) and made of. Who
+/// lists the parts placed is the caller's: the drawing only lays them out.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PartsListLine {
+    pub item: String,
+    pub quantity: u64,
+    pub name: String,
+    pub designation: String,
+    pub material: String,
 }
 
 fn default_views() -> Vec<ViewKind> {
@@ -161,6 +180,7 @@ impl Default for DrawingArgs {
             dimensions: Vec::new(),
             name: String::new(),
             material: String::new(),
+            bom: false,
         }
     }
 }
@@ -188,6 +208,17 @@ const DIMENSION_OFFSET: f64 = 10.0;
 const CENTER_OVERSHOOT: f64 = 3.0;
 /// Hatch line spacing, in millimetres.
 const HATCH_SPACING: f64 = 3.0;
+/// The bill of materials' rows, and its columns' captions and widths — as
+/// wide, together, as the title block it stands on — in millimetres.
+const LIST_ROW: f64 = 6.0;
+const LIST_COLUMNS: [(&str, f64); 5] = [
+    ("ITEM", 14.0),
+    ("QTY", 12.0),
+    ("NAME", 54.0),
+    ("DESIGNATION", 60.0),
+    ("MATERIAL", 40.0),
+];
+const LIST_TEXT: f64 = 2.5;
 
 /// A scale as written: `1:2`, `5:1`.
 pub fn scale_label(scale: f64) -> String {
@@ -256,15 +287,35 @@ pub fn drawn_faces<S: Scalar>(model: &Model<S>) -> Vec<FaceId> {
     faces
 }
 
-/// The part's drawing as `args` describe it, dated `date`.
+/// The part's drawing as `args` describe it, dated `date`, with `parts`
+/// its bill of materials if `args` asks for one.
 ///
 /// Only the part's own solids and sheets are drawn, not the parts placed in
-/// it. A dimension that no view shows truly is refused, naming it.
-pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> GeopResult<Sheet> {
+/// it: an assembly placing every part it has is drawn as its bill of
+/// materials alone. A dimension that no view shows truly is refused,
+/// naming it, as is a bill too long for the sheet.
+pub fn compose<S: Scalar>(
+    part: &Part<S>,
+    args: &DrawingArgs,
+    date: &str,
+    parts: &[PartsListLine],
+) -> GeopResult<Sheet> {
     let ctx = |e: GeopError| e.with_context("compose(drawing)");
+    let (width, height) = args.sheet.size();
+    let list_height = match args.bom {
+        true => LIST_ROW * (parts.len() + 1) as f64,
+        false => 0.0,
+    };
+    if list_height > height - 2.0 * MARGIN - TITLE_HEIGHT {
+        return Err(GeopError::new(format!(
+            "the bill of materials has {} lines, too many for an {} sheet: choose a larger one",
+            parts.len(),
+            args.sheet.name().to_uppercase()
+        )));
+    }
     let model = part.topology();
     let faces = drawn_faces(model);
-    if faces.is_empty() {
+    if faces.is_empty() && !args.bom {
         return Err(GeopError::new(
             "the part has nothing to draw: it has no faces",
         ));
@@ -274,7 +325,7 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
         hidden_lines: args.hidden_lines,
     };
     let mut slots: Vec<Slot> = Vec::new();
-    for &kind in &args.views {
+    for &kind in args.views.iter().filter(|_| !faces.is_empty()) {
         if !slots.contains(&Slot::View(kind)) {
             slots.push(Slot::View(kind));
         }
@@ -287,7 +338,7 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
             .map_err(|e| ctx(e.with_context(format!("the {} view", kind.name()))))?;
         placed.push((slot, view, Vec::new()));
     }
-    if let Some(plane) = &args.section {
+    if let Some(plane) = args.section.as_ref().filter(|_| !faces.is_empty()) {
         let (view, hatched) = section_view(part, plane, &options)
             .map_err(|e| ctx(e.with_context(format!("the section view on {}", plane.label()))))?;
         placed.push((Slot::Section, view, hatched));
@@ -305,13 +356,23 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
             })
         })
         .collect();
-    if placed.is_empty() {
+    if placed.is_empty() && !args.bom {
         return Err(GeopError::new("no view of the drawing shows any line"));
+    }
+    let mut sheet = Sheet {
+        width,
+        height,
+        ..Sheet::default()
+    };
+    if placed.is_empty() {
+        // Its bill of materials alone.
+        draw_frame(&mut sheet, args, args.scale.unwrap_or(1.0), date);
+        draw_parts_list(&mut sheet, parts);
+        return Ok(sheet);
     }
 
     // The grid: each occupied column as wide as its widest view, each row
     // as high as its highest, in model units.
-    let (width, height) = args.sheet.size();
     let mut columns: Vec<(usize, f64)> = Vec::new();
     let mut rows: Vec<(usize, f64)> = Vec::new();
     for p in &placed {
@@ -325,7 +386,7 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
     let model_width: f64 = columns.iter().map(|&(_, w)| w).sum();
     let model_height: f64 = rows.iter().map(|&(_, h)| h).sum();
     let area_width = width - 2.0 * MARGIN;
-    let area_height = height - 2.0 * MARGIN - TITLE_HEIGHT;
+    let area_height = height - 2.0 * MARGIN - TITLE_HEIGHT - list_height;
     let fit = ((area_width - GAP * (columns.len() + 1) as f64) / model_width.max(1e-300))
         .min((area_height - GAP * (rows.len() + 1) as f64) / model_height.max(1e-300));
     let scale = match args.scale {
@@ -341,7 +402,7 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
             .find(|&s| s <= fit)
             .unwrap_or(SCALES[SCALES.len() - 1]),
     };
-    // Centred on the sheet's area above the title block.
+    // Centred on the sheet's area above the title block and the bill.
     let used_width = scale * model_width + GAP * (columns.len() - 1) as f64;
     let used_height = scale * model_height + GAP * (rows.len() - 1) as f64;
     let left = MARGIN + (area_width - used_width) / 2.0;
@@ -365,11 +426,6 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
         p.center = [x, y];
     }
 
-    let mut sheet = Sheet {
-        width,
-        height,
-        ..Sheet::default()
-    };
     for p in &placed {
         draw_view(&mut sheet, p, scale).with_context(&ctx)?;
     }
@@ -379,7 +435,64 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
     }
     draw_threads(&mut sheet, part, &faces, &placed, scale, &options).with_context(&ctx)?;
     draw_frame(&mut sheet, args, scale, date);
+    if args.bom {
+        draw_parts_list(&mut sheet, parts);
+    }
     Ok(sheet)
+}
+
+/// The bill of materials as a table standing on the title block, as wide
+/// as it: its captions in the bottom row, the first item above them. A
+/// text too long for its column is cut short, ending in `…`.
+fn draw_parts_list(sheet: &mut Sheet, parts: &[PartsListLine]) {
+    let x0 = sheet.width - MARGIN - TITLE_WIDTH;
+    let y0 = MARGIN + TITLE_HEIGHT;
+    let rows = parts.len() + 1;
+    let y1 = y0 + LIST_ROW * rows as f64;
+    for k in 1..=rows {
+        let y = y0 + LIST_ROW * k as f64;
+        sheet.stroke(Layer::Border, Shape::Line([x0, y], [x0 + TITLE_WIDTH, y]));
+    }
+    let mut x = x0;
+    for (_, w) in LIST_COLUMNS {
+        sheet.stroke(Layer::Border, Shape::Line([x, y0], [x, y1]));
+        x += w;
+    }
+    sheet.stroke(Layer::Border, Shape::Line([x, y0], [x, y1]));
+    let row = |sheet: &mut Sheet, k: usize, cells: [&str; 5]| {
+        let mut x = x0;
+        for ((_, w), text) in LIST_COLUMNS.iter().zip(cells) {
+            // An average glyph is about 0.6 of the text's height wide.
+            let fits = ((w - 2.0) / (0.6 * LIST_TEXT)) as usize;
+            let text = match text.chars().count() > fits {
+                true => format!(
+                    "{}…",
+                    text.chars()
+                        .take(fits.saturating_sub(1))
+                        .collect::<String>()
+                ),
+                false => text.to_string(),
+            };
+            let at = [
+                x + 1.0,
+                y0 + LIST_ROW * k as f64 + (LIST_ROW - LIST_TEXT) / 2.0,
+            ];
+            sheet.label(Layer::Border, at, LIST_TEXT, Anchor::Start, text);
+            x += w;
+        }
+    };
+    row(sheet, 0, LIST_COLUMNS.map(|(caption, _)| caption));
+    for (k, line) in parts.iter().enumerate() {
+        let quantity = line.quantity.to_string();
+        let cells = [
+            line.item.as_str(),
+            quantity.as_str(),
+            line.name.as_str(),
+            line.designation.as_str(),
+            line.material.as_str(),
+        ];
+        row(sheet, k + 1, cells);
+    }
 }
 
 /// How a view sees a thread's axis.

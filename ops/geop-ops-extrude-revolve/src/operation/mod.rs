@@ -30,7 +30,7 @@ use geop_core_topology::{Body, SolidId, build::BuiltBody};
 use geop_ops::{
     Namer, Part,
     operation::{EntityRef, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Choice, Form, Number, Tone},
 };
 use geop_ops_booleans::{
@@ -139,6 +139,14 @@ impl Extent {
         Extent::Blind(amount.into())
     }
 
+    /// Its length, to change, if it is blind.
+    pub fn length_mut(&mut self) -> Option<&mut Formula> {
+        match self {
+            Extent::Blind(length) => Some(length),
+            Extent::UpToNext | Extent::ThroughAll => None,
+        }
+    }
+
     /// Where it ends, its length as the step building `part` reads it.
     fn end<S: Scalar>(&self, part: &mut Part<S>) -> GeopResult<End> {
         Ok(match self {
@@ -182,6 +190,13 @@ impl Extents {
             side2: None,
             reversed: false,
         }
+    }
+
+    /// The formulas of its sides' lengths (see
+    /// [`geop_ops::operation::Operation::formulas`]).
+    pub fn formulas(&mut self) -> Vec<&mut String> {
+        let sides = [Some(&mut self.side1), self.side2.as_mut()];
+        expressions(sides.into_iter().flatten().filter_map(Extent::length_mut))
     }
 
     /// Whether a side goes as far as the solid it is combined with, which

@@ -168,7 +168,7 @@ fn a_threaded_shaft_draws_its_thread() {
         scale: Some(1.0),
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "").unwrap();
+    let sheet = compose(&part, &args, "", &[]).unwrap();
     let thread = |s: &&Stroke| s.layer == Layer::Thread;
     let lines: Vec<(f64, f64)> = sheet
         .strokes
@@ -197,4 +197,50 @@ fn a_threaded_shaft_draws_its_thread() {
     assert_eq!(arcs.len(), 1, "{arcs:?}");
     assert!((arcs[0] - minor / 2.0).abs() < 1e-9, "{arcs:?}");
     assert_eq!(sheet.labels.iter().filter(|l| l.text == "M6x1").count(), 1);
+}
+
+/// A bill of materials stands on the title block and pushes the views up
+/// off it: no view line comes down into its rows. One too long for the
+/// paper is refused, saying which paper.
+#[test]
+fn a_bill_of_materials_stands_on_the_title_block() {
+    use crate::{DrawingArgs, PartsListLine, SheetSize, compose, sheet::Shape};
+    let mut part = Part::<S>::new();
+    cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(100.0, 100.0, 100.0)).unwrap();
+    let line = |k: usize| PartsListLine {
+        item: k.to_string(),
+        quantity: 2,
+        name: format!("part {k}"),
+        designation: "ISO 4762 M4x12".into(),
+        material: "Steel".into(),
+    };
+    let lines: Vec<PartsListLine> = (1..=5).map(line).collect();
+    let args = DrawingArgs {
+        bom: true,
+        sheet: SheetSize::A4,
+        ..Default::default()
+    };
+    let sheet = compose(&part, &args, "", &lines).unwrap();
+    for text in ["ITEM", "part 5", "ISO 4762 M4x12"] {
+        assert!(sheet.labels.iter().any(|l| l.text == text), "{text}");
+    }
+    // Margin 10, title block 40, six rows of 6: the bill reaches y = 86.
+    let lowest = sheet
+        .strokes
+        .iter()
+        .filter(|s| s.layer == crate::sheet::Layer::Visible)
+        .flat_map(|s| match &s.shape {
+            Shape::Line(a, b) => vec![a[1], b[1]],
+            Shape::Polyline(points) => points.iter().map(|p| p[1]).collect(),
+            _ => Vec::new(),
+        })
+        .fold(f64::INFINITY, f64::min);
+    assert!(lowest > 86.0, "a view comes down to {lowest}");
+
+    let many: Vec<PartsListLine> = (1..=40).map(line).collect();
+    let error = compose(&part, &args, "", &many).unwrap_err().to_string();
+    assert!(
+        error.contains("40 lines") && error.contains("A4"),
+        "{error}"
+    );
 }

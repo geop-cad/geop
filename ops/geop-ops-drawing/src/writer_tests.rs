@@ -66,7 +66,7 @@ fn box_drawing_reads_back() {
         material: "Aluminium 6061".into(),
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "2026-10-04").unwrap();
+    let sheet = compose(&part, &args, "2026-10-04", &[]).unwrap();
 
     let entities = read_dxf(&to_dxf(&sheet));
     assert_eq!(dxf_count(&entities, "LINE", "VISIBLE"), 4);
@@ -112,7 +112,7 @@ fn cylinder_drawing_has_circle_and_centre_mark() {
         views: vec![ViewKind::Front, ViewKind::Top],
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "today").unwrap();
+    let sheet = compose(&part, &args, "today", &[]).unwrap();
     let entities = read_dxf(&to_dxf(&sheet));
     assert_eq!(dxf_count(&entities, "CIRCLE", "VISIBLE"), 1, "{entities:?}");
     assert_eq!(dxf_count(&entities, "LINE", "CENTER"), 2);

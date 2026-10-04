@@ -1133,6 +1133,8 @@ fn number_parameter(name: &str, expression: &str, min: f64, max: f64) -> Paramet
 pub fn parametric_plate() -> Program {
     let mut program = Program::new();
     program.parameters = Parameters {
+        title: None,
+        designation: None,
         color: Some("#d0893e".into()),
         material: Some(Material {
             name: "Aluminium 6061".into(),
