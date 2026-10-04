@@ -2263,4 +2263,30 @@ mod tests {
             }
         }
     }
+
+    /// A box cut into the top of a cube, its corners known only to within
+    /// 1e-12 — as a tool computed from a solid's own (interval) vertices
+    /// is: a lip's groove offset from a shelled enclosure's rim. The same
+    /// box with sharp corners was always cut cleanly.
+    ///
+    /// The march fed each corrector step the previous step's honest
+    /// `(u, v)` as its first seed, unsharpened, so the width compounded
+    /// step after step: from the corners' 1e-12 to a whole patch within a
+    /// dozen steps, until the corrector no longer converged (see
+    /// `predictor_corrector_step`).
+    #[test]
+    fn cube_minus_box_with_wide_corners() {
+        let wide = |x: f64| ScalInF64::new(x - 1e-12, x + 1e-12);
+        let corner = |p: [f64; 3]| Vector3::from_array(p.map(wide));
+        let mut part = M::new();
+        let block = cube(&mut part, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+        let tool = geop_ops_extrude_revolve::shapes::cube_solid(
+            &mut part,
+            &fresh_id(),
+            corner([1.72, 0.1, 0.88]),
+            corner([1.9, 1.9, 1.08]),
+        )
+        .unwrap();
+        op(&mut part, block, tool, BooleanOp::Difference);
+    }
 }
