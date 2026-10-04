@@ -16,13 +16,24 @@
 //!    part's outline on the paper, which the lines that part shows hold.
 //!    So each line a part shows is cut where it crosses or runs along a
 //!    line another part shows, and each piece is decided by a ray from its
-//!    middle towards the eye, against the faces of every other part that
-//!    could be in front of it. A line its own part hides stays hidden.
+//!    middle towards the eye, against the faces of that part (see
+//!    [`Scene::together`]). A line its own part hides stays hidden. Where
+//!    the lines of two parts cross is found to a coarser handoff than
+//!    where a part's own lines do (`COARSE_SUBDIVISION`): a part's lines
+//!    meet at its corners, which must be told apart from crossings near
+//!    them, while two parts touch along curves that only touch on the
+//!    paper — a screw's round head over the flats of its nut — where a
+//!    fine search runs a long way before giving up.
+//! 3. **Copies behind copies.** A copy of a part placed exactly behind
+//!    another, as the view sees it, is hidden by it whole, and adds no line
+//!    (see [`Scene::mark_copies_behind`]): a row of screws seen end on is
+//!    drawn as one.
 //!
 //! A line is not cut where it enters another part, only where it passes
 //! behind its outline: parts that pierce each other are a known limit. The
 //! parts of an assembly touch, they do not overlap.
 
+use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Motion, Pose, Quaternion},
@@ -35,7 +46,8 @@ use geop_ops::{Part, operation::INSTANCE_SEPARATOR};
 use crate::{
     drawing::drawn_faces,
     hidden_lines::{
-        Occluder, ProjectedView, ViewLine, ViewOptions, bounds, boxes_meet, cut_points,
+        COARSE_SUBDIVISION, Occluder, ProjectedView, ViewLine, ViewOptions, bounds, boxes_meet,
+        cut_points,
         drop_drawn, meetings, project_view, ray_length, seen,
     },
     view::{ViewAxis, ViewFrame},
@@ -260,7 +272,9 @@ impl<'p, S: Scalar> Scene<'p, S> {
         options: &ViewOptions,
     ) -> GeopResult<ProjectedView<S>> {
         let mut lines = Vec::new();
+        let mut behind = vec![false; self.bodies.len()];
         for group in self.groups() {
+            self.mark_copies_behind(&group, frame, &mut behind);
             let first = &self.bodies[group[0]];
             let view = project_view(
                 first.model(),
@@ -269,20 +283,48 @@ impl<'p, S: Scalar> Scene<'p, S> {
                 options,
             )
             .map_err(|e| e.with_context(format!("the part placed as {:?}", first.path)))?;
-            for &k in &group {
+            for &k in group.iter().filter(|&&k| !behind[k]) {
                 for line in &view.lines {
                     lines.push(self.placed_line(k, line, frame)?);
                 }
             }
         }
         if self.bodies.len() > 1 {
-            lines = self.together(lines, frame, options)?;
+            lines = self.together(lines, &behind, frame, options)?;
         }
         lines.sort_by_key(|l| l.body);
         Ok(ProjectedView {
             frame: *frame,
             lines,
         })
+    }
+
+    /// Marks in `behind` each body of `group` — one model, turned alike —
+    /// that `frame` sees exactly behind another: placed where it lands on
+    /// the paper where the other does, farther from the eye, or at the
+    /// same place after it. Each point of it then has the other's point
+    /// that it is a copy of right in front of it, on its ray to the eye: it
+    /// is hidden whole, hides nothing the other does not, and each of its
+    /// lines lies on one of the other's. A row of screws seen from its end
+    /// draws one.
+    fn mark_copies_behind(&self, group: &[usize], frame: &ViewFrame<S>, behind: &mut [bool]) {
+        let toward_eye = frame.toward_eye();
+        let at: Vec<Vector3<S>> = group
+            .iter()
+            .map(|&k| self.bodies[k].pose.map(|p| p.position()).unwrap_or_else(Vector3::zero))
+            .collect();
+        for (i, &k) in group.iter().enumerate() {
+            let (paper, depth) = (frame.project_point(&at[i]), toward_eye.prod_dot(&at[i]));
+            behind[k] = group.iter().enumerate().any(|(j, _)| {
+                j != i
+                    && frame.project_point(&at[j]).could_be_equal(&paper)
+                    && match toward_eye.prod_dot(&at[j]) {
+                        d if d.definitely_greater(depth) => true,
+                        d if d.could_be_equal(depth) => j < i,
+                        _ => false,
+                    }
+            });
+        }
     }
 
     /// How `frame` sees each body.
@@ -364,9 +406,22 @@ impl<'p, S: Scalar> Scene<'p, S> {
 
     /// The second stage (see the module docs): `lines`, each body's as its
     /// own faces hide them, with what the other bodies hide of them.
+    ///
+    /// A line is decided against one other body at a time, those with the
+    /// largest box on the paper first: its pieces still seen are cut where
+    /// they meet a line that body shows, and each new piece is decided by
+    /// whether that body hides it. A piece one body hides is not looked at
+    /// again — most of what is inside an assembly is hidden by the few
+    /// large parts around it, and need not be cut for the small ones. In
+    /// which order the bodies come changes how much work that is, not what
+    /// is found.
+    ///
+    /// The bodies `behind` marks (see [`Scene::mark_copies_behind`]) have
+    /// no lines and hide nothing.
     fn together(
         &self,
         lines: Vec<ViewLine<S>>,
+        behind: &[bool],
         frame: &ViewFrame<S>,
         options: &ViewOptions,
     ) -> GeopResult<Vec<ViewLine<S>>> {
@@ -382,118 +437,115 @@ impl<'p, S: Scalar> Scene<'p, S> {
                 shown[line.body].push(i);
             }
         }
-        // Where each line shown has to be cut: where it meets a line
-        // another body shows.
-        let mut cuts: Vec<Vec<S>> = vec![Vec::new(); lines.len()];
-        for a in 0..n {
-            for b in a + 1..n {
-                if !boxes_meet(&reach[a].paper, &reach[b].paper) {
-                    continue;
-                }
-                for &i in &shown[a] {
-                    if !boxes_meet(&boxes[i], &reach[b].paper) {
-                        continue;
-                    }
-                    for &j in &shown[b] {
-                        if !boxes_meet(&boxes[i], &boxes[j]) {
-                            continue;
-                        }
-                        let (li, lj) = (&lines[i], &lines[j]);
-                        let (on_i, on_j) = meetings((&li.curve, &li.curve3), (&lj.curve, &lj.curve3))
-                            .map_err(|e| {
-                                e.with_context(format!(
-                                    "where the {:?} of edge {:?} of the part placed as {:?} and \
-                                     the {:?} of edge {:?} of the part placed as {:?} cross on \
-                                     the paper",
-                                    li.kind,
-                                    li.edge,
-                                    self.bodies[a].path,
-                                    lj.kind,
-                                    lj.edge,
-                                    self.bodies[b].path
-                                ))
-                            })?;
-                        cuts[i].extend(on_i);
-                        cuts[j].extend(on_j);
-                    }
-                }
-            }
-        }
+        let area = |b: usize| {
+            let p = &reach[b].paper;
+            (p[2] - p[0]) * (p[3] - p[1])
+        };
+        let mut order: Vec<usize> = (0..n).filter(|&b| !behind[b]).collect();
+        order.sort_by(|&a, &b| area(b).total_cmp(&area(a)));
 
+        let toward_eye = frame.toward_eye();
+        // How near the eye the farthest point of a curve could be: a body
+        // that comes no nearer cannot hide any of it.
+        let farthest = |curve3: &NurbCurve3D<S>| -> GeopResult<f64> {
+            let mut depth = f64::INFINITY;
+            for q in &curve3.control_points {
+                let p = Vector3::from_array([q[0].div(q[3])?, q[1].div(q[3])?, q[2].div(q[3])?]);
+                depth = depth.min(toward_eye.prod_dot(&p).lower().to_f64());
+            }
+            Ok(depth)
+        };
         let mut out = Vec::new();
-        for (i, line) in lines.into_iter().enumerate() {
-            let others: Vec<usize> = (0..n)
-                .filter(|&b| b != line.body && boxes_meet(&boxes[i], &reach[b].paper))
-                .collect();
-            if !line.visible || others.is_empty() {
-                out.push(line);
+        for (i, line) in lines.iter().enumerate() {
+            if !line.visible {
+                out.push(line.clone());
                 continue;
             }
             let domain = line.curve.domain();
-            let mut ends = vec![domain.0];
-            ends.extend(cut_points(std::mem::take(&mut cuts[i]), domain));
-            ends.push(domain.1);
-            // Each piece decided by its middle — or, should a ray from
-            // there graze a face too closely for its search to settle, by
-            // a point a quarter along either way.
-            let mut pieces: Vec<(S, S, GeopResult<bool>)> = Vec::new();
-            for pair in ends.windows(2) {
-                let (a, b) = (pair[0], pair[1]);
-                let mut outcome = Err(GeopError::new("no point tried"));
-                for f in [0.5, 0.25, 0.75] {
-                    let decide = || -> GeopResult<bool> {
-                        let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
-                        let point = line.curve3.evaluate(t)?;
-                        Ok(!self.hidden_by(others.iter().copied(), &reach, frame, point)?)
+            let (mut seen, mut hidden) = (vec![domain], Vec::new());
+            for &b in &order {
+                if b == line.body || !boxes_meet(&boxes[i], &reach[b].paper) {
+                    continue;
+                }
+                let mut still = Vec::new();
+                for (lo, hi) in seen {
+                    let whole = lo.could_be_equal(domain.0) && hi.could_be_equal(domain.1);
+                    let (curve, curve3) = match whole {
+                        true => (line.curve.clone(), line.curve3.clone()),
+                        false => (line.curve.sub_curve(lo, hi)?, line.curve3.sub_curve(lo, hi)?),
                     };
-                    outcome = decide().map_err(|e| {
-                        e.with_context(format!(
-                            "the piece [{a:?}, {b:?}] of the {:?} of edge {:?} of the part \
-                             placed as {:?}",
-                            line.kind, line.edge, self.bodies[line.body].path
-                        ))
-                    });
-                    if outcome.is_ok() {
-                        break;
+                    let here = bounds(&curve)?;
+                    if !boxes_meet(&here, &reach[b].paper) || reach[b].near < farthest(&curve3)? {
+                        still.push((lo, hi));
+                        continue;
+                    }
+                    let mut cuts = Vec::new();
+                    for &j in shown[b].iter().filter(|&&j| boxes_meet(&here, &boxes[j])) {
+                        let other = &lines[j];
+                        let (on_line, _) = meetings(
+                            (&curve, &curve3),
+                            (&other.curve, &other.curve3),
+                            S::from_f64(COARSE_SUBDIVISION),
+                        )
+                        .map_err(
+                                |e| {
+                                    e.with_context(format!(
+                                        "where the {:?} of edge {:?} of the part placed as {:?} \
+                                         and the {:?} of edge {:?} of the part placed as {:?} \
+                                         cross on the paper",
+                                        line.kind,
+                                        line.edge,
+                                        self.bodies[line.body].path,
+                                        other.kind,
+                                        other.edge,
+                                        self.bodies[b].path
+                                    ))
+                                },
+                            )?;
+                        cuts.extend(on_line);
+                    }
+                    let mut ends = vec![lo];
+                    ends.extend(cut_points(cuts, (lo, hi)));
+                    ends.push(hi);
+                    for (a, z, visible) in self.decide(line, &ends, b, &reach, frame)? {
+                        match visible {
+                            true => still.push((a, z)),
+                            false => hidden.push((a, z)),
+                        }
                     }
                 }
-                pieces.push((a, b, outcome));
+                seen = still;
+                if seen.is_empty() {
+                    break;
+                }
             }
-            // A piece none of whose points could be decided takes the
-            // visibility of its nearest neighbour along the line.
-            let known: Vec<Option<bool>> = pieces
-                .iter()
-                .map(|p| p.2.as_ref().ok().copied())
+            // Back in order along the line, neighbours alike joined.
+            let mut pieces: Vec<(S, S, bool)> = seen
+                .into_iter()
+                .map(|(a, z)| (a, z, true))
+                .chain(hidden.into_iter().map(|(a, z)| (a, z, false)))
                 .collect();
+            pieces.sort_by(|p, q| p.0.to_f64().total_cmp(&q.0.to_f64()));
             let mut decided: Vec<(S, S, bool)> = Vec::new();
-            for (k, (a, b, outcome)) in pieces.into_iter().enumerate() {
-                let visible = match outcome {
-                    Ok(v) => v,
-                    Err(e) => (1..known.len())
-                        .find_map(|step| {
-                            let before = k.checked_sub(step).and_then(|i| known[i]);
-                            before.or_else(|| known.get(k + step).copied().flatten())
-                        })
-                        .ok_or(e)?,
-                };
+            for (a, z, visible) in pieces {
                 match decided.last_mut() {
-                    Some(last) if last.2 == visible => last.1 = b,
-                    _ => decided.push((a, b, visible)),
+                    Some(last) if last.2 == visible => last.1 = z,
+                    _ => decided.push((a, z, visible)),
                 }
             }
             if let [(_, _, visible)] = decided.as_slice() {
                 out.push(ViewLine {
                     visible: *visible,
-                    ..line
+                    ..line.clone()
                 });
                 continue;
             }
-            for (a, b, visible) in decided {
+            for (a, z, visible) in decided {
                 out.push(ViewLine {
-                    curve: line.curve.sub_curve(a, b)?,
-                    curve3: line.curve3.sub_curve(a, b)?,
+                    curve: line.curve.sub_curve(a, z)?,
+                    curve3: line.curve3.sub_curve(a, z)?,
                     visible,
-                    range: (a, b),
+                    range: (a, z),
                     ..line.clone()
                 });
             }
@@ -504,6 +556,64 @@ impl<'p, S: Scalar> Scene<'p, S> {
         // Each body's own lines were cleared of those lying on another in
         // its own view.
         drop_drawn(out, |a, b| a.body != b.body)
+    }
+
+    /// The pieces of `line` between consecutive `ends`, each with whether
+    /// body `b` leaves it seen: decided by its middle — or, should a ray
+    /// from there graze a face too closely for its search to settle, by a
+    /// point a quarter along either way. A piece none of whose points could
+    /// be decided takes the visibility of its nearest neighbour.
+    fn decide(
+        &self,
+        line: &ViewLine<S>,
+        ends: &[S],
+        b: usize,
+        reach: &[Reach],
+        frame: &ViewFrame<S>,
+    ) -> GeopResult<Vec<(S, S, bool)>> {
+        let mut pieces: Vec<(S, S, GeopResult<bool>)> = Vec::new();
+        for pair in ends.windows(2) {
+            let (lo, hi) = (pair[0], pair[1]);
+            let mut outcome = Err(GeopError::new("no point tried"));
+            for f in [0.5, 0.25, 0.75] {
+                let at = || -> GeopResult<bool> {
+                    let t = lo.add(hi.sub(lo).mul(S::from_f64(f))).sharpen();
+                    let point = line.curve3.evaluate(t)?;
+                    Ok(!self.hidden_by([b], reach, frame, point)?)
+                };
+                outcome = at().map_err(|e| {
+                    e.with_context(format!(
+                        "the piece [{lo:?}, {hi:?}] of the {:?} of edge {:?} of the part \
+                         placed as {:?}",
+                        line.kind, line.edge, self.bodies[line.body].path
+                    ))
+                });
+                if outcome.is_ok() {
+                    break;
+                }
+            }
+            pieces.push((lo, hi, outcome));
+        }
+        let known: Vec<Option<bool>> = pieces
+            .iter()
+            .map(|p| p.2.as_ref().ok().copied())
+            .collect();
+        pieces
+            .into_iter()
+            .enumerate()
+            .map(|(k, (lo, hi, outcome))| {
+                let visible = match outcome {
+                    Ok(v) => v,
+                    Err(e) => (1..known.len())
+                        .find_map(|step| {
+                            let before = k.checked_sub(step).and_then(|i| known[i]);
+                            before.or_else(|| known.get(k + step).copied().flatten())
+                        })
+                        .ok_or(e)?,
+                };
+                Ok((lo, hi, visible))
+            })
+            .collect()
     }
 }
 

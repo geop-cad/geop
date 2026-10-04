@@ -58,9 +58,11 @@ const PROJECT_ITERATIONS: usize = 20;
 /// Seed for the containment tests.
 const FACE_CONTAINS_SEED: u64 = 0xD_0A_11;
 /// Where a search for where two lines cross on the paper hands over when
-/// one with the fine handoff could not settle (see [`meetings`]): far
-/// below what a sheet shows at any scale it is drawn at.
-const COARSE_SUBDIVISION: f64 = 1e-5;
+/// one with the fine handoff could not settle (see [`meetings`]), and
+/// where one between the lines of two parts does (see
+/// [`crate::scene`]): far below what a sheet shows at any scale it is
+/// drawn at.
+pub(crate) const COARSE_SUBDIVISION: f64 = 1e-5;
 
 /// What a line of a view shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -538,7 +540,12 @@ pub fn project_view<S: Scalar>(
                 continue;
             }
             let (a, b) = (&sources[i], &sources[j]);
-            let (a_cuts, b_cuts) = meetings((&a.curve, &a.curve3), (&b.curve, &b.curve3)).map_err(|e| {
+            let (a_cuts, b_cuts) = meetings(
+                (&a.curve, &a.curve3),
+                (&b.curve, &b.curve3),
+                min_subdivision_size(),
+            )
+            .map_err(|e| {
                 let describe = |s: &Source<S>| match s.edge {
                     Some(edge) => format!("{:?} of edge {edge}", s.kind),
                     None => format!(
@@ -673,7 +680,8 @@ fn search<S: Scalar>(
 }
 
 /// Where the pieces `a` and `b`, each on the paper and in space, have to
-/// be cut for each other (see [`search`]).
+/// be cut for each other (see [`search`]), searched with the handoff
+/// `handoff`.
 ///
 /// Two curves meeting at a common end often meet there tangentially on the
 /// paper — an edge running into another smoothly, seen from the side —
@@ -688,15 +696,16 @@ fn search<S: Scalar>(
 /// touching the line a flat of the nut under it is seen as — come closer
 /// than a fine handoff along a stretch the search cannot get through
 /// either. Should all else fail, the search is run once more with a
-/// coarser handoff ([`COARSE_SUBDIVISION`]): the touch comes out as one
-/// wide cluster, cut at a free point inside it, and two crossings closer
-/// together than that are taken as one.
+/// coarser handoff ([`COARSE_SUBDIVISION`]) if `handoff` is finer: the
+/// touch comes out as one wide cluster, cut at a free point inside it, and
+/// two crossings closer together than that are taken as one.
 pub(crate) fn meetings<S: Scalar>(
     (a, a3): (&NurbCurve2D<S>, &NurbCurve3D<S>),
     (b, b3): (&NurbCurve2D<S>, &NurbCurve3D<S>),
+    handoff: S,
 ) -> GeopResult<(Vec<S>, Vec<S>)> {
     let fine = || -> GeopResult<(Vec<S>, Vec<S>)> {
-        let error = match search(a, b, min_subdivision_size()) {
+        let error = match search(a, b, handoff) {
             Ok(found) => return Ok(found),
             Err(e) => e,
         };
@@ -724,7 +733,7 @@ pub(crate) fn meetings<S: Scalar>(
                 if i == end_a && j == end_b {
                     continue;
                 }
-                let (x, y) = search(half_a, half_b, min_subdivision_size()).map_err(|e| {
+                let (x, y) = search(half_a, half_b, handoff).map_err(|e| {
                     e.with_context(format!(
                         "searched again without the common end, after: {error}"
                     ))
@@ -735,8 +744,12 @@ pub(crate) fn meetings<S: Scalar>(
         }
         Ok((on_a, on_b))
     };
+    let coarse = S::from_f64(COARSE_SUBDIVISION);
     fine().or_else(|error| {
-        search(a, b, S::from_f64(COARSE_SUBDIVISION)).map_err(|e| {
+        if !handoff.definitely_less(coarse) {
+            return Err(error);
+        }
+        search(a, b, coarse).map_err(|e| {
             e.with_context(format!(
                 "searched again with a coarser handoff, after: {error}"
             ))

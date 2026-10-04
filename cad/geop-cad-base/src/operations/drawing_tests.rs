@@ -450,3 +450,278 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
         );
     }
 }
+
+/// Every example assembly draws: its default sheet with the bill of
+/// materials builds, with a balloon per line of the bill whose part has
+/// faces drawn, and in no view does a hidden piece run along a visible one.
+#[test]
+#[ignore = "slow: every example assembly drawn — run with `cargo test -- --ignored`"]
+fn every_example_assembly_draws() {
+    use geop_ops_drawing::{
+        scene::Scene,
+        sheet::{Layer, Shape},
+    };
+    let mut failures = Vec::new();
+    for (name, _) in crate::examples::workspaces() {
+        let (path, part) = example_assembly(name);
+        let args = DrawingArgs {
+            bom: true,
+            ..Default::default()
+        };
+        let parts = crate::inspect::parts_list(&part, path, &args).unwrap();
+        let sheet = match compose(&part, &args, "", &parts) {
+            Ok(sheet) => sheet,
+            Err(e) => {
+                failures.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        let scene = Scene::of(&part).unwrap();
+        let drawn = parts
+            .iter()
+            .filter(|line| {
+                scene
+                    .bodies
+                    .iter()
+                    .any(|b| line.placements.contains(&b.path))
+            })
+            .count();
+        let balloons = sheet
+            .strokes
+            .iter()
+            .filter(|s| {
+                s.layer == Layer::Dimension
+                    && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
+            })
+            .count();
+        if balloons != drawn {
+            failures.push(format!(
+                "{name}: {balloons} balloons for {drawn} lines of the bill drawn"
+            ));
+        }
+        for kind in ViewKind::ALL {
+            let v = match scene.project(&kind.frame().unwrap(), &ViewOptions::default()) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(format!("{name}, {} view: {e}", kind.name()));
+                    continue;
+                }
+            };
+            for hidden in v.lines.iter().filter(|l| !l.visible) {
+                let (a, b) = hidden.curve.domain();
+                let at = |f: f64| {
+                    let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
+                    hidden.curve.evaluate(t).unwrap()
+                };
+                let (p, q) = (at(1.0 / 3.0), at(2.0 / 3.0));
+                let on = |line: &geop_ops_drawing::ViewLine<S>, x| {
+                    curve_could_contain(&line.curve, x, 20_000, S::from_f64(1e-7))
+                        .unwrap()
+                        .is_some()
+                };
+                if let Some(visible) = v
+                    .lines
+                    .iter()
+                    .filter(|l| l.visible)
+                    .find(|l| on(l, &p) && on(l, &q))
+                {
+                    failures.push(format!(
+                        "{name}, {} view: the hidden {:?} of {} runs along the visible {:?} of {}",
+                        kind.name(),
+                        hidden.kind,
+                        scene.bodies[hidden.body].path,
+                        visible.kind,
+                        scene.bodies[visible.body].path,
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The bolted plate cut through the screw's axis: each part cut in its own
+/// frame, the plate, the screw and the nut each hatched, the hatching
+/// turning the other way from one part to the next; and the hole of the
+/// plate placed in it dimensioned by its name as the assembly names it.
+#[test]
+fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
+    use geop_ops_drawing::sheet::{Layer, Shape};
+    let (_, files) = crate::examples::workspaces()
+        .into_iter()
+        .find(|(n, _)| *n == "bolted_plate")
+        .unwrap();
+    let files = files();
+    let mut program = files[0].1.clone();
+    program.push(
+        "middle",
+        geop_ops_datums::AddDatumArgs {
+            selection: vec![EntityRef::datum_component(
+                geop_ops::ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )],
+            construction: geop_ops_datums::Construction::Offset {
+                distance: 20.0.into(),
+            },
+        },
+    );
+    let files = files
+        .into_iter()
+        .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
+        .collect();
+    let workspace = crate::Workspace::<S>::new(crate::stdlib::WithStandardParts(files));
+    let part = program.build(&workspace.scope("bolted_plate.geop")).unwrap();
+    let plate = part
+        .instance(part.instance_id("plate").unwrap())
+        .unwrap()
+        .part();
+    let model = plate.topology();
+    let hole = name_where(plate, |id| match id {
+        RefId::Edge(e) => model.get_edge(e).unwrap().curve.as_arc().unwrap().is_some(),
+        _ => false,
+    });
+    let args = DrawingArgs {
+        views: vec![ViewKind::Top],
+        section: Some(EntityRef::datum("middle")),
+        dimensions: vec![Dimension::Diameter {
+            edge: format!("plate/{hole}"),
+        }],
+        ..Default::default()
+    };
+    let sheet = compose(&part, &args, "", &[]).unwrap();
+    let (mut rising, mut falling) = (0, 0);
+    for stroke in sheet.strokes.iter().filter(|s| s.layer == Layer::Hatch) {
+        if let Shape::Line(a, b) = stroke.shape {
+            match (b[0] - a[0]) * (b[1] - a[1]) > 0.0 {
+                true => rising += 1,
+                false => falling += 1,
+            }
+        }
+    }
+    assert!(rising > 10 && falling > 10, "{rising} and {falling} hatch lines");
+    assert!(sheet.labels.iter().any(|l| l.text == "SECTION A-A"));
+    assert!(sheet.labels.iter().any(|l| l.text == "⌀4.5"), "the hole's diameter");
+}
+
+/// A plate with `n` by `n` M3x10 screws standing on it, 10 apart, and as
+/// many M3 nuts hanging under it, each placed on its own: the program
+/// `screwed.geop`, built.
+fn screwed_plate(n: usize) -> Part<S> {
+    use geop_ops::part::{ParamValue, State, pose_parameter};
+    let mut program = Program::new();
+    let mut place = |id: String, file: &str, size: Option<&str>, at: [f64; 3], turn: [f64; 3]| {
+        let parameters = size
+            .map(|row| State::from([("size".to_string(), ParamValue::Text(row.into()))]))
+            .unwrap_or_default();
+        program.push(
+            &id,
+            geop_ops_assembly::AddPartArgs {
+                file: file.into(),
+                parameters,
+                ..Default::default()
+            },
+        );
+        program.state.insert(
+            pose_parameter(&id),
+            ParamValue::Pose(examples::pose(at, turn)),
+        );
+    };
+    place("plate".into(), "plate.geop", None, [0.0; 3], [0.0; 3]);
+    for i in 0..n {
+        for j in 0..n {
+            let (x, y) = (5.0 + 10.0 * i as f64, 5.0 + 10.0 * j as f64);
+            place(
+                format!("screw{i}_{j}"),
+                "std:iso4762_socket_head_cap_screw.geop",
+                Some("M3x10"),
+                [x, y, 5.0],
+                [0.0; 3],
+            );
+            place(
+                format!("nut{i}_{j}"),
+                "std:iso4032_hex_nut.geop",
+                Some("M3"),
+                [x, y, 0.0],
+                [180.0, 0.0, 0.0],
+            );
+        }
+    }
+    let files = std::collections::BTreeMap::from([(
+        "plate.geop".to_string(),
+        examples::metric_plate().to_json().unwrap(),
+    )]);
+    let workspace = crate::Workspace::<S>::new(crate::stdlib::WithStandardParts(files));
+    program.build(&workspace.scope("screwed.geop")).unwrap()
+}
+
+/// The balloons of `sheet`: the item numbers on the dimension layer next
+/// to a circle of a balloon's radius.
+fn balloon_items(sheet: &geop_ops_drawing::sheet::Sheet) -> Vec<String> {
+    use geop_ops_drawing::sheet::{Layer, Shape};
+    let circles: Vec<[f64; 2]> = sheet
+        .strokes
+        .iter()
+        .filter_map(|s| match s.shape {
+            Shape::Circle { center, radius } if s.layer == Layer::Dimension && radius == 4.0 => {
+                Some(center)
+            }
+            _ => None,
+        })
+        .collect();
+    let mut items: Vec<String> = sheet
+        .labels
+        .iter()
+        .filter(|l| {
+            l.layer == Layer::Dimension
+                && circles
+                    .iter()
+                    .any(|c| (c[0] - l.at[0]).abs() < 1e-9 && (c[1] - l.at[1] - 1.75).abs() < 1e-9)
+        })
+        .map(|l| l.text.clone())
+        .collect();
+    items.sort();
+    items
+}
+
+/// A plate held by four screws and four nuts: three lines of the bill, so
+/// three balloons — not one per part placed — and one view of each part
+/// serves every copy of it.
+#[test]
+fn repeated_parts_are_ballooned_once() {
+    use geop_ops_drawing::scene::Scene;
+    let part = screwed_plate(2);
+    let scene = Scene::of(&part).unwrap();
+    assert_eq!(scene.bodies.len(), 9);
+    assert_eq!(scene.groups().len(), 3, "the plate, the screw and the nut");
+    let args = DrawingArgs {
+        views: vec![ViewKind::Front, ViewKind::Top],
+        bom: true,
+        ..Default::default()
+    };
+    let parts = crate::inspect::parts_list(&part, "screwed.geop", &args).unwrap();
+    assert_eq!(
+        parts.iter().map(|l| l.quantity).collect::<Vec<_>>(),
+        [1, 4, 4]
+    );
+    let sheet = compose(&part, &args, "", &parts).unwrap();
+    assert_eq!(balloon_items(&sheet), ["1", "2", "3"]);
+}
+
+/// A hundred screws and a hundred nuts in a plate draw — each part's own
+/// lines found once for all its copies.
+#[test]
+#[ignore = "slow: a hundred screws drawn — run with `cargo test -- --ignored`"]
+fn a_hundred_screws_draw() {
+    use geop_ops_drawing::scene::Scene;
+    let part = screwed_plate(10);
+    let scene = Scene::of(&part).unwrap();
+    assert_eq!(scene.groups().len(), 3);
+    let args = DrawingArgs {
+        bom: true,
+        sheet: geop_ops_drawing::SheetSize::A2,
+        ..Default::default()
+    };
+    let parts = crate::inspect::parts_list(&part, "screwed.geop", &args).unwrap();
+    let sheet = compose(&part, &args, "", &parts).unwrap();
+    assert_eq!(balloon_items(&sheet), ["1", "2", "3"]);
+}

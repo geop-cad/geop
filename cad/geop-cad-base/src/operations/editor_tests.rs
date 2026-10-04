@@ -2471,10 +2471,10 @@ fn renaming_a_parameter_renames_what_reads_it() {
 
 /// The bolted plate's drawing with its bill of materials, as the front end
 /// makes it: a new drawing step, "Bill of materials" ticked, committed and
-/// exported. The assembly places all it has, so the sheet is its bill
-/// alone: the plate, and the standard screw and nut by the titles and
+/// exported. The sheet draws the parts placed, where they are placed, and
+/// lists them: the plate, and the standard screw and nut by the titles and
 /// designations their own programs carry — which name their products in
-/// a STEP file too.
+/// a STEP file too — each line ballooned once with its item number.
 #[test]
 fn an_assembly_drawing_lists_its_parts() {
     let mut editor = Editor::<S>::new();
@@ -2511,6 +2511,20 @@ fn an_assembly_drawing_lists_its_parts() {
         ">Steel<",
     ] {
         assert!(svg.contains(text), "{text} is not on the sheet");
+    }
+    // The four default views draw the parts, with their hidden lines; three
+    // balloons, each with its item number, stand on the dimension layer.
+    let layer = |name: &str| {
+        let start = svg.find(&format!("<g class=\"{name}\"")).unwrap();
+        let end = start + svg[start..].find("</g>").unwrap();
+        svg[start..end].to_string()
+    };
+    assert!(layer("VISIBLE").contains("<line"), "no view line");
+    assert!(layer("HIDDEN").contains("<line"), "no hidden line");
+    let dimensions = layer("DIMENSIONS");
+    assert_eq!(dimensions.matches("r=\"4\"/>").count(), 3, "{dimensions}");
+    for item in ["1", "2", "3"] {
+        assert!(dimensions.contains(&format!(">{item}</text>")), "balloon {item}");
     }
     // A STEP file names them so too: one product per size.
     let step = editor.handle(Command::ExportStep);
