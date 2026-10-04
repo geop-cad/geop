@@ -126,28 +126,27 @@ fn tslot(cells: i32, file: &'static str, title: &'static str) -> GeopResult<Stan
     )?;
 
     // Round the outline clockwise, from its top left corner; each side
-    // `(start, direction, inward, slot centres along it)`.
+    // `(start, direction, slot centres along it)`, in from it to its right.
     let centres: Vec<i32> = (0..cells).map(|i| 200 * i - 100 * (cells - 1)).collect();
     let down: Vec<i32> = centres.iter().rev().copied().collect();
-    let sides: [([i32; 2], [i32; 2], [i32; 2], Vec<[i32; 2]>); 4] = [
-        ([-half_w, half_h], [1, 0], [0, -1], vec![[0, half_h]]),
+    let sides = [
+        ([-half_w, half_h], [1, 0], vec![[0, half_h]]),
         (
             [half_w, half_h],
             [0, -1],
-            [-1, 0],
             down.iter().map(|&y| [half_w, y]).collect(),
         ),
-        ([half_w, -half_h], [-1, 0], [0, 1], vec![[0, -half_h]]),
+        ([half_w, -half_h], [-1, 0], vec![[0, -half_h]]),
         (
             [-half_w, -half_h],
             [0, 1],
-            [1, 0],
             centres.iter().map(|&y| [-half_w, y]).collect(),
         ),
     ];
     let mm = |tenths: i32| format!("{}", f64::from(tenths) / 10.0);
     let mut corners = Vec::new();
-    for (start, along, inward, slots) in &sides {
+    for (start, along, slots) in &sides {
+        let inward = [along[1], -along[0]];
         corners.push([mm(start[0]), mm(start[1])]);
         for centre in slots {
             for [u, v] in SLOT {

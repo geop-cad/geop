@@ -59,3 +59,11 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
 ```
+
+Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball
+bearings, T-slot extrusions, a NEMA 17 motor) live in
+`geop-cad-base/src/stdlib`: one program per family, generated in Rust,
+its sizes the rows of a table parameter `size`. Every workspace reads them
+as read-only files named `std:…` (`std:iso4032_hex_nut.geop`) through
+`stdlib::WithStandardParts`, the one place they come from; the editor's
+part picker lists them, and `geop compile std:…` meshes one.
