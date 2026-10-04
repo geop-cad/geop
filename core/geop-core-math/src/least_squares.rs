@@ -202,7 +202,8 @@ fn sharp<S: Scalar>(v: &[S]) -> Vec<S> {
 }
 
 /// The Cholesky factor `L` of the symmetric `a`, `a = L Lᵀ` — leaving out
-/// every row whose pivot could be zero or less: one that, in the light of
+/// every row whose pivot could be zero or less, or is too small to divide
+/// by: one that, in the light of
 /// the rows before it, says nothing new (or nothing positive). Which rows
 /// were left out is `true` in the second.
 fn cholesky<S: Scalar>(a: &[Vec<S>]) -> GeopResult<(Vec<Vec<S>>, Vec<bool>)> {
@@ -216,8 +217,16 @@ fn cholesky<S: Scalar>(a: &[Vec<S>]) -> GeopResult<(Vec<Vec<S>>, Vec<bool>)> {
             }
             let sum = (0..j).fold(a[i][j], |sum, k| sum.sub(l[i][k].mul(l[j][k])));
             if i == j {
-                if sum.definitely_greater(S::ZERO) {
-                    l[i][i] = sum.sqrt()?;
+                // A pivot positive by so little that dividing by it gives no
+                // finite number says no more than one that could be zero:
+                // the solve through it overflowed, `0 × ∞` in the next row.
+                let root = if sum.definitely_greater(S::ZERO) {
+                    Some(sum.sqrt()?).filter(|r| S::ONE.div(*r).is_ok_and(|v| v.is_finite()))
+                } else {
+                    None
+                };
+                if let Some(root) = root {
+                    l[i][i] = root;
                 } else {
                     left_out[i] = true;
                     l[i].iter_mut().for_each(|v| *v = S::ZERO);
@@ -631,13 +640,26 @@ pub fn minimize<S: Scalar>(
                             damping: mu,
                         });
                     }
-                    let s: Vec<S> = next
-                        .iter()
-                        .zip(&x)
-                        .map(|(a, b)| a.sub(*b).sharpen())
-                        .collect();
-                    let length = norm(&s)?;
-                    if let Some(e_next) = evaluate(&next) {
+                    // How far the step went, before any correction: what
+                    // the radius shrinks from where it is turned down.
+                    let tried = norm(
+                        &next
+                            .iter()
+                            .zip(&x)
+                            .map(|(a, b)| a.sub(*b).sharpen())
+                            .collect::<Vec<S>>(),
+                    )?;
+                    let landed = match evaluate(&next) {
+                        Some(e_next) => Some(corrected(&evaluate, &moving, next, e_next)?),
+                        None => None,
+                    };
+                    if let Some((next, e_next)) = landed {
+                        let s: Vec<S> = next
+                            .iter()
+                            .zip(&x)
+                            .map(|(a, b)| a.sub(*b).sharpen())
+                            .collect();
+                        let length = norm(&s)?;
                         // `Σ r² - Σ r'²` summed as `Σ (r - r')(r + r')`: near
                         // the minimum of a sum that stays large, the difference
                         // of the two sums is lost to their width.
@@ -718,7 +740,7 @@ pub fn minimize<S: Scalar>(
                     } else {
                         rejected = Some(Rejection::Infeasible);
                     }
-                    radius = length.div(S::from_i64(GROW))?.sharpen();
+                    radius = tried.div(S::from_i64(GROW))?.sharpen();
                 }
             } else {
                 rejected = Some(Rejection::NotPositive);
@@ -745,6 +767,76 @@ pub fn minimize<S: Scalar>(
         stop: Stop::Budget,
         damping: mu,
     })
+}
+
+/// Corrections of a step back onto the constraints, at most: each a Newton
+/// step on them alone, which squares how far off they are — how hard a
+/// step is corrected, never whether it is taken.
+const CORRECTIONS: usize = 4;
+
+/// The point `x` (with its evaluation `e`), where a step landed, moved back
+/// onto the constraints — the shortest moves among the variables `moving`
+/// that meet their linearization there, as long as each definitely lowers
+/// their violation (a second-order correction).
+///
+/// A step meets the constraints' linearization where it starts, so it
+/// leaves them by as much as they curve over its length: a body turned by a
+/// large step along the directions they leave free is off them by that
+/// much. Judged there, every step along curved constraints looks worse in
+/// their violation than it is, and the minimizer could only zig-zag along
+/// them taking what the sum alone allows — a mated arm wandered off its
+/// mates by whole lengths and ran out of steps. Corrected, a step is judged
+/// where it actually leads along them.
+fn corrected<S: Scalar>(
+    evaluate: &impl Fn(&[S]) -> Option<Evaluation<S>>,
+    moving: &[bool],
+    mut x: Vec<S>,
+    mut e: Evaluation<S>,
+) -> GeopResult<(Vec<S>, Evaluation<S>)> {
+    for _ in 0..CORRECTIONS {
+        let theta = norm(&e.constraints.values)?;
+        if !theta.definitely_greater(S::ZERO) {
+            break;
+        }
+        // δ = -J_cᵀ k with J_c J_cᵀ k = c: the shortest step meeting the
+        // linearized constraints, rows that say nothing new left out.
+        let jc: Vec<Vec<S>> = e
+            .constraints
+            .jacobian
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .zip(moving)
+                    .map(|(&v, &m)| if m { choose(v) } else { S::ZERO })
+                    .collect()
+            })
+            .collect();
+        let gram: Vec<Vec<S>> = jc
+            .iter()
+            .map(|a| jc.iter().map(|b| dot(a, b)).collect())
+            .collect();
+        let (l, dependent) = cholesky(&gram)?;
+        let k = solve_cholesky(&l, &dependent, &sharp(&e.constraints.values))?;
+        let next: Vec<S> = (0..x.len())
+            .map(|i| {
+                let d = choose((0..jc.len()).fold(S::ZERO, |sum, r| sum.sub(jc[r][i].mul(k[r]))));
+                x[i].add(d).sharpen()
+            })
+            .collect();
+        if !next.iter().all(|v| v.is_finite())
+            || next.iter().zip(&x).all(|(a, b)| a.could_be_equal(*b))
+        {
+            break;
+        }
+        let Some(e_next) = evaluate(&next) else {
+            break;
+        };
+        if !norm(&e_next.constraints.values)?.definitely_less(theta) {
+            break;
+        }
+        (x, e) = (next, e_next);
+    }
+    Ok((x, e))
 }
 
 /// The part of `v` along the constraints — orthogonal to the rows of their
