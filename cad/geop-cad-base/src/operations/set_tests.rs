@@ -16,43 +16,47 @@ fn every_operation_is_offered() {
         kinds,
         [
             "add_sketch",
+            "add_sketch3d",
+            "add_datum",
             "extrude",
             "revolve",
             "sweep",
             "loft",
-            "boolean",
-            "split",
-            "delete_body",
-            "extract_face",
-            "project_curve",
+            "hole",
+            "thread",
+            "rib",
             "fillet",
             "chamfer",
             "shell",
-            "add_datum",
-            "add_part",
+            "draft",
+            "lip",
+            "groove",
+            "boolean",
+            "split",
             "linear_pattern",
             "circular_pattern",
             "mirror",
             "move_body",
-            "route",
-            "hole",
-            "thread",
+            "delete_body",
             "boundary_surface",
             "offset_surface",
             "thicken",
             "knit",
             "trim_surface",
             "extend_surface",
-            "add_sketch3d",
+            "extract_face",
+            "project_curve",
+            "add_part",
             "part_pattern",
-            "draft",
-            "lip",
-            "groove",
-            "rib"
+            "route"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");
-    assert!(infos[1].doc.starts_with("Sweep a sketch"));
+    assert!(
+        infos[3].doc.starts_with("Sweep a sketch"),
+        "{}",
+        infos[3].doc
+    );
     for (_, program) in examples::all() {
         for step in &program.steps {
             let json = serde_json::to_value(&step.operation).unwrap();

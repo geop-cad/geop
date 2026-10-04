@@ -90,6 +90,13 @@ pub enum PartOperation {
     /// planar face.
     #[operation(label = "Sketch")]
     AddSketch(AddSketchArgs),
+    /// Draw points, lines, arcs and splines in space: paths to sweep along.
+    #[operation(label = "3-D sketch")]
+    AddSketch3d(AddSketch3dArgs),
+    /// Add reference geometry — a point, an axis, a plane or a coordinate
+    /// system — built from selected points, edges and planes.
+    #[operation(label = "Reference")]
+    AddDatum(AddDatumArgs),
     /// Sweep a sketch's area along its plane's normal into a solid, or its
     /// curves into faces.
     Extrude(ExtrudeArgs),
@@ -102,23 +109,15 @@ pub enum PartOperation {
     /// Build a solid through the areas of several sketches, or faces
     /// through their curves.
     Loft(LoftArgs),
-    /// Unite, intersect or subtract two solids.
-    Boolean(BooleanArgs),
-    /// Cut a solid into pieces with a face standing on its own.
-    /// Place copies of a placed part in a row along a line, or round an
-    /// axis.
-    #[operation(label = "Part pattern")]
-    PartPattern(PartPatternArgs),
-    Split(SplitArgs),
-    /// Delete solids, and faces standing on their own.
-    #[operation(label = "Delete body")]
-    DeleteBody(DeleteBodyArgs),
-    /// Copy a face out of its body into a face standing on its own.
-    #[operation(label = "Extract face")]
-    ExtractFace(ExtractFaceArgs),
-    /// Project a sketch's curves onto a face, dividing the face along them.
-    #[operation(label = "Project curve")]
-    ProjectCurve(ProjectCurveArgs),
+    /// Drill simple, counterbored, countersunk or tapped holes at points on
+    /// a planar face, sized by ISO tables or by hand.
+    Hole(HoleArgs),
+    /// Put an ISO metric thread on a cylindrical face: recorded as a
+    /// cosmetic thread, or modelled.
+    Thread(ThreadArgs),
+    /// Grow a thin wall from an open sketch profile up to a solid's faces,
+    /// and join it.
+    Rib(RibArgs),
     /// Round a solid's straight and circular edges.
     Fillet(FilletArgs),
     /// Bevel a solid's straight and circular edges.
@@ -133,20 +132,24 @@ pub enum PartOperation {
     Lip(LipArgs),
     /// Cut the groove that takes a lip into the rim of the other half.
     Groove(GrooveArgs),
-    /// Grow a thin wall from an open sketch profile up to a solid's faces,
-    /// and join it.
-    Rib(RibArgs),
-    /// Add reference geometry — a point, an axis, a plane or a coordinate
-    /// system — built from selected points, edges and planes.
-    #[operation(label = "Reference")]
-    AddDatum(AddDatumArgs),
-    /// Place the part another program file builds, and mate it to what is
-    /// already there.
-    /// Draw points, lines, arcs and splines in space: paths to sweep along.
-    #[operation(label = "3-D sketch")]
-    AddSketch3d(AddSketch3dArgs),
-    #[operation(label = "Part")]
-    AddPart(AddPartArgs),
+    /// Unite, intersect or subtract two solids.
+    Boolean(BooleanArgs),
+    /// Cut a solid into pieces with a face standing on its own.
+    Split(SplitArgs),
+    /// Copy bodies in a row along a direction, or in a grid along two.
+    #[operation(label = "Linear pattern")]
+    LinearPattern(LinearPatternArgs),
+    /// Copy bodies turned around an axis.
+    #[operation(label = "Circular pattern")]
+    CircularPattern(CircularPatternArgs),
+    /// Mirror bodies in a plane.
+    Mirror(MirrorArgs),
+    /// Move bodies, or a copy of them, turned and shifted.
+    #[operation(label = "Move body")]
+    MoveBody(MoveBodyArgs),
+    /// Delete solids, and faces standing on their own.
+    #[operation(label = "Delete body")]
+    DeleteBody(DeleteBodyArgs),
     /// Span a face standing on its own between two edges, or fill a closed
     /// loop of edges — optionally tangent to the flat faces along them.
     #[operation(label = "Boundary surface")]
@@ -167,26 +170,23 @@ pub enum PartOperation {
     /// Carry a face standing on its own on past one of its edges.
     #[operation(label = "Extend surface")]
     ExtendSurface(ExtendSurfaceArgs),
-    /// Copy bodies in a row along a direction, or in a grid along two.
-    #[operation(label = "Linear pattern")]
-    LinearPattern(LinearPatternArgs),
-    /// Copy bodies turned around an axis.
-    #[operation(label = "Circular pattern")]
-    CircularPattern(CircularPatternArgs),
-    /// Mirror bodies in a plane.
-    Mirror(MirrorArgs),
-    /// Move bodies, or a copy of them, turned and shifted.
-    #[operation(label = "Move body")]
-    MoveBody(MoveBodyArgs),
+    /// Copy a face out of its body into a face standing on its own.
+    #[operation(label = "Extract face")]
+    ExtractFace(ExtractFaceArgs),
+    /// Project a sketch's curves onto a face, dividing the face along them.
+    #[operation(label = "Project curve")]
+    ProjectCurve(ProjectCurveArgs),
+    /// Place the part another program file builds, and mate it to what is
+    /// already there.
+    #[operation(label = "Part")]
+    AddPart(AddPartArgs),
+    /// Place copies of a placed part in a row along a line, or round an
+    /// axis.
+    #[operation(label = "Part pattern")]
+    PartPattern(PartPatternArgs),
     /// Route a bundle of wires from a connector through clips to another
     /// connector, its bends checked and every wire's cut length reported.
     Route(RouteArgs),
-    /// Drill simple, counterbored, countersunk or tapped holes at points on
-    /// a planar face, sized by ISO tables or by hand.
-    Hole(HoleArgs),
-    /// Put an ISO metric thread on a cylindrical face: recorded as a
-    /// cosmetic thread, or modelled.
-    Thread(ThreadArgs),
 }
 
 /// A program of the editor's operations.
