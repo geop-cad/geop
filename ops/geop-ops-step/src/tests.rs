@@ -196,6 +196,135 @@ fn a_cylinder_along_a_seam_is_cut_into_sectors() {
     assert!(part.face_id("import(i,s0,f2)").is_ok());
 }
 
+/// A quarter of a pipe bend: a torus' tube of radius 2 round an axis 10
+/// away, from the plane `y = 0` round to `x = 0`, closed by a disc at
+/// either end — the tube face going all the way round its tube along a
+/// seam on its outer equator.
+const PIPE_BEND: &str = "
+#100=TOROIDAL_SURFACE('',#8,10.,2.);
+#101=CARTESIAN_POINT('',(10.,0.,0.));
+#102=DIRECTION('',(0.,1.,0.));
+#103=AXIS2_PLACEMENT_3D('',#101,#102,#7);
+#104=CARTESIAN_POINT('',(0.,10.,0.));
+#105=DIRECTION('',(0.,1.,0.));
+#106=AXIS2_PLACEMENT_3D('',#104,#7,#105);
+#107=DIRECTION('',(0.,-1.,0.));
+#108=AXIS2_PLACEMENT_3D('',#101,#107,#7);
+#109=DIRECTION('',(-1.,0.,0.));
+#110=AXIS2_PLACEMENT_3D('',#104,#109,#105);
+#111=PLANE('',#108);
+#112=PLANE('',#110);
+#120=CARTESIAN_POINT('',(12.,0.,0.));
+#121=VERTEX_POINT('',#120);
+#122=CARTESIAN_POINT('',(0.,12.,0.));
+#123=VERTEX_POINT('',#122);
+#130=CIRCLE('',#8,12.);
+#131=CIRCLE('',#103,2.);
+#132=CIRCLE('',#106,2.);
+#140=EDGE_CURVE('',#121,#123,#130,.T.);
+#141=EDGE_CURVE('',#121,#121,#131,.T.);
+#142=EDGE_CURVE('',#123,#123,#132,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#142,.T.);
+#152=ORIENTED_EDGE('',*,*,#140,.F.);
+#153=ORIENTED_EDGE('',*,*,#141,.T.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('tube',(#155),#100,.T.);
+#160=ORIENTED_EDGE('',*,*,#141,.F.);
+#161=EDGE_LOOP('',(#160));
+#162=FACE_OUTER_BOUND('',#161,.T.);
+#163=ADVANCED_FACE('start',(#162),#111,.T.);
+#170=ORIENTED_EDGE('',*,*,#142,.F.);
+#171=EDGE_LOOP('',(#170));
+#172=FACE_OUTER_BOUND('',#171,.T.);
+#173=ADVANCED_FACE('end',(#172),#112,.T.);
+#180=CLOSED_SHELL('',(#156,#163,#173));
+#999=MANIFOLD_SOLID_BREP('bend',#180);";
+
+#[test]
+fn a_pipe_bend_is_cut_along_parallels() {
+    let part = import(&file(".MILLI.,.METRE.", PIPE_BEND));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    // The tube in pieces between parallels, named after it; the discs
+    // whole.
+    assert!(part.face_id("import(i,s0,f0,q0)").is_ok());
+    assert!(part.face_id("import(i,s0,f0,q1)").is_ok());
+    assert!(part.face_id("import(i,s0,f0)").is_err());
+    assert!(part.edge_id("import(i,s0,f0,m0)").is_ok());
+    assert!(part.face_id("import(i,s0,f1)").is_ok());
+    assert_bounds(model, [0.0, 0.0, -2.0], [12.0, 12.0, 2.0]);
+}
+
+/// A whole torus — an O-ring's — as one face along two seams, a circle round
+/// the tube and the outer equator, meeting at one vertex.
+const TORUS: &str = "
+#100=TOROIDAL_SURFACE('',#8,10.,2.);
+#101=CARTESIAN_POINT('',(10.,0.,0.));
+#102=DIRECTION('',(0.,1.,0.));
+#103=AXIS2_PLACEMENT_3D('',#101,#102,#7);
+#120=CARTESIAN_POINT('',(12.,0.,0.));
+#121=VERTEX_POINT('',#120);
+#130=CIRCLE('',#8,12.);
+#131=CIRCLE('',#103,2.);
+#140=EDGE_CURVE('',#121,#121,#130,.T.);
+#141=EDGE_CURVE('',#121,#121,#131,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#141,.T.);
+#152=ORIENTED_EDGE('',*,*,#140,.F.);
+#153=ORIENTED_EDGE('',*,*,#141,.F.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_OUTER_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('ring',(#155),#100,.T.);
+#180=CLOSED_SHELL('',(#156));
+#999=MANIFOLD_SOLID_BREP('o-ring',#180);";
+
+#[test]
+fn a_whole_torus_is_cut_into_bands_and_sectors() {
+    let part = import(&file(".MILLI.,.METRE.", TORUS));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    // Bands between parallels, each in sectors between meridians.
+    assert!(part.face_id("import(i,s0,f0,b0,q0)").is_ok());
+    assert!(part.face_id("import(i,s0,f0,b1,q0)").is_ok());
+    assert!(part.vertex_id("import(i,s0,f0,m0,v)").is_ok());
+    assert_bounds(model, [-12.0, -12.0, -2.0], [12.0, 12.0, 2.0]);
+}
+
+/// An apple: a torus whose tube, of radius 2, crosses its axis 1 away — the
+/// outside of the circle turned, from where it meets the axis below to where
+/// it meets it above, as one face along a seam.
+const APPLE: &str = "
+#100=TOROIDAL_SURFACE('',#8,1.,2.);
+#101=CARTESIAN_POINT('',(1.,0.,0.));
+#102=DIRECTION('',(0.,1.,0.));
+#103=AXIS2_PLACEMENT_3D('',#101,#102,#7);
+#120=CARTESIAN_POINT('',(0.,0.,-1.7320508075688772));
+#121=VERTEX_POINT('',#120);
+#122=CARTESIAN_POINT('',(0.,0.,1.7320508075688772));
+#123=VERTEX_POINT('',#122);
+#130=CIRCLE('',#103,2.);
+#140=EDGE_CURVE('',#121,#123,#130,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#140,.F.);
+#154=EDGE_LOOP('',(#150,#151));
+#155=FACE_OUTER_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('apple',(#155),#100,.T.);
+#180=CLOSED_SHELL('',(#156));
+#999=MANIFOLD_SOLID_BREP('apple',#180);";
+
+#[test]
+fn a_torus_crossing_its_axis_is_read_between_its_poles() {
+    let part = import(&file(".MILLI.,.METRE.", APPLE));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    assert!(part.face_id("import(i,s0,f0,q1)").is_ok());
+    // Its edges: the meridians it is cut along, at angles 0 and a half turn,
+    // through the circle's highest and lowest points.
+    assert_bounds(model, [-3.0, 0.0, -2.0], [3.0, 0.0, 2.0]);
+}
+
 #[test]
 fn lengths_are_read_in_millimetres() {
     let part = import(&file(".CENTI.,.METRE.", CYLINDER));

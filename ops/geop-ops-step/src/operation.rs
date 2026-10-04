@@ -26,9 +26,11 @@ use crate::import::{ImportedBody, read_step};
 /// `I`, what it is made of `import(I,sK,X)` after its entity `X` in the
 /// file: `vN`, `eN`, `fN` for the file's `N`-th vertex, edge and face,
 /// counted as the body has them. A face going all the way round an axis
-/// is cut into sectors `fN,qM`, along meridians `fN,mM`; an edge split
-/// where a cut crosses it, or because it closes on itself, into pieces
-/// `eN,pM` at the vertices `eN,cM`.
+/// is cut into sectors `fN,qM`, along meridians `fN,mM` — one going round
+/// a torus' tube likewise into pieces `fN,qM` along parallels `fN,mM`, and a
+/// whole torus first into bands `fN,bK` along parallels `fN,mK` starting at
+/// `fN,mK,v`; an edge split where a cut crosses it, or because it closes on
+/// itself, into pieces `eN,pM` at the vertices `eN,cM`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportStep;
 

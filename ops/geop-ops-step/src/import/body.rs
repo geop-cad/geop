@@ -10,14 +10,20 @@
 //!   loops that each go once round. A geop face lies on a NURBS patch that
 //!   does not wrap: its loops close in the patch's `(u, v)`. So a wrapping
 //!   face loses its seam and is cut along meridians into sectors, each on a
-//!   patch of its own (see [`Builder::cut_wrapping_face`]).
+//!   patch of its own (see [`Builder::cut_wrapping_face`]); one going round
+//!   a torus' tube — a pipe bend's — is cut along parallels instead
+//!   ([`Builder::cut_tube_wrapping_face`]), and a whole torus into bands
+//!   round its axis first ([`Builder::cut_whole_torus`]).
 //! - **Closed edges.** A STEP edge may start and end at one vertex — a whole
 //!   circle. A geop edge may not, so one is split in two.
 //! - **Tolerance.** A STEP file's vertices, curves and surfaces agree only
 //!   to within the file's accuracy. A geop vertex is an enclosure, so each
 //!   is the union of every place the file says it is: its point, the ends
 //!   of its edges' curves, and its foot points on its faces' surfaces (see
-//!   `AGENTS.md` on combining enclosures of one value with `union`).
+//!   `AGENTS.md` on combining enclosures of one value with `union`). An
+//!   edge is widened until its enclosure reaches that of its pcurve's points
+//!   on each of its faces. What lies further apart than the kernel's
+//!   accuracy is refused, naming the entities and saying how far.
 //!
 //! Every surface is built as an exact NURBS patch covering its face — or,
 //! for a B-spline, taken as it is — oriented so its normal points out of
@@ -316,6 +322,30 @@ impl<S: Scalar> Builder<'_, S> {
             }
             loops.push(coedges);
         }
+        // A face on a circle crossing its axis lies on one of its two
+        // sheets: the one past the axis is a surface of its own. Decided at
+        // the vertex that tells them apart best — not one at a pole.
+        let surface = match surface.revolved() {
+            Some(revolved) => {
+                let mut best: Option<f64> = None;
+                for &u in loops.iter().flatten() {
+                    let p = to_p3(&self.vertices[self.ends(u).0].point);
+                    if let Some(m) = revolved.past_axis(p)
+                        && best.is_none_or(|b| m.abs() > b.abs())
+                    {
+                        best = Some(m);
+                    }
+                }
+                match best {
+                    Some(m) if m > 0.0 => SurfaceDef {
+                        kind: SurfaceKind::Revolved(revolved.mirrored()),
+                        flipped: !surface.flipped,
+                    },
+                    _ => surface,
+                }
+            }
+            None => surface,
+        };
         let same_sense = args.logical(3)? != reversed;
         let index = self.faces.len();
         self.faces.push(Face {
@@ -534,6 +564,10 @@ impl<S: Scalar> Builder<'_, S> {
                         let outer: Vec<Use> = lp[j + 1..].iter().chain(&lp[..i]).copied().collect();
                         out.extend([inner, outer].into_iter().filter(|l| !l.is_empty()));
                     }
+                    // A loop of the closed edge alone: what is left of a
+                    // whole torus' loop round both seams once one is out,
+                    // twice, once each way. Neither bounds anything.
+                    [_] if lp.len() == 1 => {}
                     _ => {
                         return Err(GeopError::new(format!(
                             "the edge {} is used twice, by different loops of it",
@@ -642,17 +676,25 @@ impl<S: Scalar> Builder<'_, S> {
             }
         }
         // A torus' profile parameter is an angle too: read it from where
-        // the face is not, so it runs on across the face.
+        // the face is not, so it runs on across the face. The face lies
+        // above its bottom ring, up to its top one: it is not between the
+        // top ring and the bottom one, going on round the tube.
         let v_start = if revolved.v_is_angle() {
-            let mut all = Vec::new();
-            for lp in &self.faces[f].loops {
-                all.extend(
-                    self.loop_points(lp)?
-                        .into_iter()
-                        .map(|p| revolved.chart(p).1),
+            let (Some(b), Some(t)) = (bottom, top) else {
+                return Err(GeopError::new(format!(
+                    "it goes round its torus' axis without a loop round the axis on either side of it (its loops' windings, mean profile parameters and lengths: {summary:?})"
+                )));
+            };
+            let mean = |k: usize| -> GeopResult<f64> {
+                let v = unwrap_tube(
+                    &revolved,
+                    &self.loop_points(&self.faces[f].loops[k])?,
+                    false,
                 );
-            }
-            start_of_largest_gap(&mut all)
+                Ok(v.iter().sum::<f64>() / v.len().max(1) as f64)
+            };
+            let (b, t) = (mean(b)?, mean(t)?);
+            t + (b - t).rem_euclid(std::f64::consts::TAU) / 2.0
         } else {
             f64::NEG_INFINITY
         };
@@ -679,7 +721,8 @@ impl<S: Scalar> Builder<'_, S> {
                     .iter()
                     .copied()
                     .filter(|&p| top_v.is_none_or(|t| p < t))
-                    .reduce(f64::min)
+                    // The pole nearest below the top, where there is one.
+                    .reduce(if top_v.is_some() { f64::max } else { f64::min })
                     .ok_or_else(|| GeopError::new(format!("it has nothing closing it off below: no loop round its axis and no pole (its loops' windings, mean profile parameters and lengths: {summary:?}, the face's outward normal natural: {outward_natural})")))?,
             ),
         };
@@ -689,8 +732,9 @@ impl<S: Scalar> Builder<'_, S> {
                 poles
                     .iter()
                     .copied()
-                    .filter(|&p| bottom_v.is_none_or(|b| p > b))
-                    .reduce(f64::max)
+                    // The pole nearest above the bottom.
+                    .filter(|&p| bottom_v.or(bottom_pole).is_none_or(|b| p > b))
+                    .reduce(f64::min)
                     .ok_or_else(|| GeopError::new(format!("it has nothing closing it off above: no loop round its axis and no pole (its loops' windings, mean profile parameters and lengths: {summary:?}, the face's outward normal natural: {outward_natural})")))?,
             ),
         };
@@ -1706,26 +1750,6 @@ fn unwrap_tube(revolved: &Revolved, points: &[P3], closing: bool) -> Vec<f64> {
         });
     }
     out
-}
-
-/// The middle of the largest gap between the angles `angles`, going
-/// round: where a range covering them all can start, clear of every one —
-/// an angle a rounding below it is not read as a whole turn on.
-fn start_of_largest_gap(angles: &mut [f64]) -> f64 {
-    use std::f64::consts::TAU;
-    angles.sort_by(f64::total_cmp);
-    let n = angles.len();
-    if n == 0 {
-        return 0.0;
-    }
-    let mut gap = (angles[0] + TAU - angles[n - 1], 0usize);
-    for i in 1..n {
-        let g = angles[i] - angles[i - 1];
-        if g > gap.0 {
-            gap = (g, i);
-        }
-    }
-    angles[gap.1] - gap.0 / 2.0
 }
 
 /// How often unwrapped closing angles go round.
