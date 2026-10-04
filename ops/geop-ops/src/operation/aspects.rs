@@ -50,6 +50,8 @@ pub struct Aspects<S: Scalar> {
     pub sheet: bool,
     /// A sketch, as a whole: its regions, to sweep.
     pub sketch: bool,
+    /// Curves to run along: a planar or a 3-D sketch's.
+    pub path: bool,
 }
 
 impl<S: Scalar> Aspects<S> {
@@ -112,6 +114,11 @@ impl<S: Scalar> Aspects<S> {
             EntityRef::Sketch { name } => {
                 part.sketch_id(name).with_context(ctx)?;
                 g.sketch = true;
+                g.path = true;
+            }
+            EntityRef::Sketch3d { name } => {
+                part.sketch3d_id(name).with_context(ctx)?;
+                g.path = true;
             }
             EntityRef::SketchPoint { sketch, point } => {
                 let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
@@ -170,6 +177,7 @@ impl<S: Scalar> Aspects<S> {
             solid: self.solid,
             sheet: self.sheet,
             sketch: self.sketch,
+            path: self.path,
         })
     }
 
@@ -208,10 +216,12 @@ pub enum Role {
     Sheet,
     /// A sketch, as a whole.
     Sketch,
+    /// Curves to run along: a planar or a 3-D sketch, as a whole.
+    Path,
 }
 
 impl Role {
-    pub const ALL: [Role; 10] = [
+    pub const ALL: [Role; 11] = [
         Role::Point,
         Role::Line,
         Role::Plane,
@@ -222,6 +232,7 @@ impl Role {
         Role::Solid,
         Role::Sheet,
         Role::Sketch,
+        Role::Path,
     ];
 
     pub fn fits<S: Scalar>(self, aspects: &Aspects<S>) -> bool {
@@ -236,6 +247,7 @@ impl Role {
             Role::Solid => aspects.solid,
             Role::Sheet => aspects.sheet,
             Role::Sketch => aspects.sketch,
+            Role::Path => aspects.path,
         }
     }
 
@@ -252,6 +264,7 @@ impl Role {
             Role::Solid => "a solid",
             Role::Sheet => "a face on its own",
             Role::Sketch => "a sketch",
+            Role::Path => "a sketch or a 3-D sketch",
         }
     }
 
@@ -268,6 +281,7 @@ impl Role {
             Role::Solid => "solid",
             Role::Sheet => "sheet",
             Role::Sketch => "sketch",
+            Role::Path => "path",
         }
     }
 }

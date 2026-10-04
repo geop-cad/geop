@@ -1086,6 +1086,7 @@ impl<S: Scalar> Editor<S> {
             .filter(|r| !pickable(r))
             .filter_map(|r| match r {
                 EntityRef::Sketch { name }
+                | EntityRef::Sketch3d { name }
                 | EntityRef::Datum {
                     name,
                     component: None,
@@ -1125,6 +1126,7 @@ impl<S: Scalar> Editor<S> {
             let wanted = [
                 EntityRef::datum(name.clone()),
                 EntityRef::Sketch { name: name.clone() },
+                EntityRef::Sketch3d { name: name.clone() },
                 EntityRef::Solid { name: name.clone() },
                 EntityRef::Face { name: name.clone() },
             ];
@@ -1156,6 +1158,7 @@ impl<S: Scalar> Editor<S> {
         items.extend(
             part.sketch_names()
                 .iter()
+                .chain(&part.sketch3d_names())
                 .map(|n| item(StructureKind::Sketch, n)),
         );
         items.extend(

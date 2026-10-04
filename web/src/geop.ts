@@ -31,7 +31,7 @@ export type DatumComponent = { axis: FrameAxis } | { plane: FrameAxis };
  * behind the placing step's id: `bolt/extrude(head,end)`.
  */
 export type EntityRef =
-  | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch"; name: string }
+  | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch" | "Sketch3d"; name: string }
   | { type: "Datum"; name: string; component?: DatumComponent }
   | { type: "SketchCurve"; sketch: string; curve: number }
   | { type: "SketchPoint"; sketch: string; point: number };
@@ -107,6 +107,12 @@ export interface PartView {
     plane: Frame;
     curves: { id: number; construction: boolean; polyline: [number, number][] }[];
     points: { id: number; at: [number, number] }[];
+  }[];
+  /** 3-D sketches: curves and points in space. */
+  sketches3d: {
+    name: string;
+    curves: { id: number; construction: boolean; polyline: Vec3[] }[];
+    points: { id: number; at: Vec3 }[];
   }[];
   datums: DatumInfo[];
   /** Cosmetic threads, each drawn as the helix it runs along on its face, and what it is called (`M6x1`). */
@@ -254,7 +260,18 @@ export interface ListItem {
 }
 
 /** What an entity can be used as, and what a pick looks for — see `geop_ops::operation::Role`. */
-export type Role = "point" | "line" | "plane" | "edge" | "circle" | "round" | "face" | "solid" | "sheet" | "sketch";
+export type Role =
+  | "point"
+  | "line"
+  | "plane"
+  | "edge"
+  | "circle"
+  | "round"
+  | "face"
+  | "solid"
+  | "sheet"
+  | "sketch"
+  | "path";
 
 /** What a number measures. */
 export type Unit = "length" | "angle" | "fraction" | "count";

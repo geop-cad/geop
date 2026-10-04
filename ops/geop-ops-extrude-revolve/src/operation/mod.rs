@@ -17,7 +17,7 @@ mod sweep;
 pub use extrude::{Extrude, ExtrudeArgs, reach_past, shape_loops};
 pub use loft::{Loft, LoftArgs};
 pub use revolve::{Revolve, RevolveArgs};
-pub use sweep::{Sweep, SweepArgs};
+pub use sweep::{Sweep, SweepArgs, path_chain};
 
 use std::collections::HashSet;
 
@@ -73,6 +73,45 @@ fn sketch_field<'a, S: Scalar, A: 'a>(
         move |edit, picked| {
             let name = match picked.as_slice() {
                 [EntityRef::Sketch { name }] => name.clone(),
+                _ => String::new(),
+            };
+            set(edit.args, name);
+        },
+    );
+}
+
+/// The path field `key` of a form, labelled the same: a sketch or a 3-D
+/// sketch whose curves something runs along, `set` given its name (none
+/// when the field is cleared) — or, before there is any, a hint to draw
+/// one.
+fn path_field<'a, S: Scalar, A: 'a>(
+    form: &mut Form<'a, S, A>,
+    before: &Part<S>,
+    key: &str,
+    path: &str,
+    set: impl Fn(&mut A, String) + 'a,
+) {
+    if before.sketches().next().is_none() && before.sketches3d().next().is_none() {
+        form.text(key, "No sketch yet — add one first.", Tone::Hint);
+        return;
+    }
+    let value = if path.is_empty() {
+        Vec::new()
+    } else if before.sketch3d_id(path).is_ok() {
+        vec![EntityRef::Sketch3d { name: path.into() }]
+    } else {
+        vec![EntityRef::Sketch { name: path.into() }]
+    };
+    form.reference(
+        key,
+        key,
+        value,
+        &[Role::Path],
+        None,
+        false,
+        move |edit, picked| {
+            let name = match picked.as_slice() {
+                [EntityRef::Sketch { name } | EntityRef::Sketch3d { name }] => name.clone(),
                 _ => String::new(),
             };
             set(edit.args, name);

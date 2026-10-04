@@ -42,7 +42,8 @@ fn every_operation_is_offered() {
             "thicken",
             "knit",
             "trim_surface",
-            "extend_surface"
+            "extend_surface",
+            "add_sketch3d"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

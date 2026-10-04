@@ -8,7 +8,7 @@ use geop_core_math::{
 use geop_core_topology::{CoedgeId, EdgeId, FaceId, Sense, SolidId, VertexId};
 
 use super::Part;
-use super::ids::{DatumId, InstanceId, RefId, SketchId};
+use super::ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId};
 
 impl<S: Scalar> Part<S> {
     /// `name`'s id, checked to be the particular kind `extract` accepts.
@@ -73,6 +73,13 @@ impl<S: Scalar> Part<S> {
         })
     }
 
+    pub fn sketch3d_id(&self, name: &str) -> GeopResult<Sketch3dId> {
+        self.named(name, "3-D sketch", |r| match r {
+            RefId::Sketch3d(id) => Some(id),
+            _ => None,
+        })
+    }
+
     /// Every solid's name, oldest first.
     pub fn solid_names(&self) -> Vec<String> {
         let mut solids: Vec<SolidId> = self.topology().solids.keys().copied().collect();
@@ -108,6 +115,13 @@ impl<S: Scalar> Part<S> {
     /// Every sketch's name, oldest first.
     pub fn sketch_names(&self) -> Vec<String> {
         self.sketches()
+            .filter_map(|(id, _)| self.name_of(id).map(str::to_string))
+            .collect()
+    }
+
+    /// Every 3-D sketch's name, oldest first.
+    pub fn sketch3d_names(&self) -> Vec<String> {
+        self.sketches3d()
             .filter_map(|(id, _)| self.name_of(id).map(str::to_string))
             .collect()
     }

@@ -58,6 +58,9 @@ ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                and clips as lines and arcs, bend radius
                                checked, the bundle swept, cut lengths; the
                                route operation
+ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
+                               and splines in space, placed on the part and
+                               constrained — paths and rails for sweeps
 ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
                                surfaces, offset, thicken, knit, trim and
                                extend of faces standing on their own

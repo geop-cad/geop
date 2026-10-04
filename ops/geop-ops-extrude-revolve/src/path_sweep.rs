@@ -42,7 +42,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::Vector3,
+    vector::{Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
@@ -1375,6 +1375,67 @@ fn controlled<S: Scalar>(
     })
 }
 
+/// Refuses `loops` where they reach to or across the axis of a circular
+/// arc of `chain`, swept along it as `path` carries them: turned about that
+/// axis, the profile would sweep through itself — a bend tighter than the
+/// profile is wide.
+///
+/// Where an arc starts, the profile's plane holds the arc's axis and its
+/// radius there, so the profile is clear of the axis if every point of it
+/// lies definitely on the radius's side. Each profile curve lies within the
+/// hull of its control points, and of its quarters' — which hug it closely
+/// enough that a profile is only refused where it comes within a hair of
+/// the axis.
+fn clear_of_bends<S: Scalar>(
+    chain: &PathChain<S>,
+    path: &Path<S>,
+    loops: &[SweepLoop<S>],
+) -> GeopResult<()> {
+    for (k, curve) in chain.curves.iter().enumerate() {
+        let Kind::Arc {
+            start,
+            middle,
+            rotation,
+            ..
+        } = kind(curve)?
+        else {
+            continue;
+        };
+        // Square to the tangent at the start, towards the turn, the tangent
+        // leg's length over tan(angle / 2) = sin / (1 + cos) away.
+        let leg = middle.sub(&start);
+        let radius = leg.norm().mul(S::ONE.add(rotation.cos)).div(rotation.sin)?;
+        let center = start.add(
+            &rotation
+                .axis
+                .prod_cross(&leg)
+                .normalize()?
+                .prod_scalar(radius),
+        );
+        let station = &path.stations[k];
+        let radial = start_of(curve)?.sub(&center);
+        for profile in loops.iter().map(|l| &l.profile) {
+            for (c, name) in profile.curves.iter().zip(&profile.curve_names) {
+                let (a, b) = c.split_mid()?;
+                let (a, b) = (a.split_mid()?, b.split_mid()?);
+                for piece in [a.0, a.1, b.0, b.1] {
+                    for cp in &piece.control_points {
+                        let p = Vector2::from_array([cp[0].div(cp[2])?, cp[1].div(cp[2])?]);
+                        let outward = station.point(&p).sub(&center).prod_dot(&radial);
+                        if !outward.definitely_greater(S::ZERO) {
+                            return Err(GeopError::new(format!(
+                                "path sweep: the profile's {name} reaches across the axis of the bend {}: make the bend's radius larger than the profile reaches from the path",
+                                chain.curve_names[k]
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Sweeps `loops` — the first the outer loop, counter-clockwise in
 /// `plane`'s `(u, v)`, the rest holes in it, clockwise — along `chain`,
 /// changing as `control` says (see [`along_chain`]): into a solid named
@@ -1395,6 +1456,14 @@ pub fn sweep_along<S: Scalar>(
     control: &Control<S>,
 ) -> GeopResult<BuiltBody> {
     let path = along_chain(chain, plane, control)?;
+    // Whether a bend is tighter than the profile reaches is a question
+    // about the profile carried rigidly along the path: a sampled path's
+    // stations no longer match the chain's curves one to one.
+    let rigid = match control.is_plain() {
+        true => None,
+        false => Some(along_chain(chain, plane, &Control::default())?),
+    };
+    clear_of_bends(chain, rigid.as_ref().unwrap_or(&path), loops)?;
     let loops: Vec<SweepLoop<S>> = if path.along_normal {
         loops.iter().map(SweepLoop::reversed).collect()
     } else {
@@ -1734,6 +1803,41 @@ mod tests {
     #[test]
     fn corner_at_an_arc_is_refused() {
         for_all_scalars!(check_corner_at_an_arc_is_refused);
+    }
+
+    /// A bend tighter than the profile reaches would sweep it through
+    /// itself: refused, naming the bend.
+    fn check_bend_tighter_than_the_profile_is_refused<S: Scalar>() {
+        let path = chain(
+            vec![
+                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                arc3(
+                    v3(2., 0., 0.),
+                    v3(2.2, 0., 0.),
+                    v3(2.2, 0.2, 0.),
+                    sqrt2_over_2(),
+                )
+                .unwrap(),
+            ],
+            false,
+        );
+        let mut part = Part::<S>::new();
+        let namer = Namer::new("sweep", "s").unwrap();
+        let error = sweep_along(
+            &mut part,
+            &namer,
+            Some(&namer.root()),
+            &path,
+            &yz(Vector3::zero()),
+            &[SweepLoop::plain(Profile::closed(circle(0.3)))],
+            &Control::default(),
+        )
+        .unwrap_err();
+        assert!(error.root_message().contains("bend k1"), "{error:?}");
+    }
+    #[test]
+    fn bend_tighter_than_the_profile_is_refused() {
+        for_all_scalars!(check_bend_tighter_than_the_profile_is_refused);
     }
 
     /// A profile in a plane the path runs along cannot be swept.

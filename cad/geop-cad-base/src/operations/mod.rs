@@ -8,7 +8,8 @@
 //! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
 //! patterns, mirrors and moves of bodies in `geop_ops_pattern`,
 //! wire harness routes in `geop_ops_harness`,
-//! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`.
+//! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
+//! 3-D sketches in `geop_ops_sketch3d`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -30,6 +31,7 @@ use geop_ops_pattern::{
 };
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
+use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 use geop_ops_surface::{
     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
@@ -60,6 +62,8 @@ mod regression_tests;
 mod set_tests;
 #[cfg(test)]
 mod shell_tests;
+#[cfg(test)]
+mod sketch3d_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]
@@ -120,6 +124,9 @@ pub enum PartOperation {
     AddDatum(AddDatumArgs),
     /// Place the part another program file builds, and mate it to what is
     /// already there.
+    /// Draw points, lines, arcs and splines in space: paths to sweep along.
+    #[operation(label = "3-D sketch")]
+    AddSketch3d(AddSketch3dArgs),
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
     /// Span a face standing on its own between two edges, or fill a closed

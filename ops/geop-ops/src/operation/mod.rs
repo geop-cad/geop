@@ -58,7 +58,7 @@ use crate::{
     Part,
     part::State,
     program::Library,
-    ui::{CanvasEvent, Edit, Form, Value},
+    ui::{CanvasEvent, Edit, Form, PartView, Value},
 };
 
 /// No state: what a step is edited with by default.
@@ -78,6 +78,10 @@ pub struct Context<'a, S: Scalar> {
     /// building the step again itself: an editor runs a step once per
     /// change, however often it asks for its form.
     pub built: Option<&'a Part<S>>,
+    /// The part picks test against, as drawn (see [`PartView::pick`]) —
+    /// set while an editor passes a pointer event on, for an operation
+    /// that places what it draws on the part where the pointer is.
+    pub view: Option<&'a PartView<S>>,
 }
 
 impl<'a, S: Scalar> Context<'a, S> {
@@ -90,6 +94,7 @@ impl<'a, S: Scalar> Context<'a, S> {
             library,
             state: &NO_PARAMETERS,
             built: None,
+            view: None,
         }
     }
 
@@ -101,6 +106,14 @@ impl<'a, S: Scalar> Context<'a, S> {
     /// The same, with the step having built `built`.
     pub fn built(self, built: Option<&'a Part<S>>) -> Self {
         Self { built, ..self }
+    }
+
+    /// The same, picks testing against `view`.
+    pub fn view(self, view: &'a PartView<S>) -> Self {
+        Self {
+            view: Some(view),
+            ..self
+        }
     }
 }
 

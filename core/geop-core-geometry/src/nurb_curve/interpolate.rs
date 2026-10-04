@@ -9,7 +9,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector, Vector2, Vector3},
+    vector::{Vector, Vector2, Vector3, Vector4},
 };
 
 use super::{NurbCurve, ParameterRefinable};
@@ -360,7 +360,146 @@ where
     Ok(())
 }
 
+/// Solves `a x = rhs` for the `n x n` matrix `a` and `C` right-hand sides
+/// by Gaussian elimination, pivoting on the entry of largest magnitude in
+/// each column. Which row to pivot on is a free choice — every pivot that
+/// cannot be zero gives the same enclosed solution — and the largest is the
+/// well-conditioned one. Fails if no entry of a column definitely differs
+/// from zero.
+fn solve_pivoted<S: Scalar, const C: usize>(
+    mut a: Vec<Vec<S>>,
+    mut rhs: Vec<Vector<S, C>>,
+) -> GeopResult<Vec<Vector<S, C>>> {
+    let n = a.len();
+    for col in 0..n {
+        let pivot = (col..n)
+            .max_by(|&i, &j| {
+                a[i][col]
+                    .abs()
+                    .to_f64()
+                    .total_cmp(&a[j][col].abs().to_f64())
+            })
+            .expect("a column has rows");
+        if a[pivot][col].could_be_equal(S::ZERO) {
+            return Err(GeopError::new(format!(
+                "solve_pivoted: column {col} has no entry that is definitely not zero"
+            )));
+        }
+        a.swap(col, pivot);
+        rhs.swap(col, pivot);
+        for row in (col + 1)..n {
+            let factor = a[row][col].div(a[col][col])?;
+            for c in col..n {
+                a[row][c] = a[row][c].sub(factor.mul(a[col][c]));
+            }
+            rhs[row] = rhs[row].sub(&rhs[col].prod_scalar(factor));
+        }
+    }
+    let mut x = vec![Vector::<S, C>::zero(); n];
+    for row in (0..n).rev() {
+        let mut sum = rhs[row];
+        for col in (row + 1)..n {
+            sum = sum.sub(&x[col].prod_scalar(a[row][col]));
+        }
+        x[row] = sum.prod_scalar(S::ONE.div(a[row][row])?);
+    }
+    Ok(x)
+}
+
 impl<S: Scalar> NurbCurve<S, 4> {
+    /// The cubic spline through `points`, in order: twice continuously
+    /// differentiable, parameterized by chord length (see
+    /// [`chord_length_params`]) with a knot at every point, so it bends
+    /// only as much as passing through them needs.
+    ///
+    /// Each end leaves along its tangent `start` / arrives along `end` if
+    /// given — a direction, whose length does not matter — and is free
+    /// otherwise: straight there, its second derivative zero (a natural
+    /// spline). How fast it leaves along a given tangent is a free choice
+    /// of the spline's shape; it is the speed the parameterization travels
+    /// at anyway, the polyline's length per unit of parameter, worked out
+    /// from the points' midpoints so that the same points always give the
+    /// same spline.
+    ///
+    /// Two points and no tangents give the straight line between them.
+    pub fn cubic_spline(
+        points: &[Vector3<S>],
+        start: Option<Vector3<S>>,
+        end: Option<Vector3<S>>,
+    ) -> GeopResult<Self> {
+        let m = points.len();
+        if m < 2 {
+            return Err(GeopError::new(
+                "NurbCurve::cubic_spline: need at least 2 points",
+            ));
+        }
+        let t = chord_length_params(points);
+        // Knots `0 0 0 0 t1 .. t(m-2) 1 1 1 1`: `m + 2` control points.
+        let mut knots = vec![S::ZERO; 4];
+        knots.extend_from_slice(&t[1..m - 1]);
+        knots.extend([S::ONE; 4]);
+        let n = m + 2;
+        let speed = S::from_f64(
+            points
+                .windows(2)
+                .map(|w| w[1].sub(&w[0]).norm().to_f64())
+                .sum(),
+        );
+        let mut a = vec![vec![S::ZERO; n]; n];
+        let mut rhs = vec![Vector3::zero(); n];
+        // Through the ends.
+        a[0][0] = S::ONE;
+        rhs[0] = points[0];
+        a[n - 1][n - 1] = S::ONE;
+        rhs[n - 1] = points[m - 1];
+        // Through the points between, at their parameters.
+        for k in 1..m - 1 {
+            let span = find_span(3, &knots, n - 1, t[k])?;
+            for (j, value) in basis_funs(span, t[k], 3, &knots).into_iter().enumerate() {
+                a[k + 1][span - 3 + j] = value;
+            }
+            rhs[k + 1] = points[k];
+        }
+        // The end conditions, as rows over the first (last) three control
+        // points: `C'(0) = 3 (P1 - P0) / u4`, `C''(0) ∝ (P2 - P1) / u5 -
+        // (P1 - P0) / u4`, and mirrored at the end.
+        let (u4, u5) = (knots[4], knots[5]);
+        let (v4, v5) = (S::ONE.sub(knots[n - 1]), S::ONE.sub(knots[n - 2]));
+        let mut condition = |row: usize,
+                             tangent: Option<Vector3<S>>,
+                             h1: S,
+                             h2: S,
+                             ends: [usize; 3],
+                             sign: S|
+         -> GeopResult<()> {
+            let [p0, p1, p2] = ends;
+            match tangent {
+                Some(direction) => {
+                    let derivative = direction.normalize()?.prod_scalar(speed.mul(sign));
+                    a[row][p1] = S::ONE;
+                    a[row][p0] = S::ONE.neg();
+                    rhs[row] = derivative.prod_scalar(h1.div(S::from_i64(3))?);
+                }
+                None => {
+                    let (k1, k2) = (S::ONE.div(h1)?, S::ONE.div(h2)?);
+                    a[row][p2] = k2;
+                    a[row][p1] = k1.add(k2).neg();
+                    a[row][p0] = k1;
+                }
+            }
+            Ok(())
+        };
+        condition(1, start, u4, u5, [0, 1, 2], S::ONE)?;
+        // At the end, the tangent points back along the spline from its
+        // last control point.
+        condition(n - 2, end, v4, v5, [n - 1, n - 2, n - 3], S::ONE.neg())?;
+        let control_points = solve_pivoted(a, rhs)?
+            .into_iter()
+            .map(|p| Vector4::from_array([p[0], p[1], p[2], S::ONE]))
+            .collect();
+        NurbCurve::try_new(3, control_points, knots)
+    }
+
     /// Fit a 3-D NURBS curve exactly through `points` — see `interpolate`
     /// above. Between the points it is only an approximation of whatever
     /// curve they were sampled from; use [`Self::interpolate_enclosing`]
@@ -611,5 +750,60 @@ mod tests {
     #[test]
     fn interpolate_enclosing_contains_the_true_curve() {
         for_all_scalars!(check_interpolate_enclosing_contains_the_true_curve);
+    }
+
+    /// A cubic spline passes through every point, leaves and arrives along
+    /// the tangents it is given, and is straight at a free end.
+    fn check_cubic_spline_meets_its_conditions<S: Scalar>() {
+        let points = [
+            v3::<S>(0.0, 0.0, 0.0),
+            v3(1.0, 0.5, 0.2),
+            v3(2.0, 0.3, 1.0),
+            v3(2.5, 1.5, 1.2),
+        ];
+        let parallel = |a: Vector3<S>, b: Vector3<S>| {
+            let c = a.prod_cross(&b);
+            (0..3).all(|k| c[k].abs().to_f64() < 1e-9) && a.prod_dot(&b).to_f64() > 0.0
+        };
+        let start = v3(0.0, 0.0, 1.0);
+        let curve = NurbCurve::<S, 4>::cubic_spline(&points, Some(start), None).unwrap();
+        let (t0, t1) = curve.domain();
+        // Through every point: the ends exactly, the rest at their knots.
+        assert!(curve.evaluate(t0).unwrap().could_be_equal(&points[0]));
+        assert!(curve.evaluate(t1).unwrap().could_be_equal(&points[3]));
+        for (k, &p) in points.iter().enumerate().take(3).skip(1) {
+            let at = curve.knot_vector[3 + k];
+            let on = curve.evaluate(at).unwrap();
+            assert!(
+                on.could_be_equal(&p),
+                "point {k}: {on:?} at {at:?}, not {p:?}"
+            );
+        }
+        assert!(parallel(curve.tangent(t0).unwrap(), start));
+        // Free at the end: no second derivative.
+        let bend = curve.second_derivative(t1).unwrap();
+        assert!((0..3).all(|k| bend[k].could_be_equal(S::ZERO)), "{bend:?}");
+
+        let end = v3(1.0, 0.0, 0.0);
+        let curve = NurbCurve::<S, 4>::cubic_spline(&points, None, Some(end)).unwrap();
+        assert!(parallel(curve.tangent(S::ONE).unwrap(), end));
+        let bend = curve.second_derivative(S::ZERO).unwrap();
+        assert!((0..3).all(|k| bend[k].could_be_equal(S::ZERO)), "{bend:?}");
+    }
+    #[test]
+    fn cubic_spline_meets_its_conditions() {
+        for_all_scalars!(check_cubic_spline_meets_its_conditions);
+    }
+
+    /// Two points and no tangents: the line between them.
+    fn check_cubic_spline_of_two_points_is_straight<S: Scalar>() {
+        let (a, b) = (v3::<S>(0.0, 1.0, 2.0), v3(3.0, 1.0, -2.0));
+        let curve = NurbCurve::<S, 4>::cubic_spline(&[a, b], None, None).unwrap();
+        let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
+        assert!(middle.could_be_equal(&v3(1.5, 1.0, 0.0)), "{middle:?}");
+    }
+    #[test]
+    fn cubic_spline_of_two_points_is_straight() {
+        for_all_scalars!(check_cubic_spline_of_two_points_is_straight);
     }
 }
