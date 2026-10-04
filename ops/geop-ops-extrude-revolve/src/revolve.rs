@@ -15,6 +15,7 @@ use crate::{
     common::{Profile, end_point, line2, sqrt2_over_2, start_point},
     sweep::{Frame, Path, Span, SweepLoop, sweep},
 };
+use geop_core_geometry::nurb_curve::{Handedness, HelixRow, cos_sin, helix_rows};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
@@ -23,18 +24,6 @@ use geop_core_math::{
 };
 use geop_core_topology::{SolidId, build::BuiltBody};
 use geop_ops::{Namer, Part};
-
-/// `(cos, sin)` of `degrees` — exact at every quarter turn, so that a
-/// revolve through a right angle lands exactly on the plane it should.
-fn cos_sin(degrees: f64) -> (f64, f64) {
-    match degrees.rem_euclid(360.0) {
-        0.0 => (1.0, 0.0),
-        90.0 => (0.0, 1.0),
-        180.0 => (-1.0, 0.0),
-        270.0 => (0.0, -1.0),
-        d => (d.to_radians().cos(), d.to_radians().sin()),
-    }
-}
 
 /// The path around the axis `axes.w()` through `axes.origin()`, from the
 /// angle `from` to `to` — either way round — in degrees, angles turning
@@ -172,6 +161,88 @@ pub fn revolve<S: Scalar>(
         loops.to_vec()
     };
     sweep(part, namer, &path, &loops, solid)
+}
+
+/// The path of a screw motion around the axis `axes.w()` through
+/// `axes.origin()`: turning from `axes.u()` through `turns` turns while
+/// rising `pitch` along `w` per turn, right-handed — from `u` towards `v` —
+/// or left-handed. A profile point `(r, z)` travels along the helix of
+/// radius `r` raised by `z`: the stations and middles of the path are the
+/// control rows of [`NurbCurve3D::helix`] (see [`helix_rows`]), exactly on
+/// the cylinder, the height within 0.53 % of the pitch of the true helix.
+///
+/// Its stations are `a0`, `a1`, ... and its spans `q0`, `q1`, ..., each at
+/// most a quarter turn. It never closes: a sweep along it has caps `start`
+/// and `end`.
+///
+/// [`NurbCurve3D::helix`]: geop_core_geometry::nurb_curve::NurbCurve3D::helix
+pub fn screw_path<S: Scalar>(
+    axes: &CoordinateSystem<S>,
+    pitch: S,
+    turns: f64,
+    handedness: Handedness,
+) -> GeopResult<Path<S>> {
+    let rows = helix_rows(axes, pitch, turns, handedness)?;
+    let (origin, w) = (axes.origin(), axes.w());
+    let frame = |row: &HelixRow<S>| Frame {
+        origin: origin.add(&w.prod_scalar(row.rise)),
+        e1: row.radial,
+        e2: *w,
+    };
+    let stations: Vec<Frame<S>> = rows.iter().step_by(2).map(frame).collect();
+    let spans: Vec<Span<S>> = rows
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .map(|row| Span::Arc {
+            middle: frame(row),
+            weight: row.weight.expect("a middle row is weighted"),
+        })
+        .collect();
+    // Turning from `u` towards `v` — right-handed — runs against `e1 x e2
+    // = u x w = -v` where it starts, as a revolve turning forwards does.
+    let along_normal = handedness == Handedness::Left;
+    Ok(Path {
+        station_names: (0..stations.len()).map(|k| format!("a{k}")).collect(),
+        span_names: (0..spans.len()).map(|k| Some(format!("q{k}"))).collect(),
+        stations,
+        spans,
+        closed: false,
+        along_normal,
+    })
+}
+
+/// Sweeps `loops` — in `(r, z)` as for [`revolve`], the first the outer
+/// loop counter-clockwise, the rest holes in it, clockwise — along the
+/// screw motion of [`screw_path`] into a solid named `solid`, its faces
+/// pointing outwards: a thread, for a profile at most a pitch wide. The
+/// profile must stay clear of the axis, and narrower along it than the
+/// pitch, or the turns run into each other.
+///
+/// Named after the profiles' curves `X` and joints `P`: `N(X,q)` the face
+/// `X` sweeps through span `q`, `N(X,a)` the edge `X` is at station `a`,
+/// `N(P,q)` the helical edge `P` sweeps through `q`, and the caps
+/// `N(start)` and `N(end)`.
+#[allow(clippy::too_many_arguments)]
+pub fn screw<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    solid: &str,
+    axes: &CoordinateSystem<S>,
+    pitch: S,
+    turns: f64,
+    handedness: Handedness,
+    loops: &[SweepLoop<S>],
+) -> GeopResult<SolidId> {
+    let path = screw_path(axes, pitch, turns, handedness)?;
+    let loops: Vec<SweepLoop<S>> = if path.along_normal {
+        loops.iter().map(SweepLoop::reversed).collect()
+    } else {
+        loops.to_vec()
+    };
+    sweep(part, namer, &path, &loops, Some(solid))?
+        .solid
+        .ok_or_else(|| GeopError::new("screw: built no solid"))
 }
 
 /// Revolves `profile` a full turn around `axes.w()` into a solid named
@@ -644,5 +715,70 @@ mod tests {
     #[test]
     fn sheets_are_walls_alone() {
         for_all_scalars!(check_sheets_are_walls_alone);
+    }
+
+    /// A rectangular thread, a turn and a quarter of it either way round:
+    /// a valid solid, its helical edges exactly the helices
+    /// `NurbCurve3D::helix` builds — on the cylinder of their radius, rising
+    /// by the pitch per turn.
+    fn check_a_screw_sweeps_a_thread<S: Scalar>() {
+        use geop_core_geometry::nurb_curve::NurbCurve3D;
+        for handedness in [Handedness::Right, Handedness::Left] {
+            let mut part = Part::<S>::new();
+            let namer = Namer::new("screw", "t").unwrap();
+            // Counter-clockwise in `(r, z)`.
+            let corners = [
+                (1.0, -0.2),
+                (1.3, -0.2),
+                (1.3, 0.2),
+                (1.0, 0.2),
+                (1.0, -0.2),
+            ];
+            let points: Vec<Vector2<S>> = corners.iter().map(|&(r, z)| v2(r, z)).collect();
+            let profile = Profile::closed(crate::common::polyline(&points).unwrap());
+            let axes = CoordinateSystem::world_at(Vector3::zero());
+            let pitch = S::ONE;
+            screw(
+                &mut part,
+                &namer,
+                "screw(t)",
+                &axes,
+                pitch,
+                1.25,
+                handedness,
+                &[SweepLoop::plain(profile)],
+            )
+            .unwrap();
+            part.check_names().unwrap();
+            assert_valid(part.topology());
+            assert_eq!(part.topology().faces.len(), 4 * 5 + 2);
+            // The edge the inner bottom corner sweeps through the third
+            // span is that stretch of the helix of radius 1, lowered by 0.2.
+            let edge = part.edge_id("screw(t,p0,q2)").unwrap();
+            let curve = &part.topology().get_edge(edge).unwrap().curve;
+            let lowered = CoordinateSystem::world_at(Vector3::from_array([
+                S::ZERO,
+                S::ZERO,
+                S::from_f64(-0.2),
+            ]));
+            let helix = NurbCurve3D::helix(&lowered, S::ONE, pitch, 1.25, handedness).unwrap();
+            for k in 0..=4 {
+                let along = S::from_ratio(k, 4).unwrap();
+                let (t0, t1) = curve.domain();
+                let p = curve.evaluate(t0.add(t1.sub(t0).mul(along))).unwrap();
+                let h = helix
+                    .evaluate(
+                        S::from_ratio(2, 5)
+                            .unwrap()
+                            .add(along.div(S::from_f64(5.0)).unwrap()),
+                    )
+                    .unwrap();
+                assert!(p.could_be_equal(&h), "{handedness:?} {k}: {p:?} vs {h:?}");
+            }
+        }
+    }
+    #[test]
+    fn a_screw_sweeps_a_thread() {
+        for_all_scalars!(check_a_screw_sweeps_a_thread);
     }
 }

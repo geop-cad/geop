@@ -51,10 +51,11 @@ pub struct HelixRow<S: Scalar> {
     pub weight: Option<S>,
 }
 
-/// `(cos, sin)` of `degrees` — exact at every quarter turn, as a revolve's
-/// are, so that a helix's spans of a quarter turn sit on exactly the circle
-/// a revolve's do.
-fn cos_sin(degrees: f64) -> (f64, f64) {
+/// `(cos, sin)` of `degrees` — exact at every quarter turn, so that a
+/// revolve through a right angle lands exactly on the plane it should, and
+/// a helix's spans of a quarter turn sit on exactly the circle a revolve's
+/// do.
+pub fn cos_sin(degrees: f64) -> (f64, f64) {
     match degrees.rem_euclid(360.0) {
         0.0 => (1.0, 0.0),
         90.0 => (0.0, 1.0),
