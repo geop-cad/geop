@@ -335,6 +335,20 @@ impl<S: Scalar> Mechanism<'_, S> {
     }
 }
 
+thread_local! {
+    static MATES_RESOLVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many mates this thread has resolved — their entities found and
+/// measured on the parts placed — to solve or check them, ever. What any
+/// question about the mates costs grows with this, so a test can bound the
+/// work an edit does by the mates it touches, rather than time it: asking
+/// the whole assembly something once per step is quadratic, and shows here
+/// at any size.
+pub fn mates_resolved() -> usize {
+    MATES_RESOLVED.get()
+}
+
 /// The bodies of a solve in `part`: its instances, and inside every
 /// flexible one, the instances of the part it places — named, and their
 /// parameters named, behind `prefix`, and placed in the body `parent` at
@@ -460,6 +474,7 @@ impl<S: Scalar> Part<S> {
             if !mate.is_complete() || !named(name) {
                 continue;
             }
+            MATES_RESOLVED.set(MATES_RESOLVED.get() + 1);
             let ctx = with_context!("mate {name:?}");
             // The body an entity moves with — the innermost one it is of —
             // and what it is there.

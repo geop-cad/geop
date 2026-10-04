@@ -1118,24 +1118,35 @@ impl<S: Scalar> Assembly<S> {
     /// the directions in which every mate's residuals stay put to first
     /// order — the Jacobian's null space — and of those, how many move each
     /// body.
+    ///
+    /// The Jacobian is block diagonal over the groups no mate ties together
+    /// (see [`Assembly::independent`]): no row of one group's mates has an
+    /// entry in another group's variables. So its null space is that of
+    /// each group's own, side by side, and each group is taken on its own —
+    /// a plate with hundreds of screws is hundreds of systems of one screw,
+    /// not one of hundreds. A body in no group is not free: it cannot move.
     pub fn freedom(&self) -> GeopResult<Freedom> {
         self.validate()?;
-        let residuals = self.residuals()?;
-        let system = self.system(&residuals)?;
-        let basis = system.null_space();
-        let bodies = (0..self.bodies.len())
-            .map(|body| match system.variables(body) {
-                Some(vars) => rank(
-                    basis.iter().map(|v| v[vars.clone()].to_vec()).collect(),
-                    vars.len(),
-                ),
-                None => 0,
-            })
-            .collect();
-        Ok(Freedom {
-            bodies,
-            total: basis.len(),
-        })
+        let mut bodies = vec![0; self.bodies.len()];
+        let mut total = 0;
+        for group in self.independent() {
+            let (part, _) = self.restricted(&group);
+            let residuals = part.residuals()?;
+            let system = part.system(&residuals)?;
+            let basis = system.null_space();
+            // The group's free bodies come first in the restricted
+            // assembly, in the order of `group.bodies`.
+            for (local, &body) in group.bodies.iter().enumerate() {
+                if let Some(vars) = system.variables(local) {
+                    bodies[body] = rank(
+                        basis.iter().map(|v| v[vars.clone()].to_vec()).collect(),
+                        vars.len(),
+                    );
+                }
+            }
+            total += basis.len();
+        }
+        Ok(Freedom { bodies, total })
     }
 
     /// The mates that cannot all hold together, by index as

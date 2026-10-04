@@ -1017,7 +1017,7 @@ impl<S: Scalar> Editor<S> {
                     .into_iter()
                     .find(|(n, _)| *n == name)
                     .ok_or_else(|| GeopError::new(format!("there is no example {name:?}")))?;
-                self.program = program;
+                self.program = program();
                 self.marker = None;
                 Changed::Program
             }
@@ -1027,7 +1027,7 @@ impl<S: Scalar> Editor<S> {
                     .into_iter()
                     .find(|(n, _)| *n == name)
                     .ok_or_else(|| GeopError::new(format!("there is no example {name:?}")))?;
-                let files: Vec<File> = files
+                let files: Vec<File> = files()
                     .into_iter()
                     .map(|(path, program)| File {
                         path: match &folder {
@@ -1299,9 +1299,13 @@ impl<S: Scalar> Editor<S> {
                 if let Some((_, picked)) = before.get(i).filter(|(read, _)| read == step) {
                     return (step.clone(), picked.clone());
                 }
+                // What a step picks is its arguments': not what it built,
+                // which is why it is kept for as long as the step is the
+                // same. Without it, a form does none of the work it would
+                // to show what was built — a placed part's mates checked
+                // over the whole assembly, for every step.
                 let session = step.operation.new_session();
-                let context = Context::new(self.runner.part_at(i), &step.id, &library)
-                    .built(self.runner.built(i));
+                let context = Context::new(self.runner.part_at(i), &step.id, &library);
                 let form = step.operation.form(context, &*session, &[]);
                 (step.clone(), form.dialog.picked().cloned().collect())
             })
@@ -1525,9 +1529,13 @@ impl<S: Scalar> Editor<S> {
             .iter()
             .enumerate()
             .map(|(i, step)| {
+                // A summary is of the step's arguments and the program's
+                // state, not of what it built: every step's form is asked
+                // for on every change, and one shown with what it built
+                // checks a placed part's mates over the whole assembly.
                 let session = step.operation.new_session();
                 let context = Context::new(self.runner.part_at(i), &step.id, &library)
-                    .built(self.runner.built(i));
+                    .state(&self.program.state);
                 let form = step.operation.form(context, &*session, &[]);
                 StepInfo {
                     id: step.id.clone(),

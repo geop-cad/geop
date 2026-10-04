@@ -1431,54 +1431,51 @@ pub fn bolted_plate() -> Program {
     program
 }
 
-/// Every example made of several files, by name: each file's path and
-/// program, the one to open first first.
-pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
+/// The files of an example made of several: each file's path and program,
+/// the one to open first first.
+pub type ExampleFiles = Vec<(&'static str, Program)>;
+
+/// Every example made of several files, by name, each with what makes its
+/// files: listing them builds nothing (see [`all`]).
+pub fn workspaces() -> Vec<(&'static str, fn() -> ExampleFiles)> {
     vec![
-        (
-            "pin_in_plate",
+        ("pin_in_plate", || {
             vec![
                 ("assembly.geop", pin_in_plate_assembly()),
                 ("plate.geop", box_with_drill_hole()),
                 ("pin.geop", pin()),
-            ],
-        ),
-        (
-            "chain",
-            vec![("chain.geop", chain_assembly()), ("link.geop", link())],
-        ),
-        (
-            "parametric_plates",
+            ]
+        }),
+        ("chain", || {
+            vec![("chain.geop", chain_assembly()), ("link.geop", link())]
+        }),
+        ("parametric_plates", || {
             vec![
                 ("plates.geop", plates_assembly()),
                 ("plate.geop", parametric_plate()),
-            ],
-        ),
-        (
-            "four_bar",
+            ]
+        }),
+        ("four_bar", || {
             vec![
                 ("four_bar.geop", four_bar_assembly()),
                 ("ground.geop", bar(4.0)),
                 ("crank.geop", bar(1.5)),
                 ("rocker.geop", bar(3.0)),
                 ("coupler.geop", bar(4.0)),
-            ],
-        ),
-        (
-            "arm",
-            vec![("arm.geop", arm_assembly()), ("link.geop", link())],
-        ),
-        (
-            "bolted_plate",
+            ]
+        }),
+        ("arm", || {
+            vec![("arm.geop", arm_assembly()), ("link.geop", link())]
+        }),
+        ("bolted_plate", || {
             vec![
                 ("bolted_plate.geop", bolted_plate()),
                 ("plate.geop", metric_plate()),
-            ],
-        ),
+            ]
+        }),
     ]
 }
 
-/// Every example, by name.
 /// The NACA 2412 section, chord 1 from its leading edge at the origin to
 /// its trailing edge at `(1, 0)`: the upper side from the trailing edge to
 /// the leading edge, then the lower side back — points of the four-digit
@@ -1998,26 +1995,29 @@ pub fn subd_mouse() -> Program {
     program
 }
 
-pub fn all() -> Vec<(&'static str, Program)> {
+/// Every example, by name, each with what makes its program: listing them
+/// builds nothing — an editor lists them when it starts, and making one
+/// may solve sketches, or build a part to name its faces.
+pub fn all() -> Vec<(&'static str, fn() -> Program)> {
     vec![
-        ("box_with_drill_hole", box_with_drill_hole()),
-        ("bracket", bracket()),
-        ("cross_drilled_shaft", cross_drilled_shaft()),
-        ("split_plate", split_plate()),
-        ("boss_on_reference_plane", boss_on_reference_plane()),
-        ("handle_with_hole", handle_with_hole()),
-        ("luggage_tag", luggage_tag()),
-        ("revolved_cone_on_box", revolved_cone_on_box()),
-        ("pin", pin()),
-        ("link", link()),
-        ("parametric_plate", parametric_plate()),
-        ("airfoil_wing", airfoil_wing()),
-        ("subd_mouse", subd_mouse()),
-        ("sheet_metal_bracket", sheet_metal_bracket()),
-        ("pipe", pipe()),
-        ("patterned_plate", patterned_plate()),
-        ("horn", horn()),
-        ("hole_plate", hole_plate()),
+        ("box_with_drill_hole", box_with_drill_hole),
+        ("bracket", bracket),
+        ("cross_drilled_shaft", cross_drilled_shaft),
+        ("split_plate", split_plate),
+        ("boss_on_reference_plane", boss_on_reference_plane),
+        ("handle_with_hole", handle_with_hole),
+        ("luggage_tag", luggage_tag),
+        ("revolved_cone_on_box", revolved_cone_on_box),
+        ("pin", pin),
+        ("link", link),
+        ("parametric_plate", parametric_plate),
+        ("airfoil_wing", airfoil_wing),
+        ("subd_mouse", subd_mouse),
+        ("sheet_metal_bracket", sheet_metal_bracket),
+        ("pipe", pipe),
+        ("patterned_plate", patterned_plate),
+        ("horn", horn),
+        ("hole_plate", hole_plate),
     ]
 }
 

@@ -122,7 +122,7 @@ fn check_mass(name: &str, summary: &MassSummary, failures: &mut Vec<String>) {
 fn example_mass_properties_are_consistent() {
     let mut failures = Vec::new();
     for (example, program) in examples::all() {
-        let part: Part<S> = program.build(&NoFiles).unwrap();
+        let part: Part<S> = program().build(&NoFiles).unwrap();
         let report = mass_report(&part).unwrap();
         for (body, placed) in report.bodies.iter().zip(placed_solids(&part).unwrap()) {
             let name = format!("{example}/{}", body.name);

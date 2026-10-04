@@ -64,7 +64,7 @@ fn every_operation_is_offered() {
         infos[3].doc
     );
     for (_, program) in examples::all() {
-        for step in &program.steps {
+        for step in &program().steps {
             let json = serde_json::to_value(&step.operation).unwrap();
             assert_eq!(json["operation"], step.operation.kind());
             assert!(kinds.contains(&step.operation.kind()));
