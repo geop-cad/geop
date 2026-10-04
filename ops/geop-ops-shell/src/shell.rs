@@ -1085,6 +1085,10 @@ fn dehomogenized<S: Scalar>(p: &Vector<S, 4>) -> Vector3<S> {
 /// it (keep two copies, see `AGENTS.md`). Without that, a vertex on the
 /// edge of a patch — where a revolved face's quarters meet — slides a
 /// rounding error off it with nothing to say it might not have.
+///
+/// Public, with [`extended`] and [`pcurve`], for the other operations that
+/// rebuild a solid face by face: a draft (`geop_ops_plastic`) moves its
+/// vertices onto tilted planes with it.
 pub fn offset_vertex<S: Scalar>(
     point: Vector3<S>,
     surfaces: &[(&NurbSurface3D<S>, Vector2<S>, bool)],
