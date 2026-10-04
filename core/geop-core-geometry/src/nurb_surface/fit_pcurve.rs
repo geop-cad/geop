@@ -34,14 +34,14 @@ const SAMPLES: usize = 48;
 const MIN_PIECE_SAMPLES: usize = 8;
 
 /// The most intervals a smooth piece of a curve is sampled in. A pcurve
-/// still wider than the target then is as wide as its samples (the trace is
-/// known no better), or its trace is not smooth where the curve's knots say
-/// nothing (a seam of the surface): it is returned as it is, wide and
-/// honest.
+/// still drifting then has a trace that is not smooth where the curve's
+/// knots say nothing (a seam of the surface): it is returned as it is, wide
+/// and honest.
 const MAX_PIECE_SAMPLES: usize = 1536;
 
 /// A piece is sampled twice as densely while its pcurve is wider than
-/// `min_subdivision_size` over this: a width that small is lost in any
+/// `min_subdivision_size` over this (and than twice its widest sample, a
+/// width no sampling removes): a width that small is lost in any
 /// search resolving to that size, which is what every question later asked
 /// of the pcurve is. Like `min_subdivision_size` itself, it decides effort,
 /// not correctness: the pcurve encloses its trace however wide it is.
@@ -202,11 +202,20 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 }
                 let fitted =
                     NurbCurve2D::interpolate_enclosing(&uvs, &between, 3).with_context(&ctx)?;
-                let wide = fitted
-                    .control_points
+                // Denser samples narrow the pcurve only by its drift: as
+                // wide as its samples are, it stays however many there are.
+                // So it is refined while it is wider than the target and
+                // more than twice as wide as its widest sample.
+                let sampled = uvs
                     .iter()
-                    .any(|cp| (0..2).any(|c| cp[c].width().definitely_greater(target)));
-                if !wide || intervals * 2 > MAX_PIECE_SAMPLES {
+                    .chain(between.iter().flatten())
+                    .fold(S::ZERO, |w, p| w.max(p[0].width()).max(p[1].width()));
+                let fitted_width = fitted.control_points.iter().fold(S::ZERO, |w, cp| {
+                    w.max(cp[0].width()).max(cp[1].width())
+                });
+                let drifting = fitted_width.definitely_greater(target)
+                    && fitted_width.definitely_greater(sampled.add(sampled));
+                if !drifting || intervals * 2 > MAX_PIECE_SAMPLES {
                     start = uvs.last().copied();
                     pieces.push(fitted);
                     break;
