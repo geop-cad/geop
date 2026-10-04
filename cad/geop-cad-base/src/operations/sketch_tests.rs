@@ -908,7 +908,9 @@ fn drawing_on_an_edge_on_projection() {
 fn parameters_no_step_reads_rebuild_nothing() {
     let mut program = examples::parametric_plate();
     let mut runner = crate::ProgramRunner::<S>::new();
+    let started = std::time::Instant::now();
     runner.run(&program, None, &NoFiles);
+    let build = started.elapsed();
     let built = runner.part().clone();
     program.parameters.color = Some("#123456".into());
     let started = std::time::Instant::now();
@@ -917,10 +919,11 @@ fn parameters_no_step_reads_rebuild_nothing() {
     assert_eq!(runner.part().color(), Some("#123456"));
     assert_eq!(runner.part().parameters(), &program.parameters);
     // Rebuilding the plate — a boolean among its steps — takes far longer
-    // than looking at what changed.
+    // than looking at what changed. Measured against the build itself, so
+    // a loaded machine slows both alike.
     assert!(
-        took < std::time::Duration::from_millis(20),
-        "a colour change took {took:?}"
+        took < build / 4,
+        "a colour change took {took:?}, the build {build:?}"
     );
     assert_eq!(
         geop_ops::PartDescription::of(runner.part()).unwrap(),
@@ -935,10 +938,12 @@ fn colours_are_picked_without_rebuilding() {
     use crate::{Command, Editor};
     let mut editor = Editor::<S>::new();
     let program = examples::parametric_plate();
+    let started = std::time::Instant::now();
     editor.handle(Command::Load {
         program: program.clone(),
         path: None,
     });
+    let load = started.elapsed();
     let mut parameters = program.parameters.clone();
     parameters.color = Some("#123456".into());
     let started = std::time::Instant::now();
@@ -953,8 +958,10 @@ fn colours_are_picked_without_rebuilding() {
             .as_deref(),
         Some("#123456")
     );
+    // Against loading, which builds the plate: a loaded machine slows
+    // both alike.
     assert!(
-        took < std::time::Duration::from_millis(30),
-        "picking a colour took {took:?}"
+        took < load / 4,
+        "picking a colour took {took:?}, loading {load:?}"
     );
 }
