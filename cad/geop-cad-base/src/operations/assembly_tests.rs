@@ -354,9 +354,9 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
             operation: AddDatumArgs {
                 selection: vec![EntityRef::datum("plate/origin")],
                 construction: Construction::Point {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
+                    x: 0.0.into(),
+                    y: 0.0.into(),
+                    z: 0.0.into(),
                 },
             }
             .into(),

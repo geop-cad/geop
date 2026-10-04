@@ -491,7 +491,7 @@ fn offset_plane_dragged_by_its_handle() {
             selection: vec![EntityRef::Face {
                 name: "extrude(box,end)".into(),
             }],
-            construction: geop_ops_datums::Construction::Offset { distance: 0.5 },
+            construction: geop_ops_datums::Construction::Offset { distance: 0.5.into() },
         },
     );
     editor.handle(Command::Load {
@@ -541,7 +541,7 @@ fn offset_plane_dragged_by_its_handle() {
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::AddDatum(args) => assert_eq!(
             args.construction,
-            geop_ops_datums::Construction::Offset { distance: 0.8 }
+            geop_ops_datums::Construction::Offset { distance: 0.8.into() }
         ),
         other => panic!("{other:?}"),
     }

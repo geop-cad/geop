@@ -127,7 +127,9 @@ fn lifted(program: &mut Program, name: &str, distance: f64) {
         name,
         AddDatumArgs {
             selection: vec![base(FrameAxis::Z)],
-            construction: Construction::Offset { distance },
+            construction: Construction::Offset {
+                distance: distance.into(),
+            },
         },
     );
 }
@@ -187,7 +189,7 @@ fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
         "far_plane",
         AddDatumArgs {
             selection: vec![base(FrameAxis::Y)],
-            construction: Construction::Offset { distance: 3.0 },
+            construction: Construction::Offset { distance: 3.0.into() },
         },
     );
     program.push("profile", sketch(EntityRef::datum("far_plane"), far));
@@ -507,7 +509,7 @@ fn sweep_along_a_spline_cuts_a_slab() {
         "start_plane",
         AddDatumArgs {
             selection: vec![base(FrameAxis::X)],
-            construction: Construction::Offset { distance: -2.0 },
+            construction: Construction::Offset { distance: (-2.0).into() },
         },
     );
     program.push(

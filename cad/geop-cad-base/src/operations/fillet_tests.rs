@@ -674,7 +674,7 @@ fn lofted(bottom: Sketch, top: Sketch) -> Program {
         "top_plane",
         AddDatumArgs {
             selection: vec![xy],
-            construction: Construction::Offset { distance: 2.0 },
+            construction: Construction::Offset { distance: 2.0.into() },
         },
     );
     program.push(

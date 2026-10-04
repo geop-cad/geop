@@ -143,7 +143,7 @@ pub fn cut_to(
                     BELOW,
                     AddDatumArgs {
                         selection: vec![outline_plane()],
-                        construction: Construction::Offset { distance: -1.0 },
+                        construction: Construction::Offset { distance: (-1.0).into() },
                     },
                 );
             }
@@ -218,7 +218,7 @@ pub fn base_datum(program: &mut Program, id: &str) {
         id,
         AddDatumArgs {
             selection: vec![outline_plane()],
-            construction: Construction::Offset { distance: 0.0 },
+            construction: Construction::Offset { distance: 0.0.into() },
         },
     );
 }

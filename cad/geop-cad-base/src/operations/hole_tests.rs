@@ -343,9 +343,9 @@ fn points_picked_one_by_one() {
                 name: "extrude(plate,outline,p2,end)".into(),
             }],
             construction: geop_ops_datums::Construction::Point {
-                x: -10.0,
-                y: -10.0,
-                z: 0.0,
+                x: (-10.0).into(),
+                y: (-10.0).into(),
+                z: 0.0.into(),
             },
         },
     );

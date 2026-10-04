@@ -478,7 +478,7 @@ pub fn boss_on_reference_plane() -> Program {
             selection: vec![EntityRef::Face {
                 name: "extrude(box,end)".into(),
             }],
-            construction: Construction::Offset { distance: 0.5 },
+            construction: Construction::Offset { distance: 0.5.into() },
         },
     );
     let mut boss = Sketch::new();
@@ -1564,7 +1564,7 @@ pub fn airfoil_wing() -> Program {
                 ORIGIN,
                 DatumComponent::Plane(FrameAxis::Y),
             )],
-            construction: Construction::Offset { distance: 3.0 },
+            construction: Construction::Offset { distance: 3.0.into() },
         },
     );
     program.push(

@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use geop_ops::{
     Context, Library, Part,
     operation::{Aspects, EntityRef, Operation, Role, frame_along},
+    parameters::Formula,
     ui::{Form, Unit},
 };
 
@@ -29,6 +30,7 @@ use crate::editor;
 /// What kind of value a construction takes besides its selection.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParamKind {
+    /// A number, or a formula of the part's parameters (see [`Formula`]);
     /// `min`/`max` bound what a slider offers, not what is valid.
     Number {
         default: f64,
@@ -122,15 +124,15 @@ constructions! {
     // ── points ──
     Point "point" "Point" [Point] -> Point,
     "A point offset from the selected one: along its own axes if it is a datum or the origin, along the world's otherwise. Its frame is that point's, moved." {
-        x: f64 = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along x.";
-        y: f64 = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along y.";
-        z: f64 = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along z.";
+        x: Formula = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along x.";
+        y: Formula = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along y.";
+        z: Formula = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along z.";
     }
     Midpoint "midpoint" "Midpoint" [Point, Point] -> Point,
     "The point halfway between two points." {}
     EdgePoint "edge_point" "Point on edge" [Edge] -> Point,
     "A point along an edge, its z axis along the edge." {
-        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
     Center "center" "Center" [Circle] -> Point,
     "The center of a circular edge, its z axis the one the arc turns around." {}
@@ -166,13 +168,13 @@ constructions! {
     }
     Tangent "tangent" "Tangent to edge" [Edge] -> Axis,
     "The tangent to an edge at a point along it." {
-        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
     // ── planes ──
     Offset "offset" "Offset plane" [Plane] -> Plane,
     "A plane parallel to the selected one, a distance along its normal." {
-        distance: f64 = Number { default: 1.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along the plane's normal; backwards if negative.";
+        distance: Formula = Number { default: 1.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along the plane's normal; backwards if negative.";
     }
     Midplane "midplane" "Midplane" [Plane, Plane] -> Plane,
     "The plane halfway between two parallel planes, or halving the angle between two that meet." {
@@ -182,7 +184,7 @@ constructions! {
     "The plane through three points." {}
     Angle "angle" "Plane at angle" [Plane, Line] -> Plane,
     "The plane through a line at an angle to a plane: turned around the line from the plane through it most nearly parallel to the selected one — which, for a line parallel to that plane, is parallel to it." {
-        angle: f64 = Number { default: 45.0, min: -180.0, max: 180.0, unit: Unit::Angle }, "How far to turn, in degrees, right-handed about the line's direction.";
+        angle: Formula = Number { default: 45.0, min: -180.0, max: 180.0, unit: Unit::Angle }, "How far to turn, in degrees, right-handed about the line's direction.";
     }
     LinePoint "line_point" "Plane through line and point" [Line, Point] -> Plane,
     "The plane through a line and a point off it." {}
@@ -194,7 +196,7 @@ constructions! {
     "The plane through a point perpendicular to a line." {}
     NormalToEdge "normal_to_edge" "Plane normal to edge" [Edge] -> Plane,
     "The plane perpendicular to an edge at a point along it." {
-        position: f64 = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
     // ── coordinate systems ──
@@ -363,10 +365,12 @@ impl Construction {
     }
 
     /// The frame it builds from `inputs`, ordered as it takes them (see
-    /// [`AddDatumArgs::inputs`]).
+    /// [`AddDatumArgs::inputs`]), `value` giving the values of its numbers
+    /// — as a step reads them, or as a form shows them.
     pub(crate) fn build<S: Scalar>(
         &self,
         inputs: &[Aspects<S>],
+        mut value: impl FnMut(&Formula) -> GeopResult<f64>,
     ) -> GeopResult<CoordinateSystem<S>> {
         let point = |i: usize| inputs[i].point.expect("assigned a point");
         let line = |i: usize| inputs[i].line.clone().expect("assigned a line");
@@ -380,7 +384,8 @@ impl Construction {
                     Some(frame) => frame.clone(),
                     None => CoordinateSystem::world_at(p),
                 };
-                let offset = base.to_xyz(&Vector3::from_array([*x, *y, *z].map(S::from_f64)));
+                let xyz = [value(x)?, value(y)?, value(z)?];
+                let offset = base.to_xyz(&Vector3::from_array(xyz.map(S::from_f64)));
                 moved(&base, offset)
             }
             Construction::Midpoint {} => Ok(CoordinateSystem::world_at(Vector3::interpolate(
@@ -389,7 +394,7 @@ impl Construction {
                 half,
             ))),
             Construction::EdgePoint { position } => {
-                let (p, tangent) = along_edge(&inputs[0], *position)?;
+                let (p, tangent) = along_edge(&inputs[0], value(position)?)?;
                 frame_along(p, &tangent)
             }
             Construction::Center {} => {
@@ -469,14 +474,15 @@ impl Construction {
                 frame_along(at, &a.direction.add(&second))
             }
             Construction::Tangent { position } => {
-                let (p, tangent) = along_edge(&inputs[0], *position)?;
+                let (p, tangent) = along_edge(&inputs[0], value(position)?)?;
                 frame_along(p, &tangent)
             }
             Construction::Offset { distance } => {
                 let f = frame(0);
                 moved(
                     &f,
-                    f.origin().add(&f.w().prod_scalar(S::from_f64(*distance))),
+                    f.origin()
+                        .add(&f.w().prod_scalar(S::from_f64(value(distance)?))),
                 )
             }
             Construction::Midplane { other } => {
@@ -529,7 +535,7 @@ impl Construction {
                         "the line is perpendicular to the plane: every plane through it is at right angles to it",
                     ));
                 }
-                let a: S = radians(*angle);
+                let a: S = radians(value(angle)?);
                 let normal = square
                     .prod_scalar(a.cos())
                     .add(&l.direction.prod_cross(&square).prod_scalar(a.sin()));
@@ -567,7 +573,7 @@ impl Construction {
             }
             Construction::NormalToLine {} => frame_along(point(1), &line(0).direction),
             Construction::NormalToEdge { position } => {
-                let (p, tangent) = along_edge(&inputs[0], *position)?;
+                let (p, tangent) = along_edge(&inputs[0], value(position)?)?;
                 frame_along(p, &tangent)
             }
             Construction::FrameThreePoints {} => {
@@ -606,9 +612,10 @@ impl Operation for AddDatum {
         _library: &dyn Library<S>,
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("add_datum({operation_id}, {args:?})");
+        let inputs = args.inputs(&part).with_context(ctx)?;
         let frame = args
             .construction
-            .build(&args.inputs(&part).with_context(ctx)?)
+            .build(&inputs, |f| f.evaluate(&mut part))
             .with_context(ctx)?;
         let datum = Datum {
             kind: args.construction.schema().result,
@@ -698,7 +705,7 @@ mod tests {
     fn a_selection_that_does_not_fit_says_what_it_needs() {
         let args = AddDatumArgs {
             selection: vec![origin()],
-            construction: Construction::Offset { distance: 1.0 },
+            construction: Construction::Offset { distance: 1.0.into() },
         };
         let Err(e) = AddDatum.apply(Part::<S>::new(), "d", &args, &NoFiles) else {
             panic!("an offset plane from a point");
@@ -745,7 +752,7 @@ mod tests {
         assert!(
             err(
                 vec![base(FrameAxis::Z), axis(FrameAxis::Z)],
-                Construction::Angle { angle: 10.0 }
+                Construction::Angle { angle: 10.0.into() }
             )
             .contains("perpendicular")
         );
@@ -784,9 +791,9 @@ mod tests {
         let args = AddDatumArgs {
             selection: vec![origin()],
             construction: Construction::Point {
-                x: 1.0,
-                y: 2.0,
-                z: 3.0,
+                x: 1.0.into(),
+                y: 2.0.into(),
+                z: 3.0.into(),
             },
         };
         let part = Part::<S>::new();
@@ -810,9 +817,9 @@ mod tests {
         assert_eq!(
             dragged.construction,
             Construction::Point {
-                x: 1.0,
-                y: 2.0,
-                z: 3.5
+                x: 1.0.into(),
+                y: 2.0.into(),
+                z: 3.5.into()
             }
         );
     }
@@ -824,7 +831,7 @@ mod tests {
     fn dialogs_say_what_a_selection_fits() {
         let args = AddDatumArgs {
             selection: vec![origin(), edge("nowhere")],
-            construction: Construction::Offset { distance: 1.0 },
+            construction: Construction::Offset { distance: 1.0.into() },
         };
         let part = Part::<S>::new();
         assert!(AddDatum.apply(part.clone(), "d", &args, &NoFiles).is_err());

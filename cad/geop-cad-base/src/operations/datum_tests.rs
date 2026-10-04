@@ -166,9 +166,9 @@ fn points() {
         &part,
         vec![corner.clone()],
         Construction::Point {
-            x: 0.5,
-            y: 0.0,
-            z: 1.0,
+            x: 0.5.into(),
+            y: 0.0.into(),
+            z: 1.0.into(),
         },
     );
     assert_eq!(d.kind, DatumKind::Point);
@@ -177,7 +177,7 @@ fn points() {
     // point on it has its z axis along it.
     let on_edge = AddDatumArgs {
         selection: vec![edge("extrude(box,outline,c4,end)")],
-        construction: Construction::EdgePoint { position: 0.25 },
+        construction: Construction::EdgePoint { position: 0.25.into() },
     };
     let with_point = AddDatum
         .apply(part.clone(), "on_edge", &on_edge, &NoFiles)
@@ -191,9 +191,9 @@ fn points() {
         &with_point,
         vec![EntityRef::datum("on_edge")],
         Construction::Point {
-            x: 0.0,
-            y: 0.0,
-            z: 0.5,
+            x: 0.0.into(),
+            y: 0.0.into(),
+            z: 0.5.into(),
         },
     );
     assert_at(&d.frame, [1.0, 0.0, 1.0], [-1., 0., 0.]);
@@ -321,7 +321,7 @@ fn axes() {
     let d = datum(
         &part,
         vec![edge("extrude(hole,hole_sketch,c1,start)")],
-        Construction::Tangent { position: 0.0 },
+        Construction::Tangent { position: 0.0.into() },
     );
     assert_at(&d.frame, [1.4, 1.0, 1.0], [0., 1., 0.]);
 }
@@ -337,7 +337,7 @@ fn planes() {
     let d = datum(
         &part,
         vec![top.clone()],
-        Construction::Offset { distance: 0.5 },
+        Construction::Offset { distance: 0.5.into() },
     );
     assert_eq!(d.kind, DatumKind::Plane);
     assert_at(&d.frame, [0., 0., 1.5], [0., 0., 1.]);
@@ -356,7 +356,7 @@ fn planes() {
             "lifted",
             &AddDatumArgs {
                 selection: vec![top.clone()],
-                construction: Construction::Offset { distance: 1.0 },
+                construction: Construction::Offset { distance: 1.0.into() },
             },
             &NoFiles,
         )
@@ -396,7 +396,7 @@ fn planes() {
     let d = datum(
         &part,
         vec![top.clone(), edge("extrude(box,outline,c4,end)")],
-        Construction::Angle { angle: 90.0 },
+        Construction::Angle { angle: 90.0.into() },
     );
     assert!(on_plane(&d.frame, [0.5, 0., 0.]) && on_plane(&d.frame, [0.5, 0., 7.]));
     let d = datum(
@@ -429,7 +429,7 @@ fn planes() {
     let d = datum(
         &part,
         vec![edge("extrude(hole,hole_sketch,c1,start)")],
-        Construction::NormalToEdge { position: 0.0 },
+        Construction::NormalToEdge { position: 0.0.into() },
     );
     assert!(on_plane(&d.frame, [1.4, 1., 1.]) && on_plane(&d.frame, [1., 1., 1.]));
 }
@@ -477,9 +477,9 @@ fn frames() {
         &part,
         vec![EntityRef::datum("cs")],
         Construction::Point {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
+            x: 1.0.into(),
+            y: 0.0.into(),
+            z: 0.0.into(),
         },
     );
     assert_at(&d.frame, [2., 1., 1.], [-1., 0., 2.]);

@@ -649,6 +649,30 @@ mod tests {
         assert!(!is_formula(" 12.5 ") && is_formula("width"));
     }
 
+    /// A formula typed is plain if it is a number, and saves as one; any
+    /// other saves as its text. Both read back as they were, and evaluate
+    /// against the parameters.
+    #[test]
+    fn formulas_save_as_numbers_or_text() {
+        let plain = Formula::from(" 12.5 ");
+        let formula = Formula::from(" width / 2 ");
+        assert_eq!(plain, Formula::Plain(12.5));
+        assert_eq!(formula, Formula::Expression("width / 2".into()));
+        assert_eq!(serde_json::to_string(&plain).unwrap(), "12.5");
+        assert_eq!(serde_json::to_string(&formula).unwrap(), r#""width / 2""#);
+        for f in [&plain, &formula] {
+            let back: Formula = serde_json::from_str(&serde_json::to_string(f).unwrap()).unwrap();
+            assert_eq!(&back, f);
+        }
+        let inputs = State::from([(
+            "width".to_string(),
+            ParamValue::Number(Design::from_f64(10.0)),
+        )]);
+        assert_eq!(plain.peek(&inputs).unwrap(), 12.5);
+        assert_eq!(formula.peek(&inputs).unwrap(), 5.0);
+        assert!(Formula::from("depth").peek(&inputs).is_err());
+    }
+
     /// Numbers read what is defined before or after them, a table gives
     /// its row's values by column, and overrides take the place of
     /// definitions — the numbers reading them following.
