@@ -130,7 +130,9 @@ fn section_through_a_blind_hole_is_hatched() {
                 geop_ops::ORIGIN,
                 DatumComponent::Plane(FrameAxis::Y),
             )],
-            construction: geop_ops_datums::Construction::Offset { distance: 1.0.into() },
+            construction: geop_ops_datums::Construction::Offset {
+                distance: 1.0.into(),
+            },
         },
     );
     let part = build(&program);

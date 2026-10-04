@@ -705,7 +705,9 @@ mod tests {
     fn a_selection_that_does_not_fit_says_what_it_needs() {
         let args = AddDatumArgs {
             selection: vec![origin()],
-            construction: Construction::Offset { distance: 1.0.into() },
+            construction: Construction::Offset {
+                distance: 1.0.into(),
+            },
         };
         let Err(e) = AddDatum.apply(Part::<S>::new(), "d", &args, &NoFiles) else {
             panic!("an offset plane from a point");
@@ -831,7 +833,9 @@ mod tests {
     fn dialogs_say_what_a_selection_fits() {
         let args = AddDatumArgs {
             selection: vec![origin(), edge("nowhere")],
-            construction: Construction::Offset { distance: 1.0.into() },
+            construction: Construction::Offset {
+                distance: 1.0.into(),
+            },
         };
         let part = Part::<S>::new();
         assert!(AddDatum.apply(part.clone(), "d", &args, &NoFiles).is_err());

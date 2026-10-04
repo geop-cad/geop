@@ -491,7 +491,9 @@ fn offset_plane_dragged_by_its_handle() {
             selection: vec![EntityRef::Face {
                 name: "extrude(box,end)".into(),
             }],
-            construction: geop_ops_datums::Construction::Offset { distance: 0.5.into() },
+            construction: geop_ops_datums::Construction::Offset {
+                distance: 0.5.into(),
+            },
         },
     );
     editor.handle(Command::Load {
@@ -541,7 +543,9 @@ fn offset_plane_dragged_by_its_handle() {
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::AddDatum(args) => assert_eq!(
             args.construction,
-            geop_ops_datums::Construction::Offset { distance: 0.8.into() }
+            geop_ops_datums::Construction::Offset {
+                distance: 0.8.into()
+            }
         ),
         other => panic!("{other:?}"),
     }
@@ -1879,14 +1883,16 @@ fn formulas_are_typed_into_dialog_fields() {
         name: "parametric_plate".into(),
     });
     assert!(update.error.is_none(), "{:?}", update.error);
-    let field = |step: &crate::editor::StepState<S>| match step.presentation.dialog.get("distance") {
+    let field = |step: &crate::editor::StepState<S>| match step.presentation.dialog.get("distance")
+    {
         Some(Control::Number(n)) => n.clone(),
         other => panic!("{other:?} is no number field"),
     };
     let handle = |step: &crate::editor::StepState<S>| {
-        step.presentation.visuals.iter().any(|v| {
-            v.key == "distance" && matches!(v.shape, geop_ops::ui::Shape::Handle { .. })
-        })
+        step.presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "distance" && matches!(v.shape, geop_ops::ui::Shape::Handle { .. }))
     };
     let thickness = |editor: &Editor<S>| {
         let program = editor.program();

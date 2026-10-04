@@ -167,7 +167,9 @@ pub fn cut_to(
                     BELOW,
                     AddDatumArgs {
                         selection: vec![outline_plane()],
-                        construction: Construction::Offset { distance: (-1.0).into() },
+                        construction: Construction::Offset {
+                            distance: (-1.0).into(),
+                        },
                     },
                 );
             }

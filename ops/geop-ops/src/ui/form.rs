@@ -223,11 +223,15 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
         number: Number<S>,
         set: impl Fn(&mut A, Formula) + 'a,
     ) -> &mut Self {
-        self.field(key, Control::Number(number), move |edit, value| match value {
-            Value::Number(v) => set(edit.args, Formula::Plain(v)),
-            Value::Text(text) if !text.trim().is_empty() => set(edit.args, Formula::from(text)),
-            _ => {}
-        })
+        self.field(
+            key,
+            Control::Number(number),
+            move |edit, value| match value {
+                Value::Number(v) => set(edit.args, Formula::Plain(v)),
+                Value::Text(text) if !text.trim().is_empty() => set(edit.args, Formula::from(text)),
+                _ => {}
+            },
+        )
     }
 
     /// One of `options`, by value — found by typing, if `searchable`.

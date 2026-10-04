@@ -170,9 +170,7 @@ impl Operation for CircularPattern {
         } else {
             axis.direction
         };
-        let (count, degrees, divisor) = args
-            .angles(|f| f.evaluate(&mut part))
-            .with_context(ctx)?;
+        let (count, degrees, divisor) = args.angles(|f| f.evaluate(&mut part)).with_context(ctx)?;
         let mut instances = seed_instances(&seeds, "0");
         for k in 1..count {
             // `degrees * k / divisor` in radians, enclosed in one go rather

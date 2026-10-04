@@ -53,10 +53,10 @@ fn needs(construction: &ConstructionSchema) -> String {
 /// normal; an offset point's `x`, `y`, `z` a little out along each axis,
 /// along it. None for a step that does not build.
 fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<S>> {
-    let Ok(built) = args.inputs(part).and_then(|inputs| {
-        args.construction
-            .build(&inputs, |f| f.peek(part.inputs()))
-    }) else {
+    let Ok(built) = args
+        .inputs(part)
+        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.inputs())))
+    else {
         return BTreeMap::new();
     };
     let track = |d: &Vector3<S>, out: f64| Track {

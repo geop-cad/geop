@@ -9,9 +9,9 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{CurveId, PointId};
+use geop_ops::EntityRef;
 use geop_ops::parameters::Material;
 use geop_ops::parameters::Parameters;
-use geop_ops::EntityRef;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
 

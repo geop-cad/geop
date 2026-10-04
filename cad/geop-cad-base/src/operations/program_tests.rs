@@ -126,7 +126,11 @@ fn box_by_formulas() -> Program {
 
 /// Sets the number parameter `name` of `program` to `expression`.
 fn set(program: &mut Program, name: &str, expression: &str) {
-    let parameter = program.parameters.values.iter_mut().find(|p| p.name == name);
+    let parameter = program
+        .parameters
+        .values
+        .iter_mut()
+        .find(|p| p.name == name);
     let Some(Parameter {
         kind: ParameterKind::Number { expression: e, .. },
         ..

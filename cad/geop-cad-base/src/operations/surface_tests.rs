@@ -168,7 +168,9 @@ fn lofted_faces_knit_into_a_solid() {
         "top_plane",
         AddDatumArgs {
             selection: vec![z_plane()],
-            construction: Construction::Offset { distance: 2.0.into() },
+            construction: Construction::Offset {
+                distance: 2.0.into(),
+            },
         },
     );
     let mut circle = Sketch::new();

@@ -359,4 +359,3 @@ pub(crate) fn track<S: Scalar>(at: Vector3<S>, direction: Vector3<S>) -> Option<
         .definitely_greater(S::ZERO)
         .then_some(Track { at, direction })
 }
-

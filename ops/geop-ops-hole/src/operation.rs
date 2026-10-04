@@ -693,8 +693,10 @@ impl Operation for Hole {
             let result = part.solid_id(&namer.root()).with_context(ctx)?;
             for (scope, axes) in placed {
                 let length = args.thread_length.or(blind);
-                record_tapped_thread(&mut part, &namer, result, scope, &axes, &shape, size, length)
-                    .with_context(ctx)?;
+                record_tapped_thread(
+                    &mut part, &namer, result, scope, &axes, &shape, size, length,
+                )
+                .with_context(ctx)?;
             }
         }
         Ok(part)
