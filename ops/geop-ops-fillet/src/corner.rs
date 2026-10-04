@@ -103,12 +103,14 @@ pub(crate) fn plan_corners<S: Scalar>(
         }
     }
     for vertex in vertices {
-        let incident: Vec<EdgeId> = model
+        // In the order they were made — the model's own order is none.
+        let mut incident: Vec<EdgeId> = model
             .edges
             .iter()
             .filter(|(_, e)| e.start_vertex == vertex || e.end_vertex == vertex)
             .map(|(&id, _)| id)
             .collect();
+        incident.sort_by_key(|e| e.0);
         // A vertex inside a tangent chain, or one not every edge of which
         // is blended, is no corner to round.
         if incident.len() < 3 || !incident.iter().all(|e| covered.contains(e)) {

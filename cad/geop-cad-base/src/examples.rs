@@ -24,6 +24,7 @@ use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{
     Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, RevolveArgs, SweepArgs,
 };
+use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
 use geop_ops_pattern::{Direction, LinearPatternArgs, Spacing};
 use geop_ops_sheetmetal::{
@@ -2004,6 +2005,46 @@ pub fn subd_mouse() -> Program {
     program
 }
 
+/// A 2 x 1.5 x 1 box with every edge rounded by 0.2, at once: where three
+/// fillets meet, at each corner, the ball touching its three faces rounds
+/// it — the solid `fillet(round)`.
+pub fn rounded_box() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.5);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "box",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(1.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    let mut edges = Vec::new();
+    for line in &lines {
+        for cap in ["start", "end"] {
+            edges.push(format!("extrude(box,outline,{line},{cap})"));
+        }
+    }
+    for corner in 0..4 {
+        edges.push(format!("extrude(box,outline,p{corner})"));
+    }
+    program.push("round", FilletArgs::constant(edges, 0.2));
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -2024,6 +2065,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("patterned_plate", patterned_plate()),
         ("horn", horn()),
         ("hole_plate", hole_plate()),
+        ("rounded_box", rounded_box()),
     ]
 }
 
@@ -2398,6 +2440,21 @@ mod tests {
     #[test]
     fn luggage_tag_round_trips() {
         build_and_round_trip("luggage_tag", &luggage_tag());
+    }
+
+    /// Every edge rounded, and a ball's piece at each of the eight corners.
+    #[test]
+    fn rounded_box_round_trips() {
+        let part = build_and_round_trip("rounded_box", &rounded_box());
+        assert_eq!(part.solid_names(), ["fillet(round)"]);
+        let corners = part
+            .topology()
+            .faces
+            .keys()
+            .filter_map(|&f| part.name_of(f))
+            .filter(|name| name.ends_with(",corner)"))
+            .count();
+        assert_eq!(corners, 8);
     }
 
     /// Reproduces the real bug report described on `revolved_cone_on_box`.
