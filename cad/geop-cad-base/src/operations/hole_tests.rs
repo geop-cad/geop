@@ -735,7 +735,15 @@ fn modelled_thread_in_a_tapped_hole() {
 /// thick enough for the largest: each valid, each removing what its
 /// dimensions say.
 #[test]
-#[ignore = "slow: every ISO size × hole kind × end — run with `cargo test -- --ignored`"]
+///
+/// Known to fail on M24 simple and counterbored through all (Ø26): the
+/// hole's rim on the plate's bottom has no vertex but where the tool's four
+/// seams pierce it, so each quarter arc, 2π·13/4 ≈ 20.4 long, is traced in
+/// ~204 steps of the boolean's default `trace_step_size` 0.1 — past its
+/// `max_trace_steps` of 200 ("traced 202 step(s) ... without reaching
+/// another vertex"). The same holds for any circular cut that large; the
+/// booleans' trace budget, not the hole, needs to scale with the size.
+#[ignore = "slow: every ISO size × hole kind × end (3 min) — run with `cargo test -- --ignored`; fails for M24 through all, see the doc comment"]
 fn every_iso_size_and_kind() {
     let mut failures = Vec::new();
     for size in &SIZES {
