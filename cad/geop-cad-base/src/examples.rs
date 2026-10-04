@@ -21,11 +21,12 @@ use geop_ops::{
 use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, RevolveArgs};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, RevolveArgs, SweepArgs};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
 };
+use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d};
 
 use crate::Program;
 
@@ -1344,6 +1345,93 @@ pub fn airfoil_wing() -> Program {
     program
 }
 
+/// The route of [`pipe`]: from the origin 3 along `x`, a bend of radius 1
+/// turning to `y`, 2 on, a bend of radius 1 turning up to `z`, and 3 up —
+/// every bend tangent to the lines it joins.
+pub fn pipe_route() -> Sketch3d {
+    let mut s = Sketch3d::new();
+    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(n));
+    let p = [
+        s.add_point(v(0.0, 0.0, 0.0)),
+        s.add_point(v(3.0, 0.0, 0.0)),
+        s.add_point(v(3.0 + half, 1.0 - half, 0.0)),
+        s.add_point(v(4.0, 1.0, 0.0)),
+        s.add_point(v(4.0, 3.0, 0.0)),
+        s.add_point(v(4.0, 3.0 + half, 1.0 - half)),
+        s.add_point(v(4.0, 4.0, 1.0)),
+        s.add_point(v(4.0, 4.0, 4.0)),
+    ];
+    let curves = [
+        s.add_line(p[0], p[1]),
+        s.add_arc(p[1], p[2], p[3]),
+        s.add_line(p[3], p[4]),
+        s.add_arc(p[4], p[5], p[6]),
+        s.add_line(p[6], p[7]),
+    ];
+    for axis in geop_core_sketch::space::Coordinate::ALL {
+        s.constrain(Constraint3d::Coordinate {
+            point: p[0],
+            axis,
+            value: n(0.0),
+        });
+    }
+    s.constrain(Constraint3d::ParallelTo {
+        line: curves[0],
+        direction: v(1.0, 0.0, 0.0),
+    });
+    s.constrain(Constraint3d::Length {
+        line: curves[0],
+        value: n(3.0),
+    });
+    for w in curves.windows(2) {
+        s.constrain(Constraint3d::Tangent { a: w[0], b: w[1] });
+    }
+    for arc in [curves[1], curves[3]] {
+        s.constrain(Constraint3d::Radius { arc, value: n(1.0) });
+    }
+    let report = s.solve().expect("the route is valid");
+    assert!(report.converged, "the route does not solve: {report:?}");
+    s
+}
+
+/// A pipe bent through space — a cable conduit, say: a circle of radius
+/// 0.3 on the `x` plane (`section`), swept along a 3-D sketch of lines and
+/// bends (`route`, see [`pipe_route`]) into the solid `sweep(pipe)`.
+pub fn pipe() -> Program {
+    let mut program = Program::new();
+    let mut section = Sketch::new();
+    circle(&mut section, [0.0, 0.0], 0.3);
+    program.push(
+        "section",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::X),
+            )),
+            sketch: solved(section),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "route",
+        AddSketch3dArgs {
+            sketch: pipe_route(),
+            references: Vec::new(),
+        },
+    );
+    program.push(
+        "pipe",
+        SweepArgs {
+            profile: "section".into(),
+            path: "route".into(),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1358,6 +1446,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("link", link()),
         ("parametric_plate", parametric_plate()),
         ("airfoil_wing", airfoil_wing()),
+        ("pipe", pipe()),
     ]
 }
 
@@ -1392,7 +1481,11 @@ mod tests {
                     RefId::Vertex(v) => format!("{:?}", model.get_vertex(v).ok()?.point),
                     RefId::Edge(e) => format!("{:?}", model.get_edge(e).ok()?.curve),
                     RefId::Face(f) => format!("{:?}", model.get_face(f).ok()?.surface),
-                    RefId::Solid(_) | RefId::Sketch(_) | RefId::Datum(_) | RefId::Instance(_) => {
+                    RefId::Solid(_)
+                    | RefId::Sketch(_)
+                    | RefId::Sketch3d(_)
+                    | RefId::Datum(_)
+                    | RefId::Instance(_) => {
                         return None;
                     }
                 };
@@ -1469,6 +1562,43 @@ mod tests {
             }
         }
         result
+    }
+
+    /// The pipe through space is one valid closed solid: four quarters of
+    /// wall along each of its five curves and two caps — the far one square
+    /// to its last line, at `z = 4` — hollow nowhere and solid all along.
+    #[test]
+    fn pipe_round_trips() {
+        let part = build_and_round_trip("pipe", &pipe());
+        let validation = ValidationParameters::default();
+        if let Err(errors) =
+            geop_core_topology::validation::validate_manifold(&validation, part.topology())
+        {
+            panic!("{errors:?}");
+        }
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["sweep(pipe)"]
+        );
+        assert_eq!(description.faces.len(), 5 * 4 + 2);
+        let model = part.topology();
+        let end = part.face_id("sweep(pipe,end)").unwrap();
+        assert!(model.iterate_face_coedges(end).all(|c| {
+            model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
+        }));
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        for (p, expected) in [
+            ([1.5, 0.0, 0.0], PointClassification::Inside),
+            ([1.5, 0.4, 0.0], PointClassification::Outside),
+            ([3.0 + half, 1.0 - half, 0.0], PointClassification::Inside),
+            ([4.0, 2.0, 0.2], PointClassification::Inside),
+            ([4.0, 3.0 + half, 1.0 - half], PointClassification::Inside),
+            ([4.0, 4.0, 3.0], PointClassification::Inside),
+            ([4.0, 4.0, 4.2], PointClassification::Outside),
+        ] {
+            assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
+        }
     }
 
     #[test]

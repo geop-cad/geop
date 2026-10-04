@@ -1,4 +1,5 @@
-//! [`Sweep`]: carry a sketch's area along the curves of another sketch.
+//! [`Sweep`]: carry a sketch's area along the curves of another sketch, or
+//! of a 3-D sketch.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -6,14 +7,14 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_sketch::Shape;
-use geop_ops::{Context, Library, Namer, Part, operation::Operation, ui::Form};
+use geop_core_sketch::{Shape, space::Sketch3d};
+use geop_ops::{Context, Design, Library, Namer, Part, operation::Operation, ui::Form};
 use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
 use super::{
     extrude::{region_loops, shape_loops, sketch_profile},
-    sketch_field,
+    path_field, sketch_field,
 };
 use crate::{
     common::embed_curve,
@@ -22,14 +23,15 @@ use crate::{
 };
 
 /// Sweeps the one area of a sketch — the profile — along the curves of
-/// another sketch — the path — into a solid named `sweep(W)` for the
+/// another sketch or of a 3-D sketch — the path — into a solid named `sweep(W)` for the
 /// operation `W`, kept as a new body or combined with another solid (see
 /// [`Combine`]). Or, as a face ([`SweepArgs::face`]), sweeps the profile's
 /// curves into faces standing on their own — the area's outline, or a chain
 /// of curves enclosing nothing.
 ///
 /// The path is the path sketch's one chain of curves, or its one loop, which
-/// sweeps a ring. The profile travels along it from where it is drawn,
+/// sweeps a ring — a 3-D sketch's chain runs through space, and the profile
+/// turns with it as little as it can (see [`crate::path_sweep`]). The profile travels along it from where it is drawn,
 /// square to the path as it was there (see [`crate::path_sweep`]): draw it
 /// at the start of the path, its plane across it. An open path starts at
 /// its end nearer the profile, a closed one at its joint nearest the
@@ -52,7 +54,7 @@ pub struct Sweep;
 pub struct SweepArgs {
     /// The sketch to sweep.
     pub profile: String,
-    /// The sketch whose curves it is swept along.
+    /// The sketch or 3-D sketch whose curves it is swept along.
     pub path: String,
     /// Sweep the profile's curves into faces standing on their own, rather
     /// than its area into a solid.
@@ -67,13 +69,23 @@ impl Operation for Sweep {
     type Args = SweepArgs;
     type Session = ();
 
-    /// The second newest sketch along the newest, joined to the newest solid
-    /// if there is one.
+    /// The newest sketch along the newest path — a sketch or a 3-D sketch,
+    /// whichever is newer — joined to the newest solid if there is one.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> SweepArgs {
-        let mut sketches = before.sketch_names();
-        let path = sketches.pop().unwrap_or_default();
+        let mut sketches: Vec<(u64, String)> = before
+            .sketches()
+            .filter_map(|(id, _)| Some((id.0, before.name_of(id)?.to_string())))
+            .collect();
+        let newest_3d = before
+            .sketches3d()
+            .filter_map(|(id, _)| Some((id.0, before.name_of(id)?.to_string())))
+            .last();
+        let path = match newest_3d {
+            Some((id, name)) if sketches.last().is_none_or(|(newest, _)| *newest < id) => name,
+            _ => sketches.pop().map(|(_, name)| name).unwrap_or_default(),
+        };
         SweepArgs {
-            profile: sketches.pop().unwrap_or_default(),
+            profile: sketches.pop().map(|(_, name)| name).unwrap_or_default(),
             path,
             face: false,
             combine: Combine::new_for(before),
@@ -94,8 +106,8 @@ impl Operation for Sweep {
         sketch_field(&mut f, before, "profile", &args.profile, |args, sketch| {
             args.profile = sketch
         });
-        sketch_field(&mut f, before, "path", &args.path, |args, sketch| {
-            args.path = sketch
+        path_field(&mut f, before, "path", &args.path, |args, path| {
+            args.path = path
         });
         f.checkbox("face", "face", args.face, |args, b| args.face = b);
         if !args.face {
@@ -163,10 +175,14 @@ impl Operation for Sweep {
     }
 }
 
-/// The curves of the sketch `name` of `part` as a path: its one open chain,
-/// or its one loop, in space, named after the sketch's elements as a
-/// profile is (see [`sketch_profile`]).
-fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>> {
+/// The curves of the sketch or 3-D sketch `name` of `part` as a path: its
+/// one open chain, or its one loop, in space, named after the sketch's
+/// elements as a profile is (see [`sketch_profile`]): `L,c3` for a piece,
+/// `L,p2` for a joint.
+pub fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>> {
+    if let Ok(id) = part.sketch3d_id(name) {
+        return chain_in_space(part.sketch3d(id)?, name);
+    }
     let placed = part.sketch(part.sketch_id(name)?)?;
     let sketch = &placed.sketch;
     let geometry = sketch.enclose::<S>()?;
@@ -189,6 +205,36 @@ fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>>
             .collect::<GeopResult<_>>()?,
         curve_names: profile.curve_names,
         joint_names: profile.joint_names,
+    })
+}
+
+/// The one chain of curves of the 3-D sketch `name`, as a path (see
+/// [`path_chain`]).
+fn chain_in_space<S: Scalar>(sketch: &Sketch3d<Design>, name: &str) -> GeopResult<PathChain<S>> {
+    let chains = sketch.chains()?;
+    let [chain] = chains.as_slice() else {
+        return Err(GeopError::new(format!(
+            "sweep: the 3-D sketch {name:?} has {} chains of curves: a path is one chain of curves, or one loop",
+            chains.len()
+        )));
+    };
+    let pieces = chain.to_nurbs(sketch, &sketch.enclose::<S>()?)?;
+    let mut joint_names: Vec<String> = pieces
+        .iter()
+        .map(|p| format!("{name},{}", p.start))
+        .collect();
+    if !chain.closed
+        && let Some(last) = pieces.last()
+    {
+        joint_names.push(format!("{name},{}", last.end));
+    }
+    Ok(PathChain {
+        curve_names: pieces
+            .iter()
+            .map(|p| format!("{name},{}", p.name()))
+            .collect(),
+        joint_names,
+        curves: pieces.into_iter().map(|p| p.curve).collect(),
     })
 }
 

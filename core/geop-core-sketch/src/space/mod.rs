@@ -41,6 +41,7 @@ mod solve;
 mod tests;
 
 pub use curves::{Chain3d, Piece3d};
+pub use geometry::Arc3;
 pub use solve::Solve3dReport;
 
 use std::collections::{BTreeMap, BTreeSet};

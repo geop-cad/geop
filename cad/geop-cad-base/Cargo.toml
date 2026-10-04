@@ -17,6 +17,7 @@ geop-ops-fillet.workspace = true
 geop-ops-assembly.workspace = true
 geop-ops-shell.workspace = true
 geop-ops-rasterize.workspace = true
+geop-ops-sketch3d.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

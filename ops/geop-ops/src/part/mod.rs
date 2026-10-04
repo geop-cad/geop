@@ -11,9 +11,10 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
+use geop_core_sketch::space::Sketch3d;
 use geop_core_topology::Model;
 
-use crate::assembly::Mate;
+use crate::{Design, assembly::Mate};
 
 mod datum;
 mod describe;
@@ -24,18 +25,19 @@ mod instance;
 mod names;
 mod resolve;
 mod sketch;
+mod sketch3d;
 mod state;
 
 pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
 pub use edit::BodyNames;
-pub use ids::{DatumId, InstanceId, RefId, SketchId};
+pub use ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId};
 pub use instance::{Component, Instance};
 pub use names::{NameRegistry, Namer, validate_operation_id};
 pub use sketch::PlacedSketch;
 pub use state::{ParamValue, State, pose_parameter};
 
 /// A complete, editable CAD part: its boundary-representation topology, the
-/// sketches and datums used to build it — starting with the frame
+/// sketches — planar and 3-D — and datums used to build it — starting with the frame
 /// [`ORIGIN`] — the other parts placed in it and the mates holding those
 /// together, and a name for every one of those entities.
 ///
@@ -55,6 +57,7 @@ pub struct Part<S: Scalar> {
     pub(crate) topology: Model<S>,
     pub(crate) names: NameRegistry,
     pub(crate) sketches: BTreeMap<SketchId, PlacedSketch<S>>,
+    pub(crate) sketches3d: BTreeMap<Sketch3dId, Sketch3d<Design>>,
     pub(crate) datums: BTreeMap<DatumId, Datum<S>>,
     pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
     pub(crate) mates: BTreeMap<String, Mate>,
@@ -64,7 +67,7 @@ pub struct Part<S: Scalar> {
     declared: State,
     /// What its parameters are defined as (see [`Part::parameters`]).
     pub(crate) parameters: crate::parameters::Parameters,
-    /// The next sketch, datum or instance id: ids count up in the order
+    /// The next sketch, 3-D sketch, datum or instance id: ids count up in the order
     /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,
 }
@@ -81,6 +84,7 @@ impl<S: Scalar> Part<S> {
             topology: Model::new(),
             names: NameRegistry::new(),
             sketches: BTreeMap::new(),
+            sketches3d: BTreeMap::new(),
             datums: BTreeMap::new(),
             instances: BTreeMap::new(),
             mates: BTreeMap::new(),
@@ -136,6 +140,7 @@ impl<S: Scalar> Part<S> {
             RefId::Face(id) => self.topology.faces.contains_key(&id),
             RefId::Solid(id) => self.topology.solids.contains_key(&id),
             RefId::Sketch(id) => self.sketches.contains_key(&id),
+            RefId::Sketch3d(id) => self.sketches3d.contains_key(&id),
             RefId::Datum(id) => self.datums.contains_key(&id),
             RefId::Instance(id) => self.instances.contains_key(&id),
         }
@@ -167,6 +172,7 @@ impl<S: Scalar> Part<S> {
             .chain(topology.faces.keys().map(|&id| id.into()))
             .chain(topology.solids.keys().map(|&id| id.into()))
             .chain(self.sketches.keys().map(|&id| id.into()))
+            .chain(self.sketches3d.keys().map(|&id| id.into()))
             .chain(self.datums.keys().map(|&id| id.into()))
             .chain(self.instances.keys().map(|&id| id.into()));
         let unnamed: Vec<String> = entities

@@ -55,6 +55,10 @@ pub enum EntityRef {
     Sketch {
         name: String,
     },
+    /// A 3-D sketch, as a whole: its curves.
+    Sketch3d {
+        name: String,
+    },
     /// A curve of a sketch, by its id in the sketch.
     SketchCurve {
         sketch: String,
@@ -98,7 +102,8 @@ impl EntityRef {
             | EntityRef::Face { name }
             | EntityRef::Datum { name, .. }
             | EntityRef::Solid { name }
-            | EntityRef::Sketch { name } => name.clone(),
+            | EntityRef::Sketch { name }
+            | EntityRef::Sketch3d { name } => name.clone(),
         }
     }
 }
@@ -112,7 +117,8 @@ impl EntityRef {
             | EntityRef::Face { name }
             | EntityRef::Datum { name, .. }
             | EntityRef::Solid { name }
-            | EntityRef::Sketch { name } => name,
+            | EntityRef::Sketch { name }
+            | EntityRef::Sketch3d { name } => name,
             EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. } => sketch,
         }
     }
@@ -171,6 +177,7 @@ impl std::fmt::Display for EntityRef {
             } => write!(f, "the {component} of datum {name:?}"),
             EntityRef::Solid { name } => write!(f, "solid {name:?}"),
             EntityRef::Sketch { name } => write!(f, "sketch {name:?}"),
+            EntityRef::Sketch3d { name } => write!(f, "3-D sketch {name:?}"),
             EntityRef::SketchCurve { sketch, curve } => {
                 write!(f, "curve {curve} of sketch {sketch:?}")
             }

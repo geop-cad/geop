@@ -205,6 +205,7 @@ dependencies = [
  "geop-ops-rasterize",
  "geop-ops-shell",
  "geop-ops-sketch",
+ "geop-ops-sketch3d",
  "serde",
  "serde_json",
 ]
@@ -393,6 +394,18 @@ dependencies = [
  "geop-core-math",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-ops",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "geop-ops-sketch3d"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-sketch",
  "geop-ops",
  "serde",
  "serde_json",

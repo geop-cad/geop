@@ -21,4 +21,5 @@ pub mod sweep;
 
 pub use operation::{
     Extent, Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
+    path_chain,
 };

@@ -141,6 +141,7 @@ impl PartDescription {
         let mut sketches = part
             .sketches()
             .map(|(id, _)| name(id.into()))
+            .chain(part.sketches3d().map(|(id, _)| name(id.into())))
             .collect::<GeopResult<Vec<_>>>()?;
         sketches.sort();
         let mut datums = part

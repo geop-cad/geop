@@ -58,4 +58,7 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
+ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
+                               and splines in space, placed on the part and
+                               constrained — paths and rails for sweeps
 ```

@@ -314,6 +314,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         view: &PartView<S>,
         event: &StepEditEvent<S>,
     ) {
+        let context = context.view(view);
         let form = self.form(context);
         if let StepEditEvent::Dialog { key, value } = event {
             self.dialog(context, &form.dialog, key, value.clone());
