@@ -16,13 +16,14 @@
 //! program it leaves as that file's. What each step shows and does is the operation's; see
 //! [`geop_ops::ui::StepEditor`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_math::vector::Vector3;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
     Context, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
     assembly::Drag,
+    program::library::resolve,
     operation::Role,
     parameters::{Parameters, Resolved},
     part::{ParamValue, State},
@@ -742,7 +743,7 @@ impl<S: Scalar> Editor<S> {
                     // elsewhere.
                     if let Some(left) = self.path.replace(path) {
                         let text = self.program.to_json()?;
-                        self.workspace.files_mut().insert(left, text);
+                        self.workspace.write(&left, Some(text));
                     }
                     self.undo.clear();
                     self.redo.clear();
@@ -754,14 +755,20 @@ impl<S: Scalar> Editor<S> {
                 Changed::Program
             }
             Command::Files { files } => {
-                let known = self.workspace.files_mut();
-                for (path, text) in files {
-                    match text {
-                        Some(text) => known.insert(path, text),
-                        None => known.remove(&path),
-                    };
+                // Only what was built from a file that changed is built
+                // again; a file saved as it was changes nothing.
+                let changed: BTreeSet<String> = files
+                    .into_iter()
+                    .filter_map(|(path, text)| {
+                        self.workspace
+                            .write(&path, text)
+                            .then(|| resolve("", &path))
+                    })
+                    .collect();
+                if changed.is_empty() {
+                    return Ok(Changed::Nothing);
                 }
-                self.runner.reset();
+                self.runner.forget(&changed);
                 // What the step being edited is built on may have changed.
                 if let Some(open) = &self.open {
                     let library = library(&self.workspace, self.path.as_deref());
@@ -803,7 +810,9 @@ impl<S: Scalar> Editor<S> {
                     .iter()
                     .map(|f| Ok((f.path.clone(), f.program.to_json()?)))
                     .collect::<GeopResult<Vec<_>>>()?;
-                self.workspace.files_mut().extend(texts);
+                for (path, text) in texts {
+                    self.workspace.write(&path, Some(text));
+                }
                 let first = files.first().expect("an example has files");
                 self.program = first.program.clone();
                 self.path = Some(first.path.clone());

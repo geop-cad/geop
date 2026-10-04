@@ -24,6 +24,8 @@ use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
+mod assembly_scale_tests;
+#[cfg(test)]
 mod assembly_tests;
 #[cfg(test)]
 mod datum_tests;

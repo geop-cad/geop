@@ -251,6 +251,11 @@ impl<S: Scalar> Part<S> {
                 ));
             }
         }
+        let body_named: std::collections::HashMap<&str, usize> = bodies_of
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.name.as_str(), i))
+            .collect();
         let mut constraints = Vec::new();
         let mut names = Vec::new();
         for (name, mate) in &mates {
@@ -267,7 +272,7 @@ impl<S: Scalar> Part<S> {
                         Some(b) => format!("{}{INSTANCE_SEPARATOR}{instance}", bodies_of[b].name),
                         None => instance,
                     };
-                    let Some(found) = bodies_of.iter().position(|p| p.name == name) else {
+                    let Some(&found) = body_named.get(name.as_str()) else {
                         break;
                     };
                     body = Some(found);

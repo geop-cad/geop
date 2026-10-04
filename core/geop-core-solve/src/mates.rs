@@ -448,15 +448,171 @@ impl<S: Scalar> Assembly<S> {
         }
     }
 
+    /// The free bodies in groups no constraint ties together, each with the
+    /// constraints that move one of its bodies — by index. A constraint
+    /// none of whose bodies is free moves nothing, and is in no group.
+    fn independent(&self) -> Vec<(Vec<usize>, Vec<usize>)> {
+        // Union-find over the bodies: each points towards the root of its
+        // group.
+        let mut root: Vec<usize> = (0..self.bodies.len()).collect();
+        fn find(root: &mut [usize], mut b: usize) -> usize {
+            while root[b] != b {
+                root[b] = root[root[b]];
+                b = root[b];
+            }
+            b
+        }
+        let free = |c: &Constraint<S>| {
+            [c.a.body, c.b.body]
+                .into_iter()
+                .flatten()
+                .filter(|&b| self.bodies[b].free)
+        };
+        for c in &self.constraints {
+            let mut bodies = free(c);
+            if let (Some(a), Some(b)) = (bodies.next(), bodies.next()) {
+                let (a, b) = (find(&mut root, a), find(&mut root, b));
+                root[a] = b;
+            }
+        }
+        let mut group_of = std::collections::HashMap::new();
+        let mut groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
+        for (b, body) in self.bodies.iter().enumerate() {
+            if body.free {
+                let r = find(&mut root, b);
+                let g = *group_of.entry(r).or_insert_with(|| {
+                    groups.push((Vec::new(), Vec::new()));
+                    groups.len() - 1
+                });
+                groups[g].0.push(b);
+            }
+        }
+        for (i, c) in self.constraints.iter().enumerate() {
+            if let Some(b) = free(c).next() {
+                groups[group_of[&find(&mut root, b)]].1.push(i);
+            }
+        }
+        groups
+    }
+
+    /// The assembly of the free bodies `free` and the constraints
+    /// `constraints` alone — the bodies those hold that are not free, held
+    /// as they are — and, by index here, the body each of its bodies is.
+    fn restricted(&self, free: &[usize], constraints: &[usize]) -> (Assembly<S>, Vec<usize>) {
+        let mut bodies: Vec<usize> = free.to_vec();
+        let mut local = std::collections::HashMap::new();
+        for (l, &b) in bodies.iter().enumerate() {
+            local.insert(b, l);
+        }
+        let mut at = |b: Option<usize>, bodies: &mut Vec<usize>| {
+            b.map(|b| {
+                *local.entry(b).or_insert_with(|| {
+                    bodies.push(b);
+                    bodies.len() - 1
+                })
+            })
+        };
+        let constraints = constraints
+            .iter()
+            .map(|&i| {
+                let c = self.constraints[i];
+                Constraint {
+                    a: Feature {
+                        body: at(c.a.body, &mut bodies),
+                        ..c.a
+                    },
+                    b: Feature {
+                        body: at(c.b.body, &mut bodies),
+                        ..c.b
+                    },
+                    ..c
+                }
+            })
+            .collect();
+        let assembly = Assembly {
+            bodies: bodies.iter().map(|&b| self.bodies[b]).collect(),
+            constraints,
+            scale: self.scale,
+        };
+        (assembly, bodies)
+    }
+
     /// Moves the free bodies so every constraint holds, changing the poses
     /// as little as the constraints allow — pulled as `pulls` ask (see the
     /// crate docs).
     ///
+    /// Bodies no constraint ties together move independently, so each
+    /// group of them is solved on its own ([`Assembly::independent`]): a
+    /// plate with hundreds of screws mated to it is hundreds of small
+    /// solves, not one of hundreds of bodies. That changes nothing about
+    /// the solution — what a solve minimizes is a sum over the groups, and
+    /// the constraints of one never involve another's bodies. A group that
+    /// nothing pulls and whose constraints hold already is where its solve
+    /// would leave it, and is not solved at all.
+    ///
     /// The bodies are moved even if the solve does not converge, to the
     /// closest configuration found — the report says which constraints
-    /// could not be met.
+    /// could not be met. Its steps and phases are those of the groups side
+    /// by side: the most steps any took, and per phase, the worst.
     pub fn solve(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
         self.validate()?;
+        let mut phases: Vec<crate::Phase<S>> = Vec::new();
+        let mut iterations = 0;
+        for (free, constraints) in self.independent() {
+            let (mut part, bodies) = self.restricted(&free, &constraints);
+            let pulls: Vec<Pull<S>> = pulls
+                .iter()
+                .filter_map(|p| {
+                    let local = |body: usize| free.iter().position(|&b| b == body);
+                    Some(match *p {
+                        Pull::Pose { body, target } => Pull::Pose {
+                            body: local(body)?,
+                            target,
+                        },
+                        Pull::Point {
+                            body,
+                            local: at,
+                            target,
+                        } => Pull::Point {
+                            body: local(body)?,
+                            local: at,
+                            target,
+                        },
+                    })
+                })
+                .collect();
+            if pulls.is_empty() && part.report()?.converged {
+                continue;
+            }
+            let report = part.solve_together(&pulls)?;
+            for (&b, body) in bodies.iter().zip(&part.bodies) {
+                self.bodies[b].pose = body.pose;
+            }
+            iterations = iterations.max(report.iterations);
+            for (k, phase) in report.phases.into_iter().enumerate() {
+                match phases.get_mut(k) {
+                    None => phases.push(phase),
+                    Some(worst) => {
+                        if phase.iterations > worst.iterations {
+                            worst.stop = phase.stop;
+                            worst.iterations = phase.iterations;
+                        }
+                        if phase.max_residual.could_be_greater(worst.max_residual) {
+                            worst.max_residual = phase.max_residual;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(SolveReport {
+            iterations,
+            phases,
+            ..self.report()?
+        })
+    }
+
+    /// [`Assembly::solve`], every free body in one system.
+    fn solve_together(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
         let mates = self.mates();
         let mut system = self.system(&mates);
         let pulls: Vec<ParamPull<S>> = pulls

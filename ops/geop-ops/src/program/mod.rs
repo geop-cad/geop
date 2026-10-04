@@ -9,9 +9,13 @@
 
 pub mod library;
 
-pub use library::{Files, Library, NoFiles, Workspace};
+pub use library::{Files, FilesMut, Library, NoFiles, Workspace};
 
-use std::collections::HashSet;
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -21,7 +25,8 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Part, operation::Operations, parameters::Parameters, part::State, validate_operation_id,
+    Component, Part, operation::Operations, parameters::Parameters, part::State,
+    validate_operation_id,
 };
 
 /// One step of a [`Program`]: an operation with its arguments, and the id
@@ -212,8 +217,8 @@ pub struct StepResult {
 /// inputs it reads (see [`Program::inputs`]) — when those change, it runs
 /// again from the first step that read one that did, and nothing runs again
 /// for a change nothing read, like the part's colour — and on the files its
-/// library reads. When those change, [`ProgramRunner::reset`] forgets
-/// everything built.
+/// library reads, which it notes per step: when some change,
+/// [`ProgramRunner::forget`] runs again from the first step that read one.
 pub struct ProgramRunner<S: Scalar, O> {
     /// The steps the cache was built from.
     steps: Vec<Step<O>>,
@@ -223,8 +228,32 @@ pub struct ProgramRunner<S: Scalar, O> {
     /// part as it was, so this stays one longer than `steps`.
     parts: Vec<Part<S>>,
     results: Vec<StepResult>,
+    /// `reads[i]`: the files `steps[i]` built on — those of every part it
+    /// placed (see [`Component::files`]).
+    reads: Vec<BTreeSet<String>>,
     /// How many steps the last run covers.
     ran: usize,
+}
+
+/// A library that notes the files of every part it gives out: what a step
+/// built with it read.
+struct Recording<'l, S: Scalar> {
+    library: &'l dyn Library<S>,
+    read: RefCell<BTreeSet<String>>,
+}
+
+impl<S: Scalar> Library<S> for Recording<'_, S> {
+    fn component(&self, file: &str, overrides: &State) -> GeopResult<Arc<Component<S>>> {
+        let component = self.library.component(file, overrides)?;
+        self.read
+            .borrow_mut()
+            .extend(component.files.iter().cloned());
+        Ok(component)
+    }
+
+    fn files(&self) -> Vec<String> {
+        self.library.files()
+    }
 }
 
 impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
@@ -234,14 +263,33 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             inputs: State::new(),
             parts: vec![Part::new()],
             results: Vec::new(),
+            reads: Vec::new(),
             ran: 0,
         }
     }
 
-    /// Forgets every part built: the files the library reads have changed,
-    /// so a step may build something else now.
+    /// Forgets every part built: it builds another program now.
     pub fn reset(&mut self) {
         *self = Self::new();
+    }
+
+    /// Forgets the parts built from the first step that read one of the
+    /// files `changed` — as the library names them — or failed, which it
+    /// may have for want of one: those steps may build something else now.
+    /// The steps before it read none, and are kept.
+    pub fn forget(&mut self, changed: &BTreeSet<String>) {
+        let first = self
+            .reads
+            .iter()
+            .zip(&self.results)
+            .position(|(read, result)| result.error.is_some() || !read.is_disjoint(changed));
+        if let Some(first) = first {
+            self.steps.truncate(first);
+            self.parts.truncate(first + 1);
+            self.results.truncate(first);
+            self.reads.truncate(first);
+            self.ran = self.ran.min(first);
+        }
     }
 
     /// Runs the first `stop` steps of `program` — all of them if `None` —
@@ -276,6 +324,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         self.steps.truncate(common);
         self.parts.truncate(common + 1);
         self.results.truncate(common);
+        self.reads.truncate(common);
         // What is kept read nothing that changed: it is the same part, with
         // the values and the parameters the program has now — its colour,
         // what a program placing it offers, what the next step reads.
@@ -291,12 +340,17 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             let step = &program.steps[index];
             let before = self.parts.last().expect("parts is never empty");
             let before = before.clone().with_state(self.inputs.clone());
-            let (part, error) = match run_step(before.clone(), index, step, library) {
+            let recording = Recording {
+                library,
+                read: RefCell::new(BTreeSet::new()),
+            };
+            let (part, error) = match run_step(before.clone(), index, step, &recording) {
                 Ok(part) => (part, None),
                 Err(e) => (before.clone(), Some(e.to_string())),
             };
             self.steps.push(step.clone());
             self.parts.push(part);
+            self.reads.push(recording.read.into_inner());
             self.results.push(StepResult {
                 id: step.id.clone(),
                 error,
