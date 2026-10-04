@@ -212,12 +212,20 @@ fn join<S: Scalar>(a: &Piece<S>, b: &Piece<S>) -> Option<Piece<S>> {
             if !da.prod_cross(&db)[2].could_be_equal(S::ZERO) {
                 return None;
             }
-            let ends = [(a0, a1, b0, b1), (a0, a1, b1, b0), (a1, a0, b0, b1), (a1, a0, b1, b0)];
+            let ends = [
+                (a0, a1, b0, b1),
+                (a0, a1, b1, b0),
+                (a1, a0, b0, b1),
+                (a1, a0, b1, b0),
+            ];
             ends.into_iter().find_map(|(far_a, near_a, near_b, far_b)| {
                 // Meeting end to end, not overlapping: the far ends lie on
                 // either side of the meeting point.
                 (near_a.could_be_equal(near_b)
-                    && far_a.sub(near_a).prod_dot(&far_b.sub(near_b)).definitely_less(S::ZERO))
+                    && far_a
+                        .sub(near_a)
+                        .prod_dot(&far_b.sub(near_b))
+                        .definitely_less(S::ZERO))
                 .then(|| Piece::Line(*far_a, *far_b))
             })
         }

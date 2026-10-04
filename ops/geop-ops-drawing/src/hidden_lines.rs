@@ -152,7 +152,12 @@ struct Source<S: Scalar> {
 
 /// The box holding `curve`'s control points (and so the curve).
 fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<[f64; 4]> {
-    let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut b = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for q in &curve.control_points {
         let (x, y) = (q[0].div(q[2])?, q[1].div(q[2])?);
         b[0] = b[0].min(x.lower().to_f64());
@@ -306,7 +311,8 @@ fn seen<S: Scalar>(
     let mut behind_an_edge = false;
     for occluder in occluders.iter().filter(|o| o.could_meet(&point, &far)) {
         let (face_id, surface) = (occluder.face, &occluder.surface);
-        let ctx = |e: GeopError| e.with_context(format!("the ray from {point:?} against face {face_id}"));
+        let ctx =
+            |e: GeopError| e.with_context(format!("the ray from {point:?} against face {face_id}"));
         let overlaps = curve_surface_overlaps(&ray, surface, MAX_NODES, min_subdivision_size())
             .with_context(&ctx)?;
         if !overlaps.is_empty() {
@@ -512,7 +518,9 @@ pub fn project_view<S: Scalar>(
             // touches it there on the paper, tangentially: no search
             // here could isolate that.
             let bounds_silhouette = |a: &Source<S>, b: &Source<S>| {
-                a.edge.is_some() && b.kind == LineKind::Silhouette && b.edge.is_none()
+                a.edge.is_some()
+                    && b.kind == LineKind::Silhouette
+                    && b.edge.is_none()
                     && b.on.iter().any(|f| a.on.contains(f))
             };
             if bounds_silhouette(&sources[i], &sources[j])
@@ -523,7 +531,11 @@ pub fn project_view<S: Scalar>(
             let (a_cuts, b_cuts) = meetings(&sources[i], &sources[j]).map_err(|e| {
                 let describe = |s: &Source<S>| match s.edge {
                     Some(edge) => format!("{:?} of edge {edge}", s.kind),
-                    None => format!("{:?} of face {:?}", s.kind, s.silhouette.as_ref().map(|s| s.face)),
+                    None => format!(
+                        "{:?} of face {:?}",
+                        s.kind,
+                        s.silhouette.as_ref().map(|s| s.face)
+                    ),
                 };
                 e.with_context(format!(
                     "project_view: where the {} and the {} cross on the paper",
@@ -685,7 +697,11 @@ fn meetings<S: Scalar>(a: &Source<S>, b: &Source<S>) -> GeopResult<(Vec<S>, Vec<
             if i == end_a && j == end_b {
                 continue;
             }
-            let (x, y) = search(half_a, half_b).map_err(|e| e.with_context(format!("searched again without the common end, after: {error}")))?;
+            let (x, y) = search(half_a, half_b).map_err(|e| {
+                e.with_context(format!(
+                    "searched again without the common end, after: {error}"
+                ))
+            })?;
             on_a.extend(x);
             on_b.extend(y);
         }
@@ -696,9 +712,14 @@ fn meetings<S: Scalar>(a: &Source<S>, b: &Source<S>) -> GeopResult<(Vec<S>, Vec<
 /// `lines` with the pieces of one curve that follow on from each other, and
 /// are both visible or both hidden, joined again: the cuts that did not
 /// change anything undone, so a circle seen round stays a circle.
-fn rejoin<S: Scalar>(sources: &[Source<S>], mut lines: Vec<ViewLine<S>>) -> GeopResult<Vec<ViewLine<S>>> {
+fn rejoin<S: Scalar>(
+    sources: &[Source<S>],
+    mut lines: Vec<ViewLine<S>>,
+) -> GeopResult<Vec<ViewLine<S>>> {
     lines.sort_by(|a, b| {
-        (a.source, a.range.0.to_f64()).partial_cmp(&(b.source, b.range.0.to_f64())).unwrap_or(std::cmp::Ordering::Equal)
+        (a.source, a.range.0.to_f64())
+            .partial_cmp(&(b.source, b.range.0.to_f64()))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     let mut joined: Vec<ViewLine<S>> = Vec::new();
     for line in lines {

@@ -12,6 +12,7 @@ use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
+use geop_ops_drawing::{Drawing, DrawingArgs};
 use geop_ops_edit::{
     DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
 };
@@ -20,7 +21,6 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
-use geop_ops_drawing::{Drawing, DrawingArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 mod assembly_tests;
 #[cfg(test)]
 mod datum_tests;
+#[cfg(test)]
+mod drawing_tests;
 #[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
@@ -52,8 +54,6 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
-#[cfg(test)]
-mod drawing_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

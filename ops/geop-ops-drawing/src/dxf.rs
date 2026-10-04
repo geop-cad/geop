@@ -35,7 +35,9 @@ const LINE_TYPES: [(&str, &str, &[f64]); 3] = [
 
 /// Text as DXF writes it: its special characters as `%%` codes.
 fn text(s: &str) -> String {
-    s.replace('⌀', "%%c").replace('°', "%%d").replace('±', "%%p")
+    s.replace('⌀', "%%c")
+        .replace('°', "%%d")
+        .replace('±', "%%p")
 }
 
 struct Writer(String);

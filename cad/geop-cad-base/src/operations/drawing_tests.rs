@@ -57,8 +57,14 @@ fn drilled_plate_shows_its_hole_hidden() {
         })
         .collect();
     xs.sort_by(f64::total_cmp);
-    assert!(S::from_f64(xs[0]).could_be_equal(S::from_f64(17.0)), "{xs:?}");
-    assert!(S::from_f64(xs[1]).could_be_equal(S::from_f64(23.0)), "{xs:?}");
+    assert!(
+        S::from_f64(xs[0]).could_be_equal(S::from_f64(17.0)),
+        "{xs:?}"
+    );
+    assert!(
+        S::from_f64(xs[1]).could_be_equal(S::from_f64(23.0)),
+        "{xs:?}"
+    );
     assert_eq!(front.lines.iter().filter(|l| l.visible).count(), 4);
 
     let top = view(&part, ViewKind::Top);
@@ -191,7 +197,11 @@ fn every_example_draws() {
                 Ok(v) => v,
                 Err(_) if KNOWN_TO_FAIL.contains(&(name, kind)) => continue,
                 Err(e) => {
-                    failures.push(format!("{name}, {} view: {}", kind.name(), named(&part, &e)));
+                    failures.push(format!(
+                        "{name}, {} view: {}",
+                        kind.name(),
+                        named(&part, &e)
+                    ));
                     continue;
                 }
             };

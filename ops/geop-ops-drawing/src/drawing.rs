@@ -5,8 +5,7 @@
 //! with its cut hatched, a border and a title block.
 
 use geop_core_geometry::{
-    intersection::curve_curve_overlaps_and_crossings,
-    nurb_curve::NurbCurve2D,
+    intersection::curve_curve_overlaps_and_crossings, nurb_curve::NurbCurve2D,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -137,7 +136,12 @@ pub struct DrawingArgs {
 }
 
 fn default_views() -> Vec<ViewKind> {
-    vec![ViewKind::Front, ViewKind::Top, ViewKind::Right, ViewKind::Iso]
+    vec![
+        ViewKind::Front,
+        ViewKind::Top,
+        ViewKind::Right,
+        ViewKind::Iso,
+    ]
 }
 
 fn yes() -> bool {
@@ -261,7 +265,9 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
     let model = part.topology();
     let faces = drawn_faces(model);
     if faces.is_empty() {
-        return Err(GeopError::new("the part has nothing to draw: it has no faces"));
+        return Err(GeopError::new(
+            "the part has nothing to draw: it has no faces",
+        ));
     }
     let options = ViewOptions {
         tangent_edges: args.tangent_edges,
@@ -324,7 +330,11 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
         .min((area_height - GAP * (rows.len() + 1) as f64) / model_height.max(1e-300));
     let scale = match args.scale {
         Some(s) if s.is_finite() && s > 0.0 => s,
-        Some(s) => return Err(GeopError::new(format!("the scale {s} is not a positive number"))),
+        Some(s) => {
+            return Err(GeopError::new(format!(
+                "the scale {s} is not a positive number"
+            )));
+        }
         None => SCALES
             .iter()
             .copied()
@@ -341,10 +351,16 @@ pub fn compose<S: Scalar>(part: &Part<S>, args: &DrawingArgs, date: &str) -> Geo
         let ci = columns.iter().position(|&(k, _)| k == c).unwrap_or(0);
         let ri = rows.iter().position(|&(k, _)| k == r).unwrap_or(0);
         let x: f64 = left
-            + columns[..ci].iter().map(|&(_, w)| scale * w + GAP).sum::<f64>()
+            + columns[..ci]
+                .iter()
+                .map(|&(_, w)| scale * w + GAP)
+                .sum::<f64>()
             + scale * columns[ci].1 / 2.0;
         let y: f64 = top
-            - rows[..ri].iter().map(|&(_, h)| scale * h + GAP).sum::<f64>()
+            - rows[..ri]
+                .iter()
+                .map(|&(_, h)| scale * h + GAP)
+                .sum::<f64>()
             - scale * rows[ri].1 / 2.0;
         p.center = [x, y];
     }
@@ -420,9 +436,23 @@ fn draw_view<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> GeopRes
         // right.
         let [x0, y0, x1, y1] = p.extents;
         let (a, b) = (place([x0, y0]), place([x1, y0]));
-        linear_dimension(sheet, a, b, [0.0, -1.0], DIMENSION_OFFSET, length_label(x1 - x0));
+        linear_dimension(
+            sheet,
+            a,
+            b,
+            [0.0, -1.0],
+            DIMENSION_OFFSET,
+            length_label(x1 - x0),
+        );
         let (a, b) = (place([x1, y0]), place([x1, y1]));
-        linear_dimension(sheet, a, b, [1.0, 0.0], DIMENSION_OFFSET, length_label(y1 - y0));
+        linear_dimension(
+            sheet,
+            a,
+            b,
+            [1.0, 0.0],
+            DIMENSION_OFFSET,
+            length_label(y1 - y0),
+        );
     }
     if p.kind == Slot::Section {
         let [_, y0, _, _] = p.extents;
@@ -500,7 +530,11 @@ fn times(a: P, s: f64) -> P {
 
 fn unit(a: P) -> P {
     let n = (a[0] * a[0] + a[1] * a[1]).sqrt();
-    if n > 0.0 { times(a, 1.0 / n) } else { [1.0, 0.0] }
+    if n > 0.0 {
+        times(a, 1.0 / n)
+    } else {
+        [1.0, 0.0]
+    }
 }
 
 /// An arrowhead with its tip at `tip`, pointing along `direction`.
@@ -586,7 +620,9 @@ fn draw_dimension<S: Scalar>(
             };
             let (pa, pb) = (at(&a), at(&b));
             if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) == 0.0 {
-                return Err(GeopError::new(format!("{from} and {to} are the same point")));
+                return Err(GeopError::new(format!(
+                    "{from} and {to} are the same point"
+                )));
             }
             // Off the side away from the view's centre.
             let along = unit(sub(pb, pa));
@@ -663,9 +699,8 @@ fn draw_dimension<S: Scalar>(
 /// The border and the title block.
 fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
     let (w, h) = (sheet.width, sheet.height);
-    let corners = |x0: f64, y0: f64, x1: f64, y1: f64| {
-        vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
-    };
+    let corners =
+        |x0: f64, y0: f64, x1: f64, y1: f64| vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]];
     sheet.stroke(
         Layer::Border,
         Shape::Polyline(corners(MARGIN, MARGIN, w - MARGIN, h - MARGIN)),
@@ -680,15 +715,30 @@ fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
         sheet.stroke(Layer::Border, Shape::Line([x0, y], [x1, y]));
     }
     // The bottom two rows hold two fields each.
-    sheet.stroke(Layer::Border, Shape::Line([half, y0], [half, y0 + 2.0 * row]));
+    sheet.stroke(
+        Layer::Border,
+        Shape::Line([half, y0], [half, y0 + 2.0 * row]),
+    );
     let name = if args.name.is_empty() {
         "PART"
     } else {
         args.name.as_str()
     };
     let field = |sheet: &mut Sheet, x: f64, y: f64, caption: &str, value: &str| {
-        sheet.label(Layer::Border, [x + 2.0, y + row - 3.0], 2.0, Anchor::Start, caption);
-        sheet.label(Layer::Border, [x + 2.0, y + 1.5], TEXT, Anchor::Start, value);
+        sheet.label(
+            Layer::Border,
+            [x + 2.0, y + row - 3.0],
+            2.0,
+            Anchor::Start,
+            caption,
+        );
+        sheet.label(
+            Layer::Border,
+            [x + 2.0, y + 1.5],
+            TEXT,
+            Anchor::Start,
+            value,
+        );
     };
     sheet.label(
         Layer::Border,
@@ -724,9 +774,18 @@ fn section_view<S: Scalar>(
     // Up on the paper: the world axis least along the line of sight.
     let up = {
         let axis = (0..3)
-            .min_by(|&a, &b| normal[a].to_f64().abs().total_cmp(&normal[b].to_f64().abs()))
+            .min_by(|&a, &b| {
+                normal[a]
+                    .to_f64()
+                    .abs()
+                    .total_cmp(&normal[b].to_f64().abs())
+            })
             .unwrap_or(2);
-        let axis = if normal[2].to_f64().abs() < 0.9 { 2 } else { axis };
+        let axis = if normal[2].to_f64().abs() < 0.9 {
+            2
+        } else {
+            axis
+        };
         let mut up = Vector3::zero();
         up[axis] = S::ONE;
         up
@@ -834,6 +893,8 @@ fn hatch_line<S: Scalar>(
     ts.sort_by(f64::total_cmp);
     let at = |t: f64| [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
     Ok(Some(
-        ts.chunks(2).map(|pair| (at(pair[0]), at(pair[1]))).collect(),
+        ts.chunks(2)
+            .map(|pair| (at(pair[0]), at(pair[1])))
+            .collect(),
     ))
 }

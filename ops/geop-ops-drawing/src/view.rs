@@ -92,7 +92,10 @@ impl ViewKind {
 #[derive(Clone, Copy, Debug)]
 pub enum ViewAxis<S: Scalar> {
     /// The coordinate axis `index`, negated if `negative`.
-    Unit { index: usize, negative: bool },
+    Unit {
+        index: usize,
+        negative: bool,
+    },
     General(Vector3<S>),
 }
 

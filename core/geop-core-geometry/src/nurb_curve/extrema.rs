@@ -35,10 +35,7 @@ fn derivative_numerator<S: Scalar>(a: &[S], w: &[S]) -> GeopResult<Vec<S>> {
     for i in 0..p {
         let (da, dw) = (a[i + 1].sub(a[i]), w[i + 1].sub(w[i]));
         for j in 0..=p {
-            let factor = S::from_ratio(
-                binomial(p - 1, i) * binomial(p, j),
-                binomial(m, i + j),
-            )?;
+            let factor = S::from_ratio(binomial(p - 1, i) * binomial(p, j), binomial(m, i + j))?;
             let term = da.mul(w[j]).sub(dw.mul(a[j]));
             n[i + j] = n[i + j].add(factor.mul(term));
         }
@@ -180,9 +177,18 @@ mod tests {
                 .iter()
                 .map(|t| circle.evaluate(t.midpoint()).unwrap()[k])
                 .collect();
-            assert!(values.iter().all(|v| v.abs().could_be_equal(S::ONE)), "{values:?}");
-            assert!(values.iter().any(|v| v.could_be_equal(S::ONE)), "{values:?}");
-            assert!(values.iter().any(|v| v.could_be_equal(S::ONE.neg())), "{values:?}");
+            assert!(
+                values.iter().all(|v| v.abs().could_be_equal(S::ONE)),
+                "{values:?}"
+            );
+            assert!(
+                values.iter().any(|v| v.could_be_equal(S::ONE)),
+                "{values:?}"
+            );
+            assert!(
+                values.iter().any(|v| v.could_be_equal(S::ONE.neg())),
+                "{values:?}"
+            );
         }
         let ts = circle
             .stationary_parameters(&v3::<S>(0.0, 0.0, 1.0), 1000, min)
@@ -210,7 +216,11 @@ mod tests {
         for k in 0..3 {
             let mut direction = v3::<S>(0.0, 0.0, 0.0);
             direction[k] = S::ONE;
-            assert!(line.stationary_parameters(&direction, 100, min).unwrap().is_empty());
+            assert!(
+                line.stationary_parameters(&direction, 100, min)
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
     #[test]

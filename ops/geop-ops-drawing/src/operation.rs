@@ -114,9 +114,12 @@ impl Operation for Drawing {
                 }
             },
         );
-        f.checkbox("hidden_lines", "Hidden lines", args.hidden_lines, |args, on| {
-            args.hidden_lines = on
-        });
+        f.checkbox(
+            "hidden_lines",
+            "Hidden lines",
+            args.hidden_lines,
+            |args, on| args.hidden_lines = on,
+        );
         f.checkbox(
             "tangent_edges",
             "Tangent edges",
@@ -151,7 +154,11 @@ impl Operation for Drawing {
             },
         );
         let mut scales = vec![Choice::new("fit", "To fit")];
-        scales.extend(SCALES.iter().map(|&s| Choice::new(scale_label(s), scale_label(s))));
+        scales.extend(
+            SCALES
+                .iter()
+                .map(|&s| Choice::new(scale_label(s), scale_label(s))),
+        );
         f.select(
             "scale",
             "scale",

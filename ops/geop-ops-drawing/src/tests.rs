@@ -116,6 +116,10 @@ fn cylinder_side_view_has_silhouettes() {
     assert_extents(&front, [-1.0, 0.0, 1.0, 2.0]);
 
     let top = view(&part, ViewKind::Top, ViewOptions::default());
-    assert!(top.lines.iter().all(|l| l.kind == LineKind::Edge && l.visible));
+    assert!(
+        top.lines
+            .iter()
+            .all(|l| l.kind == LineKind::Edge && l.visible)
+    );
     assert_extents(&top, [-1.0, -1.0, 1.0, 1.0]);
 }

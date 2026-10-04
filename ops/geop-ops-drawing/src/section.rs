@@ -56,7 +56,11 @@ pub fn section_part<S: Scalar>(
     // A box reaching past the whole part from wherever on the plane.
     let b = bounds(cut.topology()).with_context(&ctx)?;
     let center: Vec<f64> = b.iter().map(|[lo, hi]| (lo + hi) / 2.0).collect();
-    let diagonal: f64 = b.iter().map(|[lo, hi]| (hi - lo).powi(2)).sum::<f64>().sqrt();
+    let diagonal: f64 = b
+        .iter()
+        .map(|[lo, hi]| (hi - lo).powi(2))
+        .sum::<f64>()
+        .sqrt();
     let offset: f64 = (0..3)
         .map(|k| (origin[k].to_f64() - center[k]).powi(2))
         .sum::<f64>()
@@ -118,7 +122,11 @@ pub fn cut_faces<S: Scalar>(
             .normal
             .prod_cross(normal)
             .could_be_equal(&Vector3::zero())
-            && plane.point.sub(origin).prod_dot(normal).could_be_equal(S::ZERO)
+            && plane
+                .point
+                .sub(origin)
+                .prod_dot(normal)
+                .could_be_equal(S::ZERO)
         {
             cut.push(face);
         }

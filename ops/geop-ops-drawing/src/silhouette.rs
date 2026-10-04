@@ -471,11 +471,7 @@ fn swept_along<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> bool {
         let (Some(pa), Some(pb)) = (cartesian(a), cartesian(b)) else {
             return false;
         };
-        a[3].could_be_equal(b[3])
-            && pb
-                .sub(&pa)
-                .prod_cross(d)
-                .could_be_equal(&Vector3::zero())
+        a[3].could_be_equal(b[3]) && pb.sub(&pa).prod_cross(d).could_be_equal(&Vector3::zero())
     };
     let along_v = (0..nu).all(|i| (1..nv).all(|j| along(point(i, j - 1), point(i, j))));
     let along_u = (0..nv).all(|j| (1..nu).all(|i| along(point(i - 1, j), point(i, j))));
@@ -551,12 +547,18 @@ pub fn edge_crossings<S: Scalar>(
     // Where on the surface the edge's point at `t` is: projected from the
     // pcurve's point as far along it — a seed, a free choice.
     let foot = |t: S| -> Option<(S, S)> {
-        let f = t.sub(edge_domain.0).div(edge_domain.1.sub(edge_domain.0)).ok()?;
+        let f = t
+            .sub(edge_domain.0)
+            .div(edge_domain.1.sub(edge_domain.0))
+            .ok()?;
         let f = match coedge.sense {
             geop_core_topology::Sense::Forward => f,
             geop_core_topology::Sense::Reversed => S::ONE.sub(f),
         };
-        let seed = coedge.pcurve.evaluate(s0.add(s1.sub(s0).mul(f)).sharpen()).ok()?;
+        let seed = coedge
+            .pcurve
+            .evaluate(s0.add(s1.sub(s0).mul(f)).sharpen())
+            .ok()?;
         let point = curve.evaluate(t).ok()?;
         surface
             .project(point, seed[0], seed[1], CORRECTOR_ITERATIONS)
@@ -702,7 +704,8 @@ fn trim<S: Scalar>(
                 k => fraction(a, b, k as f64 / count as f64),
             };
             let q = fit.evaluate(t)?;
-            let (u, v) = correct(surface, d, (q[0].sharpen(), q[1].sharpen())).unwrap_or((q[0], q[1]));
+            let (u, v) =
+                correct(surface, d, (q[0].sharpen(), q[1].sharpen())).unwrap_or((q[0], q[1]));
             samples.push(Vector2::from_array([u, v]));
         }
         let mut points3 = Vec::with_capacity(samples.len());
