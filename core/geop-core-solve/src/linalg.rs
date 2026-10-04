@@ -12,6 +12,9 @@ pub(crate) struct Elimination<S: Scalar> {
     /// Per pivot: its column, and the index of the row it was among the
     /// rows eliminated.
     pub pivots: Vec<(usize, usize)>,
+    /// Per reduced row: the index of the row it was among the rows
+    /// eliminated — for the rows past the pivots' too.
+    pub origin: Vec<usize>,
 }
 
 /// Gauss-Jordan elimination of `rows` (each over `n` variables) with
@@ -68,7 +71,11 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
         pivots.push((col, origin[r]));
         r += 1;
     }
-    Elimination { rows, pivots }
+    Elimination {
+        rows,
+        pivots,
+        origin,
+    }
 }
 
 /// A basis of the null space of `rows` (each over `n` variables): the
@@ -76,7 +83,7 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
 /// variable no pivot determines, which is one there and zero at every other
 /// such variable.
 pub(crate) fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> {
-    let Elimination { rows, pivots } = eliminate(rows, n);
+    let Elimination { rows, pivots, .. } = eliminate(rows, n);
     let is_pivot: Vec<bool> = (0..n).map(|c| pivots.iter().any(|p| p.0 == c)).collect();
     (0..n)
         .filter(|&f| !is_pivot[f])
@@ -125,7 +132,7 @@ pub(crate) fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
             row
         })
         .collect();
-    let Elimination { rows, pivots } = eliminate(rows, m);
+    let Elimination { rows, pivots, .. } = eliminate(rows, m);
     if pivots.len() < m {
         return None;
     }

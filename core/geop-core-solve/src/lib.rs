@@ -42,5 +42,5 @@ mod system;
 
 pub use placed::Placed;
 pub use system::{
-    Mobility, Param, Phase, Pull, RELATIVE_TOLERANCE, Report, Residual, System, Value,
+    EncloseError, Mobility, Param, Phase, Pull, RELATIVE_TOLERANCE, Report, Residual, System, Value,
 };

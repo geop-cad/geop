@@ -601,20 +601,16 @@ fn build(
             ] {
                 sketch.constrain(Constraint::Tangent { a: x, b: y });
             }
-            // The outer side about the center; the inner side, touching
-            // both ends, is then one of a family of arcs, and turning as
-            // far as the centerline picks the one about the center too.
-            // (Concentric as well would say one thing twice — consistent
-            // on the solution, but only there, which leaves its proof
-            // singular.)
-            sketch.constrain(Constraint::Concentric {
-                a: centerline,
-                b: outer,
-            });
-            sketch.constrain(Constraint::EqualSweep {
-                a: centerline,
-                b: inner,
-            });
+            // Both sides about the center. With the ends tangent to both,
+            // the inner side's center follows from the rest, so one of
+            // these says what the others do: true on the solution, which
+            // is all `System::enclose` asks of a redundant constraint.
+            for side in [outer, inner] {
+                sketch.constrain(Constraint::Concentric {
+                    a: centerline,
+                    b: side,
+                });
+            }
             sketch.constrain(Constraint::Center {
                 point: b,
                 curve: round_b,
