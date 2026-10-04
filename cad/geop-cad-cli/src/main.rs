@@ -151,6 +151,14 @@ struct DrawingCliArgs {
     /// What the part is made of, for the title block.
     #[arg(long)]
     material: Option<String>,
+    /// Write instead the flat pattern of a sheet-metal body, for laser
+    /// cutting — its outline and holes on a CUT layer, its bend lines on a
+    /// BEND layer with how each is bent — as DXF: of the body named, else
+    /// the newest. The whole program runs; the drawing's options do not
+    /// apply. Defaults the output to the program's path with `.geop`
+    /// replaced by `_flat.dxf`.
+    #[arg(long, value_name = "SOLID", num_args = 0..=1, default_missing_value = "")]
+    flat_pattern: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -223,6 +231,28 @@ fn drawing(args: &DrawingCliArgs) -> GeopResult<PathBuf> {
     let program = Program::from_json(&Disk.read(&path)?)?;
     let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
     let library = workspace.scope(&path);
+    if let Some(solid) = &args.flat_pattern {
+        let output = args.output.clone().unwrap_or_else(|| {
+            let stem = args
+                .program
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy();
+            args.program.with_file_name(format!("{stem}_flat.dxf"))
+        });
+        if Format::of_path(&output.to_string_lossy()) != Some(Format::Dxf) {
+            return Err(GeopError::new(format!(
+                "{} is no .dxf file: a flat pattern is written for cutting as DXF",
+                output.display()
+            )));
+        }
+        let part = program.build(&library)?;
+        let named = (!solid.is_empty()).then_some(solid.as_str());
+        let (_, text) = geop_ops_sheetmetal::flat_pattern_dxf(&part, named)?;
+        std::fs::write(&output, text)
+            .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
+        return Ok(output);
+    }
     let found = match &args.step {
         Some(id) => {
             let index = program.index_of(id)?;
@@ -1023,6 +1053,7 @@ mod tests {
             sheet: None,
             name: None,
             material: Some("6061-T6".into()),
+            flat_pattern: None,
         };
         let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
         let dxf = std::fs::read_to_string(written).unwrap();
@@ -1038,6 +1069,39 @@ mod tests {
         assert!(err.to_string().contains("front"), "{err}");
         assert_eq!(parse_scale("1:5").unwrap(), 0.2);
         assert_eq!(today().len(), 10);
+    }
+
+    /// `geop drawing sheet_metal_bracket.geop --flat-pattern`: the
+    /// bracket's flat pattern for laser cutting, next to the program — its
+    /// outline and holes on the CUT layer, its two bends on the BEND layer.
+    #[test]
+    fn writes_a_flat_pattern_for_cutting() {
+        let dir = scratch("flat-pattern");
+        let path = dir.join("sheet_metal_bracket.geop");
+        std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
+        let args = DrawingCliArgs {
+            program: path.clone(),
+            output: None,
+            step: None,
+            views: Vec::new(),
+            first_angle: false,
+            scale: None,
+            sheet: None,
+            name: None,
+            material: None,
+            flat_pattern: Some(String::new()),
+        };
+        let written = drawing(&args).unwrap();
+        assert_eq!(written, dir.join("sheet_metal_bracket_flat.dxf"));
+        let dxf = std::fs::read_to_string(written).unwrap();
+        assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
+        assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
+        let err = drawing(&DrawingCliArgs {
+            output: Some(dir.join("flat.svg")),
+            ..args
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("no .dxf"), "{err}");
     }
 
     #[test]

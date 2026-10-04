@@ -27,10 +27,14 @@ pub enum Layer {
     Border,
     /// Thin continuous lines: a cosmetic thread seen.
     Thread,
+    /// What a laser or a punch cuts: a flat pattern's outline and holes.
+    Cut,
+    /// Where a flat pattern is bent, and how.
+    Bend,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 7] = [
+    pub const ALL: [Layer; 9] = [
         Layer::Visible,
         Layer::Hidden,
         Layer::Center,
@@ -38,6 +42,8 @@ impl Layer {
         Layer::Hatch,
         Layer::Border,
         Layer::Thread,
+        Layer::Cut,
+        Layer::Bend,
     ];
 
     /// Its name, as a DXF layer and an SVG class.
@@ -50,6 +56,8 @@ impl Layer {
             Layer::Hatch => "HATCH",
             Layer::Border => "BORDER",
             Layer::Thread => "THREAD",
+            Layer::Cut => "CUT",
+            Layer::Bend => "BEND",
         }
     }
 }

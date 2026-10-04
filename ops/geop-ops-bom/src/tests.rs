@@ -233,6 +233,7 @@ fn a_plain_part_is_one_line_with_its_sheet_thickness() {
         FlatPatternData {
             thickness: 1.5,
             bends: Vec::new(),
+            pattern: Default::default(),
         },
     )
     .unwrap();

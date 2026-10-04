@@ -27,7 +27,8 @@ use geop_ops_extrude_revolve::{
 use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
 use geop_ops_pattern::{Direction, LinearPatternArgs, Spacing};
 use geop_ops_sheetmetal::{
-    BaseFlangeArgs, EdgeFlangeArgs, FlangePosition, LengthReference, SheetMetalRules,
+    BaseFlangeArgs, Corner, EdgeFlangeArgs, FlangePosition, LengthReference, SheetCutArgs,
+    SheetMetalRules,
 };
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
@@ -1922,16 +1923,15 @@ pub fn pipe() -> Program {
     program
 }
 
-/// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick with two
-/// holes (`plate`), a flange bent up along part of its front edge with
-/// reliefs beside it (`front`), and one along all of its back edge
-/// (`back`) — the bent body is `edge_flange(back)`.
+/// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick (`plate`),
+/// a flange bent up along part of its front edge with reliefs beside it
+/// (`front`), one along all of its back edge (`back`), and two mounting
+/// holes cut through the plate after flanging (`mount`, drawn in `holes`)
+/// — the body is `sheet_cut(mount)`.
 pub fn sheet_metal_bracket() -> Program {
     let mut program = Program::new();
     let mut outline = Sketch::new();
     let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.2);
-    circle(&mut outline, [0.5, 0.6], 0.15);
-    circle(&mut outline, [1.5, 0.6], 0.15);
     program.push(
         "outline",
         AddSketchArgs {
@@ -1966,9 +1966,31 @@ pub fn sheet_metal_bracket() -> Program {
         radius: None,
         offset_start: offset,
         offset_end: offset,
+        corner: Corner::Open,
     };
     program.push("front", flange(lines[0], 0.6, 0.3));
     program.push("back", flange(lines[2], 0.4, 0.0));
+    let mut holes = Sketch::new();
+    circle(&mut holes, [0.5, 0.6], 0.15);
+    circle(&mut holes, [1.5, 0.6], 0.15);
+    program.push(
+        "holes",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(holes),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "mount",
+        SheetCutArgs {
+            sketch: "holes".into(),
+            face: String::new(),
+        },
+    );
     program
 }
 

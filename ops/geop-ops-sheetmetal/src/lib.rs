@@ -17,8 +17,13 @@
 //! [`thicken`]).
 
 pub mod base_flange;
+pub mod cut;
+pub mod cutting;
 pub mod edge_flange;
 pub mod flat_pattern;
+mod fold;
+pub mod hem;
+pub mod layout;
 pub mod sheet;
 pub mod thicken;
 
@@ -26,6 +31,9 @@ pub mod thicken;
 mod tests;
 
 pub use base_flange::{BaseFlange, BaseFlangeArgs};
-pub use edge_flange::{EdgeFlange, EdgeFlangeArgs, FlangePosition, LengthReference};
+pub use cut::{SheetCut, SheetCutArgs};
+pub use cutting::{cutting_sheet, flat_pattern_dxf};
+pub use edge_flange::{Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, LengthReference};
 pub use flat_pattern::{BendLine, FlatPattern, FlatPatternArgs, FlatPatternData};
+pub use hem::{Hem, HemArgs, HemKind};
 pub use sheet::{Relief, Sheet, SheetMetalRules};

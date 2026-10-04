@@ -48,6 +48,8 @@ fn every_operation_is_offered() {
             "project_curve",
             "base_flange",
             "edge_flange",
+            "sheet_cut",
+            "hem",
             "flat_pattern",
             "subd",
             "add_part",

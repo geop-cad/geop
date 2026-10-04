@@ -271,6 +271,7 @@ fn plate<S: Scalar>(
             name: namer.scoped("plate"),
         }],
         bends: Vec::new(),
+        cuts: Vec::new(),
     })
 }
 
@@ -483,6 +484,7 @@ fn strip<S: Scalar>(
         rules: args.rules.clone(),
         flats,
         bends,
+        cuts: Vec::new(),
     })
 }
 

@@ -430,7 +430,9 @@ export type Command =
   /** Write the part shown as a STEP file: the update's `export`. */
   | { command: "export_step" }
   /** Write the bill of materials of the part shown as a CSV file: the update's `export`. */
-  | { command: "export_bom"; structure: BomStructure };
+  | { command: "export_bom"; structure: BomStructure }
+  /** Write the flat pattern of a sheet-metal body — `solid`, else the newest — as DXF for cutting: the update's `export`. */
+  | { command: "export_flat_pattern"; solid?: string };
 
 /** A question asked of the part as drawn — see `geop_cad_base::inspect::Query`. */
 export type Query = "mass_properties" | "interference" | { bom: { structure: BomStructure } };
@@ -591,7 +593,7 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
-  /** The file `export_drawing`, `export_urdf`, `export_step` or `export_bom` wrote, to save. */
+  /** The file `export_drawing`, `export_urdf`, `export_step`, `export_bom` or `export_flat_pattern` wrote, to save. */
   export: ExportedFile | null;
   /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;

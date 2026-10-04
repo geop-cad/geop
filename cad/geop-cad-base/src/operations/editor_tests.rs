@@ -2058,3 +2058,106 @@ fn an_assembly_is_exported_as_step_products() {
     let bodies = geop_ops_step::read_step::<S>(text).unwrap();
     assert_eq!(bodies.len(), 3, "the link, once where each step places it");
 }
+
+/// Sheet metal the way the front end does it, on the bracket: a sketch on
+/// the back flange cut through it by a new sheet-metal cut that takes the
+/// newest sketch and picks the flange by a click; a new hem picked on the
+/// plate's right edge and opened in the dialog; and the flat pattern
+/// exported for laser cutting, as the File menu asks for it.
+#[test]
+fn sheet_metal_cut_hem_and_cutting_export() {
+    use geop_ops_sheetmetal::HemKind;
+    use geop_ops_sketch::AddSketchArgs;
+
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadExample {
+        name: "sheet_metal_bracket".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    // A hole drawn on the back flange's outside, 0.3 up: the face's sketch
+    // `x` runs along the world's, its `y` down.
+    let mut program = editor.program().clone();
+    let mut hole = geop_ops_sketch::Sketch::new();
+    let c = hole.add_point(1.0.into(), (-0.3).into());
+    hole.add_circle(c, 0.05.into());
+    program.push(
+        "flange_hole",
+        AddSketchArgs {
+            plane: Some(EntityRef::Face {
+                name: "edge_flange(back,flange,a)".into(),
+            }),
+            sketch: hole,
+            ..Default::default()
+        },
+    );
+    let update = editor.handle(Command::Load {
+        program,
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    editor.handle(Command::New {
+        kind: "sheet_cut".into(),
+    });
+    // The face is the one the sketch lies on unless picked: pressed, it
+    // takes the click.
+    editor.handle(dialog("face", Value::Press));
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Click {
+            pointer: pointer([1.0, 5.0, 0.3], [0.0, -1.0, 0.0]),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = editor.program().steps.last().unwrap().clone();
+    match &step.operation {
+        PartOperation::SheetCut(args) => {
+            assert_eq!(args.sketch, "flange_hole");
+            assert_eq!(args.face, "edge_flange(back,flange,a)");
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = update.scene.expect("the scene is sent anew");
+    assert_eq!(scene.part.solids, [format!("sheet_cut({})", step.id)]);
+
+    editor.handle(Command::New { kind: "hem".into() });
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Click {
+            pointer: pointer([2.0, 0.4, 10.0], [0.0, 0.0, -1.0]),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("kind", Value::Choice("open".into())));
+    editor.handle(dialog("gap", Value::Number(0.06)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = editor.program().steps.last().unwrap().clone();
+    match &step.operation {
+        PartOperation::Hem(args) => {
+            assert_eq!(args.edge, "base_flange(plate,outline,c5,b)");
+            assert_eq!((args.kind, args.gap), (HemKind::Open, 0.06));
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = update.scene.expect("the scene is sent anew");
+    assert_eq!(scene.part.solids, [format!("hem({})", step.id)]);
+
+    let json = editor
+        .handle_json(r#"{"command": "export_flat_pattern"}"#)
+        .unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    assert_eq!(update["export"]["name"], "part_flat.dxf");
+    let dxf = update["export"]["text"].as_str().unwrap();
+    assert_eq!(dxf.matches("\nUP 90%%d R0.08\n").count(), 2, "{dxf}");
+    assert_eq!(dxf.matches("\nUP 180%%d R0.03\n").count(), 1, "{dxf}");
+    // Three holes, each one circle.
+    assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 3, "{dxf}");
+}

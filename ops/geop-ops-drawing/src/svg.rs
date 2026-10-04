@@ -14,6 +14,8 @@ fn style(layer: Layer) -> (f64, Option<&'static str>) {
         Layer::Hatch => (0.18, None),
         Layer::Border => (0.5, None),
         Layer::Thread => (0.25, None),
+        Layer::Cut => (0.25, None),
+        Layer::Bend => (0.25, Some("8 1.5 1.5 1.5")),
     }
 }
 

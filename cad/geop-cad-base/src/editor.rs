@@ -177,6 +177,15 @@ pub enum Command<S: Scalar> {
         #[serde(default)]
         structure: geop_ops_bom::Structure,
     },
+    /// Write the flat pattern of a sheet-metal body of the part shown — the
+    /// body `solid`, else the newest — as a DXF file for laser cutting (see
+    /// [`geop_ops_sheetmetal::flat_pattern_dxf`]): its outline and holes on
+    /// the `CUT` layer, its bend lines on the `BEND` layer. Named after the
+    /// program's file, it is the update's [`Update::export`].
+    ExportFlatPattern {
+        #[serde(default)]
+        solid: Option<String>,
+    },
 }
 
 /// How finely an exported robot's curved faces are meshed: as finely as
@@ -1071,6 +1080,16 @@ impl<S: Scalar> Editor<S> {
                 self.exported = Some(Export {
                     name: format!("{stem}.step"),
                     content: Content::Text(text),
+                });
+                Changed::Nothing
+            }
+            Command::ExportFlatPattern { solid } => {
+                let (_, dxf) =
+                    geop_ops_sheetmetal::flat_pattern_dxf(self.runner.part(), solid.as_deref())?;
+                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
+                self.exported = Some(Export {
+                    name: format!("{stem}_flat.dxf"),
+                    content: Content::Text(dxf),
                 });
                 Changed::Nothing
             }

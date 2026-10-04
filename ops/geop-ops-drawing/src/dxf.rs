@@ -1,6 +1,7 @@
 //! A [`Sheet`] as an ASCII DXF file of release 12 — the oldest and most
 //! widely read: lines, arcs, circles, polylines, solids and text, one layer
-//! per [`Layer`], with hidden and centre lines dashed by line type.
+//! per [`Layer`] it draws on, with hidden, centre and bend lines dashed by
+//! line type.
 
 use std::fmt::Write;
 
@@ -11,7 +12,7 @@ use crate::sheet::{Anchor, Layer, Shape, Sheet};
 fn line_type(layer: Layer) -> &'static str {
     match layer {
         Layer::Hidden => "HIDDEN",
-        Layer::Center => "CENTER",
+        Layer::Center | Layer::Bend => "CENTER",
         _ => "CONTINUOUS",
     }
 }
@@ -19,12 +20,13 @@ fn line_type(layer: Layer) -> &'static str {
 /// The colour of a layer, by AutoCAD colour index.
 fn color(layer: Layer) -> u8 {
     match layer {
-        Layer::Visible | Layer::Border => 7,
+        Layer::Visible | Layer::Border | Layer::Cut => 7,
         Layer::Hidden => 8,
         Layer::Center => 1,
         Layer::Dimension => 3,
         Layer::Hatch => 9,
         Layer::Thread => 4,
+        Layer::Bend => 5,
     }
 }
 
@@ -86,10 +88,18 @@ pub fn to_dxf(sheet: &Sheet) -> String {
         }
     }
     w.pair(0, "ENDTAB");
+    // The layers it draws on, each once.
+    let layers: Vec<Layer> = Layer::ALL
+        .into_iter()
+        .filter(|&layer| {
+            sheet.strokes.iter().any(|s| s.layer == layer)
+                || sheet.labels.iter().any(|l| l.layer == layer)
+        })
+        .collect();
     w.pair(0, "TABLE");
     w.pair(2, "LAYER");
-    w.pair(70, Layer::ALL.len());
-    for layer in Layer::ALL {
+    w.pair(70, layers.len());
+    for layer in layers {
         w.pair(0, "LAYER");
         w.pair(2, layer.name());
         w.pair(70, 0);

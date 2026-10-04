@@ -592,6 +592,20 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M9.5 7 L13.5 7 M9.5 10 L13.5 10 M9.5 13 L13.5 13" strokeWidth="1" />
     </>
   ),
+  // A sheet with a hole cut through it and a notch out of its edge.
+  sheet_cut: (
+    <>
+      <path d="M3 5 L17 5 L17 15 L12 15 L12 12 L9 12 L9 15 L3 15 Z" />
+      <circle cx="7" cy="9" r="1.8" />
+    </>
+  ),
+  // A sheet's edge folded right back over it.
+  hem: (
+    <>
+      <path d="M17 13 L6 13 A2.5 2.5 0 0 1 6 8 L13 8" />
+      <path d="M17 15 L6 15 A4.5 4.5 0 0 1 6 6 L13 6" strokeWidth="1" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

@@ -7,7 +7,6 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_topology::Body;
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
@@ -17,10 +16,7 @@ use geop_ops::{
 use geop_ops_extrude_revolve::common::{line2, start_point};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    sheet::{Bend, BendFrame, Flat, FlatEdge, Sheet, straight},
-    thicken::thicken,
-};
+use crate::sheet::{Bend, BendFrame, Flat, FlatEdge, Sheet, SheetMetalRules, straight};
 
 /// What a flange's length is measured from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +46,21 @@ pub enum FlangePosition {
     BendOutside,
 }
 
+/// What a flange does at an end of its edge where a flange already stands
+/// on the edge beside it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Corner {
+    /// It stops the body's corner gap short of the other flange's bend.
+    #[default]
+    Open,
+    /// Its bend stops the corner gap short of the other's, and its flat
+    /// reaches on, past its bend, to the corner gap from the other flange's
+    /// inside: the corner closed. For two flanges at right angles, turning
+    /// the same way, of one radius, on edges at right angles.
+    Closed,
+}
+
 /// Bends a flange up from the straight edge `edge` of a sheet-metal body,
 /// for the operation `F`: the body is consumed and rebuilt as
 /// `edge_flange(F)`, every face, edge and vertex it had keeping its name
@@ -63,11 +74,14 @@ pub enum FlangePosition {
 /// the edge's start to `offset_end` before its end (the edge running with
 /// its face on its left, seen from outside); where it is narrower than the
 /// edge, the body's relief is cut beside the bend. An end of the edge that
-/// meets a bend already there keeps the body's corner gap from it.
+/// meets a bend already there keeps the body's corner gap from it — or,
+/// with a closed `corner`, its flat reaches on to the other flange.
 ///
 /// What it builds is named `edge_flange(F,...)`: the bend `bend`, the
 /// flange's flat face `flange` with its edges `flange,line` where the bend
-/// ends, `flange,side0`, `flange,end` and `flange,side1`; where the bend
+/// ends, `flange,side0`, `flange,end` and `flange,side1` — and where a
+/// closed corner carries its flat past its bend, `flange,corner0` or
+/// `flange,corner1` on from its line; where the bend
 /// starts on the body `line`, the rest of the edge `before` and `after`,
 /// and the reliefs
 /// `relief0,in`, `relief0,across`, `relief0,out` (and `relief1,...`) — each
@@ -97,6 +111,8 @@ pub struct EdgeFlangeArgs {
     pub offset_start: f64,
     #[serde(default)]
     pub offset_end: f64,
+    #[serde(default)]
+    pub corner: Corner,
 }
 
 impl Operation for EdgeFlange {
@@ -114,6 +130,7 @@ impl Operation for EdgeFlange {
             radius: None,
             offset_start: 0.0,
             offset_end: 0.0,
+            corner: Corner::Open,
         }
     }
 
@@ -226,6 +243,22 @@ impl Operation for EdgeFlange {
             Number::new("offset at end", args.offset_end, Unit::Length).range(0.0, 5.0),
             |args, o| args.offset_end = o,
         );
+        f.select(
+            "corner",
+            "corner",
+            match args.corner {
+                Corner::Open => "open",
+                Corner::Closed => "closed",
+            },
+            vec![Choice::new("open", "Open"), Choice::new("closed", "Closed")],
+            false,
+            |args, choice| {
+                args.corner = match choice {
+                    "closed" => Corner::Closed,
+                    _ => Corner::Open,
+                }
+            },
+        );
         f
     }
 
@@ -238,46 +271,109 @@ impl Operation for EdgeFlange {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("edge_flange({operation_id}, {args:?})");
         let namer = Namer::new("edge_flange", operation_id)?;
-        let (solid, mut sheet, (f, k, toward_b)) = part
-            .solid_names()
-            .into_iter()
-            .find_map(|solid| {
-                let sheet = part.body_data::<Sheet<S>>(&solid)?;
-                let at = sheet.edge_named(&args.edge)?;
-                Some((solid, sheet.clone(), at))
-            })
-            .ok_or_else(|| {
-                GeopError::new(format!(
-                    "{:?} is no edge of a sheet-metal body's flat face on its outline: a flange is bent from one of those, on a body built by a base flange",
-                    args.edge
-                ))
-            })
-            .with_context(ctx)?;
+        let (solid, mut sheet, (f, k, toward_b)) =
+            Sheet::with_edge(&part, &args.edge, "a flange").with_context(ctx)?;
         let angle = args.angle.evaluate(&mut part).with_context(ctx)?;
         let length = args.length.evaluate(&mut part).with_context(ctx)?;
-        add_flange(&mut sheet, &namer, (f, k, toward_b), (angle, length), args)
+        let shape = args.shape(&sheet.rules, angle, length).with_context(ctx)?;
+        add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
+        sheet
+            .replace(&mut part, &solid, &namer.root())
             .with_context(ctx)?;
-        let folded = sheet.folded().with_context(ctx)?;
-        let id = part.solid_id(&solid)?;
-        part.assemble_sheet(&[Body::Solid(id)], &[])
-            .with_context(ctx)?;
-        let name = namer.root();
-        thicken(&mut part, &folded, &name, &|n| n).with_context(ctx)?;
-        part.set_body_data(&name, sheet).with_context(ctx)?;
         Ok(part)
     }
 }
 
-/// Adds the flange `args` describes to `sheet`, bent from edge `k` of flat
-/// `f`'s outline towards its B side if `toward_b`, `angle` degrees and
-/// `flange_length` long — the values its formulas came to (see
-/// [`EdgeFlange`]).
-fn add_flange<S: Scalar>(
+/// What a flange is, worked out from the arguments of the operation that
+/// adds it: how far it turns and at what inner radius, how far its bend is
+/// set back into the sheet (`None`: it starts at the edge), how long its
+/// flat is, how far in from the edge's ends it runs, and what it does at a
+/// corner.
+pub(crate) struct FlangeShape<S: Scalar> {
+    pub angle: S,
+    pub radius: S,
+    pub set_back: Option<S>,
+    pub flat: S,
+    pub offset_start: f64,
+    pub offset_end: f64,
+    pub corner: Corner,
+}
+
+/// Checks that the offsets from the edge's ends are not negative.
+pub(crate) fn check_offsets(offset_start: f64, offset_end: f64) -> GeopResult<()> {
+    for (what, offset) in [("start", offset_start), ("end", offset_end)] {
+        if !(offset.is_finite() && offset >= 0.0) {
+            return Err(GeopError::new(format!(
+                "the offset at the {what} must not be negative, not {offset}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+impl EdgeFlangeArgs {
+    /// The flange these arguments describe, on a body of `rules`, turning
+    /// `angle` degrees and `length` long — the values its formulas came to.
+    fn shape<S: Scalar>(
+        &self,
+        rules: &SheetMetalRules,
+        angle: f64,
+        length: f64,
+    ) -> GeopResult<FlangeShape<S>> {
+        if !(angle > 0.0 && angle < 180.0) {
+            return Err(GeopError::new(format!(
+                "a flange turns by more than 0 and less than 180 degrees, not {angle}"
+            )));
+        }
+        let radius = self.radius.unwrap_or(rules.bend_radius);
+        if !(radius.is_finite() && radius > 0.0) {
+            return Err(GeopError::new(format!(
+                "the bend radius must be positive, not {radius}"
+            )));
+        }
+        check_offsets(self.offset_start, self.offset_end)?;
+        let s = S::from_f64;
+        let t = s(rules.thickness);
+        let r = s(radius);
+        let angle = s(angle).mul(S::PI).div(s(180.0))?;
+        let half = angle.div(S::TWO)?;
+        let half_tan = half.sin().div(half.cos())?;
+        let set_back = match self.position {
+            FlangePosition::MaterialInside => Some(r.add(t).mul(half_tan)),
+            FlangePosition::MaterialOutside => Some(r.mul(half_tan)),
+            FlangePosition::BendOutside => None,
+        };
+        let flat = s(length).sub(match self.reference {
+            LengthReference::OuterSharp => r.add(t).mul(half_tan),
+            LengthReference::InnerSharp => r.mul(half_tan),
+            LengthReference::Tangent => S::ZERO,
+        });
+        if !flat.definitely_greater(S::ZERO) {
+            return Err(GeopError::new(format!(
+                "a flange {length} long leaves nothing flat after its bend ({flat:?})"
+            )));
+        }
+        Ok(FlangeShape {
+            angle,
+            radius: r,
+            set_back,
+            flat,
+            offset_start: self.offset_start,
+            offset_end: self.offset_end,
+            corner: self.corner,
+        })
+    }
+}
+
+/// Adds the flange `shape` describes to `sheet`, bent from edge `k` of flat
+/// `f`'s outline towards its B side if `toward_b` (see [`EdgeFlange`]).
+pub(crate) fn add_flange<S: Scalar>(
     sheet: &mut Sheet<S>,
     namer: &Namer,
-    (f, k, toward_b): (usize, usize, bool),
-    (angle, flange_length): (f64, f64),
-    args: &EdgeFlangeArgs,
+    f: usize,
+    k: usize,
+    toward_b: bool,
+    shape: &FlangeShape<S>,
 ) -> GeopResult<()> {
     let rules = sheet.rules.clone();
     let flat = &sheet.flats[f];
@@ -291,47 +387,16 @@ fn add_flange<S: Scalar>(
     if sheet.is_bent(&name) {
         return Err(GeopError::new(format!("edge {name} is already bent")));
     }
-    if !(angle > 0.0 && angle < 180.0) {
+    if sheet.layout()?.changed.contains(&name) {
         return Err(GeopError::new(format!(
-            "a flange turns by more than 0 and less than 180 degrees, not {angle}"
+            "edge {name} has been cut: a flange is bent along an edge as a flange or base flange built it — flange before cutting"
         )));
     }
-    let radius = args.radius.unwrap_or(rules.bend_radius);
-    if !(radius.is_finite() && radius > 0.0) {
-        return Err(GeopError::new(format!(
-            "the bend radius must be positive, not {radius}"
-        )));
-    }
-    for (what, offset) in [("start", args.offset_start), ("end", args.offset_end)] {
-        if !(offset.is_finite() && offset >= 0.0) {
-            return Err(GeopError::new(format!(
-                "the offset at the {what} must not be negative, not {offset}"
-            )));
-        }
-    }
-    let n = flat.outer.len();
-    let (prev, next) = ((k + n - 1) % n, (k + 1) % n);
     let s = S::from_f64;
     let t = s(rules.thickness);
-    let r = s(radius);
-    let angle = s(angle).mul(S::PI).div(s(180.0))?;
-    let half = angle.div(S::TWO)?;
-    let half_tan = half.sin().div(half.cos())?;
-    let set_back = match args.position {
-        FlangePosition::MaterialInside => Some(r.add(t).mul(half_tan)),
-        FlangePosition::MaterialOutside => Some(r.mul(half_tan)),
-        FlangePosition::BendOutside => None,
-    };
-    let length = s(flange_length).sub(match args.reference {
-        LengthReference::OuterSharp => r.add(t).mul(half_tan),
-        LengthReference::InnerSharp => r.mul(half_tan),
-        LengthReference::Tangent => S::ZERO,
-    });
-    if !length.definitely_greater(S::ZERO) {
-        return Err(GeopError::new(format!(
-            "a flange {flange_length} long leaves nothing flat after its bend ({length:?})"
-        )));
-    }
+    let (angle, r, set_back, length) = (shape.angle, shape.radius, shape.set_back, shape.flat);
+    let n = flat.outer.len();
+    let (prev, next) = ((k + n - 1) % n, (k + 1) % n);
 
     // Along the edge `s`, into the flat `h`.
     let edge_length = b.sub(&a).norm();
@@ -345,23 +410,61 @@ fn add_flange<S: Scalar>(
     let relief = rules.relief_size().map(s);
     let depth = relief.map(|w| d.add(w));
 
-    // Each end: how far in the flange starts, whether it reaches the
-    // corner, and the neighbour there.
-    let gap = |neighbour: usize, end: &str| -> GeopResult<f64> {
+    // Each end: how far in from the corner the flange starts if a bend
+    // meets it there, and how far its flat reaches on past its bend if it
+    // closes the corner.
+    let corner = |neighbour: usize, end: &str, offset: f64| -> GeopResult<(f64, Option<S>)> {
         let key = flat.outer[neighbour].key();
         if !sheet.is_bent(&key) {
-            return Ok(0.0);
+            return Ok((0.0, None));
         }
-        if rules.corner_gap > 0.0 {
-            Ok(rules.corner_gap)
-        } else {
-            Err(GeopError::new(format!(
+        if rules.corner_gap <= 0.0 {
+            return Err(GeopError::new(format!(
                 "edge {name} meets the bent edge {key} at its {end}, and the corner gap is 0: the two bends would touch"
-            )))
+            )));
         }
+        if shape.corner == Corner::Open || offset > 0.0 {
+            return Ok((rules.corner_gap, None));
+        }
+        let refuse = |why: &str| {
+            GeopError::new(format!(
+                "a closed corner at the {end} of edge {name}, where it meets {key}: {why} — close only corners of two flanges at right angles, turning the same way, of one radius, on edges at right angles"
+            ))
+        };
+        let other = sheet
+            .bends
+            .iter()
+            .find(|b| b.parent == f && b.parent_edge == key)
+            .ok_or_else(|| refuse("that edge is where a bend ends, not a flange beside it"))?;
+        let right = S::PI.div(S::TWO)?;
+        if !(other.angle.could_be_equal(right) && angle.could_be_equal(right)) {
+            return Err(refuse("the flanges do not both turn by 90 degrees"));
+        }
+        if other.toward_b != toward_b {
+            return Err(refuse("the flanges turn opposite ways"));
+        }
+        if !other.radius.could_be_equal(r) {
+            return Err(refuse("the bends' radii differ"));
+        }
+        let [p, q] = flat.outer[neighbour]
+            .line()
+            .ok_or_else(|| refuse("that edge is not straight"))??;
+        if !q
+            .sub(&p)
+            .normalize()?
+            .prod_dot(&b.sub(&a).normalize()?)
+            .could_be_equal(S::ZERO)
+        {
+            return Err(refuse("the edges do not meet at a right angle"));
+        }
+        // The other flange's inside lies its radius short of where this
+        // bend starts, less the gap: however each is set back.
+        Ok((rules.corner_gap, Some(other.radius)))
     };
-    let inset_start = args.offset_start + gap(prev, "start")?;
-    let inset_end = args.offset_end + gap(next, "end")?;
+    let (gap_start, close_start) = corner(prev, "start", shape.offset_start)?;
+    let (gap_end, close_end) = corner(next, "end", shape.offset_end)?;
+    let inset_start = shape.offset_start + gap_start;
+    let inset_end = shape.offset_end + gap_end;
     let (s0, s1) = (s(inset_start), edge_length.sub(s(inset_end)));
     if !s1.sub(s0).definitely_greater(S::ZERO) {
         return Err(GeopError::new(format!(
@@ -475,12 +578,24 @@ fn add_flange<S: Scalar>(
     let out = inward.neg().prod_scalar(length);
     let flange = namer.scoped("flange");
     let (c_a, c_b) = (line_start, line_end);
-    let outer = vec![
-        straight(c_b, c_a, flange.scoped("line"))?,
-        straight(c_a, c_a.add(&out), flange.scoped("side0"))?,
-        straight(c_a.add(&out), c_b.add(&out), flange.scoped("end"))?,
-        straight(c_b.add(&out), c_b, flange.scoped("side1"))?,
-    ];
+    // Where a closed corner carries the flat on past the bend, along the
+    // line it starts at.
+    let e_a = close_start.map_or(c_a, |x| c_a.sub(&tau.prod_scalar(x)));
+    let e_b = close_end.map_or(c_b, |x| c_b.add(&tau.prod_scalar(x)));
+    let mut outer = vec![straight(c_b, c_a, flange.scoped("line"))?];
+    if close_start.is_some() {
+        outer.push(straight(c_a, e_a, flange.scoped("corner0"))?);
+    }
+    outer.push(straight(e_a, e_a.add(&out), flange.scoped("side0"))?);
+    outer.push(straight(
+        e_a.add(&out),
+        e_b.add(&out),
+        flange.scoped("end"),
+    )?);
+    outer.push(straight(e_b.add(&out), e_b, flange.scoped("side1"))?);
+    if close_end.is_some() {
+        outer.push(straight(e_b, c_b, flange.scoped("corner1"))?);
+    }
     let place = flat.place.clone();
     let frame = BendFrame::new(&place, [c_a, c_b], angle, r, t, toward_b)?;
     let child = Flat {
