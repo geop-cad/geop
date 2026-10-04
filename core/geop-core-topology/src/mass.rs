@@ -120,12 +120,15 @@ pub struct PrincipalAxes<S: Scalar> {
 /// a reference point near the solid, so that the integrands do not cancel.
 const SOLID_COMPONENTS: usize = 10;
 
-/// What is integrated over a face: `g`, a function of the point `S(u, v)`
-/// and of `S_u × S_v`, of `components` components.
+/// A function of the point `S(u, v)` and of `S_u × S_v`, of several
+/// components.
+type PointAndNormal<'a, S> = dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>> + 'a;
+
+/// What is integrated over a face: `g`, of `components` components.
 #[derive(Clone, Copy)]
 struct FaceIntegrand<'a, S: Scalar> {
     components: usize,
-    g: &'a dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>>,
+    g: &'a PointAndNormal<'a, S>,
     /// The degree of `g` along a direction in which the surface is a
     /// polynomial of degree `p`, as a function of `p` — `None` where it is
     /// no polynomial there (see the module docs).

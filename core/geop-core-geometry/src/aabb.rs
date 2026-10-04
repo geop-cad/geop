@@ -5,6 +5,8 @@
 
 use geop_core_math::{scalars::Scalar, vector::Vector};
 
+use crate::nurb_curve::NurbCurve;
+
 /// Axis-aligned bounding box of `control_points`'s dehomogenized Cartesian
 /// coordinates (`D - 1` axes), padded to 3 with [`Scalar::ENTIRE`] so both
 /// 2-D pcurves (`D = 3`) and 3-D curves/surfaces (`D = 4`) share one result
@@ -54,4 +56,53 @@ pub(crate) fn aabb_could_contain<S: Scalar, const C: usize>(
     point: &Vector<S, C>,
 ) -> bool {
     (0..C).all(|i| aabb[i].could_be_equal(point[i]))
+}
+
+/// True if `curve` could meet the cached box `aabb` in its first `c` axes.
+///
+/// For a straight segment — degree one between two control points, which
+/// traces the segment between them whatever their weights — whether the
+/// segment itself could: far tighter than its own box when it runs
+/// diagonally, and a ray cast across a solid to classify a point is a long
+/// diagonal segment, whose box overlaps nearly every face's. Each axis
+/// confines the segment's parameter to where it lies within the box's
+/// extent on that axis; the segment meets the box only if those ranges
+/// and `[0, 1]` share a point. For any other curve, whether the two boxes
+/// could overlap. `false` is a hard proof of separation either way.
+pub(crate) fn curve_could_meet_aabb<S: Scalar, const D: usize>(
+    curve: &NurbCurve<S, D>,
+    aabb: &[S; 3],
+    c: usize,
+) -> bool {
+    if !aabb_could_overlap(&curve.aabb, aabb, c) {
+        return false;
+    }
+    let [p, q] = curve.control_points[..] else {
+        return true;
+    };
+    if curve.degree != 1 {
+        return true;
+    }
+    let point = |cp: Vector<S, D>, i: usize| cp[i].div(cp[D - 1]);
+    let mut range = S::ZERO.union(S::ONE);
+    for (i, extent) in aabb.iter().enumerate().take(c) {
+        let (Ok(a), Ok(b)) = (point(p, i), point(q, i)) else {
+            return true;
+        };
+        let d = b.sub(a);
+        if d.could_be_equal(S::ZERO) {
+            // Hardly moving along this axis, the segment's parameter is not
+            // confined by it; the boxes overlap on it, checked above.
+            continue;
+        }
+        let (Ok(t0), Ok(t1)) = (extent.lower().sub(a).div(d), extent.upper().sub(a).div(d)) else {
+            continue;
+        };
+        let along = t0.union(t1);
+        if !along.could_be_equal(range) {
+            return false;
+        }
+        range = along.intersect(range);
+    }
+    true
 }
