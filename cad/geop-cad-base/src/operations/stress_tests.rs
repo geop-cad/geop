@@ -6,6 +6,12 @@
 //! it builds has to be a valid solid, and it must not fail otherwise. Each
 //! body is one test, so they run side by side; each lists every case that
 //! went wrong, not only the first.
+//!
+//! The bodies that take seconds run with every `cargo test`. The rest —
+//! mostly those with circular edges, each blended by a revolved tool and a
+//! boolean — take up to a minute each and are `#[ignore]`d: the full set
+//! runs with `cargo test -- --ignored`, before changing a blend, a shell or
+//! the booleans under them.
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::ScalInF64 as S;
@@ -303,6 +309,7 @@ fn stress_block() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_block_drilled() {
     let mut program = block();
     extrude(
@@ -317,6 +324,7 @@ fn stress_block_drilled() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_block_pocketed() {
     let mut program = block();
     extrude(
@@ -333,6 +341,7 @@ fn stress_block_pocketed() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_block_stepped() {
     let mut program = block();
     extrude(
@@ -361,6 +370,7 @@ fn stress_block_corner_cut_off() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_block_with_boss() {
     let mut program = block();
     extrude(
@@ -377,11 +387,13 @@ fn stress_block_with_boss() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_cylinder() {
     stress(cylinder(), 0.1);
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_cylinder_drilled() {
     let mut program = cylinder();
     extrude(
@@ -396,6 +408,7 @@ fn stress_cylinder_drilled() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_cylinder_drilled_off_axis() {
     let mut program = cylinder();
     extrude(
@@ -424,6 +437,7 @@ fn stress_cylinder_with_flat() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_cylinder_pocketed() {
     let mut program = cylinder();
     extrude(
@@ -440,6 +454,7 @@ fn stress_cylinder_pocketed() {
 }
 
 #[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
 fn stress_cylinder_with_boss() {
     let mut program = cylinder();
     extrude(
