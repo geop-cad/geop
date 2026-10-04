@@ -9,7 +9,7 @@ use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_fillet::FilletArgs;
-use geop_ops_plastic::DraftArgs;
+use geop_ops_plastic::{DraftArgs, GrooveArgs, LipArgs};
 use geop_ops_shell::ShellArgs;
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
@@ -184,4 +184,87 @@ fn wall_next_to_a_fillet_is_refused() {
     let message = format!("{error}");
     assert!(message.contains("tangentially"), "{message}");
     assert!(message.contains("fillet(f,"), "{message}");
+}
+
+const RIM: &str = "shell(s,extrude(box,end))";
+
+/// The inner edge of the rim along the wall `c`.
+fn inner_edge(c: &str) -> String {
+    format!("shell(s,extrude(box,outline,{c},end))")
+}
+
+/// A lip all along the inside of the rim, and on a second enclosure the
+/// groove that takes it.
+#[test]
+fn enclosure_lip_and_groove() {
+    let mut program = enclosure();
+    program.push(
+        "l",
+        LipArgs {
+            face: RIM.into(),
+            edges: Vec::new(),
+            width: 0.08,
+            height: 0.1,
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert!(part.solid_id("lip(l)").is_ok());
+
+    let mut program = enclosure();
+    program.push(
+        "g",
+        GrooveArgs {
+            face: RIM.into(),
+            edges: Vec::new(),
+            width: 0.08,
+            height: 0.1,
+            clearance: 0.02,
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert!(part.solid_id("groove(g)").is_ok());
+}
+
+/// A lip along two inner edges of the rim, ending at corners of the rim:
+/// its square ends would lie on the next walls, along their edges, so it is
+/// refused, naming the corner.
+#[test]
+fn lip_ending_at_a_corner_is_refused() {
+    let mut program = enclosure();
+    program.push(
+        "l",
+        LipArgs {
+            face: RIM.into(),
+            edges: vec![inner_edge("c5"), inner_edge("c6")],
+            width: 0.08,
+            height: 0.1,
+        },
+    );
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("a lip ending at a corner is refused");
+    };
+    let message = format!("{error}");
+    assert!(message.contains("a corner of face"), "{message}");
+}
+
+/// Edges that do not form one chain are refused, by name.
+#[test]
+fn lip_along_opposite_edges_is_refused() {
+    let mut program = enclosure();
+    program.push(
+        "l",
+        LipArgs {
+            face: RIM.into(),
+            edges: vec![inner_edge("c4"), inner_edge("c6")],
+            width: 0.08,
+            height: 0.1,
+        },
+    );
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("a lip along two separate edges is refused");
+    };
+    let message = format!("{error}");
+    assert!(message.contains("not one chain"), "{message}");
 }

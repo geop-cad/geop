@@ -21,7 +21,7 @@ use geop_ops_extrude_revolve::{
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
-use geop_ops_plastic::{Draft, DraftArgs};
+use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -107,6 +107,10 @@ pub enum PartOperation {
     /// Tilt planar faces about a neutral plane, so the part comes out of
     /// its mould.
     Draft(DraftArgs),
+    /// Raise a lip along the rim of one half of an enclosure.
+    Lip(LipArgs),
+    /// Cut the groove that takes a lip into the rim of the other half.
+    Groove(GrooveArgs),
 }
 
 /// A program of the editor's operations.

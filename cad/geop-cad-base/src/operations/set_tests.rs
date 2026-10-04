@@ -30,7 +30,9 @@ fn every_operation_is_offered() {
             "shell",
             "add_datum",
             "add_part",
-            "draft"
+            "draft",
+            "lip",
+            "groove"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

@@ -41,24 +41,17 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, Curve2, Curve3, FaceId, Sense, SolidId,
+    Body, Curve3, FaceId, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, Namer, Part};
 use geop_ops_extrude_revolve::common::line3;
 use geop_ops_shell::shell::{extended, offset_vertex, pcurve};
 
-/// Bounds how hard a containment search or a pcurve fit tries: effort, not
-/// what an answer means.
-const MAX_NODES: usize = 20_000;
-
-/// Where a containment search hands over to Newton (see `AGENTS.md`).
-fn min_subdivision_size<S: Scalar>() -> S {
-    S::from_f64(1e-7)
-}
-
-/// Newton steps projecting a point onto a surface.
-const PROJECT_ITERATIONS: usize = 20;
+use crate::common::{
+    MAX_NODES, PROJECT_ITERATIONS, ends, halfway, loops_of, min_subdivision_size, normal_at,
+    oriented, pcurve_ends,
+};
 
 /// The surface a face lies on, as far as a draft cares.
 #[derive(Clone, Debug)]
@@ -215,34 +208,6 @@ struct Drafted<'a, S: Scalar> {
     points: Vec<Vector3<S>>,
     /// Per edge: its new curve, if it changes.
     curves: Vec<Option<Curve3<S>>>,
-}
-
-/// The loops of `face`, outer first.
-fn loops_of<S: Scalar>(face: &FaceSpec<S>) -> Vec<&Vec<CoedgeSpec<S>>> {
-    std::iter::once(&face.outer).chain(&face.holes).collect()
-}
-
-/// The vertices a coedge runs from and to.
-fn ends<S: Scalar>(spec: &BodySpec<S>, on: CoedgeOn) -> (usize, usize) {
-    match on {
-        CoedgeOn::Edge(e, Sense::Forward) => (spec.edges[e].start, spec.edges[e].end),
-        CoedgeOn::Edge(e, Sense::Reversed) => (spec.edges[e].end, spec.edges[e].start),
-        CoedgeOn::Vertex(v) => (v, v),
-    }
-}
-
-/// Where `pcurve` starts and ends.
-fn pcurve_ends<S: Scalar>(pcurve: &Curve2<S>) -> GeopResult<(Vector2<S>, Vector2<S>)> {
-    let (t0, t1) = pcurve.domain();
-    Ok((pcurve.evaluate(t0)?, pcurve.evaluate(t1)?))
-}
-
-/// `curve`, run the way a coedge of `sense` runs it.
-fn oriented<S: Scalar>(curve: &Curve3<S>, sense: Sense) -> Curve3<S> {
-    match sense {
-        Sense::Forward => curve.clone(),
-        Sense::Reversed => curve.reverse(),
-    }
 }
 
 impl<'a, S: Scalar> Drafted<'a, S> {
@@ -562,17 +527,9 @@ impl<'a, S: Scalar> Drafted<'a, S> {
 /// Whether the faces `f` and `g` could meet tangentially along edge `e`:
 /// their normals, halfway along it, could be parallel.
 fn tangent_along<S: Scalar>(spec: &BodySpec<S>, e: usize, f: usize, g: usize) -> GeopResult<bool> {
-    let curve = &spec.edges[e].curve;
-    let (t0, t1) = curve.domain();
-    let point = curve.evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))?;
-    let normal = |face: usize| -> GeopResult<Vector3<S>> {
-        let surface = &spec.faces[face].surface;
-        let (u, v) = surface_could_contain(surface, &point, MAX_NODES, min_subdivision_size())?
-            .ok_or_else(|| GeopError::new(format!("edge {e} is off face {face}")))?;
-        let (u, v) = surface.project(point, u.sharpen(), v.sharpen(), PROJECT_ITERATIONS)?;
-        surface.normal(u, v)
-    };
-    let (n_f, n_g) = (normal(f)?, normal(g)?);
+    let (point, _) = halfway(&spec.edges[e].curve)?;
+    let n_f = normal_at(&spec.faces[f].surface, &point)?;
+    let n_g = normal_at(&spec.faces[g].surface, &point)?;
     Ok(n_f.prod_cross(&n_g).norm_sq().could_be_equal(S::ZERO))
 }
 

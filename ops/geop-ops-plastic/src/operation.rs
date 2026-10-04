@@ -1,6 +1,8 @@
-//! The plastic features as operations of a program: [`Draft`].
+//! The plastic features as operations of a program: [`Draft`], [`Lip`] and
+//! [`Groove`].
 
 use geop_core_geometry::shape::Plane;
+use geop_core_topology::{EdgeId, FaceId};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -13,7 +15,10 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::draft::draft;
+use crate::{
+    draft::draft,
+    lip::{LipSize, groove, lip},
+};
 
 /// Faces by name, as a reference field holds them.
 fn face_refs(names: &[String]) -> Vec<EntityRef> {
@@ -145,6 +150,258 @@ impl Operation for Draft {
         }
         let angle = S::from_f64(args.angle.to_radians());
         draft(&mut part, &namer, &faces, &plane, angle).with_context(ctx)?;
+        Ok(part)
+    }
+}
+
+/// The rim face and its edges, as the fields of a lip or a groove hold
+/// them.
+fn rim_fields<'a, S: Scalar, A: 'a>(
+    f: &mut Form<'a, S, A>,
+    face: &str,
+    edges: &[String],
+    rim: fn(&mut A) -> (&mut String, &mut Vec<String>),
+) {
+    let value = (!face.is_empty())
+        .then(|| EntityRef::Face { name: face.into() })
+        .into_iter()
+        .collect();
+    f.reference(
+        "face",
+        "rim face",
+        value,
+        &[Role::Plane],
+        None,
+        false,
+        move |e, picked| {
+            let (face, edges) = rim(e.args);
+            let name = face_names(&picked).pop().unwrap_or_default();
+            if name != *face {
+                edges.clear();
+            }
+            *face = name;
+        },
+    );
+    f.reference(
+        "edges",
+        "edges",
+        edges
+            .iter()
+            .map(|name| EntityRef::Edge { name: name.clone() })
+            .collect(),
+        &[Role::Edge],
+        None,
+        true,
+        move |e, picked| {
+            *rim(e.args).1 = picked
+                .iter()
+                .filter_map(|p| match p {
+                    EntityRef::Edge { name } => Some(name.clone()),
+                    _ => None,
+                })
+                .collect();
+        },
+    );
+    f.optional("edges");
+}
+
+/// The rim face and edges named, resolved.
+fn resolve_rim<S: Scalar>(
+    part: &Part<S>,
+    face: &str,
+    edges: &[String],
+) -> GeopResult<(FaceId, Vec<EdgeId>)> {
+    if face.is_empty() {
+        return Err(GeopError::new("pick the rim face"));
+    }
+    Ok((
+        part.face_id(face)?,
+        edges
+            .iter()
+            .map(|name| part.edge_id(name))
+            .collect::<GeopResult<_>>()?,
+    ))
+}
+
+/// Fails unless a size typed in is a number.
+fn finite(what: &str, value: f64) -> GeopResult<()> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(GeopError::new(format!("the {what} is not a number")))
+    }
+}
+
+/// Raises a lip `width` wide and `height` high along the edges `edges` of
+/// the planar rim face `face` — all along its hole if none are picked: the
+/// inside of a shelled enclosure's rim — flush with the wall they are on
+/// and joined to the solid (see [`crate::lip::lip`]), for the operation
+/// `L`: the result is named `lip(L)`, the lip's side on the wall along an
+/// edge `E` `lip(L,E)`, its side on the rim `lip(L,E,far)`, its top
+/// `lip(L,end)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Lip;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LipArgs {
+    /// The rim: a planar face.
+    pub face: String,
+    /// Edges of the rim to run along, one chain; none for all of its hole.
+    #[serde(default)]
+    pub edges: Vec<String>,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Operation for Lip {
+    type Args = LipArgs;
+    type Session = ();
+
+    /// No rim yet, a lip 0.05 wide and 0.1 high.
+    fn new_args<S: Scalar>(&self, _: &Part<S>) -> LipArgs {
+        LipArgs {
+            face: String::new(),
+            edges: Vec::new(),
+            width: 0.05,
+            height: 0.1,
+        }
+    }
+
+    /// The rim and its edges, picked, the width and the height.
+    fn form<'a, S: Scalar>(
+        &self,
+        _: Context<'a, S>,
+        args: &LipArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, LipArgs> {
+        let mut f = Form::<S, LipArgs>::new();
+        rim_fields(&mut f, &args.face, &args.edges, |a| {
+            (&mut a.face, &mut a.edges)
+        });
+        f.number(
+            "width",
+            Number::new("width", args.width, Unit::Length).range(0.0, 1.0),
+            |args, w| args.width = w,
+        );
+        f.number(
+            "height",
+            Number::new("height", args.height, Unit::Length).range(0.0, 1.0),
+            |args, h| args.height = h,
+        );
+        f
+    }
+
+    fn apply<S: Scalar>(
+        &self,
+        mut part: Part<S>,
+        operation_id: &str,
+        args: &LipArgs,
+        _library: &dyn Library<S>,
+    ) -> GeopResult<Part<S>> {
+        let ctx = with_context!("lip({operation_id}, {args:?})");
+        let namer = Namer::new("lip", operation_id)?;
+        let (face, edges) = resolve_rim(&part, &args.face, &args.edges).with_context(ctx)?;
+        finite("width", args.width).with_context(ctx)?;
+        finite("height", args.height).with_context(ctx)?;
+        let size = LipSize {
+            width: S::from_f64(args.width),
+            height: S::from_f64(args.height),
+        };
+        lip(&mut part, &namer, operation_id, face, &edges, size).with_context(ctx)?;
+        Ok(part)
+    }
+}
+
+/// Cuts the groove that takes a [`Lip`] `width` wide and `height` high,
+/// `clearance` wider and deeper, along the edges `edges` of the planar rim
+/// face `face` — all along its hole if none are picked — from the solid
+/// (see [`crate::lip::groove`]), for the operation `G`: the result is named
+/// `groove(G)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Groove;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GrooveArgs {
+    /// The rim: a planar face.
+    pub face: String,
+    /// Edges of the rim to run along, one chain; none for all of its hole.
+    #[serde(default)]
+    pub edges: Vec<String>,
+    /// The lip's width.
+    pub width: f64,
+    /// The lip's height.
+    pub height: f64,
+    /// How much wider and deeper the groove is than the lip.
+    pub clearance: f64,
+}
+
+impl Operation for Groove {
+    type Args = GrooveArgs;
+    type Session = ();
+
+    /// No rim yet, for a lip 0.05 wide and 0.1 high, 0.01 clearance.
+    fn new_args<S: Scalar>(&self, _: &Part<S>) -> GrooveArgs {
+        GrooveArgs {
+            face: String::new(),
+            edges: Vec::new(),
+            width: 0.05,
+            height: 0.1,
+            clearance: 0.01,
+        }
+    }
+
+    /// The rim and its edges, picked, the lip's width and height, and the
+    /// clearance.
+    fn form<'a, S: Scalar>(
+        &self,
+        _: Context<'a, S>,
+        args: &GrooveArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, GrooveArgs> {
+        let mut f = Form::<S, GrooveArgs>::new();
+        rim_fields(&mut f, &args.face, &args.edges, |a| {
+            (&mut a.face, &mut a.edges)
+        });
+        f.number(
+            "width",
+            Number::new("lip width", args.width, Unit::Length).range(0.0, 1.0),
+            |args, w| args.width = w,
+        );
+        f.number(
+            "height",
+            Number::new("lip height", args.height, Unit::Length).range(0.0, 1.0),
+            |args, h| args.height = h,
+        );
+        f.number(
+            "clearance",
+            Number::new("clearance", args.clearance, Unit::Length).range(0.0, 0.1),
+            |args, c| args.clearance = c,
+        );
+        f
+    }
+
+    fn apply<S: Scalar>(
+        &self,
+        mut part: Part<S>,
+        operation_id: &str,
+        args: &GrooveArgs,
+        _library: &dyn Library<S>,
+    ) -> GeopResult<Part<S>> {
+        let ctx = with_context!("groove({operation_id}, {args:?})");
+        let namer = Namer::new("groove", operation_id)?;
+        let (face, edges) = resolve_rim(&part, &args.face, &args.edges).with_context(ctx)?;
+        finite("width", args.width).with_context(ctx)?;
+        finite("height", args.height).with_context(ctx)?;
+        finite("clearance", args.clearance).with_context(ctx)?;
+        let size = LipSize {
+            width: S::from_f64(args.width),
+            height: S::from_f64(args.height),
+        };
+        let clearance = S::from_f64(args.clearance);
+        groove(&mut part, &namer, operation_id, face, &edges, size, clearance)
+            .with_context(ctx)?;
         Ok(part)
     }
 }

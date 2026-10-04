@@ -15,7 +15,10 @@ use geop_ops_extrude_revolve::shapes::cube_solid;
 use geop_ops_rasterize::{rasterize, stl::stl_triangles};
 use geop_ops_shell::shell::shell;
 
-use crate::draft::draft;
+use crate::{
+    draft::draft,
+    lip::{LipSize, groove, lip},
+};
 
 type S = ScalInF64;
 
@@ -157,5 +160,63 @@ fn enclosure_outside_drafted() {
     assert!(
         (before - after - taken).abs() < VOLUME_TOLERANCE,
         "{before} - {after} vs {taken}"
+    );
+}
+
+
+/// The enclosure's rim, the face its open top leaves.
+fn rim(part: &Part<S>, solid: SolidId) -> FaceId {
+    face_towards(part, solid, [0., 0., 1.])
+}
+
+/// The area of the ring between the enclosure's 1.6 x 1.6 cavity and the
+/// square `out` further out all round.
+fn ring(out: f64) -> f64 {
+    (1.6 + 2.0 * out).powi(2) - 1.6 * 1.6
+}
+
+/// A lip along the inside of the enclosure's rim, the default: the ring
+/// `width` wide, `height` high, joined on.
+#[test]
+fn enclosure_lip() {
+    let (mut part, solid) = enclosure(0.2);
+    let before = volume(&part, solid);
+    let face = rim(&part, solid);
+    let namer = Namer::new("lip", "l").unwrap();
+    let size = LipSize {
+        width: S::from_f64(0.08),
+        height: S::from_f64(0.1),
+    };
+    lip(&mut part, &namer, "l", face, &[], size).unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("lip(l)").unwrap();
+    let added = volume(&part, solid) - before;
+    let expected = ring(0.08) * 0.1;
+    assert!(
+        (added - expected).abs() < VOLUME_TOLERANCE,
+        "{added} vs {expected}"
+    );
+}
+
+/// The groove taking that lip, with 0.02 clearance: the ring 0.1 wide cut
+/// 0.12 deep.
+#[test]
+fn enclosure_groove() {
+    let (mut part, solid) = enclosure(0.2);
+    let before = volume(&part, solid);
+    let face = rim(&part, solid);
+    let namer = Namer::new("groove", "g").unwrap();
+    let size = LipSize {
+        width: S::from_f64(0.08),
+        height: S::from_f64(0.1),
+    };
+    groove(&mut part, &namer, "g", face, &[], size, S::from_f64(0.02)).unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("groove(g)").unwrap();
+    let taken = before - volume(&part, solid);
+    let expected = ring(0.1) * 0.12;
+    assert!(
+        (taken - expected).abs() < VOLUME_TOLERANCE,
+        "{taken} vs {expected}"
     );
 }
