@@ -1119,7 +1119,7 @@ fn chamfer_crossing<S: Scalar>(
         let (g, t, ..) = at(lo_c, seed)?;
         (g, t)
     };
-    let (g_hi, _, ..) = at(hi_c, t)?;
+    let (g_hi, ..) = at(hi_c, t)?;
     if g_lo.signum() == g_hi.signum() {
         return Err(GeopError::new(format!(
             "cannot find where the chamfer moves from face {face} onto face {onto} across edge {edge}: its point is {g_lo:e} and {g_hi:e} off the edge either side"
