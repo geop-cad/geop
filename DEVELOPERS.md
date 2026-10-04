@@ -47,6 +47,9 @@ ops/geop-ops-extrude-revolve  extrude/revolve, the extrude and revolve
                                operations, and basic shapes for tests
 ops/geop-ops-fillet           fillets and chamfers on straight and circular
                                edges, cut or filled in with a boolean
+ops/geop-ops-shell            shelling: a solid hollowed to walls of one
+                               thickness, open at picked faces, the shell
+                               operation
 ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, drag it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it

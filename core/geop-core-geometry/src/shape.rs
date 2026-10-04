@@ -16,7 +16,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::Vector3,
+    vector::{Vector3, Vector4},
 };
 
 use crate::{
@@ -187,6 +187,49 @@ impl<S: Scalar> Arc<S> {
             .normal
             .prod_cross(&p.sub(&self.circle.center))
             .normalize()
+    }
+
+    /// The arc as a curve, the way the kernel builds every arc: rational
+    /// quadratic pieces of at most a quarter turn each, on `[0, 1]`,
+    /// running from `start` to `end` exactly.
+    ///
+    /// Where the pieces meet is a free choice (see [`Arc::point_at`]): any
+    /// point of the circle serves. Each piece from `P0` to `P2` around the
+    /// center `C`, turning through `phi`, has its middle control point
+    /// where the tangents at its ends meet, `C + (P0 - C + P2 - C) / (1 +
+    /// cos phi)`, weighted `cos(phi / 2) = sqrt((1 + cos phi) / 2)` — both
+    /// read off the ends, so no angle is taken.
+    pub fn to_curve(&self) -> GeopResult<NurbCurve3D<S>> {
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let pieces = ((self.sweep() / quarter).ceil() as usize).max(1);
+        let mut points = vec![self.start];
+        for k in 1..pieces {
+            points.push(self.point_at(k as f64 / pieces as f64)?);
+        }
+        points.push(self.end);
+        let c = &self.circle.center;
+        let r2 = self.circle.radius.mul(self.circle.radius);
+        // The ends of the pieces weigh one: taken as they are, not
+        // multiplied by it, which would only widen them by rounding.
+        let end = |p: &Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
+        let middle_point =
+            |p: &Vector3<S>, w: S| Vector4::from_array([p[0].mul(w), p[1].mul(w), p[2].mul(w), w]);
+        let mut control_points = vec![end(&points[0])];
+        let mut knots = vec![S::ZERO; 3];
+        for k in 0..pieces {
+            let (a, b) = (points[k].sub(c), points[k + 1].sub(c));
+            let one_plus_cos = S::ONE.add(a.prod_dot(&b).div(r2)?);
+            let middle = c.add(&a.add(&b).prod_scalar(S::ONE.div(one_plus_cos)?));
+            let weight = one_plus_cos.div(S::TWO)?.sqrt()?;
+            control_points.push(middle_point(&middle, weight));
+            control_points.push(end(&points[k + 1]));
+            if k + 1 < pieces {
+                let knot = S::from_ratio(k as i64 + 1, pieces as i64)?;
+                knots.extend([knot, knot]);
+            }
+        }
+        knots.extend([S::ONE; 3]);
+        NurbCurve::try_new(2, control_points, knots)
     }
 }
 
@@ -416,7 +459,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     }
 
     /// [`NurbSurface3D::axis_of_revolution`], for rows along `u` or along `v`.
-    fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis<S>>> {
+    pub(crate) fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis<S>>> {
         let (rows, len, degree, knots) = if along_u {
             (self.num_v, self.num_u, self.degree_u, &self.knot_vector_u)
         } else {
@@ -612,6 +655,45 @@ mod tests {
     #[test]
     fn other_conics_are_not_arcs() {
         for_all_scalars!(check_not_circle);
+    }
+
+    fn check_arc_curve<S: Scalar>() {
+        // Around (1, 1, 2), radius 2, turning about -z.
+        let circle = Circle {
+            center: v(1., 1., 2.),
+            normal: v(0., 0., -1.),
+            radius: S::from_f64(2.),
+        };
+        let at = |angle: f64| v(1. + 2. * angle.cos(), 1. - 2. * angle.sin(), 2.);
+        for (from, to) in [(0.3, 1.2), (0.3, 3.0), (-2.0, 3.5), (0.5, 0.5)] {
+            let arc = Arc {
+                circle: circle.clone(),
+                start: at(from),
+                end: at(to),
+            };
+            let curve = arc.to_curve().unwrap();
+            let traced = curve.as_arc().unwrap().expect("an arc");
+            assert!(traced.circle.could_be_equal(&circle), "{traced:?}");
+            assert!(traced.start.could_be_equal(&arc.start));
+            assert!(traced.end.could_be_equal(&arc.end));
+            // It runs the way the arc does, all the way round for a circle:
+            // its pieces turn alike, so it is halfway round halfway along.
+            let sweep = if from == to {
+                std::f64::consts::TAU
+            } else {
+                to - from
+            };
+            let mid = curve.evaluate(S::from_f64(0.5)).unwrap();
+            let expected = at(from + sweep / 2.);
+            let off = (0..3)
+                .map(|k| mid[k].sub(expected[k]).abs().to_f64())
+                .fold(0., f64::max);
+            assert!(off < 1e-7, "{mid:?} vs {expected:?}");
+        }
+    }
+    #[test]
+    fn arcs_become_curves() {
+        for_all_scalars!(check_arc_curve);
     }
 
     /// A quarter of a cylinder of radius 2 around the z axis, `u` around it

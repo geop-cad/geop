@@ -14,6 +14,7 @@ members = [
     "ops/geop-ops-booleans",
     "ops/geop-ops-edit",
     "ops/geop-ops-fillet",
+    "ops/geop-ops-shell",
     "ops/geop-ops-assembly",
     "ops/geop-ops-rasterize",
     "cad/geop-cad-base",
@@ -39,6 +40,7 @@ geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
 geop-ops-booleans = { path = "ops/geop-ops-booleans" }
 geop-ops-edit = { path = "ops/geop-ops-edit" }
 geop-ops-fillet = { path = "ops/geop-ops-fillet" }
+geop-ops-shell = { path = "ops/geop-ops-shell" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
 geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
 serde = { version = "1", features = ["derive"] }

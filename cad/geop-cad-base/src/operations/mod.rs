@@ -4,9 +4,9 @@
 //! Every operation is defined by a crate of its own — placing sketches in
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
-//! chamfers in `geop_ops_fillet`, edits of existing bodies in
-//! `geop_ops_edit`, placed parts in `geop_ops_assembly`. Which of them an
-//! editor offers is the editor's choice, made here.
+//! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs};
@@ -17,6 +17,7 @@ use geop_ops_edit::{
 };
 use geop_ops_extrude_revolve::{Extrude, ExtrudeArgs, Revolve, RevolveArgs};
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,8 @@ mod program_tests;
 mod regression_tests;
 #[cfg(test)]
 mod set_tests;
+#[cfg(test)]
+mod shell_tests;
 #[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]
@@ -75,6 +78,9 @@ pub enum PartOperation {
     Fillet(FilletArgs),
     /// Bevel a solid's straight and circular edges.
     Chamfer(ChamferArgs),
+    /// Hollow a solid out to walls of one thickness, open where faces are
+    /// picked.
+    Shell(ShellArgs),
     /// Add reference geometry — a point, an axis, a plane or a coordinate
     /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]

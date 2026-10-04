@@ -25,6 +25,7 @@ fn every_operation_is_offered() {
             "project_curve",
             "fillet",
             "chamfer",
+            "shell",
             "add_datum",
             "add_part"
         ]

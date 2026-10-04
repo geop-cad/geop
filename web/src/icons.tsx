@@ -223,6 +223,12 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M4 10 L4 4 L10 4" strokeDasharray="1.5 1.5" />
     </>
   ),
+  shell: (
+    <>
+      <path d="M3 4 L3 16 L17 16 L17 4" />
+      <path d="M6 4 L6 13 L14 13 L14 4" />
+    </>
+  ),
   add_datum: (
     <>
       <path d="M2.5 13 L7 8 L17.5 8 L13 13 Z" />
