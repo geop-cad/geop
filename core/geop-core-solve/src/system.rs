@@ -11,7 +11,7 @@ use geop_core_math::{
 
 use crate::{
     Placed,
-    linalg::{eliminate, free_variables, inverse},
+    linalg::{eliminate, free_variables, inverse, null_space},
 };
 
 /// A residual holds once it is within this fraction of the system's size:
@@ -557,6 +557,20 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
     /// ways there are to move: the degrees of freedom left.
     pub fn free_variables(&self) -> (Vec<bool>, usize) {
         free_variables(self.jacobian(), self.len())
+    }
+
+    /// A basis of the directions the free variables can move in, to first
+    /// order, without changing any residual, where the parameters are now:
+    /// each vector over every variable (see [`System::variables`]).
+    pub fn null_space(&self) -> Vec<Vec<S>> {
+        null_space(self.jacobian(), self.len())
+    }
+
+    /// The variables of parameter `param` among every variable, if it is
+    /// free.
+    pub fn variables(&self, param: usize) -> Option<std::ops::Range<usize>> {
+        let offset = self.offsets()[param]?;
+        Some(offset..offset + self.params[param].vars())
     }
 
     /// Every residual over the box `x` — each free scalar parameter's whole

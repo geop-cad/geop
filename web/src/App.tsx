@@ -28,6 +28,7 @@ import {
   type Workspace,
 } from "./files";
 import { ParametersPanel } from "./ParametersPanel";
+import { JointsPanel } from "./JointsPanel";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { Icon } from "./icons";
@@ -423,6 +424,17 @@ function App() {
         enabled={wasmReady}
         onChange={(parameters) => dispatch({ command: "parameters", parameters })}
       />
+      {(program?.joints.length ?? 0) > 0 && (
+        <>
+          <h2>Joints</h2>
+          <JointsPanel
+            joints={program?.joints ?? []}
+            freedom={program?.freedom ?? null}
+            enabled={wasmReady && step == null}
+            onSet={(parameter, value) => dispatch({ command: "joint", parameter, value })}
+          />
+        </>
+      )}
       <h2>Program</h2>
       <Timeline
         steps={timelineSteps}

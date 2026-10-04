@@ -5,7 +5,7 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! existing bodies in `geop_ops_edit`, placed parts and their patterns in `geop_ops_assembly`,
 //! patterns, mirrors and moves of bodies in `geop_ops_pattern`,
 //! wire harness routes in `geop_ops_harness`,
 //! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
@@ -13,7 +13,7 @@
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
-use geop_ops_assembly::{AddPart, AddPartArgs};
+use geop_ops_assembly::{AddPart, AddPartArgs, PartPattern, PartPatternArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
 use geop_ops_datums::{AddDatum, AddDatumArgs};
 use geop_ops_edit::{
@@ -101,6 +101,10 @@ pub enum PartOperation {
     /// Unite, intersect or subtract two solids.
     Boolean(BooleanArgs),
     /// Cut a solid into pieces with a face standing on its own.
+    /// Place copies of a placed part in a row along a line, or round an
+    /// axis.
+    #[operation(label = "Part pattern")]
+    PartPattern(PartPatternArgs),
     Split(SplitArgs),
     /// Delete solids, and faces standing on their own.
     #[operation(label = "Delete body")]

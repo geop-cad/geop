@@ -403,7 +403,7 @@ fn a_mate_added_moves_the_part_of_its_step() {
     for (id, mate) in &mates {
         editor.handle(dialog(
             "add_mate",
-            Value::Choice(format!("{:?}", mate.kind).to_lowercase()),
+            Value::Choice(mate.kind.label().to_lowercase()),
         ));
         let update = editor.handle(dialog(
             &format!("mate:{id}:entities"),
@@ -457,7 +457,13 @@ fn an_example_of_several_files_adds_its_files() {
     assert!(!program.can_undo);
     assert_eq!(
         program.workspace_examples,
-        ["pin_in_plate", "chain", "parametric_plates", "four_bar"]
+        [
+            "pin_in_plate",
+            "chain",
+            "parametric_plates",
+            "four_bar",
+            "arm"
+        ]
     );
     let part = update.scene.unwrap().part;
     let instances: Vec<&str> = part.instances.iter().map(|i| i.name.as_str()).collect();
@@ -555,9 +561,9 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
             flexible,
             mates: BTreeMap::from([(
                 "m1".into(),
-                geop_ops::assembly::Mate {
-                    kind: geop_ops::assembly::MateKind::Distance { value: n(3.0) },
-                    entities: vec![
+                geop_ops::assembly::Mate::constraint(
+                    geop_ops::assembly::Kind::Distance { value: n(3.0) },
+                    vec![
                         EntityRef::Face {
                             name: "hinge/pin/extrude(pin,end)".into(),
                         },
@@ -568,7 +574,7 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
                             ),
                         ),
                     ],
-                },
+                ),
             )]),
             ..Default::default()
         },
@@ -883,7 +889,7 @@ fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
                 local: v([2.5, 0.0, 0.2]),
                 target: v([to[0], to[1] / 2.0, 0.2 + to[1] / 2.0]),
             };
-            let (moved, report) = part.solve_mates(None, &[drag]).unwrap();
+            let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
             program.state.extend(moved);
             let check = program.build(&library).unwrap().check_mates().unwrap();
             assert!(
@@ -996,6 +1002,7 @@ fn linkage_examples_are_stacked_and_hold() {
             "chain",
             vec![("link1", 0.0), ("link2", 0.2), ("link3", 0.4)],
         ),
+        ("arm", vec![("upper", 0.0), ("fore", 0.2), ("hand", 0.4)]),
         (
             "four_bar",
             vec![
@@ -1035,7 +1042,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
             local: v([1.5, 0.0, 0.1]),
             target: v([1.5 * angle.cos(), 1.5 * angle.sin(), 0.3]),
         };
-        let (moved, report) = part.solve_mates(None, &[drag]).unwrap();
+        let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
         assert!(report.converged, "step {step}: {report:?}");
         program.state.extend(moved);
         let tip = pose_of(&program, "crank").apply(&v([1.5, 0.0, 0.0]));
@@ -1044,4 +1051,247 @@ fn the_four_bar_crank_turns_all_the_way_round() {
         let check = program.build(&library).unwrap().check_mates().unwrap();
         assert!(check.converged, "step {step}: {check:?}");
     }
+}
+
+/// The arm's joints, as its program places them: their angles where its
+/// state puts them, their limits, and how free each link is — the upper arm
+/// fixed, the forearm turning on one joint, the hand on two.
+#[test]
+fn the_arm_lists_its_joints_and_how_free_its_links_are() {
+    let (files, program) = workspace_example("arm");
+    let part = program
+        .build(&Workspace::<S>::new(files).scope("arm.geop"))
+        .unwrap();
+    let joints = part.joints().unwrap();
+    let values: Vec<_> = joints
+        .iter()
+        .map(|j| (j.name.as_str(), j.kind, j.values[0].value, j.values[0].max))
+        .collect();
+    assert_eq!(
+        values,
+        [
+            ("add_part(fore,m1)", "Revolute", 30.0, Some(150.0)),
+            ("add_part(hand,m1)", "Revolute", -45.0, Some(120.0)),
+        ]
+    );
+    let freedom = part.mate_freedom().unwrap();
+    assert_eq!(
+        freedom.parts.into_iter().collect::<Vec<_>>(),
+        [
+            ("fore".to_string(), 1),
+            ("hand".to_string(), 2),
+            ("upper".to_string(), 0)
+        ]
+    );
+    assert_eq!(freedom.total, 2);
+    assert!(freedom.conflicting.is_empty());
+}
+
+/// Dragged round past its limit, the forearm turns about its joint and
+/// stops at the limit: the joint's angle is the limit exactly, and the
+/// report says so. The hand, free on its own joint, stops at that one's.
+#[test]
+fn the_arm_is_dragged_up_to_its_limit() {
+    let (files, mut program) = workspace_example("arm");
+    let workspace = Workspace::<S>::new(files);
+    let library = workspace.scope("arm.geop");
+    let part = program.build(&library).unwrap();
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+    let a = 170.0_f64.to_radians();
+    let drag = geop_ops::assembly::Drag {
+        parameter: "fore.pose".into(),
+        local: v([1.5, 0.0, 0.2]),
+        target: v([3.0 + 1.5 * a.cos(), 1.5 * a.sin(), 0.4]),
+    };
+    let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
+    assert!(report.converged, "{report:?}");
+    // The hand keeps as much of its turn in the world as its own joint
+    // allows: turned the other way by as much as the forearm turned, it
+    // would be past its limit too.
+    assert_eq!(
+        report.at_limit,
+        ["add_part(fore,m1).angle", "add_part(hand,m1).angle"]
+    );
+    assert_eq!(
+        moved["add_part(hand,m1).angle"],
+        ParamValue::Number(n(-120.0))
+    );
+    assert_eq!(
+        moved["add_part(fore,m1).angle"],
+        ParamValue::Number(n(150.0))
+    );
+    program.state.extend(moved);
+    let fore = pose_of(&program, "fore");
+    assert!((fore.euler_degrees()[2] - 150.0).abs() < 1e-9, "{fore:?}");
+    assert_close(position(&fore), [3.0, 0.0, 0.2], 1e-9);
+    let check = program.build(&library).unwrap().check_mates().unwrap();
+    assert!(check.converged, "{check:?}");
+}
+
+/// Six pins round the plate's hole: the pin placed at 1 from the hole's
+/// axis, and a pattern of 6, 60° apart, round it. Each copy is a placed part
+/// of its own, named by the pattern, its entities behind its name; moved,
+/// the pin takes its copies with it.
+#[test]
+fn six_pins_are_patterned_round_a_hole() {
+    let workspace = Workspace::<S>::new(parts());
+    let library = workspace.scope("assembly.geop");
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        AddPartArgs {
+            file: "plate.geop".into(),
+            fixed: true,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "pin",
+        AddPartArgs {
+            file: "pin.geop".into(),
+            fixed: true,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "pins",
+        geop_ops_assembly::PartPatternArgs {
+            part: "pin".into(),
+            axis: Some(EntityRef::Face {
+                name: "plate/extrude(hole,hole_sketch,c1)".into(),
+            }),
+            layout: geop_ops_assembly::Layout::Circular { angle: 60.0 },
+            count: 6,
+        },
+    );
+    program.state = BTreeMap::from([
+        (pose_parameter("plate"), at([0.0; 3])),
+        (pose_parameter("pin"), at([2.0, 1.0, 0.0])),
+    ]);
+    let check = |program: &Program, radius: f64| {
+        let part = program.build(&library).unwrap();
+        part.check_names().unwrap();
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(description.instances.len(), 7);
+        for k in 1..6 {
+            let copy = format!("part_pattern(pins,{k})");
+            assert_eq!(description.instances[&copy].file, "pin.geop");
+            let origin = EntityRef::datum(format!("{copy}/origin"));
+            let a = (60.0 * k as f64).to_radians();
+            assert_close(
+                point(&part, &origin),
+                [1.0 + radius * a.cos(), 1.0 + radius * a.sin(), 0.0],
+                1e-9,
+            );
+        }
+        // A copy's faces are its own entities, pickable by name.
+        let top = EntityRef::Face {
+            name: "part_pattern(pins,3)/extrude(pin,end)".into(),
+        };
+        let plane = Aspects::of(&top, &part).unwrap().plane.unwrap();
+        assert!((plane.origin()[2].to_f64() - 2.0).abs() < 1e-9);
+    };
+    check(&program, 1.0);
+    program
+        .state
+        .insert(pose_parameter("pin"), at([3.0, 1.0, 0.0]));
+    check(&program, 2.0);
+
+    // Refused, saying why: a part no step placed, a pattern of one.
+    let PartOperation::PartPattern(pattern) = &mut program.steps[2].operation else {
+        panic!("the pattern");
+    };
+    pattern.part = "nut".into();
+    let err = program.build(&library).err().unwrap().to_string();
+    assert!(err.contains("no part placed so far"), "{err}");
+    let PartOperation::PartPattern(pattern) = &mut program.steps[2].operation else {
+        panic!("the pattern");
+    };
+    pattern.part = "pin".into();
+    pattern.count = 1;
+    let err = program.build(&library).err().unwrap().to_string();
+    assert!(err.contains("needs 2 or more"), "{err}");
+}
+
+/// Two links on revolute joints at the ends of a fixed one, coupled as a
+/// pair of gears 2:1 turning opposite ways: setting the first to 90° turns
+/// the second to -45°.
+#[test]
+fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
+    use geop_ops::assembly::{CouplingKind, JointKind, Mate};
+    let (files, _) = workspace_example("arm");
+    let workspace = Workspace::<S>::new(files);
+    let library = workspace.scope("gears.geop");
+    let joint = |on_hole: usize, link: &str| {
+        Mate::joint(
+            JointKind::Revolute {
+                min: None,
+                max: None,
+            },
+            vec![
+                examples::link_rim("base", on_hole, "end"),
+                examples::link_rim(link, 0, "start"),
+            ],
+        )
+    };
+    let mut program = Program::new();
+    let placed = |fixed: bool, mates: Vec<(&str, Mate)>| AddPartArgs {
+        file: "link.geop".into(),
+        fixed,
+        mates: mates
+            .into_iter()
+            .map(|(id, m)| (id.to_string(), m))
+            .collect(),
+        ..Default::default()
+    };
+    program.push("base", placed(true, Vec::new()));
+    program.push("driver", placed(false, vec![("m1", joint(0, "driver"))]));
+    let gear = Mate::coupling(
+        CouplingKind::Gear {
+            ratio: n(2.0),
+            reverse: true,
+        },
+        vec!["add_part(driver,m1)".into(), "add_part(driven,m1)".into()],
+    );
+    program.push(
+        "driven",
+        placed(false, vec![("m1", joint(1, "driven")), ("m2", gear)]),
+    );
+    program.state = BTreeMap::from([
+        (pose_parameter("base"), at([0.0; 3])),
+        (pose_parameter("driver"), at([0.0, 0.0, 0.2])),
+        (pose_parameter("driven"), at([3.0, 0.0, 0.2])),
+    ]);
+    // The mate is written flat, by the coupling's own type.
+    let json = program.to_json().unwrap();
+    let compact: String = json.split_whitespace().collect();
+    assert!(
+        compact.contains(r#""type":"gear","ratio":2.0,"reverse":true"#),
+        "{json}"
+    );
+    assert_eq!(Program::from_json(&json).unwrap().steps, program.steps);
+
+    let driver = "add_part(driver,m1).angle";
+    program
+        .state
+        .insert(driver.into(), ParamValue::Number(n(90.0)));
+    let part = program.build(&library).unwrap();
+    let (moved, report) = part.solve_joints(&[driver.to_string()]).unwrap();
+    assert!(report.converged, "{report:?}");
+    assert_eq!(moved[driver], ParamValue::Number(n(90.0)));
+    let ParamValue::Number(driven) = moved["add_part(driven,m1).angle"] else {
+        panic!("the driven joint's angle");
+    };
+    assert!((driven.to_f64() + 45.0).abs() < 1e-9, "{driven:?}");
+    program.state.extend(moved);
+    let turned = pose_of(&program, "driven").euler_degrees()[2];
+    assert!((turned + 45.0).abs() < 1e-9, "{turned}");
+    assert!(
+        program
+            .build(&library)
+            .unwrap()
+            .check_mates()
+            .unwrap()
+            .converged
+    );
 }

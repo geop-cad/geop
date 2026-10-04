@@ -21,8 +21,8 @@ use std::collections::BTreeMap;
 use geop_core_math::vector::Vector3;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
-    Context, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
-    assembly::Drag,
+    Context, Design, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
+    assembly::{Drag, JointInfo, MateFreedom},
     operation::Role,
     parameters::{Parameters, Resolved},
     part::{ParamValue, State},
@@ -121,6 +121,13 @@ pub enum Command<S: Scalar> {
     DragTool {
         on: bool,
     },
+    /// Set the joint coordinate `parameter` — an angle in degrees, or a
+    /// distance — to `value`: the parts move to it, everything else that
+    /// is free giving way (see [`ProgramState::joints`]).
+    Joint {
+        parameter: String,
+        value: f64,
+    },
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -163,6 +170,12 @@ pub struct ProgramState {
     /// The names of the examples of several files
     /// [`Command::LoadWorkspaceExample`] loads.
     pub workspace_examples: Vec<&'static str>,
+    /// The joints of the part shown, with where their coordinates are:
+    /// what [`Command::Joint`] sets.
+    pub joints: Vec<JointInfo>,
+    /// How free each of its placed parts is, and which of its mates
+    /// conflict — if it has placed parts.
+    pub freedom: Option<MateFreedom>,
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.
@@ -552,7 +565,8 @@ impl<S: Scalar> Editor<S> {
                         local: grab.local,
                         target: target.sharpen(),
                     };
-                    if let Ok((moved, report)) = self.runner.part().solve_mates(None, &[drag]) {
+                    if let Ok((moved, report)) = self.runner.part().solve_mates(None, &[], &[drag])
+                    {
                         self.program.state.extend(moved);
                         self.dragged = Some(report);
                     }
@@ -695,6 +709,30 @@ impl<S: Scalar> Editor<S> {
             Command::Preview { preview } => {
                 self.preview = preview;
                 Changed::Nothing
+            }
+            Command::Joint { parameter, value } => {
+                idle(self)?;
+                let library = library(&self.workspace, self.path.as_deref());
+                let mut state = self.program.state.clone();
+                state.insert(
+                    parameter.clone(),
+                    ParamValue::Number(Design::from_f64(value)),
+                );
+                let program = Program {
+                    state,
+                    ..self.program.clone()
+                };
+                self.runner.run(&program, None, &library);
+                let part = self.runner.part();
+                if !part.solved_parameters().contains(&parameter) {
+                    return Err(GeopError::new(format!(
+                        "{parameter:?} is no joint coordinate of this program"
+                    )));
+                }
+                let (moved, _) = part.solve_joints(std::slice::from_ref(&parameter))?;
+                self.program.state = program.state;
+                self.program.state.extend(moved);
+                Changed::Program
             }
             Command::Parameters { parameters } => {
                 parameters.validate()?;
@@ -896,7 +934,7 @@ impl<S: Scalar> Editor<S> {
         let complete = self.runner.results().len() == program.steps.len()
             && self.runner.results().iter().all(|r| r.error.is_none());
         let part = self.runner.part();
-        let (drags, own) = match &self.open {
+        let (drags, holds, own) = match &self.open {
             Some(open) => {
                 let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
                     .built(self.runner.built(open.index));
@@ -909,37 +947,43 @@ impl<S: Scalar> Editor<S> {
                     .filter(|name| !declared.contains_key(*name))
                     .cloned()
                     .collect();
-                (open.editor.drags(context), own)
+                (open.editor.drags(context), open.editor.holds(context), own)
             }
-            None => (Vec::new(), Vec::new()),
+            None => (Vec::new(), Vec::new(), Vec::new()),
         };
-        let holds = || part.check_mates().is_ok_and(|report| report.converged);
+        let hold = || part.check_mates().is_ok_and(|report| report.converged);
         let solved = if !drags.is_empty() {
-            part.solve_mates(None, &drags).ok().map(|(moved, _)| moved)
-        } else if holds() {
+            part.solve_mates(None, &holds, &drags)
+                .ok()
+                .map(|(moved, _)| moved)
+        } else if hold() {
             None
+        } else if !holds.is_empty() {
+            part.solve_joints(&holds).ok().map(|(moved, _)| moved)
         } else {
             let own_first = own
                 .first()
-                .and_then(|name| part.solve_mates(Some(name), &[]).ok())
+                .and_then(|name| part.solve_mates(Some(name), &holds, &[]).ok())
                 .filter(|(_, report)| report.converged);
             own_first
-                .or_else(|| part.solve_mates(None, &[]).ok())
+                .or_else(|| part.solve_mates(None, &holds, &[]).ok())
                 .map(|(moved, _)| moved)
         };
         let mut state = program.state.clone();
         state.extend(solved.into_iter().flatten());
         if complete {
-            // Every pose a step declares, and no other: the file says where
-            // every placed part is. The numbers its steps read are its
-            // parameters', defined apart from its state.
+            // Every pose a step declares, and every joint's coordinates, and
+            // no other: the file says where every placed part is. The
+            // numbers its steps read are its parameters', defined apart
+            // from its state.
             let declared: State = part
                 .state()
                 .iter()
                 .filter(|(_, value)| matches!(value, ParamValue::Pose(_)))
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
-            state.retain(|name, _| declared.contains_key(name));
+            let solved = part.solved_parameters();
+            state.retain(|name, _| declared.contains_key(name) || solved.contains(name));
             for (name, value) in declared {
                 state.entry(name).or_insert(value);
             }
@@ -1240,6 +1284,10 @@ impl<S: Scalar> Editor<S> {
             operations: PartOperation::infos(),
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),
+            joints: self.runner.part().joints().unwrap_or_default(),
+            freedom: (self.runner.part().instances().next().is_some())
+                .then(|| self.runner.part().mate_freedom().ok())
+                .flatten(),
         }
     }
 }

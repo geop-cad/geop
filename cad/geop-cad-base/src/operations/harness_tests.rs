@@ -9,7 +9,7 @@ use geop_core_math::{
 };
 use geop_ops::{
     EntityRef,
-    assembly::{Mate, MateKind},
+    assembly::{Kind, Mate},
     part::{ParamValue, State, pose_parameter},
     ui::{StepEditEvent, Value},
 };
@@ -45,10 +45,7 @@ fn assembly() -> Program {
             file: "plate.geop".into(),
             mates: BTreeMap::from([(
                 "m1".into(),
-                Mate {
-                    kind: MateKind::Coincident,
-                    entities: vec![xy("b"), xy("a")],
-                },
+                Mate::constraint(Kind::Coincident, vec![xy("b"), xy("a")]),
             )]),
             ..Default::default()
         },

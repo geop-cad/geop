@@ -71,26 +71,43 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
     Elimination { rows, pivots }
 }
 
+/// A basis of the null space of `rows` (each over `n` variables): the
+/// directions in which every row stays put, to first order. One vector per
+/// variable no pivot determines, which is one there and zero at every other
+/// such variable.
+pub(crate) fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> {
+    let Elimination { rows, pivots } = eliminate(rows, n);
+    let is_pivot: Vec<bool> = (0..n).map(|c| pivots.iter().any(|p| p.0 == c)).collect();
+    (0..n)
+        .filter(|&f| !is_pivot[f])
+        .map(|f| {
+            let mut v = vec![S::ZERO; n];
+            v[f] = S::ONE;
+            for (i, &(pc, _)) in pivots.iter().enumerate() {
+                v[pc] = rows[i][f].neg();
+            }
+            v
+        })
+        .collect()
+}
+
+/// How many of `rows` (each over `n` variables) are independent: those an
+/// elimination finds a pivot that cannot be zero for.
+pub(crate) fn rank<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> usize {
+    eliminate(rows, n).pivots.len()
+}
+
 /// Which of `n` variables can move to first order without changing any
 /// residual (those with a component in the Jacobian's null space that is
 /// definitely not zero), and the null space's dimension. This only
 /// classifies entities for display — the solve itself does not depend on
 /// it.
 pub(crate) fn free_variables<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> (Vec<bool>, usize) {
-    let Elimination { rows, pivots } = eliminate(rows, n);
-    // Null space basis: one vector per non-pivot column `f`, with `v_f = 1`
-    // and `v_{pivots[i].0} = -rows[i][f]`.
-    let mut free = vec![false; n];
-    let is_pivot: Vec<bool> = (0..n).map(|c| pivots.iter().any(|p| p.0 == c)).collect();
-    for f in (0..n).filter(|&c| !is_pivot[c]) {
-        free[f] = true;
-        for (i, &(pc, _)) in pivots.iter().enumerate() {
-            if rows[i][f].definitely_not_equal(S::ZERO) {
-                free[pc] = true;
-            }
-        }
-    }
-    (free, n - pivots.len())
+    let basis = null_space(rows, n);
+    let free = (0..n)
+        .map(|k| basis.iter().any(|v| v[k].definitely_not_equal(S::ZERO)))
+        .collect();
+    (free, basis.len())
 }
 
 /// An approximate inverse of the square matrix `a`, by Gauss-Jordan

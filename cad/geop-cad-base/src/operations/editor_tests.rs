@@ -1098,3 +1098,109 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
     let params = geop_core_topology::validation::ValidationParameters::default();
     geop_core_topology::validation::validate(&params, part.topology()).unwrap();
 }
+
+/// The number a program's state gives `name`.
+fn state_number(editor: &Editor<S>, name: &str) -> f64 {
+    match editor.program().state.get(name) {
+        Some(geop_ops::part::ParamValue::Number(v)) => v.to_f64(),
+        other => panic!("{name} is no number: {other:?}"),
+    }
+}
+
+/// How far the placed part `instance` is turned about `z`, in degrees.
+fn turn_of(editor: &Editor<S>, instance: &str) -> f64 {
+    match editor
+        .program()
+        .state
+        .get(&geop_ops::part::pose_parameter(instance))
+    {
+        Some(geop_ops::part::ParamValue::Pose(pose)) => pose.euler_degrees()[2],
+        other => panic!("{instance} has no pose: {other:?}"),
+    }
+}
+
+/// The arm's forearm turns on a revolute joint limited to ±150°: dragged
+/// round past the limit by a point of it, it turns about the joint's axis
+/// and stops at 150° — the joint's angle, in the program's state, exactly
+/// the limit, and shown in the step's dialog. Set in the dialog, the joint
+/// turns the forearm there; set in the program's panel, the wrist turns the
+/// hand.
+#[test]
+fn a_revolute_joint_is_dragged_up_to_its_limit() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "arm".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let elbow = "add_part(fore,m1).angle";
+    assert_eq!(state_number(&editor, elbow), 30.0);
+    let program = update.program.unwrap();
+    assert_eq!(program.joints.len(), 2, "{:?}", program.joints);
+    let freedom = program.freedom.unwrap();
+    assert_eq!(freedom.parts["upper"], 0);
+    assert_eq!(freedom.parts["fore"], 1);
+    assert_eq!(freedom.parts["hand"], 2);
+
+    let update = editor.handle(Command::Open { id: "fore".into() });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    // Grabbed halfway along, where nothing lies on it, and dragged round
+    // the elbow at (3, 0) to 170°, looking down.
+    let down = |[x, y]: [f64; 2]| pointer([x, y, 10.0], [0.0, 0.0, -1.0]);
+    let round = |degrees: f64| {
+        let a = degrees.to_radians();
+        [3.0 + 1.5 * a.cos(), 1.5 * a.sin()]
+    };
+    let mut done = false;
+    for (k, angle) in [60.0, 100.0, 140.0, 170.0].into_iter().enumerate() {
+        done = k == 3;
+        let update = editor.handle(Command::Event {
+            event: StepEditEvent::Drag {
+                from: down(round(30.0)),
+                to: down(round(angle)),
+                done,
+                shift: false,
+            },
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    assert!(done);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(state_number(&editor, elbow), 150.0);
+    assert!((turn_of(&editor, "fore") - 150.0).abs() < 1e-9);
+    editor.handle(Command::Open { id: "fore".into() });
+    let step = editor.handle(dialog("mate:m1", Value::Press)).step.unwrap();
+    let Some(Control::Number(angle)) = step.presentation.dialog.get("mate:m1:angle") else {
+        panic!("the joint's angle is shown");
+    };
+    assert_eq!(angle.value, 150.0);
+    assert!(step.presentation.dialog.get("mate:m1:max").is_some());
+
+    // Set in the dialog: the forearm turns there.
+    let update = editor.handle(dialog("mate:m1:angle", Value::Number(-60.0)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(state_number(&editor, elbow), -60.0);
+    let fore = turn_of(&editor, "fore");
+    assert!(
+        (fore + 60.0).abs() < 1e-9,
+        "{fore} {:?}",
+        editor.program().state
+    );
+
+    // Set in the program's panel: the hand turns, the forearm stays.
+    let wrist = "add_part(hand,m1).angle";
+    let update = editor.handle(Command::Joint {
+        parameter: wrist.into(),
+        value: 90.0,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(state_number(&editor, wrist), 90.0);
+    assert!((turn_of(&editor, "fore") + 60.0).abs() < 1e-9);
+    assert!((turn_of(&editor, "hand") - 30.0).abs() < 1e-9);
+    let joints = update.program.unwrap().joints;
+    assert_eq!(joints[1].values[0].value, 90.0);
+    assert_eq!(joints[1].values[0].max, Some(120.0));
+}

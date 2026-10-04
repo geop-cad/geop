@@ -191,7 +191,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     // solved for here, not in the file: that is the editor's to write.
     let report = part.check_mates()?;
     if !report.converged {
-        let (moved, _) = part.solve_mates(None, &[])?;
+        let (moved, _) = part.solve_mates(None, &[], &[])?;
         program.state.extend(moved);
         part = program.build(&library)?;
     }

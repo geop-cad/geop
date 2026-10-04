@@ -396,7 +396,33 @@ export type Command =
   /** The program's parameters are now these. */
   | { command: "parameters"; parameters: Parameters }
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
-  | { command: "drag_tool"; on: boolean };
+  | { command: "drag_tool"; on: boolean }
+  /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
+  | { command: "joint"; parameter: string; value: number };
+
+/** A joint's coordinate — see `geop_ops::assembly::JointValue`. */
+export interface JointValue {
+  /** The parameter of the program's state it is: `add_part(fore,m1).angle`. */
+  parameter: string;
+  motion: "angle" | "distance";
+  value: number;
+  min: number | null;
+  max: number | null;
+}
+
+/** A joint of the part shown — see `geop_ops::assembly::JointInfo`. */
+export interface JointInfo {
+  name: string;
+  kind: string;
+  values: JointValue[];
+}
+
+/** How free each placed part is, and which mates conflict. */
+export interface MateFreedom {
+  parts: Record<string, number>;
+  total: number;
+  conflicting: string[];
+}
 
 /** A step of the program, as a list of steps shows it. */
 export interface StepInfo {
@@ -428,6 +454,10 @@ export interface ProgramState {
   examples: string[];
   /** Examples of several files, for [[Command]] `load_workspace_example`. */
   workspace_examples: string[];
+  /** The joints of the part shown, for [[Command]] `joint`. */
+  joints: JointInfo[];
+  /** How free its placed parts are, if it has any. */
+  freedom: MateFreedom | null;
 }
 
 /** What kind of thing a [[StructureItem]] is. */

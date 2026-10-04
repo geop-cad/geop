@@ -66,6 +66,10 @@ pub struct Form<'a, S: Scalar, A = (), T = ()> {
     /// The placed parts the step is dragging, by the parameters their poses
     /// are: the editor solves the program with them pulled.
     pub drags: Vec<Drag<S>>,
+    /// The joint coordinates the step has set, by the parameters they are:
+    /// the editor solves the program with them kept where the state has
+    /// them, the parts moving to them.
+    pub holds: Vec<String>,
     /// A value asked for in place, in the viewport.
     pub prompt: Option<Prompt<S>>,
     setters: Vec<(String, Setter<'a, A, T>)>,
@@ -79,6 +83,7 @@ impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
             focus: None,
             tool: InHand::Nothing,
             drags: Vec::new(),
+            holds: Vec::new(),
             prompt: None,
             setters: Vec::new(),
         }
@@ -107,6 +112,7 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
             focus: self.focus,
             tool: self.tool,
             drags: self.drags,
+            holds: self.holds,
             prompt: self.prompt,
             setters: Vec::new(),
         }

@@ -10,7 +10,7 @@ use geop_core_math::{
 };
 use geop_ops::{
     Component, EntityRef, Operations,
-    assembly::{Drag, MateKind},
+    assembly::{Drag, Kind, MateKind},
     operation::Aspects,
     part::{ParamValue, State, pose_parameter},
     ui::{Control, PartView, StepEditEvent, StepEditor, Tone, Value},
@@ -66,6 +66,7 @@ fn args(fixed: bool, mates: &[(&str, MateKind, [EntityRef; 2])]) -> AddPartArgs 
                 let mate = Mate {
                     kind: *kind,
                     entities: entities.to_vec(),
+                    joints: Vec::new(),
                 };
                 (id.to_string(), mate)
             })
@@ -237,17 +238,21 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
     let mates = args(
         false,
         &[
-            ("m1", MateKind::Concentric, [axis("b"), axis("a")]),
+            (
+                "m1",
+                MateKind::Constraint(Kind::Concentric),
+                [axis("b"), axis("a")],
+            ),
             (
                 "m2",
-                MateKind::Distance { value: n(1.5) },
+                MateKind::Constraint(Kind::Distance { value: n(1.5) }),
                 [base("b"), base("a")],
             ),
         ],
     );
     let part = place(with_a(&library), "b", at([5.0, 4.0, 3.0]), &mates, &library);
     assert!(!part.check_mates().unwrap().converged);
-    let (moved, report) = part.solve_mates(None, &[]).unwrap();
+    let (moved, report) = part.solve_mates(None, &[], &[]).unwrap();
     assert!(report.converged, "{report:?} {moved:?}");
     assert_eq!(moved.keys().collect::<Vec<_>>(), ["b.pose"], "a is fixed");
     let solved = place(
@@ -336,8 +341,16 @@ fn a_drag_pulls_the_point_grabbed() {
     let mates = args(
         false,
         &[
-            ("m1", MateKind::Concentric, [axis("b"), axis("a")]),
-            ("m2", MateKind::Coincident, [base("b"), base("a")]),
+            (
+                "m1",
+                MateKind::Constraint(Kind::Concentric),
+                [axis("b"), axis("a")],
+            ),
+            (
+                "m2",
+                MateKind::Constraint(Kind::Coincident),
+                [base("b"), base("a")],
+            ),
         ],
     );
     let part = place(with_a(&library), "b", Pose::identity(), &mates, &library);
@@ -384,7 +397,7 @@ fn a_drag_pulls_the_point_grabbed() {
     let plain = |p: &Vector3<S>| [0, 1, 2].map(|k| p[k].to_f64());
     assert_close(plain(local), [1.0, 0.0, 0.0], 1e-12);
     assert_close(plain(target), [0.0, 1.0, 0.0], 1e-12);
-    let (moved, report) = part.solve_mates(None, &drags).unwrap();
+    let (moved, report) = part.solve_mates(None, &[], &drags).unwrap();
     assert!(report.converged);
     let corner = apply(&moved_to(&moved, "b"), [1.0, 0.0, 0.0]);
     assert_close(corner, [0.0, 1.0, 0.0], 1e-2);
@@ -450,12 +463,12 @@ fn mates_that_cannot_hold_are_said_so() {
         &[
             (
                 "m1",
-                MateKind::Distance { value: n(1.0) },
+                MateKind::Constraint(Kind::Distance { value: n(1.0) }),
                 [base("b"), base("a")],
             ),
             (
                 "m2",
-                MateKind::Distance { value: n(2.0) },
+                MateKind::Constraint(Kind::Distance { value: n(2.0) }),
                 [base("b"), base("a")],
             ),
         ],

@@ -6,13 +6,17 @@
 //! after every edit (see `geop_cad_base::editor`). A drag is the step's to
 //! ask for, the solving the editor's: while the part is dragged, the form
 //! says what point of it is pulled where ([`Form::drags`]).
+//!
+//! A joint's coordinates are parameters of the program too: set in the
+//! dialog, they are held there while the step is edited ([`Form::holds`]),
+//! and the parts move to them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
 use geop_ops::{
     Context, Design, EntityRef,
-    assembly::{Drag, Mate, MateKind},
+    assembly::{CouplingKind, Drag, JointInfo, JointKind, Kind, Mate, MateKind, Motion},
     operation::Role,
     parameters::{COLOR, ParameterKind, validate_color},
     part::{ParamValue, State, pose_parameter},
@@ -30,50 +34,112 @@ pub const PART: &str = "part";
 /// What an entity of a mate of `kind` can be: what [`Mate::needs`] says.
 fn mate_roles(kind: &MateKind) -> &'static [Role] {
     match kind {
-        MateKind::Coincident | MateKind::Distance { .. } => {
+        MateKind::Constraint(Kind::Coincident | Kind::Distance { .. }) => {
             &[Role::Point, Role::Line, Role::Plane, Role::Round]
         }
-        MateKind::Concentric => &[Role::Round, Role::Line],
-        MateKind::Parallel | MateKind::Perpendicular | MateKind::Angle { .. } => {
+        MateKind::Constraint(Kind::Concentric) => &[Role::Round, Role::Line],
+        MateKind::Constraint(Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. }) => {
             &[Role::Line, Role::Plane, Role::Round]
         }
+        MateKind::Joint(_) => &[
+            Role::Circle,
+            Role::Round,
+            Role::Point,
+            Role::Line,
+            Role::Plane,
+        ],
+        MateKind::Coupling(_) => &[],
     }
 }
 
-/// The kinds of mate, as added: by name, with a value to start from.
-fn kinds() -> [(&'static str, MateKind, &'static str); 6] {
-    [
-        (
+/// The kinds of mate, as added: by name, with a value to start from, what
+/// it does, and the group it is offered in.
+fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
+    let constraint = |name, kind, doc| (name, MateKind::Constraint(kind), doc, "Add");
+    let joint = |name, kind, doc| (name, MateKind::Joint(kind), doc, "Joint");
+    let coupling = |name, kind, doc| (name, MateKind::Coupling(kind), doc, "Couple");
+    vec![
+        constraint(
             "coincident",
-            MateKind::Coincident,
+            Kind::Coincident,
             "Two points, a point and a line or a plane, two lines or two planes touch.",
         ),
-        (
+        constraint(
             "concentric",
-            MateKind::Concentric,
+            Kind::Concentric,
             "Two round edges or faces, or lines, share their axis.",
         ),
-        (
+        constraint(
             "parallel",
-            MateKind::Parallel,
+            Kind::Parallel,
             "Two lines or planes, or a line and a plane, run parallel.",
         ),
-        (
+        constraint(
             "perpendicular",
-            MateKind::Perpendicular,
+            Kind::Perpendicular,
             "Two lines or planes stand square, or a line along a plane's normal.",
         ),
-        (
+        constraint(
             "distance",
-            MateKind::Distance { value: Design::ONE },
+            Kind::Distance { value: Design::ONE },
             "Two points, a point and a line or plane, or parallel lines or planes, keep a distance.",
         ),
-        (
+        constraint(
             "angle",
-            MateKind::Angle {
+            Kind::Angle {
                 value: Design::from_i64(90),
             },
             "Two lines or planes meet at an angle, in degrees.",
+        ),
+        joint(
+            "revolute",
+            JointKind::Revolute {
+                min: None,
+                max: None,
+            },
+            "The second part turns about the first one's axis, and nothing else: pick a circular edge or a datum of each.",
+        ),
+        joint(
+            "slider",
+            JointKind::Slider {
+                min: None,
+                max: None,
+            },
+            "The second part slides along the first one's axis, and nothing else.",
+        ),
+        joint(
+            "cylindrical",
+            JointKind::Cylindrical,
+            "The second part turns about the first one's axis and slides along it.",
+        ),
+        joint(
+            "fastened",
+            JointKind::Fastened,
+            "The two parts are held together where their circular edges or datums meet.",
+        ),
+        coupling(
+            "gear",
+            CouplingKind::Gear {
+                ratio: Design::ONE,
+                reverse: true,
+            },
+            "Two turning joints turn together: the first `ratio` times per turn of the second.",
+        ),
+        coupling(
+            "rack_pinion",
+            CouplingKind::RackPinion {
+                radius: Design::ONE,
+                reverse: false,
+            },
+            "A sliding joint moves as far as a turning joint's pitch circle rolls.",
+        ),
+        coupling(
+            "screw",
+            CouplingKind::Screw {
+                lead: Design::from_ratio(1, 10).expect("ten is not zero"),
+                reverse: false,
+            },
+            "A sliding joint moves its lead per turn of a turning joint — of one cylindrical joint, say.",
         ),
     ]
 }
@@ -90,6 +156,10 @@ pub struct PartSession {
     /// Whether the drag was released: it pulls once more — for the editor
     /// to solve with where it was let go — and is gone at the next event.
     released: bool,
+    /// The joint coordinates set in the dialog, by the parameters they are:
+    /// kept where they were set while the step is edited, until the part is
+    /// dragged.
+    held: BTreeSet<String>,
 }
 
 /// Where the part is placed as the step `id`: the program's parameter, or
@@ -107,8 +177,234 @@ fn pose_of<S: Scalar>(context: Context<'_, S>) -> Pose<Design> {
 /// The value a kind of mate holds, if any — as the dialog shows it.
 fn value_of(kind: &MateKind) -> Option<f64> {
     match *kind {
-        MateKind::Distance { value } | MateKind::Angle { value } => Some(value.to_f64()),
+        MateKind::Constraint(Kind::Distance { value } | Kind::Angle { value })
+        | MateKind::Coupling(
+            CouplingKind::Gear { ratio: value, .. }
+            | CouplingKind::RackPinion { radius: value, .. }
+            | CouplingKind::Screw { lead: value, .. },
+        ) => Some(value.to_f64()),
         _ => None,
+    }
+}
+
+/// Sets the joint coordinate `parameter` to `value` and keeps it there
+/// while the step is edited: the parts move to it (see [`Form::holds`]).
+fn set_joint(state: &mut State, session: &mut PartSession, parameter: &str, value: f64) {
+    state.insert(
+        parameter.to_string(),
+        ParamValue::Number(Design::from_f64(value)),
+    );
+    session.held.insert(parameter.to_string());
+}
+
+/// The value a kind of mate holds is `v` now.
+fn set_value(kind: &mut MateKind, v: f64) {
+    let v = Design::from_f64(v);
+    match kind {
+        MateKind::Constraint(Kind::Distance { value } | Kind::Angle { value }) => *value = v,
+        MateKind::Coupling(CouplingKind::Gear { ratio: value, .. })
+        | MateKind::Coupling(CouplingKind::RackPinion { radius: value, .. })
+        | MateKind::Coupling(CouplingKind::Screw { lead: value, .. }) => *value = v,
+        _ => {}
+    }
+}
+
+/// The name of a coupling's value, as its field reads.
+fn value_name(kind: &CouplingKind<Design>) -> &'static str {
+    match kind {
+        CouplingKind::Gear { .. } => "ratio",
+        CouplingKind::RackPinion { .. } => "pitch radius",
+        CouplingKind::Screw { .. } => "lead",
+    }
+}
+
+/// The fields of the mate `id` selected: the entities to pick for a
+/// constraint or a joint; a joint's coordinates — set, they hold — and its
+/// limits; the joints a coupling ties, and how.
+fn selected<'a, S: Scalar>(
+    f: &mut Form<'a, S, AddPartArgs, PartSession>,
+    id: &str,
+    mate: &Mate,
+    joint: Option<&JointInfo>,
+    joints: &[JointInfo],
+) {
+    if let MateKind::Coupling(kind) = mate.kind {
+        let options: Vec<Choice> = std::iter::once(Choice::new("", "Choose a joint…"))
+            .chain(
+                joints
+                    .iter()
+                    .map(|j| Choice::new(j.name.clone(), format!("{} — {}", j.name, j.kind))),
+            )
+            .collect();
+        let [first, second] = match kind {
+            CouplingKind::Gear { .. } => ["driving joint", "driven joint"],
+            CouplingKind::RackPinion { .. } => ["pinion's joint", "rack's joint"],
+            CouplingKind::Screw { .. } => ["turning joint", "sliding joint"],
+        };
+        for (k, label) in [first, second].into_iter().enumerate() {
+            let mate_id = id.to_string();
+            let value = mate.joints.get(k).cloned().unwrap_or_default();
+            f.select(
+                &format!("mate:{id}:joint{k}"),
+                label,
+                value,
+                options.clone(),
+                true,
+                move |args, joint| {
+                    if let Some(mate) = args.mates.get_mut(&mate_id) {
+                        mate.joints.resize(2, String::new());
+                        mate.joints[k] = joint.to_string();
+                        if mate.joints.iter().all(String::is_empty) {
+                            mate.joints.clear();
+                        }
+                    }
+                },
+            );
+        }
+        let (value, reverse) = match kind {
+            CouplingKind::Gear { ratio, reverse } => (ratio, reverse),
+            CouplingKind::RackPinion { radius, reverse } => (radius, reverse),
+            CouplingKind::Screw { lead, reverse } => (lead, reverse),
+        };
+        let unit = match kind {
+            CouplingKind::Gear { .. } => Unit::Fraction,
+            _ => Unit::Length,
+        };
+        let mate_id = id.to_string();
+        f.number(
+            &format!("mate:{id}:value"),
+            Number::new(value_name(&kind), value.to_f64(), unit),
+            move |args, v| {
+                if let Some(mate) = args.mates.get_mut(&mate_id) {
+                    set_value(&mut mate.kind, v);
+                }
+            },
+        );
+        let mate_id = id.to_string();
+        f.checkbox(
+            &format!("mate:{id}:reverse"),
+            "the other way round",
+            reverse,
+            move |args, r| {
+                if let Some(MateKind::Coupling(
+                    CouplingKind::Gear { reverse, .. }
+                    | CouplingKind::RackPinion { reverse, .. }
+                    | CouplingKind::Screw { reverse, .. },
+                )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
+                {
+                    *reverse = r;
+                }
+            },
+        );
+        f.text(
+            "mate_hint",
+            format!(
+                "Choose {}: the joints of the parts placed so far.",
+                mate.needs()
+            ),
+            Tone::Hint,
+        );
+        return;
+    }
+
+    let mate_id = id.to_string();
+    f.reference(
+        &format!("mate:{id}:entities"),
+        "entities",
+        mate.entities.clone(),
+        mate_roles(&mate.kind),
+        None,
+        true,
+        move |edit, mut entities| {
+            // Two at most: a third pick replaces the oldest.
+            let extra = entities.len().saturating_sub(2);
+            entities.drain(..extra);
+            let complete = entities.len() == 2;
+            if let Some(mate) = edit.args.mates.get_mut(&mate_id) {
+                mate.entities = entities;
+            }
+            if complete {
+                edit.session.selected = None;
+            }
+        },
+    );
+    f.text(
+        "mate_hint",
+        format!(
+            "Pick two entities, each {} — of the placed part, of a part placed before, or of this part itself.",
+            mate.needs()
+        ),
+        Tone::Hint,
+    );
+
+    let MateKind::Joint(kind) = mate.kind else {
+        return;
+    };
+    for motion in kind.motions() {
+        let unit = match motion {
+            Motion::Turn => Unit::Angle,
+            Motion::Slide => Unit::Length,
+        };
+        if let Some(value) = joint.and_then(|j| j.values.iter().find(|v| v.motion == motion.name()))
+        {
+            let key = format!("mate:{id}:{}", motion.name());
+            let parameter = value.parameter.clone();
+            f.on(&key, move |edit, value| {
+                if let Value::Number(v) = value {
+                    set_joint(edit.state, edit.session, &parameter, v);
+                }
+            });
+            f.dialog.push(
+                key,
+                Control::Number(Number::new(motion.name(), value.value, unit)),
+            );
+        }
+        if !matches!(kind, JointKind::Revolute { .. } | JointKind::Slider { .. }) {
+            continue;
+        }
+        let [min, max] = kind.limits(motion);
+        let mate_id = id.to_string();
+        // Limited to either side of where it is now, to start with.
+        let here = joint
+            .and_then(|j| j.values.iter().find(|v| v.motion == motion.name()))
+            .map_or(0.0, |v| v.value);
+        let reach = match motion {
+            Motion::Turn => 90.0,
+            Motion::Slide => 1.0,
+        };
+        f.checkbox(
+            &format!("mate:{id}:limited"),
+            format!("limit the {}", motion.name()),
+            min.is_some() || max.is_some(),
+            move |args, limited| {
+                if let Some(MateKind::Joint(
+                    JointKind::Revolute { min, max } | JointKind::Slider { min, max },
+                )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
+                {
+                    let bound = |v: f64| limited.then(|| Design::from_f64(v));
+                    *min = bound(here - reach);
+                    *max = bound(here + reach);
+                }
+            },
+        );
+        for (k, (bound, label)) in [(min, "min"), (max, "max")].into_iter().enumerate() {
+            let Some(bound) = bound else {
+                continue;
+            };
+            let mate_id = id.to_string();
+            f.number(
+                &format!("mate:{id}:{label}"),
+                Number::new(format!("{label} {}", motion.name()), bound.to_f64(), unit),
+                move |args, v| {
+                    if let Some(MateKind::Joint(
+                        JointKind::Revolute { min, max } | JointKind::Slider { min, max },
+                    )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
+                    {
+                        *[min, max][k] = Some(Design::from_f64(v));
+                    }
+                },
+            );
+        }
     }
 }
 
@@ -296,13 +592,20 @@ pub(crate) fn form<'a, S: Scalar>(
         .and_then(|(part, _)| part.check_mates().ok())
         .map(|report| report.failed)
         .unwrap_or_default();
-    let namer_prefix = format!("add_part({},", context.id);
+    // Every joint of the part as built, its coordinates where they are.
+    let joints = built
+        .and_then(|(part, _)| part.joints().ok())
+        .unwrap_or_default();
+    let namer = |id: &str| format!("add_part({},{id})", context.id);
     let items = args
         .mates
         .iter()
         .map(|(id, mate)| {
             let key = format!("mate:{id}");
             let mate_id = id.clone();
+            let joint = joints.iter().find(|j| j.name == namer(id)).cloned();
+            let first = joint.as_ref().and_then(|j| j.values.first().cloned());
+            let parameter = first.as_ref().map(|v| v.parameter.clone());
             f.on(key.clone(), move |edit, value| {
                 let args = &mut *edit.args;
                 match value {
@@ -317,50 +620,55 @@ pub(crate) fn form<'a, S: Scalar>(
                             edit.session.selected = None;
                         }
                     }
-                    Value::Number(v) => {
-                        if let Some(mate) = args.mates.get_mut(&mate_id) {
-                            match &mut mate.kind {
-                                MateKind::Distance { value } | MateKind::Angle { value } => {
-                                    *value = Design::from_f64(v)
-                                }
-                                _ => {}
-                            }
+                    Value::Number(v) => match (args.mates.get_mut(&mate_id), &parameter) {
+                        (Some(mate), None) => set_value(&mut mate.kind, v),
+                        (Some(_), Some(parameter)) => {
+                            set_joint(edit.state, edit.session, parameter, v)
                         }
-                    }
+                        (None, _) => {}
+                    },
                     _ => {}
                 }
             });
             let mut item = ListItem::new(key, mate.kind.label());
-            let entities: Vec<String> = mate.entities.iter().map(EntityRef::label).collect();
-            let holds = !failed.contains(&format!("{namer_prefix}{id})"));
+            let holds = !failed.contains(&namer(id));
+            let complete = mate.is_complete();
             // Two entities of one part keep where they are to each other
             // whatever moves: such a mate holds nothing together.
             let one_part = mate.pair().and_then(|[a, b]| {
                 let (a, b) = (a.split_instance()?.0, b.split_instance()?.0);
                 (a == b).then_some(a)
             });
-            item.detail = Some(match (mate.pair(), &one_part, holds) {
-                (None, _, _) => {
-                    format!("pick {} — {}", 2 - mate.entities.len().min(2), mate.needs())
+            let what = match mate.kind {
+                MateKind::Coupling(_) => mate.joints.join(" & "),
+                _ => {
+                    let entities: Vec<String> =
+                        mate.entities.iter().map(EntityRef::label).collect();
+                    entities.join(" & ")
                 }
-                (Some(_), Some(part), _) => {
-                    format!(
-                        "{} — both of {part}: holds nothing together",
-                        entities.join(" & ")
-                    )
+            };
+            item.detail = Some(match (complete, &one_part, holds) {
+                (false, _, _) => match mate.kind {
+                    MateKind::Coupling(_) => {
+                        format!("choose {}", mate.needs())
+                    }
+                    _ => format!("pick {} — {}", 2 - mate.entities.len().min(2), mate.needs()),
+                },
+                (true, Some(part), _) => {
+                    format!("{what} — both of {part}: holds nothing together")
                 }
-                (Some(_), None, true) => entities.join(" & "),
-                (Some(_), None, false) => format!("{} — cannot hold", entities.join(" & ")),
+                (true, None, true) => what,
+                (true, None, false) => format!("{what} — cannot hold"),
             });
             let holds = holds && one_part.is_none();
-            item.tone = match (mate.pair(), holds) {
-                (None, _) => Tone::Hint,
-                (Some(_), true) => Tone::Normal,
-                (Some(_), false) => Tone::Error,
+            item.tone = match (complete, holds) {
+                (false, _) => Tone::Hint,
+                (true, true) => Tone::Normal,
+                (true, false) => Tone::Error,
             };
             item.selected = session.selected.as_deref() == Some(id);
             item.removable = true;
-            item.value = value_of(&mate.kind);
+            item.value = first.map(|v| v.value).or_else(|| value_of(&mate.kind));
             item
         })
         .collect();
@@ -369,16 +677,19 @@ pub(crate) fn form<'a, S: Scalar>(
         "add_mate",
         kinds()
             .iter()
-            .map(|(name, kind, doc)| Action::new(*name, kind.label()).title(*doc).group("Add"))
+            .map(|(name, kind, doc, group)| {
+                Action::new(*name, kind.label()).title(*doc).group(*group)
+            })
             .collect(),
         |edit, name| {
-            if let Some((_, kind, _)) = kinds().iter().find(|(n, _, _)| *n == name) {
+            if let Some((_, kind, _, _)) = kinds().iter().find(|(n, ..)| *n == name) {
                 let id = fresh_mate_id(&edit.args.mates);
                 edit.args.mates.insert(
                     id.clone(),
                     Mate {
                         kind: *kind,
                         entities: Vec::new(),
+                        joints: Vec::new(),
                     },
                 );
                 edit.session.selected = Some(id);
@@ -391,36 +702,38 @@ pub(crate) fn form<'a, S: Scalar>(
         .as_ref()
         .and_then(|id| args.mates.get_key_value(id))
     {
-        let mate_id = id.clone();
-        f.reference(
-            &format!("mate:{id}:entities"),
-            "entities",
-            mate.entities.clone(),
-            mate_roles(&mate.kind),
-            None,
-            true,
-            move |edit, mut entities| {
-                // Two at most: a third pick replaces the oldest.
-                let extra = entities.len().saturating_sub(2);
-                entities.drain(..extra);
-                let complete = entities.len() == 2;
-                if let Some(mate) = edit.args.mates.get_mut(&mate_id) {
-                    mate.entities = entities;
-                }
-                if complete {
-                    edit.session.selected = None;
-                }
-            },
-        );
-        f.text(
-            "mate_hint",
-            format!(
-                "Pick two entities, each {} — of the placed part, of a part placed before, or of this part itself.",
-                mate.needs()
-            ),
-            Tone::Hint,
+        selected(
+            &mut f,
+            id,
+            mate,
+            joints.iter().find(|j| j.name == namer(id)),
+            &joints,
         );
     }
+
+    if let Some((part, _)) = built
+        && let Ok(freedom) = part.mate_freedom()
+    {
+        if let Some(dof) = freedom.parts.get(context.id) {
+            let text = match dof {
+                0 => "Held fast: it cannot move.".to_string(),
+                1 => "Free to move in 1 way.".to_string(),
+                n => format!("Free to move in {n} ways."),
+            };
+            f.text("freedom", text, Tone::Hint);
+        }
+        if !freedom.conflicting.is_empty() {
+            f.text(
+                "conflict",
+                format!(
+                    "These mates cannot all hold: {}.",
+                    freedom.conflicting.join(", ")
+                ),
+                Tone::Error,
+            );
+        }
+    }
+    f.holds.extend(session.held.iter().cloned());
 
     // A fixed part is moved by the event itself; nothing is solved for it.
     f.drags.extend(
@@ -486,6 +799,8 @@ pub(crate) fn event<S: Scalar>(
                 let moved = pose.with_position(pose.position().add(&target.sub(&at)).sharpen());
                 state.insert(pose_parameter(context.id), ParamValue::Pose(moved));
             }
+            // A drag moves the joints set in the dialog too.
+            session.held.clear();
             session.drag = Some(Drag {
                 parameter: pose_parameter(context.id),
                 local,

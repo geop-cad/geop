@@ -479,6 +479,14 @@ const ICONS: Record<string, ReactElement> = {
       {dot(8, 6, 1.4)}
     </>
   ),
+  part_pattern: (
+    <>
+      <circle cx="10" cy="10" r="6.5" strokeDasharray="1.5 1.5" strokeWidth="1" />
+      {dot(10, 3.5, 1.6)}
+      {dot(15.6, 13.2, 1.6)}
+      {dot(4.4, 13.2, 1.6)}
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

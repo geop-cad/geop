@@ -14,7 +14,7 @@ use geop_core_math::{
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops::{
     Design, EntityRef, ORIGIN,
-    assembly::{Mate, MateKind},
+    assembly::{JointKind, Kind, Mate, Motion, joint_parameter},
     parameters::{Parameter, ParameterKind, Parameters, Row},
     part::{ParamValue, State, pose_parameter},
 };
@@ -817,10 +817,7 @@ pub fn pin_in_plate_assembly() -> Program {
         },
     );
     let face = |name: &str| EntityRef::Face { name: name.into() };
-    let mate = |kind, a: &str, b: &str| Mate {
-        kind,
-        entities: vec![face(a), face(b)],
-    };
+    let mate = |kind, a: &str, b: &str| Mate::constraint(kind, vec![face(a), face(b)]);
     program.push(
         "pin",
         AddPartArgs {
@@ -831,7 +828,7 @@ pub fn pin_in_plate_assembly() -> Program {
                 (
                     "m1".into(),
                     mate(
-                        MateKind::Concentric,
+                        Kind::Concentric,
                         "pin/extrude(pin,pin_sketch,c1)",
                         "plate/extrude(hole,hole_sketch,c1)",
                     ),
@@ -839,7 +836,7 @@ pub fn pin_in_plate_assembly() -> Program {
                 (
                     "m2".into(),
                     mate(
-                        MateKind::Coincident,
+                        Kind::Coincident,
                         "pin/extrude(pin,start)",
                         "plate/extrude(hole,end)",
                     ),
@@ -913,9 +910,9 @@ pub fn link_holes(instance: &str) -> [EntityRef; 2] {
 /// bottom face on the other's top — so bars linked in a stack never cut
 /// into each other.
 fn on_top(above: &str, below: &str) -> Mate {
-    Mate {
-        kind: MateKind::Coincident,
-        entities: vec![
+    Mate::constraint(
+        Kind::Coincident,
+        vec![
             EntityRef::Face {
                 name: format!("{above}/extrude(link,start)"),
             },
@@ -923,16 +920,16 @@ fn on_top(above: &str, below: &str) -> Mate {
                 name: format!("{below}/extrude(link,end)"),
             },
         ],
-    }
+    )
 }
 
 /// The hole `hole` of the bar placed as `link` on the axis of the hole `pin`
 /// of the one placed as `on`.
 fn pinned(link: &str, hole: usize, on: &str, pin: usize) -> Mate {
-    Mate {
-        kind: MateKind::Concentric,
-        entities: vec![link_holes(on)[pin].clone(), link_holes(link)[hole].clone()],
-    }
+    Mate::constraint(
+        Kind::Concentric,
+        vec![link_holes(on)[pin].clone(), link_holes(link)[hole].clone()],
+    )
 }
 
 /// A part placed from `file`, held by `mates`.
@@ -971,6 +968,82 @@ pub fn chain_assembly() -> Program {
         (pose_parameter("link1"), pose(0.0, 0.0)),
         (pose_parameter("link2"), pose(3.0, 0.2)),
         (pose_parameter("link3"), pose(6.0, 0.4)),
+    ]);
+    program
+}
+
+/// The circular edge of the hole `hole` (0 near, 1 far) of the [`link`]
+/// placed as `instance`, on its top (`end`) or bottom (`start`) face.
+pub fn link_rim(instance: &str, hole: usize, cap: &str) -> EntityRef {
+    EntityRef::Edge {
+        name: format!(
+            "{instance}/extrude(link,link_sketch,{},{cap})",
+            link_sketch(3.0).1[hole]
+        ),
+    }
+}
+
+/// The [`link`] placed as `link` turns on the one placed as `on`: a
+/// revolute joint from the rim of `on`'s far hole on its top to the rim of
+/// `link`'s near hole on its bottom — so it lies on it, pinned there —
+/// turning from `min` to `max` degrees.
+fn hinged(link: &str, on: &str, min: f64, max: f64) -> Mate {
+    Mate::joint(
+        JointKind::Revolute {
+            min: Some(n(min)),
+            max: Some(n(max)),
+        },
+        vec![link_rim(on, 1, "end"), link_rim(link, 0, "start")],
+    )
+}
+
+/// The assembly of `arm`: three links (`link.geop`, [`link`]) — the first
+/// fixed, each next one hinged on the far end of the one before by a
+/// revolute joint (see [`hinged`]), the elbow turning at most 150° either
+/// way, the wrist 120°. Its state sets the joints — 30° and -45° — and puts
+/// the links where those joints have them.
+pub fn arm_assembly() -> Program {
+    let mut program = Program::new();
+    program.push("upper", placed("link.geop", true, Vec::new()));
+    program.push(
+        "fore",
+        placed(
+            "link.geop",
+            false,
+            vec![hinged("fore", "upper", -150.0, 150.0)],
+        ),
+    );
+    program.push(
+        "hand",
+        placed(
+            "link.geop",
+            false,
+            vec![hinged("hand", "fore", -120.0, 120.0)],
+        ),
+    );
+    let (elbow, wrist) = (30.0_f64, -45.0_f64);
+    let turned = |angle: f64| {
+        [
+            3.0 * angle.to_radians().cos(),
+            3.0 * angle.to_radians().sin(),
+        ]
+    };
+    let fore = [3.0, 0.0];
+    let [dx, dy] = turned(elbow);
+    let hand = [fore[0] + dx, fore[1] + dy];
+    let at = |[x, y]: [f64; 2], z, turn| ParamValue::Pose(pose([x, y, z], [0.0, 0.0, turn]));
+    program.state = State::from([
+        (pose_parameter("upper"), at([0.0, 0.0], 0.0, 0.0)),
+        (pose_parameter("fore"), at(fore, 0.2, elbow)),
+        (pose_parameter("hand"), at(hand, 0.4, elbow + wrist)),
+        (
+            joint_parameter("add_part(fore,m1)", Motion::Turn),
+            ParamValue::Number(n(elbow)),
+        ),
+        (
+            joint_parameter("add_part(hand,m1)", Motion::Turn),
+            ParamValue::Number(n(wrist)),
+        ),
     ]);
     program
 }
@@ -1235,6 +1308,10 @@ pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
                 ("rocker.geop", bar(3.0)),
                 ("coupler.geop", bar(4.0)),
             ],
+        ),
+        (
+            "arm",
+            vec![("arm.geop", arm_assembly()), ("link.geop", link())],
         ),
     ]
 }
