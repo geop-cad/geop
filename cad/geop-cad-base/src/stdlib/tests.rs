@@ -9,7 +9,7 @@ use geop_ops::{
     part::ParamValue,
 };
 
-use super::{StandardPart, parts, steps::SIZE};
+use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
 use crate::{Program, operations::regression_tests::check_valid};
 
 /// How far out from the `z` axis, and from where to where along it, the
@@ -179,9 +179,12 @@ families_build! {
     tslot_2020_builds: "std:tslot_2020.geop",
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
+    #[ignore = "slow: twenty booleans, see `a_12_tooth_spur_gear_builds` — run with `cargo test -- --ignored`"]
     spur_gears_build: "std:spur_gear.geop",
     gt2_16t_pulleys_build: "std:gt2_pulley_16t.geop",
+    #[ignore = "slow: like the 16-tooth one, with more grooves — run with `cargo test -- --ignored`"]
     gt2_20t_pulleys_build: "std:gt2_pulley_20t.geop",
+    #[ignore = "slow: like the 16-tooth one, with more grooves — run with `cargo test -- --ignored`"]
     gt2_36t_pulleys_build: "std:gt2_pulley_36t.geop",
     shaft_collars_build: "std:shaft_collar.geop",
     flange_couplings_build: "std:flange_coupling.geop",
@@ -200,10 +203,25 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
         program.state.insert(name.into(), value);
         program
     };
+    // A gear's module and tooth count are tables of their own: every
+    // module, each with another tooth count, from the fewest to the most.
+    let teeth = [12, 17, 25, 33, 42, 60, 80, 120];
+    let gear = part.program.parameters.get(TEETH).is_some();
     match part.program.parameters.get(SIZE).map(|p| &p.kind) {
         Some(ParameterKind::Table { rows, .. }) => rows
             .iter()
-            .map(|r| (r.name.clone(), with(SIZE, ParamValue::Text(r.name.clone()))))
+            .enumerate()
+            .map(|(i, r)| {
+                let mut program = with(SIZE, ParamValue::Text(r.name.clone()));
+                if !gear {
+                    return (r.name.clone(), program);
+                }
+                let z = format!("z{}", teeth[i % teeth.len()]);
+                program
+                    .state
+                    .insert(TEETH.into(), ParamValue::Text(z.clone()));
+                (format!("{} {z}", r.name), program)
+            })
             .collect(),
         _ => [20.0, 333.3, 1000.0]
             .into_iter()
@@ -289,6 +307,20 @@ fn the_bolted_plate_holds_together() {
     }
 }
 
+/// The fewest teeth a gear has build into a valid gear: the fast check of
+/// the family, whose default of 20 teeth takes twenty booleans.
+#[test]
+fn a_12_tooth_spur_gear_builds() {
+    let part = super::part("std:spur_gear.geop").unwrap();
+    let mut program = part.program.clone();
+    program
+        .state
+        .insert("teeth".into(), ParamValue::Text("z12".into()));
+    if let Err(e) = built(part, &program, false) {
+        panic!("a 12-tooth spur gear {e}");
+    }
+}
+
 /// One gap of a 20-tooth gear of module 1 cut from its blank, turned
 /// `angle` degrees round: each is one boolean of building the gear.
 fn one_gap_cut(angle: f64) -> Result<(), String> {
@@ -308,7 +340,150 @@ fn one_gap_cut(angle: f64) -> Result<(), String> {
     check_valid(&built).map_err(|e| format!("is not valid: {e}"))
 }
 
+/// The curves where a gap's flanks cross the gear's sides are traced, and
+/// an involute's curvature changes tenfold along them: fitted as finely as
+/// usual, they came out 7e-4 wide, and the gear was not valid.
 #[test]
-fn a_gear_gap_turned_234_degrees_is_cut() {
+fn a_gear_gap_turned_234_degrees_is_cut_valid() {
     one_gap_cut(234.0).unwrap();
+}
+
+/// A NEMA 17 stepper driving a gear pair: a 12-tooth pinion on its shaft,
+/// meshing with a 15-tooth wheel beside it — module 1, so their centres
+/// are `(12 + 15) / 2 = 13.5` apart, both 10 up from the motor's face. Each
+/// turns on a revolute joint about an axis of the assembly's own, and a
+/// gear coupling of ratio `15 / 12`, reversed, ties the two: the motor
+/// turning the pinion turns the wheel four fifths as far the other way.
+/// With an odd count, the wheel has a gap facing the pinion's tooth on
+/// `+x` unturned, and the coupling keeps them in mesh.
+fn gear_drive() -> Program {
+    use std::collections::BTreeMap;
+
+    use geop_core_math::primitives::{DatumComponent, FrameAxis};
+    use geop_ops::{
+        EntityRef, ORIGIN,
+        assembly::{CouplingKind, JointKind, Mate},
+        part::{State, pose_parameter},
+    };
+    use geop_ops_assembly::AddPartArgs;
+    use geop_ops_datums::{AddDatumArgs, Construction};
+
+    use crate::examples::{n, pose};
+
+    let mut program = Program::new();
+    program.push(
+        "motor",
+        AddPartArgs {
+            file: "std:nema17_stepper.geop".into(),
+            fixed: true,
+            ..Default::default()
+        },
+    );
+    // The axes the gears turn about: the motor's, and one 13.5 along `x`,
+    // through points 10 up.
+    let z_axis = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    for (id, x) in [("pinion", 0.0), ("wheel", 13.5)] {
+        program.push(
+            format!("{id}_centre"),
+            AddDatumArgs {
+                selection: vec![EntityRef::datum(ORIGIN)],
+                construction: Construction::Point {
+                    x: x.into(),
+                    y: 0.0.into(),
+                    z: 10.0.into(),
+                },
+            },
+        );
+        program.push(
+            format!("{id}_shaft"),
+            AddDatumArgs {
+                selection: vec![EntityRef::datum(&format!("{id}_centre")), z_axis.clone()],
+                construction: Construction::Parallel {},
+            },
+        );
+    }
+    let gear = |teeth: &str, bore: f64| {
+        State::from([
+            ("teeth".to_string(), ParamValue::Text(teeth.into())),
+            ("bore".to_string(), ParamValue::Number(n(bore))),
+        ])
+    };
+    let turning = |id: &str| {
+        Mate::joint(
+            JointKind::Revolute {
+                min: None,
+                max: None,
+            },
+            vec![
+                EntityRef::datum(&format!("{id}_shaft")),
+                EntityRef::datum(&format!("{id}/axis")),
+            ],
+        )
+    };
+    program.push(
+        "pinion",
+        AddPartArgs {
+            file: "std:spur_gear.geop".into(),
+            parameters: gear("z12", 5.0),
+            mates: BTreeMap::from([("m1".into(), turning("pinion"))]),
+            ..Default::default()
+        },
+    );
+    let coupling = Mate::coupling(
+        CouplingKind::Gear {
+            ratio: n(15.0 / 12.0),
+            reverse: true,
+        },
+        vec!["add_part(pinion,m1)".into(), "add_part(wheel,m1)".into()],
+    );
+    program.push(
+        "wheel",
+        AddPartArgs {
+            file: "std:spur_gear.geop".into(),
+            parameters: gear("z15", 6.0),
+            mates: BTreeMap::from([("m1".into(), turning("wheel")), ("m2".into(), coupling)]),
+            ..Default::default()
+        },
+    );
+    program.state = State::from([
+        (
+            pose_parameter("motor"),
+            ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+        ),
+        (
+            pose_parameter("pinion"),
+            ParamValue::Pose(pose([0.0, 0.0, 10.0], [0.0; 3])),
+        ),
+        (
+            pose_parameter("wheel"),
+            ParamValue::Pose(pose([13.5, 0.0, 10.0], [0.0; 3])),
+        ),
+    ]);
+    program
+}
+
+/// The gear drive holds together where it is drawn, and turning the
+/// pinion 90° turns the wheel 72° the other way.
+#[test]
+#[ignore = "slow: builds a 12- and a 15-tooth gear — run with `cargo test -- --ignored`"]
+fn a_motor_drives_a_gear_pair_at_its_ratio() {
+    use std::collections::BTreeMap;
+
+    use super::WithStandardParts;
+    use crate::Workspace;
+
+    let workspace = Workspace::<S>::new(WithStandardParts(BTreeMap::<String, String>::new()));
+    let mut program = gear_drive();
+    let driver = "add_part(pinion,m1).angle";
+    program.state.insert(
+        driver.into(),
+        ParamValue::Number(geop_ops::Design::from_f64(90.0)),
+    );
+    let part = program.build(&workspace.scope("gear_drive.geop")).unwrap();
+    let (moved, report) = part.solve_joints(&[driver.to_string()]).unwrap();
+    assert!(report.converged, "{report:?}");
+    let ParamValue::Number(driven) = moved["add_part(wheel,m1).angle"] else {
+        panic!("the wheel's joint has an angle");
+    };
+    assert!((driven.to_f64() + 72.0).abs() < 1e-9, "{driven:?}");
 }
