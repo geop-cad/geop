@@ -369,3 +369,14 @@ fn an_assembly_is_flattened_with_its_placements() {
     // One round z at x = 10, one along y — `z` turned onto `y` — at y = 10.
     assert_bounds(model, [-1.0, -1.0, -1.0], [11.0, 12.0, 2.0]);
 }
+
+/// A face standing on its own is written as a surface model, and read
+/// back as one.
+#[test]
+fn a_sheet_round_trips() {
+    let part = import(&file(".MILLI.,.METRE.", QUARTER));
+    let text = write_step(&part, "sheet").unwrap();
+    assert!(text.contains("SHELL_BASED_SURFACE_MODEL"));
+    let back = round_trip(&part);
+    assert!(back.topology().solids.is_empty());
+}
