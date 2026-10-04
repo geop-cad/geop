@@ -72,6 +72,13 @@ fn chord_length_params<S: Scalar, const C: usize>(points: &[Vector<S, C>]) -> Ve
             Err(_) => return uniform_params(m),
         };
     }
+    // Sharpened from chords as wide as they are long — points a rounding
+    // apart, as a silhouette 4e-13 long gave — the fractions need not even
+    // increase, or stay below 1, and the knots averaged from them leave a
+    // parameter outside the domain.
+    if !t.windows(2).all(|w| w[0].definitely_less(w[1])) {
+        return uniform_params(m);
+    }
     t
 }
 
@@ -692,6 +699,36 @@ mod tests {
     #[test]
     fn interpolate_reproduces_endpoints() {
         for_all_scalars!(check_interpolate_reproduces_endpoints);
+    }
+
+    /// Points a rounding apart, each as wide as the steps between them — a
+    /// silhouette 4e-13 long, from an iso view of `cross_drilled_shaft` —
+    /// still interpolate. Their chord-length fractions, sharpened, did not
+    /// increase, and a knot averaged from them lay outside the domain.
+    fn check_points_a_rounding_apart_interpolate<S: Scalar>() {
+        let i = |lo: f64, hi: f64| S::from_f64(lo).union(S::from_f64(hi));
+        let (x, y) = (
+            i(-0.4242640687119382, -0.4242640687119197),
+            i(-0.42426406871193406, -0.4242640687119227),
+        );
+        let points: Vec<Vector3<S>> = [
+            (1.0000000000003741, 1.0000000000004499),
+            (1.000000000000271, 1.0000000000003466),
+            (1.0000000000001676, 1.0000000000002431),
+            (1.0000000000000644, 1.0000000000001399),
+            (0.9999999999999599, 1.0000000000000369),
+        ]
+        .iter()
+        .map(|&(lo, hi)| Vector3::from_array([x, y, i(lo, hi)]))
+        .collect();
+        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let (t0, t1) = curve.domain();
+        assert!(curve.evaluate(t0).unwrap().could_be_equal(&points[0]));
+        assert!(curve.evaluate(t1).unwrap().could_be_equal(&points[4]));
+    }
+    #[test]
+    fn points_a_rounding_apart_interpolate() {
+        for_all_scalars!(check_points_a_rounding_apart_interpolate);
     }
 
     /// Same parabola-fitting check as `check_interpolate_curve_matches_samples`,
