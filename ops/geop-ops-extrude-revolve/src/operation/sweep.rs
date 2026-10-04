@@ -7,7 +7,11 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::Shape;
-use geop_ops::{Context, Library, Namer, Part, operation::Operation, ui::Form};
+use geop_ops::{
+    Context, Library, Namer, Part,
+    operation::{EntityRef, Operation, Role},
+    ui::{Choice, Form, Number, Unit},
+};
 use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +21,7 @@ use super::{
 };
 use crate::{
     common::embed_curve,
-    path_sweep::{PathChain, sweep_along},
+    path_sweep::{Control, Orientation, PathChain, Rail, sweep_along},
     sweep::SweepLoop,
 };
 
@@ -45,6 +49,14 @@ use crate::{
 /// - `sweep(W,K,P,L,C)` / `sweep(W,K,P,L,J)`: the edge `P` sweeps along `C`,
 ///   and its vertex at `J`;
 /// - `sweep(W,start)` / `sweep(W,end)`: the caps of an open path.
+///
+/// Along an open path the profile can change as it goes (see
+/// [`Control`]): twisted and scaled evenly along the path, or shaped by one
+/// or two guide rails — sketches whose one chain of curves starts on the
+/// profile's plane, at a point of the profile, and runs along beside the
+/// path: that point of the profile follows the rail, the whole profile
+/// turned and scaled with it. And it can keep facing the way it is drawn
+/// rather than turn with the path ([`Orientation::FixedNormal`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Sweep;
 
@@ -54,6 +66,19 @@ pub struct SweepArgs {
     pub profile: String,
     /// The sketch whose curves it is swept along.
     pub path: String,
+    /// Whether the profile turns with the path or keeps facing one way.
+    #[serde(default)]
+    pub orientation: Orientation,
+    /// How far the profile turns about the path from start to end, in
+    /// degrees, counter-clockwise in its sketch.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub twist: f64,
+    /// The profile's size at the end, as a multiple of its size where drawn.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub end_scale: f64,
+    /// Sketches whose curves guide the profile — one or two.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rails: Vec<String>,
     /// Sweep the profile's curves into faces standing on their own, rather
     /// than its area into a solid.
     #[serde(default)]
@@ -62,6 +87,24 @@ pub struct SweepArgs {
     #[serde(default)]
     pub combine: Combine,
 }
+
+fn is_zero(x: &f64) -> bool {
+    *x == 0.0
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+fn is_one(x: &f64) -> bool {
+    *x == 1.0
+}
+
+/// The orientations a sweep offers, by value and label.
+const ORIENTATIONS: [(Orientation, &str, &str); 2] = [
+    (Orientation::FollowPath, "follow_path", "follow path"),
+    (Orientation::FixedNormal, "fixed_normal", "keep normal fixed"),
+];
 
 impl Operation for Sweep {
     type Args = SweepArgs;
@@ -75,13 +118,17 @@ impl Operation for Sweep {
         SweepArgs {
             profile: sketches.pop().unwrap_or_default(),
             path,
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: Vec::new(),
             face: false,
             combine: Combine::new_for(before),
         }
     }
 
-    /// The profile and the path, picked; whether a face; and how to
-    /// combine.
+    /// The profile and the path, picked; the rails, if any; how the profile
+    /// turns, twists and scales; whether a face; and how to combine.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -97,6 +144,61 @@ impl Operation for Sweep {
         sketch_field(&mut f, before, "path", &args.path, |args, sketch| {
             args.path = sketch
         });
+        if before.sketches().next().is_some() {
+            let rails = args
+                .rails
+                .iter()
+                .map(|name| EntityRef::Sketch { name: name.clone() })
+                .collect();
+            f.reference(
+                "rails",
+                "guide rails",
+                rails,
+                &[Role::Sketch],
+                None,
+                true,
+                |edit, picked| {
+                    edit.args.rails = picked
+                        .into_iter()
+                        .filter_map(|entity| match entity {
+                            EntityRef::Sketch { name } => Some(name),
+                            _ => None,
+                        })
+                        .collect();
+                },
+            );
+            f.optional("rails");
+        }
+        f.select(
+            "orientation",
+            "orientation",
+            ORIENTATIONS
+                .iter()
+                .find(|o| o.0 == args.orientation)
+                .map_or("", |o| o.1),
+            ORIENTATIONS
+                .iter()
+                .map(|&(_, value, label)| Choice::new(value, label))
+                .collect(),
+            false,
+            |args, value| {
+                if let Some(&(orientation, ..)) = ORIENTATIONS.iter().find(|o| o.1 == value) {
+                    args.orientation = orientation;
+                }
+            },
+        );
+        if args.rails.is_empty() {
+            f.number(
+                "twist",
+                Number::new("twist", args.twist, Unit::Angle),
+                |args, v| args.twist = v,
+            );
+            f.number(
+                "end_scale",
+                Number::new("end scale", args.end_scale, Unit::Fraction).range(0.0, 4.0),
+                |args, v| args.end_scale = v,
+            );
+        }
         f.checkbox("face", "face", args.face, |args, b| args.face = b);
         if !args.face {
             args.combine.show(&mut f, before, |args| &mut args.combine);
@@ -143,14 +245,33 @@ impl Operation for Sweep {
         let plane = &placed.plane;
         let chain = path_chain(&part, &args.path).with_context(ctx)?;
         let chain = starting_near(chain, &profile_centre(plane, &loops)?)?;
+        let mut rails = Vec::new();
+        for name in &args.rails {
+            if *name == args.profile || *name == args.path {
+                return Err(GeopError::new(format!(
+                    "sweep: the rail {name:?} is the profile or the path: a rail is a sketch of its own"
+                )))
+                .with_context(ctx);
+            }
+            rails.push(Rail {
+                name: name.clone(),
+                chain: path_chain(&part, name).with_context(ctx)?,
+            });
+        }
+        let control = Control {
+            orientation: args.orientation,
+            twist: args.twist.to_radians(),
+            end_scale: args.end_scale,
+            rails,
+        };
 
         if args.face {
-            sweep_along(&mut part, &namer, None, &chain, plane, &loops).with_context(ctx)?;
+            sweep_along(&mut part, &namer, None, &chain, plane, &loops, &control).with_context(ctx)?;
             return Ok(part);
         }
         let name = args.combine.built_name(&namer);
-        let built =
-            sweep_along(&mut part, &namer, Some(&name), &chain, plane, &loops).with_context(ctx)?;
+        let built = sweep_along(&mut part, &namer, Some(&name), &chain, plane, &loops, &control)
+            .with_context(ctx)?;
         let tool = Tool {
             solid: built.solid.expect("swept as a solid"),
             up_to_next: None,
@@ -163,9 +284,9 @@ impl Operation for Sweep {
     }
 }
 
-/// The curves of the sketch `name` of `part` as a path: its one open chain,
-/// or its one loop, in space, named after the sketch's elements as a
-/// profile is (see [`sketch_profile`]).
+/// The curves of the sketch `name` of `part` as a path or a rail: its one
+/// open chain, or its one loop, in space, named after the sketch's elements
+/// as a profile is (see [`sketch_profile`]).
 fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>> {
     let placed = part.sketch(part.sketch_id(name)?)?;
     let sketch = &placed.sketch;
@@ -175,7 +296,7 @@ fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>>
         Shape::Region(region) if region.holes.is_empty() => (region.outer, true),
         Shape::Region(_) => {
             return Err(GeopError::new(format!(
-                "sweep: the path sketch {name:?} has more than one loop: a path is one chain of curves, or one loop"
+                "sweep: the sketch {name:?} has more than one loop: a path or a rail is one chain of curves, or one loop"
             )));
         }
     };

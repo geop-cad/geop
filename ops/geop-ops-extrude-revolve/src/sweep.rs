@@ -79,18 +79,70 @@ impl<S: Scalar> Frame<S> {
 pub enum Span<S: Scalar> {
     /// In a straight line: degree 1.
     Line,
+    /// Along a NURBS of `degree` on the clamped `knots` over `[0, 1]`, whose
+    /// inner control rows are the span's first section placed by each of
+    /// `middle`, weighted by its weight (none: one): along circular arcs —
+    /// a rational quadratic (see [`Span::arc`]) — translated along a curve,
+    /// or along any other path, approximated by sections of the profile
+    /// skinned together (see [`crate::path_sweep`]).
+    Curve {
+        degree: usize,
+        knots: Vec<S>,
+        middle: Vec<(Frame<S>, Option<S>)>,
+    },
+    /// From one section to another of a different shape, along a NURBS of
+    /// `degree` on the clamped `knots` over `[0, 1]`, each inner control row
+    /// the sum of the span's first section placed by the first frame and
+    /// its last section placed by the second, each times its weight: the
+    /// interior of a loft shaped by guide curves (see [`crate::loft`]).
+    Blend {
+        degree: usize,
+        knots: Vec<S>,
+        middle: Vec<[(Frame<S>, S); 2]>,
+    },
+}
+
+impl<S: Scalar> Span<S> {
     /// Along circular arcs: a rational quadratic whose middle control row is
     /// the profile at `middle`, weighted `weight`.
-    Arc { middle: Frame<S>, weight: S },
-    /// Along a B-spline of `degree` on the clamped `knots` over `[0, 1]`,
-    /// whose inner control rows are the profile at each of `middle`: a
-    /// curved path that is neither, approximated by sections of the profile
-    /// skinned together (see [`crate::path_sweep`]).
-    Spline {
-        degree: usize,
-        middle: Vec<Frame<S>>,
-        knots: Vec<S>,
-    },
+    pub fn arc(middle: Frame<S>, weight: S) -> Self {
+        Span::Curve {
+            degree: 2,
+            knots: vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE],
+            middle: vec![(middle, Some(weight))],
+        }
+    }
+}
+
+/// One control row of a span (see [`Path::rows`]).
+enum Row<'a, S: Scalar> {
+    /// The span's first section, placed by a frame, its weight multiplied
+    /// by the weight given, if any.
+    First(&'a Frame<S>, Option<S>),
+    /// The span's last section, placed by a frame.
+    Last(&'a Frame<S>),
+    /// The sum of the first section placed by one frame and the last placed
+    /// by another, each times its weight.
+    Both(&'a [(Frame<S>, S); 2]),
+}
+
+impl<S: Scalar> Row<'_, S> {
+    /// The row's control point for the homogeneous profile points `a` in
+    /// the first section and `b` in the last.
+    fn point(&self, a: &Vector3<S>, b: &Vector3<S>) -> Vector4<S> {
+        let place =
+            |p: &Vector3<S>, frame: &Frame<S>| embed_point(p, &frame.origin, &frame.e1, &frame.e2);
+        match self {
+            Row::First(frame, weight) => weighted(place(a, frame), *weight),
+            Row::Last(frame) => place(b, frame),
+            Row::Both([(fa, wa), (fb, wb)]) => {
+                let (pa, pb) = (place(a, fa), place(b, fb));
+                Vector4::from_array(std::array::from_fn(|k| {
+                    pa[k].mul(*wa).add(pb[k].mul(*wb))
+                }))
+            }
+        }
+    }
 }
 
 /// What a profile is swept along: its stations, and the spans between
@@ -122,56 +174,42 @@ impl<S: Scalar> Path<S> {
         }
     }
 
-    /// The control rows of span `j`: each a station or middle frame, and its
-    /// weight — none for a station's, whose weight is one: multiplying by
-    /// it would only widen every enclosure by rounding.
-    fn rows(&self, j: usize) -> Vec<(&Frame<S>, Option<S>)> {
+    /// The control rows of span `j`: its first station's, its inner rows,
+    /// its last station's. A station's row has no weight: multiplying by
+    /// one would only widen every enclosure by rounding.
+    fn rows(&self, j: usize) -> Vec<Row<'_, S>> {
         let (a, b) = (&self.stations[j], &self.stations[self.station(j + 1)]);
-        match &self.spans[j] {
-            Span::Line => vec![(a, None), (b, None)],
-            Span::Arc { middle, weight } => vec![(a, None), (middle, Some(*weight)), (b, None)],
-            Span::Spline { middle, .. } => std::iter::once((a, None))
-                .chain(middle.iter().map(|m| (m, None)))
-                .chain(std::iter::once((b, None)))
-                .collect(),
-        }
+        let middle: Vec<Row<'_, S>> = match &self.spans[j] {
+            Span::Line => Vec::new(),
+            Span::Curve { middle, .. } => middle.iter().map(|(m, w)| Row::First(m, *w)).collect(),
+            Span::Blend { middle, .. } => middle.iter().map(Row::Both).collect(),
+        };
+        std::iter::once(Row::First(a, None))
+            .chain(middle)
+            .chain(std::iter::once(Row::Last(b)))
+            .collect()
     }
 
     fn degree(&self, j: usize) -> usize {
         match &self.spans[j] {
-            Span::Spline { degree, .. } => *degree,
-            _ => self.rows(j).len() - 1,
+            Span::Line => 1,
+            Span::Curve { degree, .. } | Span::Blend { degree, .. } => *degree,
         }
     }
 
     fn knots(&self, j: usize) -> Vec<S> {
-        if let Span::Spline { knots, .. } = &self.spans[j] {
-            return knots.clone();
+        match &self.spans[j] {
+            Span::Line => vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            Span::Curve { knots, .. } | Span::Blend { knots, .. } => knots.clone(),
         }
-        let degree = self.rows(j).len() - 1;
-        let mut knots = vec![S::ZERO; degree + 1];
-        knots.extend(vec![S::ONE; degree + 1]);
-        knots
     }
 
     /// The path along span `j` of a profile point: `a` in the span's first
-    /// station's section — which its inner rows carry on — and `b` in its
-    /// last one's (see [`skin`]).
+    /// station's section and `b` in its last one's (see [`skin`]).
     fn lateral(&self, j: usize, a: &Vector2<S>, b: &Vector2<S>) -> GeopResult<NurbCurve3D<S>> {
-        let rows = self.rows(j);
-        let last = rows.len() - 1;
-        let control_points = rows
-            .iter()
-            .enumerate()
-            .map(|(r, (frame, weight))| {
-                let p = if r == last { b } else { a };
-                let homogeneous = Vector3::from_array([p[0], p[1], S::ONE]);
-                weighted(
-                    embed_point(&homogeneous, &frame.origin, &frame.e1, &frame.e2),
-                    *weight,
-                )
-            })
-            .collect();
+        let homogeneous = |p: &Vector2<S>| Vector3::from_array([p[0], p[1], S::ONE]);
+        let (a, b) = (homogeneous(a), homogeneous(b));
+        let control_points = self.rows(j).iter().map(|row| row.point(&a, &b)).collect();
         NurbCurve::try_new(self.degree(j), control_points, self.knots(j))
     }
 
@@ -184,19 +222,14 @@ impl<S: Scalar> Path<S> {
         a: &NurbCurve2D<S>,
         b: &NurbCurve2D<S>,
     ) -> GeopResult<NurbSurface3D<S>> {
-        let rows = self.rows(j);
-        let last = rows.len() - 1;
-        let control_points = rows
+        let control_points = self
+            .rows(j)
             .iter()
-            .enumerate()
-            .flat_map(|(r, (frame, weight))| {
-                let curve = if r == last { b } else { a };
-                curve.control_points.iter().map(move |cp| {
-                    weighted(
-                        embed_point(cp, &frame.origin, &frame.e1, &frame.e2),
-                        *weight,
-                    )
-                })
+            .flat_map(|row| {
+                a.control_points
+                    .iter()
+                    .zip(&b.control_points)
+                    .map(move |(pa, pb)| row.point(pa, pb))
             })
             .collect();
         NurbSurface::try_new(

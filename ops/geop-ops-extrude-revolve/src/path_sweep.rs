@@ -7,12 +7,12 @@
 //! Every joint of the path is a station; every curve of it a span:
 //!
 //! - a **line** moves the profile straight on — a [`Span::Line`], exact;
-//! - a **circular arc** turns it about the arc's axis — a [`Span::Arc`],
+//! - a **circular arc** turns it about the arc's axis — a [`Span::arc`],
 //!   exact: the wall is a piece of a torus, as a revolve sweeps it;
 //! - **any other curve** — a spline — has no swept surface that is a
 //!   NURBS, so it is approximated: sections of the profile at samples
 //!   along the curve, joined by cubic Hermite interpolation of the frames
-//!   carrying them — a [`Span::Spline`] skinning those sections.
+//!   carrying them — a [`Span::Curve`] skinning those sections.
 //!
 //! At a joint where the path is tangent-continuous the profile carries on.
 //! Where two lines meet at an angle, the profile at the joint is mitred —
@@ -38,6 +38,7 @@ use geop_core_math::{
 };
 use geop_core_topology::build::BuiltBody;
 use geop_ops::{Namer, Part};
+use serde::{Deserialize, Serialize};
 
 use crate::sweep::{Frame, Path, Span, SweepLoop, sweep};
 
@@ -87,6 +88,71 @@ impl<S: Scalar> PathChain<S> {
             joints.push(end_of(self.curves.last().expect("a chain has curves"))?);
         }
         Ok(joints)
+    }
+}
+
+/// Which way the profile faces as it travels along the path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Orientation {
+    /// Square to the path as it was where it is drawn: carried along by a
+    /// rotation minimizing frame, mitred where two lines meet.
+    #[default]
+    FollowPath,
+    /// Facing the way it is drawn all along: moved along the path, never
+    /// turned — the path has to keep running through its plane.
+    FixedNormal,
+}
+
+/// A guide rail: an open chain of curves starting on the profile's plane,
+/// which the profile's point there follows (see [`Control::rails`]), and
+/// what it is called in errors.
+#[derive(Clone, Debug)]
+pub struct Rail<S: Scalar> {
+    pub name: String,
+    pub chain: PathChain<S>,
+}
+
+/// How the profile changes as it travels, besides being carried along the
+/// path (see [`along_chain`]). Every section of the sweep is the profile
+/// mapped about the path's start point in the profile's plane — its centre
+/// — by a turn and a scale:
+///
+/// - **twist** and **scale** grow evenly with the length travelled, from
+///   none to `twist` (radians, counter-clockwise in the profile's plane as
+///   drawn) and from one to `end_scale`;
+/// - **rails**, one or two, decide them instead: where each rail crosses a
+///   section is where the profile's point it starts at goes. One rail turns
+///   and scales the profile uniformly about the centre; two map it linearly,
+///   which scales it differently along different directions. That is the
+///   sweep following the path and its first guide: with
+///   [`Orientation::FollowPath`] the section planes are square to the path,
+///   and the rails turn the profile within them.
+#[derive(Clone, Debug)]
+pub struct Control<S: Scalar> {
+    pub orientation: Orientation,
+    pub twist: f64,
+    pub end_scale: f64,
+    pub rails: Vec<Rail<S>>,
+}
+
+impl<S: Scalar> Default for Control<S> {
+    /// Carried along the path, unchanged.
+    fn default() -> Self {
+        Self {
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: Vec::new(),
+        }
+    }
+}
+
+impl<S: Scalar> Control<S> {
+    /// Whether the profile only travels, neither twisted, scaled nor
+    /// following rails — which needs no sampling (see the module docs).
+    pub fn is_plain(&self) -> bool {
+        self.twist == 0.0 && self.end_scale == 1.0 && self.rails.is_empty()
     }
 }
 
@@ -256,13 +322,15 @@ fn is_smooth<S: Scalar>(arriving: &Vector3<S>, leaving: &Vector3<S>) -> GeopResu
 }
 
 /// The path along `chain` for a profile drawn in `plane`'s `(u, v)` (see
-/// the module docs): the profile at the first station where it is drawn,
-/// carried along from there. Its stations are named after the chain's
-/// joints, its spans after its curves.
+/// the module docs), changing as `control` says: the profile at the first
+/// station where it is drawn, carried along from there. Its stations are
+/// named after the chain's joints, its spans after its curves.
 pub fn along_chain<S: Scalar>(
     chain: &PathChain<S>,
     plane: &CoordinateSystem<S>,
+    control: &Control<S>,
 ) -> GeopResult<Path<S>> {
+    let follow = control.orientation == Orientation::FollowPath;
     let n = chain.curves.len();
     let closed = chain.is_closed();
     if n == 0 || chain.curve_names.len() != n || chain.joint_names.len() != n + usize::from(!closed)
@@ -300,7 +368,9 @@ pub fn along_chain<S: Scalar>(
     let mut corner = vec![false; n];
     for k in 0..n {
         let Some(b) = before(k) else { continue };
-        if !is_smooth(&arriving[b], &leaving[k])? {
+        // A profile that never turns needs no mitre: it meets itself at
+        // any corner.
+        if !is_smooth(&arriving[b], &leaving[k])? && follow {
             if !(matches!(kinds[b], Kind::Line) && matches!(kinds[k], Kind::Line)) {
                 return Err(GeopError::new(format!(
                     "path sweep: the path turns a corner at {}, where only two lines can meet at an angle: make it tangent there",
@@ -322,6 +392,19 @@ pub fn along_chain<S: Scalar>(
             "path sweep: the path could run along the profile's plane where it starts",
         ));
     };
+    let drawn = Frame {
+        origin: *plane.origin(),
+        e1: *plane.u(),
+        e2: *plane.v(),
+    };
+    if !follow {
+        let path = translated(chain, &drawn, along_normal)?;
+        if control.is_plain() {
+            return Ok(path);
+        }
+        let starts = path.stations[..n].to_vec();
+        return controlled(chain, &kinds, plane, &path, &starts, &corner, control);
+    }
 
     // `rigid` is the profile carried along so far, square to the path as
     // it was where it was drawn; the stations are it, or mitred: projected
@@ -331,13 +414,11 @@ pub fn along_chain<S: Scalar>(
         let bisector = arriving[b].normalize()?.add(&leaving[k].normalize()?);
         projected(frame, direction, &start_of(&chain.curves[k])?, &bisector)
     };
-    let mut rigid = Frame {
-        origin: *plane.origin(),
-        e1: *plane.u(),
-        e2: *plane.v(),
-    };
+    let mut rigid = drawn;
     let mut stations: Vec<Frame<S>> = Vec::new();
     let mut spans: Vec<Span<S>> = Vec::new();
+    // The profile carried along, unmitred, where each curve starts.
+    let mut starts: Vec<Frame<S>> = Vec::new();
     for k in 0..n {
         let ctx = with_context!(
             "path sweep at {}, along {}",
@@ -357,12 +438,104 @@ pub fn along_chain<S: Scalar>(
         } else {
             stations.push(rigid.clone());
         }
+        starts.push(rigid.clone());
         let (span, end) = carry(&chain.curves[k], &kinds[k], &rigid).with_context(ctx)?;
         spans.push(span);
         rigid = end;
     }
     if !closed {
         stations.push(rigid);
+    }
+    let path = Path {
+        stations,
+        spans,
+        closed,
+        along_normal,
+        station_names: chain.joint_names.clone(),
+        span_names: chain.curve_names.iter().cloned().map(Some).collect(),
+    };
+    if control.is_plain() {
+        return Ok(path);
+    }
+    controlled(chain, &kinds, plane, &path, &starts, &corner, control)
+}
+
+/// The path along `chain` for a profile placed by `drawn` that keeps facing
+/// the way it was drawn (see [`Orientation::FixedNormal`]): the profile
+/// moved along each curve, never turned. Every point of it travels a copy
+/// of the curve, so every span is the curve's own degree, knots and weights,
+/// its rows the profile moved to each control point — exact.
+///
+/// The path has to keep running through the profile's plane the way it
+/// starts, or the walls would fold over: checked on the control points,
+/// whose heights above the plane rise all the way along — which is enough,
+/// since a NURBS of positive weights varies no more than its control
+/// polygon.
+fn translated<S: Scalar>(
+    chain: &PathChain<S>,
+    drawn: &Frame<S>,
+    along_normal: bool,
+) -> GeopResult<Path<S>> {
+    let normal = drawn.e1.prod_cross(&drawn.e2);
+    let normal = if along_normal { normal } else { normal.neg() };
+    let start = start_of(&chain.curves[0])?;
+    let moved_to = |p: &Vector3<S>| Frame {
+        origin: drawn.origin.add(&p.sub(&start)),
+        ..drawn.clone()
+    };
+    let mut height: Option<S> = None;
+    let mut stations = Vec::new();
+    let mut spans = Vec::new();
+    for (k, curve) in chain.curves.iter().enumerate() {
+        // Its ends weighted one, as the stations are.
+        let curve = &curve.with_unit_end_weights()?;
+        let points = curve
+            .control_points
+            .iter()
+            .map(|cp| {
+                Ok(Vector3::from_array([
+                    cp[0].div(cp[3])?,
+                    cp[1].div(cp[3])?,
+                    cp[2].div(cp[3])?,
+                ]))
+            })
+            .collect::<GeopResult<Vec<_>>>()?;
+        for (i, p) in points.iter().enumerate() {
+            let h = p.sub(&start).prod_dot(&normal);
+            // Every curve after the first starts where the one before ends.
+            if k > 0 && i == 0 {
+                continue;
+            }
+            if i > 0 && !height.is_some_and(|before| h.definitely_greater(before)) {
+                return Err(GeopError::new(format!(
+                    "path sweep: with a fixed normal, the path has to keep running through the profile's plane, but along {} it could turn parallel to it or back",
+                    chain.curve_names[k]
+                )));
+            }
+            height = Some(h);
+        }
+        stations.push(moved_to(&points[0]));
+        let n = points.len();
+        spans.push(if curve.degree == 1 && n == 2 {
+            Span::Line
+        } else {
+            let exactly_one = |w: S| w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w);
+            Span::Curve {
+                degree: curve.degree,
+                knots: curve.knot_vector.clone(),
+                middle: (1..n - 1)
+                    .map(|i| {
+                        let w = curve.control_points[i][3];
+                        (moved_to(&points[i]), (!exactly_one(w)).then_some(w))
+                    })
+                    .collect(),
+            }
+        });
+    }
+    let closed = chain.is_closed();
+    if !closed {
+        let last = chain.curves.last().expect("a chain has curves");
+        stations.push(moved_to(&end_of(last)?));
     }
     Ok(Path {
         stations,
@@ -411,13 +584,7 @@ fn carry<S: Scalar>(
                 e1: middle_vector(&start.e1),
                 e2: middle_vector(&start.e2),
             };
-            (
-                Span::Arc {
-                    middle,
-                    weight: *weight,
-                },
-                end,
-            )
+            (Span::arc(middle, *weight), end)
         }
         Kind::Other => spline_span(curve, start)?,
     })
@@ -488,21 +655,36 @@ impl Plain {
             e2: add(self.e2, scale(derivative.e2, h)),
         }
     }
+
+    /// `self - other`: how far `other` is from `self`, as a derivative.
+    fn minus(&self, other: &Plain) -> Self {
+        Plain {
+            origin: sub(self.origin, other.origin),
+            e1: sub(self.e1, other.e1),
+            e2: sub(self.e2, other.e2),
+        }
+    }
 }
 
-/// The profile at `start` carried along the general `curve` (see the
-/// module docs): sections at evenly spaced parameters, each frame carried
-/// on from the one before by the double reflection method (Wang et al.,
-/// 2008) — rotation minimizing, and exact for a planar curve — joined by
-/// cubic Hermite interpolation, each frame's derivative the frame's
+/// A frame's sample along a span: the frame, its derivative along the
+/// span's parameter, and the point of the path it is at.
+#[derive(Clone, Copy, Debug)]
+struct Sample {
+    frame: Plain,
+    derivative: Plain,
+    point: V,
+}
+
+/// The profile at `start` carried along the general `curve` by a rotation
+/// minimizing frame, at `fine + 1` evenly spaced parameters: each frame
+/// carried on from the one before by the double reflection method (Wang et
+/// al., 2008) — exact for a planar curve — its derivative the frame's
 /// angular velocity `T x C'' / |C'|` applied to it.
-fn spline_span<S: Scalar>(
+fn reflected<S: Scalar>(
     curve: &NurbCurve3D<S>,
     start: &Frame<S>,
-) -> GeopResult<(Span<S>, Frame<S>)> {
-    let knot_spans = curve.control_points.len() - curve.degree;
-    let sections = SECTIONS_PER_KNOT_SPAN * knot_spans.max(1);
-    let fine = sections * REFLECTION_STEPS;
+    fine: usize,
+) -> GeopResult<Vec<Sample>> {
     let at = |i: usize| S::from_f64(i as f64 / fine as f64);
     let tangent = |t: S| -> GeopResult<V> { Ok(unit(plain(&curve.tangent(t)?))) };
     let start = Plain::of(start);
@@ -511,16 +693,12 @@ fn spline_span<S: Scalar>(
     // axes, and where on the curve it has got to.
     let mut axes: [V; 3] = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
     let (mut x, mut t) = (c0, tangent(S::ZERO)?);
-    let mut frames = Vec::with_capacity(sections + 1);
-    let mut derivatives = Vec::with_capacity(sections + 1);
+    let mut samples = Vec::with_capacity(fine + 1);
     for i in 0..=fine {
         if i > 0 {
             let (x1, t1) = (plain(&curve.evaluate(at(i))?), tangent(at(i))?);
             axes = axes.map(|a| reflect(a, x, x1, t, t1));
             (x, t) = (x1, t1);
-        }
-        if i % REFLECTION_STEPS != 0 {
-            continue;
         }
         let turn = |v: V| {
             add(
@@ -536,21 +714,38 @@ fn spline_span<S: Scalar>(
         let d1 = plain(&curve.tangent(at(i))?);
         let d2 = plain(&curve.second_derivative(at(i))?);
         let omega = scale(cross(t, d2), 1.0 / dot(d1, d1).sqrt());
-        derivatives.push(Plain {
-            origin: add(d1, cross(omega, sub(frame.origin, x))),
-            e1: cross(omega, frame.e1),
-            e2: cross(omega, frame.e2),
+        samples.push(Sample {
+            frame,
+            derivative: Plain {
+                origin: add(d1, cross(omega, sub(frame.origin, x))),
+                e1: cross(omega, frame.e1),
+                e2: cross(omega, frame.e2),
+            },
+            point: x,
         });
-        frames.push(frame);
     }
+    Ok(samples)
+}
+
+/// The cubic Hermite spline through `samples` taken as evenly spaced over
+/// `[0, 1]` — the frames at its knots, the frames a third of a step along
+/// their derivatives either side between them: the inner rows and knots of
+/// a [`Span::Curve`] from the first sample's frame to the last's.
+fn hermite<S: Scalar>(samples: &[Sample]) -> GeopResult<Span<S>> {
+    let sections = samples.len() - 1;
     let h = 1.0 / sections as f64;
     let mut middle = Vec::new();
     for k in 0..sections {
         if k > 0 {
-            middle.push(frames[k].frame());
+            middle.push(samples[k].frame.frame());
         }
-        middle.push(frames[k].step(&derivatives[k], h / 3.0).frame());
-        middle.push(frames[k + 1].step(&derivatives[k + 1], -h / 3.0).frame());
+        middle.push(samples[k].frame.step(&samples[k].derivative, h / 3.0).frame());
+        middle.push(
+            samples[k + 1]
+                .frame
+                .step(&samples[k + 1].derivative, -h / 3.0)
+                .frame(),
+        );
     }
     let mut knots = vec![S::ZERO; 4];
     for k in 1..sections {
@@ -560,14 +755,31 @@ fn spline_span<S: Scalar>(
         ));
     }
     knots.extend(vec![S::ONE; 4]);
-    Ok((
-        Span::Spline {
-            degree: 3,
-            middle,
-            knots,
-        },
-        frames[sections].frame(),
-    ))
+    Ok(Span::Curve {
+        degree: 3,
+        knots,
+        middle: middle.into_iter().map(|m| (m, None)).collect(),
+    })
+}
+
+/// How many knot spans `curve` has.
+fn knot_spans<S: Scalar>(curve: &NurbCurve3D<S>) -> usize {
+    (curve.control_points.len() - curve.degree).max(1)
+}
+
+/// The profile at `start` carried along the general `curve` (see the
+/// module docs): sections at evenly spaced parameters (see [`reflected`]),
+/// joined by cubic Hermite interpolation (see [`hermite`]).
+fn spline_span<S: Scalar>(
+    curve: &NurbCurve3D<S>,
+    start: &Frame<S>,
+) -> GeopResult<(Span<S>, Frame<S>)> {
+    let sections = SECTIONS_PER_KNOT_SPAN * knot_spans(curve);
+    let samples: Vec<Sample> = reflected(curve, start, sections * REFLECTION_STEPS)?
+        .into_iter()
+        .step_by(REFLECTION_STEPS)
+        .collect();
+    Ok((hermite(&samples)?, samples[sections].frame.frame()))
 }
 
 /// One step of the double reflection method, applied to the vector `v`:
@@ -588,11 +800,582 @@ fn reflect(v: V, x0: V, x1: V, t0: V, t1: V) -> V {
     reflect_in(v2, reflect_in(v1, v))
 }
 
+// ── twist, scale and guide rails ────────────────────────────────────────────
+
+/// A linear map of the profile's plane, `[[a, b], [c, d]]` taking `(x, y)`
+/// to `(a x + b y, c x + d y)`.
+type Mat = [[f64; 2]; 2];
+
+const IDENTITY: Mat = [[1.0, 0.0], [0.0, 1.0]];
+
+/// Steps of Newton's method finding where a rail crosses a section, at most.
+const RAIL_NEWTON_STEPS: usize = 50;
+
+/// `frame` with the profile in it mapped by `m` about the profile point
+/// `c` first: `p` goes where `c + m (p - c)` went.
+fn compose(frame: &Plain, m: &Mat, c: [f64; 2]) -> Plain {
+    let (a, b) = offset(m, c);
+    Plain {
+        origin: add(frame.origin, add(scale(frame.e1, a), scale(frame.e2, b))),
+        e1: add(scale(frame.e1, m[0][0]), scale(frame.e2, m[1][0])),
+        e2: add(scale(frame.e1, m[0][1]), scale(frame.e2, m[1][1])),
+    }
+}
+
+/// The derivative of `compose(frame, m, c)`, given those of `frame` and `m`.
+fn compose_derivative(frame: &Plain, d_frame: &Plain, m: &Mat, d_m: &Mat, c: [f64; 2]) -> Plain {
+    let moved = compose(d_frame, m, c);
+    let (da, db) = (
+        -(d_m[0][0] * c[0] + d_m[0][1] * c[1]),
+        -(d_m[1][0] * c[0] + d_m[1][1] * c[1]),
+    );
+    Plain {
+        origin: add(
+            moved.origin,
+            add(scale(frame.e1, da), scale(frame.e2, db)),
+        ),
+        e1: add(
+            moved.e1,
+            add(scale(frame.e1, d_m[0][0]), scale(frame.e2, d_m[1][0])),
+        ),
+        e2: add(
+            moved.e2,
+            add(scale(frame.e1, d_m[0][1]), scale(frame.e2, d_m[1][1])),
+        ),
+    }
+}
+
+/// `c - m c`: where the profile's origin goes under the map `m` about `c`.
+fn offset(m: &Mat, c: [f64; 2]) -> (f64, f64) {
+    (
+        c[0] - (m[0][0] * c[0] + m[0][1] * c[1]),
+        c[1] - (m[1][0] * c[0] + m[1][1] * c[1]),
+    )
+}
+
+/// [`compose`] on a frame of scalars: the map, a free choice made in plain
+/// numbers, taken as sharp. The identity leaves the frame as it is.
+fn compose_frame<S: Scalar>(frame: &Frame<S>, m: &Mat, c: [f64; 2]) -> Frame<S> {
+    if *m == IDENTITY {
+        return frame.clone();
+    }
+    let f = S::from_f64;
+    let (a, b) = offset(m, c);
+    let combine = |x: f64, y: f64| frame.e1.prod_scalar(f(x)).add(&frame.e2.prod_scalar(f(y)));
+    Frame {
+        origin: frame.origin.add(&combine(a, b)),
+        e1: combine(m[0][0], m[1][0]),
+        e2: combine(m[0][1], m[1][1]),
+    }
+}
+
+/// `x` in the coordinates of `frame`'s plane: the `(x, y)` whose point
+/// `origin + x e1 + y e2` is nearest to it.
+fn in_plane(frame: &Plain, x: V) -> [f64; 2] {
+    let d = sub(x, frame.origin);
+    let (g11, g12, g22) = (
+        dot(frame.e1, frame.e1),
+        dot(frame.e1, frame.e2),
+        dot(frame.e2, frame.e2),
+    );
+    let (r1, r2) = (dot(d, frame.e1), dot(d, frame.e2));
+    let det = g11 * g22 - g12 * g12;
+    [(g22 * r1 - g12 * r2) / det, (g11 * r2 - g12 * r1) / det]
+}
+
+/// A rail followed along the sweep: where along it the last section
+/// crossed it, as a parameter running `0..n` over its `n` curves.
+struct Tracked<'a, S: Scalar> {
+    rail: &'a Rail<S>,
+    chain: PathChain<S>,
+    tau: f64,
+}
+
+impl<'a, S: Scalar> Tracked<'a, S> {
+    /// `rail`, run from its end on the profile's `plane` — an error if
+    /// neither end could be on it.
+    fn new(rail: &'a Rail<S>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
+        let joints = rail.chain.joints()?;
+        let on_plane = |p: &Vector3<S>| plane.to_uvw(p)[2].could_be_equal(S::ZERO);
+        let chain = if rail.chain.is_closed() {
+            return Err(GeopError::new(format!(
+                "path sweep: the rail {} is a closed loop: a rail is an open chain of curves, starting on the profile's plane",
+                rail.name
+            )));
+        } else if on_plane(&joints[0]) {
+            rail.chain.clone()
+        } else if on_plane(&joints[joints.len() - 1]) {
+            rail.chain.reversed()
+        } else {
+            return Err(GeopError::new(format!(
+                "path sweep: the rail {} starts on the profile's plane at neither end: draw it from a point of the profile",
+                rail.name
+            )));
+        };
+        Ok(Self {
+            rail,
+            chain,
+            tau: 0.0,
+        })
+    }
+
+    fn length(&self) -> f64 {
+        self.chain.curves.len() as f64
+    }
+
+    /// The curve `tau` is on, and the parameter along it.
+    fn local(&self, tau: f64) -> (usize, f64) {
+        let i = (tau.floor() as usize).min(self.chain.curves.len() - 1);
+        (i, tau - i as f64)
+    }
+
+    /// The rail at `tau`, and its derivative.
+    fn at(&self, tau: f64) -> GeopResult<(V, V)> {
+        let (i, t) = self.local(tau);
+        let curve = &self.chain.curves[i];
+        let t = S::from_f64(t);
+        Ok((plain(&curve.evaluate(t)?), plain(&curve.tangent(t)?)))
+    }
+
+    /// Where the rail crosses the plane of `frame`, in its coordinates:
+    /// Newton's method from where it crossed the last section, until its
+    /// steps stop shrinking — where rounding takes over. An error if the
+    /// rail runs along the section, ends before it, or the steps never stop
+    /// shrinking.
+    fn crossing(&mut self, frame: &Plain) -> GeopResult<[f64; 2]> {
+        let normal = cross(frame.e1, frame.e2);
+        let mut tau = self.tau;
+        let mut last_step = f64::INFINITY;
+        for _ in 0..RAIL_NEWTON_STEPS {
+            let (x, d) = self.at(tau)?;
+            let (value, slope) = (dot(sub(x, frame.origin), normal), dot(d, normal));
+            if slope == 0.0 {
+                return Err(GeopError::new(format!(
+                    "path sweep: the rail {} runs along a section of the sweep, at its parameter {tau:?}",
+                    self.rail.name
+                )));
+            }
+            let step = value / slope;
+            if !(step.abs() < last_step) {
+                self.tau = tau;
+                return Ok(in_plane(frame, x));
+            }
+            last_step = step.abs();
+            tau -= step;
+            if !(0.0..=self.length()).contains(&tau) {
+                return Err(GeopError::new(format!(
+                    "path sweep: the rail {} ends before the path does: it has to reach the plane of every section, the last one too",
+                    self.rail.name
+                )));
+            }
+        }
+        Err(GeopError::new(format!(
+            "path sweep: could not find where the rail {} crosses a section near its parameter {tau:?}",
+            self.rail.name
+        )))
+    }
+
+    /// Whether the rail runs straight from `from` to `to`: both on one of
+    /// its curves, a line.
+    fn straight_between(&self, from: f64, to: f64) -> bool {
+        let (i, _) = self.local(from);
+        let curve = &self.chain.curves[i];
+        to <= (i + 1) as f64 && curve.degree == 1 && curve.control_points.len() == 2
+    }
+}
+
+/// The map the rails make of the profile about `c`, given where each rail
+/// crossed the plane it is drawn in, `start`, and where it crosses this
+/// section, `now`: about `c`, with one rail, the turn and uniform scale
+/// taking its start where it is now; with two, the linear map taking both
+/// starts where they are now.
+fn rail_map(c: [f64; 2], start: &[[f64; 2]], now: &[[f64; 2]]) -> Mat {
+    let rel = |p: [f64; 2]| [p[0] - c[0], p[1] - c[1]];
+    match start.len() {
+        1 => {
+            // (now - c) / (start - c), as complex numbers.
+            let (q, r) = (rel(start[0]), rel(now[0]));
+            let n = q[0] * q[0] + q[1] * q[1];
+            let (a, b) = (
+                (r[0] * q[0] + r[1] * q[1]) / n,
+                (r[1] * q[0] - r[0] * q[1]) / n,
+            );
+            [[a, -b], [b, a]]
+        }
+        _ => {
+            // [r0 r1] [q0 q1]^-1, the points as columns.
+            let (q0, q1, r0, r1) = (rel(start[0]), rel(start[1]), rel(now[0]), rel(now[1]));
+            let det = q0[0] * q1[1] - q1[0] * q0[1];
+            let inv = [[q1[1] / det, -q1[0] / det], [-q0[1] / det, q0[0] / det]];
+            let r = [[r0[0], r1[0]], [r0[1], r1[1]]];
+            std::array::from_fn(|i| std::array::from_fn(|j| r[i][0] * inv[0][j] + r[i][1] * inv[1][j]))
+        }
+    }
+}
+
+/// The derivatives of `maps`, evenly spaced over `[0, 1]`, by finite
+/// differences: central inside, of second order at the ends.
+fn map_derivatives(maps: &[Mat]) -> Vec<Mat> {
+    let n = maps.len() - 1;
+    let h = 1.0 / n as f64;
+    (0..=n)
+        .map(|i| {
+            std::array::from_fn(|r| {
+                std::array::from_fn(|s| {
+                    let m = |k: usize| maps[k][r][s];
+                    if i == 0 {
+                        (-3.0 * m(0) + 4.0 * m(1) - m(2)) / (2.0 * h)
+                    } else if i == n {
+                        (3.0 * m(n) - 4.0 * m(n - 1) + m(n - 2)) / (2.0 * h)
+                    } else {
+                        (m(i + 1) - m(i - 1)) / (2.0 * h)
+                    }
+                })
+            })
+        })
+        .collect()
+}
+
+/// The length of `curve`, near enough to share out sections by: its chord
+/// polygon through many points.
+fn rough_length<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<f64> {
+    let n = 64 * knot_spans(curve);
+    let points = (0..=n)
+        .map(|i| Ok(plain(&curve.evaluate(S::from_f64(i as f64 / n as f64))?)))
+        .collect::<GeopResult<Vec<V>>>()?;
+    Ok(points.windows(2).map(|w| dot(sub(w[1], w[0]), sub(w[1], w[0])).sqrt()).sum())
+}
+
+/// The frame `start` carried along curve `k` of the path at `fine + 1`
+/// evenly spaced parameters of its span, the way the plain path carries it
+/// (see [`carry`] and [`translated`]): moved straight along a line, turned
+/// about an arc's axis, by a rotation minimizing frame along anything else
+/// — or, keeping a fixed normal, only moved along the curve.
+fn carried_samples<S: Scalar>(
+    curve: &NurbCurve3D<S>,
+    kind: &Kind<S>,
+    start: &Frame<S>,
+    fine: usize,
+    orientation: Orientation,
+) -> GeopResult<Vec<Sample>> {
+    let begin = Plain::of(start);
+    let fraction = |i: usize| i as f64 / fine as f64;
+    let still = |frame: Plain, d_origin: V, point: V| Sample {
+        frame,
+        derivative: Plain {
+            origin: d_origin,
+            e1: [0.0; 3],
+            e2: [0.0; 3],
+        },
+        point,
+    };
+    if orientation == Orientation::FixedNormal {
+        let c0 = plain(&start_of(curve)?);
+        return (0..=fine)
+            .map(|i| {
+                let t = S::from_f64(fraction(i));
+                let point = plain(&curve.evaluate(t)?);
+                let frame = Plain {
+                    origin: add(begin.origin, sub(point, c0)),
+                    ..begin
+                };
+                Ok(still(frame, plain(&curve.tangent(t)?), point))
+            })
+            .collect();
+    }
+    match kind {
+        Kind::Line => {
+            let c0 = plain(&start_of(curve)?);
+            let step = sub(plain(&end_of(curve)?), c0);
+            Ok((0..=fine)
+                .map(|i| {
+                    let u = fraction(i);
+                    let frame = Plain {
+                        origin: add(begin.origin, scale(step, u)),
+                        ..begin
+                    };
+                    still(frame, step, add(c0, scale(step, u)))
+                })
+                .collect())
+        }
+        Kind::Arc {
+            center, rotation, ..
+        } => {
+            let (center, axis) = (plain(center), plain(&rotation.axis));
+            let angle = rotation.sin.to_f64().atan2(rotation.cos.to_f64());
+            let c0 = plain(&start_of(curve)?);
+            Ok((0..=fine)
+                .map(|i| {
+                    let (sin, cos) = (angle * fraction(i)).sin_cos();
+                    // Rodrigues, about the axis through the centre.
+                    let turn = |v: V| {
+                        add(
+                            add(scale(v, cos), scale(cross(axis, v), sin)),
+                            scale(axis, dot(axis, v) * (1.0 - cos)),
+                        )
+                    };
+                    let frame = Plain {
+                        origin: add(center, turn(sub(begin.origin, center))),
+                        e1: turn(begin.e1),
+                        e2: turn(begin.e2),
+                    };
+                    let spin = |v: V| scale(cross(axis, v), angle);
+                    Sample {
+                        frame,
+                        derivative: Plain {
+                            origin: spin(sub(frame.origin, center)),
+                            e1: spin(frame.e1),
+                            e2: spin(frame.e2),
+                        },
+                        point: add(center, turn(sub(c0, center))),
+                    }
+                })
+                .collect())
+        }
+        Kind::Other => reflected(curve, start, fine),
+    }
+}
+
+/// The path along `chain` with the profile changing as `control` says (see
+/// [`Control`]), from the plain one, `rigid`, carrying the profile the way
+/// `control.orientation` says — its stations, mitred at corners, and
+/// `starts`, the frame unmitred where each curve starts.
+///
+/// Each span is sampled: the rigid frame at evenly spaced parameters (see
+/// [`carried_samples`]), the profile in it mapped about the path's start
+/// point in the profile's plane by a twist and scale growing evenly with the
+/// length travelled — or the map the rails make (see [`rail_map`]). A
+/// station is its rigid station so mapped; between them, the sections are
+/// joined by cubic Hermite interpolation, as along a spline, blended in so
+/// that the span runs from station to station exactly, a mitre included.
+/// A line along which the map grows linearly — no twist, and every rail
+/// straight there — stays a line between its stations.
+///
+/// The map is a free choice made in plain numbers, taken as sharp, like
+/// the frames along a spline: the swept body is defined by it, every edge
+/// and face built from the same frames.
+fn controlled<S: Scalar>(
+    chain: &PathChain<S>,
+    kinds: &[Kind<S>],
+    plane: &CoordinateSystem<S>,
+    rigid: &Path<S>,
+    starts: &[Frame<S>],
+    corner: &[bool],
+    control: &Control<S>,
+) -> GeopResult<Path<S>> {
+    let n = chain.curves.len();
+    let rails_given = !control.rails.is_empty();
+    if chain.is_closed() {
+        return Err(GeopError::new(
+            "path sweep: a closed path sweeps a ring, which a twist, a scale or a rail would not close: sweep along an open path",
+        ));
+    }
+    if control.rails.len() > 2 {
+        return Err(GeopError::new(format!(
+            "path sweep: {} rails given, but a sweep follows one or two",
+            control.rails.len()
+        )));
+    }
+    if rails_given && (control.twist != 0.0 || control.end_scale != 1.0) {
+        return Err(GeopError::new(
+            "path sweep: the rails decide how the profile turns and scales: no twist or scale with them",
+        ));
+    }
+    if !(control.end_scale > 0.0 && control.end_scale.is_finite() && control.twist.is_finite()) {
+        return Err(GeopError::new(format!(
+            "path sweep: cannot scale the profile to {} times its size: the end scale is more than zero",
+            control.end_scale
+        )));
+    }
+    if rails_given && let Some(k) = (0..n).find(|&k| corner[k]) {
+        return Err(GeopError::new(format!(
+            "path sweep: the path turns a corner at {}, which the profile cannot follow rails round: make it tangent there",
+            chain.joint_names[k]
+        )));
+    }
+
+    // The profile turns and scales about the path's start, in its plane.
+    let c = {
+        let p = plane.to_uvw(&start_of(&chain.curves[0])?);
+        [p[0].to_f64(), p[1].to_f64()]
+    };
+    let mut rails = control
+        .rails
+        .iter()
+        .map(|rail| Tracked::new(rail, plane))
+        .collect::<GeopResult<Vec<_>>>()?;
+    // Where each rail starts, from the path's start, in the profile's plane:
+    // apart from it — and, for two, not in line with it — or they cannot
+    // say how the profile scales.
+    let offsets: Vec<Vector3<S>> = rails
+        .iter()
+        .map(|r| Ok(plane.to_uvw(&start_of(&r.chain.curves[0])?).sub(&plane.to_uvw(&start_of(&chain.curves[0])?))))
+        .collect::<GeopResult<_>>()?;
+    let degenerate = match offsets.as_slice() {
+        [] => false,
+        [q] => q[0].could_be_equal(S::ZERO) && q[1].could_be_equal(S::ZERO),
+        [q0, q1, ..] => q0[0].mul(q1[1]).sub(q1[0].mul(q0[1])).could_be_equal(S::ZERO),
+    };
+    if degenerate {
+        return Err(GeopError::new(format!(
+            "path sweep: the rails {} could start in line with the path, so they cannot say how the profile scales: start them off it",
+            control.rails.iter().map(|r| r.name.as_str()).collect::<Vec<_>>().join(" and ")
+        )));
+    }
+    let rail_starts: Vec<[f64; 2]> = offsets
+        .iter()
+        .map(|q| [c[0] + q[0].to_f64(), c[1] + q[1].to_f64()])
+        .collect();
+
+    // Sections: as along a spline, and more for a twist or for rails.
+    let lengths = chain
+        .curves
+        .iter()
+        .map(rough_length)
+        .collect::<GeopResult<Vec<f64>>>()?;
+    let total: f64 = lengths.iter().sum();
+    let rail_sections = rails
+        .iter()
+        .map(|r| r.chain.curves.iter().map(knot_spans).sum::<usize>())
+        .max()
+        .unwrap_or(0)
+        * SECTIONS_PER_KNOT_SPAN;
+    // A section every eighth of a half turn of twist, at least.
+    let turn_per_section = std::f64::consts::FRAC_PI_8;
+
+    let mut samples: Vec<Vec<Sample>> = Vec::with_capacity(n);
+    for k in 0..n {
+        let curve = &chain.curves[k];
+        let twist_sections =
+            (control.twist.abs() * lengths[k] / total / turn_per_section).ceil() as usize;
+        let sections = (SECTIONS_PER_KNOT_SPAN * knot_spans(curve))
+            .max(twist_sections)
+            .max(rail_sections);
+        samples.push(carried_samples(
+            curve,
+            &kinds[k],
+            &starts[k],
+            sections * REFLECTION_STEPS,
+            control.orientation,
+        )?);
+    }
+
+    // How far along the path each sample is, as a fraction of its length.
+    let mut along: Vec<Vec<f64>> = Vec::with_capacity(n);
+    let mut travelled = 0.0;
+    for span in &samples {
+        let mut fractions = vec![travelled];
+        for w in span.windows(2) {
+            let d = sub(w[1].point, w[0].point);
+            travelled += dot(d, d).sqrt();
+            fractions.push(travelled);
+        }
+        along.push(fractions);
+    }
+    let along: Vec<Vec<f64>> = along
+        .into_iter()
+        .map(|f| f.into_iter().map(|s| s / travelled).collect())
+        .collect();
+
+    // The map at every sample, and where each rail is at either end of
+    // every span.
+    let mut maps: Vec<Vec<Mat>> = Vec::with_capacity(n);
+    let mut rail_ends: Vec<Vec<(f64, f64)>> = Vec::with_capacity(n);
+    for k in 0..n {
+        let mut span_maps = Vec::with_capacity(samples[k].len());
+        let before: Vec<f64> = rails.iter().map(|r| r.tau).collect();
+        for (i, sample) in samples[k].iter().enumerate() {
+            let map = if i == 0 && k == 0 {
+                IDENTITY
+            } else if i == 0 {
+                // The joint, as the span before ended.
+                *maps[k - 1].last().expect("a span has samples")
+            } else if rails_given {
+                let now = rails
+                    .iter_mut()
+                    .map(|r| r.crossing(&sample.frame))
+                    .collect::<GeopResult<Vec<_>>>()?;
+                rail_map(c, &rail_starts, &now)
+            } else {
+                let s = along[k][i];
+                let size = 1.0 + (control.end_scale - 1.0) * s;
+                let (sin, cos) = (control.twist * s).sin_cos();
+                [[size * cos, -size * sin], [size * sin, size * cos]]
+            };
+            let det = map[0][0] * map[1][1] - map[0][1] * map[1][0];
+            if !(det > 0.0) {
+                return Err(GeopError::new(format!(
+                    "path sweep: the rails squeeze the profile flat or turn it over along {}",
+                    chain.curve_names[k]
+                )));
+            }
+            span_maps.push(map);
+        }
+        maps.push(span_maps);
+        rail_ends.push(rails.iter().zip(before).map(|(r, b)| (b, r.tau)).collect());
+    }
+
+    // The stations: the rigid ones, mapped.
+    let stations: Vec<Frame<S>> = (0..=n)
+        .map(|k| {
+            let map = if k < n { &maps[k][0] } else { maps[n - 1].last().expect("samples") };
+            compose_frame(&rigid.stations[k], map, c)
+        })
+        .collect();
+
+    let mut spans = Vec::with_capacity(n);
+    for k in 0..n {
+        let straight = matches!(kinds[k], Kind::Line)
+            && control.twist == 0.0
+            && rails
+                .iter()
+                .zip(&rail_ends[k])
+                .all(|(r, &(from, to))| r.straight_between(from, to));
+        if straight {
+            spans.push(Span::Line);
+            continue;
+        }
+        let d_maps = map_derivatives(&maps[k]);
+        let last = samples[k].len() - 1;
+        let mapped = |i: usize| compose(&samples[k][i].frame, &maps[k][i], c);
+        // What the span has to be moved by at either end to run from
+        // station to station: a mitre, or rounding.
+        let to_start = Plain::of(&stations[k]).minus(&mapped(0));
+        let to_end = Plain::of(&stations[k + 1]).minus(&mapped(last));
+        let sections: Vec<Sample> = (0..=last)
+            .step_by(REFLECTION_STEPS)
+            .map(|i| {
+                let u = i as f64 / last as f64;
+                let sample = &samples[k][i];
+                Sample {
+                    frame: mapped(i).step(&to_start, 1.0 - u).step(&to_end, u),
+                    derivative: compose_derivative(
+                        &sample.frame,
+                        &sample.derivative,
+                        &maps[k][i],
+                        &d_maps[i],
+                        c,
+                    )
+                    .step(&to_start, -1.0)
+                    .step(&to_end, 1.0),
+                    point: sample.point,
+                }
+            })
+            .collect();
+        spans.push(hermite(&sections)?);
+    }
+    Ok(Path {
+        stations,
+        spans,
+        ..rigid.clone()
+    })
+}
+
 /// Sweeps `loops` — the first the outer loop, counter-clockwise in
-/// `plane`'s `(u, v)`, the rest holes in it, clockwise — along `chain`
-/// (see [`along_chain`]): into a solid named `solid`, or, without one, into
-/// sheets. Either way round, the solid comes out with its faces pointing
-/// outwards.
+/// `plane`'s `(u, v)`, the rest holes in it, clockwise — along `chain`,
+/// changing as `control` says (see [`along_chain`]): into a solid named
+/// `solid`, or, without one, into sheets. Either way round, the solid comes
+/// out with its faces pointing outwards.
 ///
 /// Named after the profiles' curves `X` and joints `P` and the chain's
 /// curves `C` and joints `J` (see [`sweep`]): the walls `N(X,C)`, their
@@ -605,8 +1388,9 @@ pub fn sweep_along<S: Scalar>(
     chain: &PathChain<S>,
     plane: &CoordinateSystem<S>,
     loops: &[SweepLoop<S>],
+    control: &Control<S>,
 ) -> GeopResult<BuiltBody> {
-    let path = along_chain(chain, plane)?;
+    let path = along_chain(chain, plane, control)?;
     let loops: Vec<SweepLoop<S>> = if path.along_normal {
         loops.iter().map(SweepLoop::reversed).collect()
     } else {
@@ -710,6 +1494,7 @@ mod tests {
             path,
             plane,
             &[SweepLoop::plain(Profile::closed(outer))],
+            &Control::default(),
         )
         .unwrap();
         part.check_names().unwrap();
@@ -909,6 +1694,7 @@ mod tests {
             &path,
             &yz(Vector3::zero()),
             &[SweepLoop::plain(profile)],
+            &Control::default(),
         )
         .unwrap();
         assert!(built.solid.is_none());
@@ -938,7 +1724,7 @@ mod tests {
             ],
             false,
         );
-        let error = along_chain(&path, &yz(Vector3::<S>::zero())).unwrap_err();
+        let error = along_chain(&path, &yz(Vector3::<S>::zero()), &Control::default()).unwrap_err();
         assert!(error.root_message().contains("corner"), "{error:?}");
     }
     #[test]
@@ -953,7 +1739,7 @@ mod tests {
             false,
         );
         let xy = plane(Vector3::<S>::zero(), v3(1., 0., 0.), v3(0., 1., 0.));
-        assert!(along_chain(&path, &xy).is_err());
+        assert!(along_chain(&path, &xy, &Control::default()).is_err());
     }
     #[test]
     fn profile_along_the_path_is_refused() {

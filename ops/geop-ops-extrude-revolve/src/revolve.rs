@@ -93,13 +93,13 @@ pub fn revolution<S: Scalar>(
     let spans_of = (0..spans)
         .map(|j| {
             let (a, b) = (&stations[j], &stations[(j + 1) % stations.len()]);
-            Span::Arc {
-                middle: frame(
+            Span::arc(
+                frame(
                     a.e1.add(&b.e1)
                         .prod_scalar(S::from_f64(1.0 / (1.0 + cos_step))),
                 ),
                 weight,
-            }
+            )
         })
         .collect();
     // Which way round the path runs, against the stations' `e1 x e2`: the
