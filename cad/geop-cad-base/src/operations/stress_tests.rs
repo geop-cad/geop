@@ -1,5 +1,6 @@
 //! Fillets, chamfers and shells across boxes, cylinders and spheres, whole
-//! and with parts cut off, added or drilled: every edge blended on its own,
+//! and with parts cut off, added or drilled — and bodies with free-form
+//! edges, a boss on a sphere and a pipe tee: every edge blended on its own,
 //! and the solid shelled closed and open at each of its faces in turn.
 //!
 //! An operation may refuse what it does not support — saying so — but what
@@ -512,4 +513,56 @@ fn stress_sphere_with_side_cut_off() {
         cut_from("revolve(body)"),
     );
     stress(program, 0.1);
+}
+
+/// A sphere with a cylinder standing on it, around its axis: the two meet
+/// in a free-form rim — no face of revolution with a straight meridian on
+/// one side of it — which a rolling ball rounds.
+fn sphere_with_boss() -> Program {
+    let mut program = sphere();
+    extrude(
+        &mut program,
+        "boss",
+        plane(FrameAxis::Z),
+        circle(0.0, 0.0, 0.4),
+        Extents::blind(1.5),
+        join_to("revolve(body)"),
+    );
+    program
+}
+
+/// A pipe along `x` with a narrower branch standing on it: the two meet in
+/// a saddle, a free-form edge round which a rolling ball rolls from face to
+/// face of both.
+fn pipe_tee() -> Program {
+    let mut program = Program::new();
+    extrude(
+        &mut program,
+        "pipe",
+        plane(FrameAxis::X),
+        circle(0.0, 0.0, 0.5),
+        both_ways(1.0),
+        Combine::NewBody,
+    );
+    extrude(
+        &mut program,
+        "branch",
+        plane(FrameAxis::Z),
+        circle(0.0, 0.0, 0.3),
+        Extents::blind(1.0),
+        join_to("extrude(pipe)"),
+    );
+    program
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_sphere_with_boss() {
+    stress(sphere_with_boss(), 0.1);
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_pipe_tee() {
+    stress(pipe_tee(), 0.1);
 }
