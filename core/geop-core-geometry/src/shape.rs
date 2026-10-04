@@ -458,8 +458,39 @@ impl<S: Scalar> NurbSurface3D<S> {
         Ok(None)
     }
 
+    /// The cylinder the surface lies on, if it is a piece of one: a
+    /// surface of revolution (see [`NurbSurface3D::axis_of_revolution`])
+    /// whose every row of control points is an arc of one radius — the same
+    /// arc, then, moved along the axis — with no row collapsed to a pole.
+    /// `None` for a cone, a sphere, a disc or any other surface.
+    pub fn as_cylinder(&self) -> GeopResult<Option<Cylinder<S>>> {
+        for along_u in [true, false] {
+            let Some(revolution) = self.revolution_rows(along_u)? else {
+                continue;
+            };
+            if !revolution.poles.is_empty() {
+                continue;
+            }
+            let first = revolution.radii[0];
+            if revolution.radii.iter().all(|r| r.could_be_equal(first)) {
+                let radius = revolution.radii.iter().fold(first, |a, &r| a.union(r));
+                return Ok(Some(Cylinder {
+                    axis: revolution.axis,
+                    radius,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     /// [`NurbSurface3D::axis_of_revolution`], for rows along `u` or along `v`.
     pub(crate) fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis<S>>> {
+        Ok(self.revolution_rows(along_u)?.map(|r| r.axis))
+    }
+
+    /// [`NurbSurface3D::revolution_along`], with the radius of every row
+    /// that is an arc and the point of every row that is a pole.
+    fn revolution_rows(&self, along_u: bool) -> GeopResult<Option<Revolution<S>>> {
         let (rows, len, degree, knots) = if along_u {
             (self.num_v, self.num_u, self.degree_u, &self.knot_vector_u)
         } else {
@@ -481,6 +512,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         // starts at, and the weights every row is proportional to.
         let mut reference: Option<(Arc<S>, Vec<S>)> = None;
         let mut poles = Vec::new();
+        let mut radii = Vec::new();
         for j in 0..rows {
             let cps = row(j);
             let weights: Vec<S> = cps.iter().map(|p| p[3]).collect();
@@ -502,6 +534,7 @@ impl<S: Scalar> NurbSurface3D<S> {
             let Some(arc) = NurbCurve::try_new(degree, cps, knots.clone())?.as_arc()? else {
                 return Ok(None);
             };
+            radii.push(arc.circle.radius);
             match &reference {
                 None => reference = Some((arc, weights)),
                 Some((first, _)) => {
@@ -524,8 +557,26 @@ impl<S: Scalar> NurbSurface3D<S> {
             return Ok(None);
         };
         let axis = first.circle.axis();
-        Ok(poles.iter().all(|p| axis.could_contain(p)).then_some(axis))
+        Ok(poles
+            .iter()
+            .all(|p| axis.could_contain(p))
+            .then_some(Revolution { axis, radii, poles }))
     }
+}
+
+/// What [`NurbSurface3D::revolution_rows`] finds a surface of revolution's
+/// control rows to be: arcs around `axis` of `radii`, and `poles` on it.
+struct Revolution<S: Scalar> {
+    axis: Axis<S>,
+    radii: Vec<S>,
+    poles: Vec<Vector3<S>>,
+}
+
+/// A cylinder: the points `radius` away from `axis`.
+#[derive(Clone, Debug)]
+pub struct Cylinder<S: Scalar> {
+    pub axis: Axis<S>,
+    pub radius: S,
 }
 
 #[cfg(test)]
@@ -725,6 +776,21 @@ mod tests {
         let mut twisted = cylinder.clone();
         twisted.control_points[1] = h(2., 0.1, 3., 1.);
         assert!(twisted.axis_of_revolution().unwrap().is_none());
+
+        let found = cylinder.as_cylinder().unwrap().expect("a cylinder");
+        assert!(found.radius.could_be_equal(S::from_f64(2.0)));
+        assert!(found.axis.could_contain(&v(0., 0., -1.)));
+        // Narrowing towards the top: a cone, which turns around the same
+        // axis but is no cylinder.
+        let mut cone = cylinder.clone();
+        for (k, &(x, y, w)) in [(1., 0., 1.), (1., 1., R2), (0., 1., 1.)]
+            .iter()
+            .enumerate()
+        {
+            cone.control_points[2 * k + 1] = h(x, y, 3., w);
+        }
+        assert!(cone.axis_of_revolution().unwrap().is_some());
+        assert!(cone.as_cylinder().unwrap().is_none());
     }
     #[test]
     fn a_cylinder_turns_around_its_axis() {
