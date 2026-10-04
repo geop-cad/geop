@@ -21,7 +21,9 @@ use geop_ops::{
 use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, RevolveArgs};
+use geop_ops_extrude_revolve::{
+    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, RevolveArgs, SweepArgs,
+};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
@@ -1345,6 +1347,67 @@ pub fn airfoil_wing() -> Program {
     program
 }
 
+/// A horn: a circle swept along a straight path, its size set by a rail —
+/// a spline flaring out beside the path, which the circle's point on it
+/// follows.
+pub fn horn() -> Program {
+    let base = |axis| {
+        Some(EntityRef::datum_component(
+            ORIGIN,
+            DatumComponent::Plane(axis),
+        ))
+    };
+    let mut program = Program::new();
+    let mut mouth = Sketch::new();
+    let c = mouth.add_point(n(0.0), n(0.0));
+    mouth.add_circle(c, n(0.5));
+    program.push(
+        "mouth",
+        AddSketchArgs {
+            plane: base(FrameAxis::X),
+            sketch: mouth,
+            ..Default::default()
+        },
+    );
+    let mut axis = Sketch::new();
+    let (a, b) = (axis.add_point(n(0.0), n(0.0)), axis.add_point(n(4.0), n(0.0)));
+    axis.add_line(a, b);
+    program.push(
+        "axis",
+        AddSketchArgs {
+            plane: base(FrameAxis::Z),
+            sketch: axis,
+            ..Default::default()
+        },
+    );
+    let mut flare = Sketch::new();
+    let points = [[0.0, 0.5], [1.5, 0.4], [3.0, 0.9], [4.0, 1.6]]
+        .map(|[x, y]| flare.add_point(n(x), n(y)));
+    flare.add_spline(points.to_vec());
+    program.push(
+        "flare",
+        AddSketchArgs {
+            plane: base(FrameAxis::Z),
+            sketch: flare,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "horn",
+        SweepArgs {
+            profile: "mouth".into(),
+            path: "axis".into(),
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: vec!["flare".into()],
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1359,6 +1422,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("link", link()),
         ("parametric_plate", parametric_plate()),
         ("airfoil_wing", airfoil_wing()),
+        ("horn", horn()),
     ]
 }
 

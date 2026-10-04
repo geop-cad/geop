@@ -900,18 +900,32 @@ impl<'a, S: Scalar> Tracked<'a, S> {
                 return Ok(in_plane(frame, x));
             }
             last_step = step.abs();
-            tau -= step;
-            if !(0.0..=self.length()).contains(&tau) {
-                return Err(GeopError::new(format!(
-                    "path sweep: the rail {} ends before the path does: it has to reach the plane of every section, the last one too",
-                    self.rail.name
-                )));
-            }
+            // The rail reaches the last section (see `reaches_the_end`), so a
+            // step past its end is a step past a crossing at the end.
+            tau = (tau - step).clamp(0.0, self.length());
         }
         Err(GeopError::new(format!(
             "path sweep: could not find where the rail {} crosses a section near its parameter {tau:?}",
             self.rail.name
         )))
+    }
+
+    /// Checks the rail reaches the plane of the path's last station, `end`,
+    /// which the path runs into along its normal if `along_normal`: its end
+    /// could lie on or beyond it — decided on the exact station and rail, so
+    /// that a rail ending exactly there counts as reaching it.
+    fn reaches_the_end(&self, end: &Frame<S>, along_normal: bool) -> GeopResult<()> {
+        let joints = self.chain.joints()?;
+        let normal = end.e1.prod_cross(&end.e2);
+        let ahead = joints[joints.len() - 1].sub(&end.origin).prod_dot(&normal);
+        let ahead = if along_normal { ahead } else { ahead.neg() };
+        if ahead.definitely_less(S::ZERO) {
+            return Err(GeopError::new(format!(
+                "path sweep: the rail {} ends before the path does: it has to reach the plane of every section, the last one too",
+                self.rail.name
+            )));
+        }
+        Ok(())
     }
 
     /// Whether the rail runs straight from `from` to `to`: both on one of
@@ -1143,6 +1157,9 @@ fn controlled<S: Scalar>(
         .iter()
         .map(|rail| Tracked::new(rail, plane))
         .collect::<GeopResult<Vec<_>>>()?;
+    for rail in &rails {
+        rail.reaches_the_end(&rigid.stations[n], rigid.along_normal)?;
+    }
     // Where each rail starts, from the path's start, in the profile's plane:
     // apart from it — and, for two, not in line with it — or they cannot
     // say how the profile scales.
@@ -2084,5 +2101,91 @@ mod tests {
     #[test]
     fn controlled_sweeps_refuse_what_they_cannot_build() {
         for_all_scalars!(check_controlled_sweeps_refuse_what_they_cannot_build);
+    }
+
+    /// Every rail shape — a line, an arc, a spline, a line running on into
+    /// an arc — alone and paired with a straight one, with a circle and a
+    /// square; and a twist and scale through bends of several turns: every
+    /// sweep valid.
+    fn check_rail_shapes<S: Scalar>() {
+        let f = S::from_f64;
+        let p = |x: f64, y: f64| Vector4::from_array([f(x), f(y), f(0.), f(1.)]);
+        let spline = NurbCurve::try_new(
+            3,
+            vec![p(0., 0.5), p(1., 0.3), p(2., 1.0), p(3., 0.8)],
+            vec![f(0.), f(0.), f(0.), f(0.), f(1.), f(1.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let rails: Vec<(&str, Vec<NurbCurve3D<S>>)> = vec![
+            ("line", vec![line3(v3(0., 0.5, 0.), v3(3., 0.8, 0.)).unwrap()]),
+            (
+                "arc",
+                vec![arc3(v3(0., 0.5, 0.), v3(1.5, 1.25, 0.), v3(3., 0.5, 0.), f(0.8)).unwrap()],
+            ),
+            ("spline", vec![spline]),
+            (
+                "line_arc",
+                vec![
+                    line3(v3(0., 0.5, 0.), v3(1., 0.5, 0.)).unwrap(),
+                    arc3(v3(1., 0.5, 0.), v3(2., 0.5, 0.), v3(3., 1.0, 0.), f(0.9)).unwrap(),
+                ],
+            ),
+        ];
+        let partner = || rail("z", vec![line3(v3::<S>(0., 0., 0.5), v3(3., 0., 0.3)).unwrap()]);
+        for (name, curves) in rails {
+            for outer in [circle::<S>(0.5), square(0.5)] {
+                for two in [false, true] {
+                    let mut guides = vec![rail(name, curves.clone())];
+                    if two {
+                        guides.push(partner());
+                    }
+                    let mut part = Part::<S>::new();
+                    let namer = Namer::new("sweep", "s").unwrap();
+                    sweep_along(
+                        &mut part,
+                        &namer,
+                        Some(&namer.root()),
+                        &along_x(3.0),
+                        &yz(Vector3::zero()),
+                        &[SweepLoop::plain(Profile::closed(outer.clone()))],
+                        &with_rails(guides),
+                    )
+                    .unwrap_or_else(|e| panic!("{name}, two rails: {two}: {e:?}"));
+                    assert_valid(part.topology());
+                }
+            }
+        }
+        // A line, then an arc turning by `degrees`, tangent to it.
+        for degrees in [30.0f64, 90.0, 150.0] {
+            let half = (degrees / 2.0).to_radians();
+            let leg = half.tan();
+            let turned = 2.0 * half;
+            let path = chain(
+                vec![
+                    line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                    arc3(
+                        v3(2., 0., 0.),
+                        v3(2. + leg, 0., 0.),
+                        v3(2. + leg * (1. + turned.cos()), leg * turned.sin(), 0.),
+                        f(half.cos()),
+                    )
+                    .unwrap(),
+                ],
+                false,
+            );
+            for twist in [0.0, 1.0, 4.0] {
+                let control = Control {
+                    twist,
+                    end_scale: 1.5,
+                    ..Control::default()
+                };
+                swept_with(square(0.3), &yz(Vector3::zero()), &path, &control);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "slow: rail shapes, twists and bends — run with `cargo test -- --ignored`"]
+    fn rail_shapes() {
+        for_all_scalars!(check_rail_shapes);
     }
 }
