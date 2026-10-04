@@ -178,6 +178,25 @@ impl<S: Scalar> Model<S> {
         }
     }
 
+    /// The corners of `face_id`'s boundaries, outer loop first — what an
+    /// error shows of a face, to tell which curves were imprinted into it.
+    pub fn face_corners(&self, face_id: FaceId) -> GeopResult<Vec<Vec<[f64; 3]>>> {
+        let at = |v: VertexId| -> GeopResult<[f64; 3]> {
+            let p = self.get_vertex(v)?.point;
+            Ok([0, 1, 2].map(|k| p[k].to_f64()))
+        };
+        self.get_face(face_id)?
+            .boundaries()
+            .map(|boundary| match boundary {
+                BoundaryType::Vertex(v) => Ok(vec![at(v)?]),
+                BoundaryType::Loop(anchor) => self
+                    .iterate_loop_coedges(anchor)
+                    .map(|c| at(self.coedge_start_vertex_id(c)?))
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// Every coedge of every boundary loop of `face_id` (its outer loop and
     /// any holes).
     pub fn iterate_face_coedges(&self, face_id: FaceId) -> impl Iterator<Item = CoedgeId> + '_ {

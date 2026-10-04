@@ -108,6 +108,39 @@ impl<S: Scalar> Model<S> {
         }
         let pcurve_rev = pcurve_fwd.reverse();
 
+        // A spur dangles into the face: its free end has to lie strictly
+        // inside it. Were it outside, the face's loop would run out of the
+        // face and back — every check of the loop's own structure passes, and
+        // the face is left straddling whatever the edge was meant to divide
+        // (`narrow_groove` surfaced that far downstream, in classification).
+        // On the boundary, it would be a vertex of the loop already.
+        if let (Some(_), None) | (None, Some(_)) = (at_start, at_end) {
+            let (t0, t1) = pcurve_fwd.domain();
+            let (free, t) = if at_start.is_some() {
+                (end_vertex, t1)
+            } else {
+                (start_vertex, t0)
+            };
+            let uv = pcurve_fwd.evaluate(t).with_context(&ctx)?;
+            let class = face_contains(
+                model,
+                face_id,
+                uv[0],
+                uv[1],
+                max_nodes,
+                min_subdivision_size,
+                HOLE_CLASSIFY_SEED,
+            )
+            .with_context(&ctx)?;
+            if class != PointClassification::Inside {
+                let point = model.get_vertex(free).with_context(&ctx)?.point;
+                return Err(ctx(GeopError::new(format!(
+                    "a spur's free end must lie inside the face, but vertex {free} at {point:?} (uv={uv:?}) is {class:?}; the face is bounded by (corners, outer loop first) {:?}",
+                    model.face_corners(face_id).with_context(&ctx)?
+                ))));
+            }
+        }
+
         let fwd = model.insert_coedge(Coedge {
             geometry: CoedgeGeometry::Edge(edge_id),
             sense: Sense::Forward,

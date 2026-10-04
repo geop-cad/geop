@@ -28,8 +28,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{
-    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId, VertexId,
-    boundary::BoundaryType,
+    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
     contains::{
         face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
         shell::{PointClassification as ShellPoint, shell_contains},
@@ -625,7 +624,7 @@ fn check_closed<S: Scalar>(
             };
             Ok(format!(
                 "{face} {name:?}: {decision}, bounded by {:?}",
-                face_corners(model, face)?
+                model.face_corners(face)?
             ))
         })
         .collect::<GeopResult<_>>()?;
@@ -635,26 +634,6 @@ fn check_closed<S: Scalar>(
         model.get_vertex(e.end_vertex)?.point,
         faces.join(", ")
     )))
-}
-
-/// The corners of `face_id`'s boundaries, outer loop first — what an error
-/// shows of a face, to tell which curves were imprinted into it.
-fn face_corners<S: Scalar>(model: &Model<S>, face_id: FaceId) -> GeopResult<Vec<Vec<[f64; 3]>>> {
-    let at = |v: VertexId| -> GeopResult<[f64; 3]> {
-        let p = model.get_vertex(v)?.point;
-        Ok([0, 1, 2].map(|k| p[k].to_f64()))
-    };
-    model
-        .get_face(face_id)?
-        .boundaries()
-        .map(|boundary| match boundary {
-            BoundaryType::Vertex(v) => Ok(vec![at(v)?]),
-            BoundaryType::Loop(anchor) => model
-                .iterate_loop_coedges(anchor)
-                .map(|c| at(model.coedge_start_vertex_id(c)?))
-                .collect(),
-        })
-        .collect()
 }
 
 /// Where `face_id` sits relative to `other_solid`, decided at points strictly
@@ -732,7 +711,7 @@ pub fn classify_face<S: Scalar>(
         if let Some((other, other_point)) = decided.iter().find(|(c, _)| *c != classification) {
             // The face's boundary: which curves were imprinted into it, and
             // so — between the two points — which one was not.
-            let loops = face_corners(model, face_id)?;
+            let loops = model.face_corners(face_id)?;
             return Err(GeopError::new(format!(
                 "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}"
             )));
@@ -1523,7 +1502,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .find(|&face| {
-                let corners = super::face_corners(model, face).unwrap();
+                let corners = model.face_corners(face).unwrap();
                 corners.len() == 1 && corners[0].iter().all(in_rim)
             })
             .expect("a face of the plate inside the hole's rim");

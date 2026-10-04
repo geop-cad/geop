@@ -430,15 +430,12 @@ fn plastic_sweep() {
 /// 0.05 past the enclosure's inner corners, less than the boolean's tracing
 /// stride (0.1).
 ///
-/// Fails in the boolean: the inner wall `x = 0.2` ends up with a spur edge
-/// from its corner `(0.2, 1.8, 0.95)` out to `(0.2, 1.85, 0.95)` — where the
-/// cut's floor edge pierces the wall's (extended) surface, outside the wall
-/// face — and the line across the wall at `z = 0.95` is never imprinted, so
-/// the wall is left straddling the cut. The same groove with the cut
-/// reaching 0.1 past the corners (`enclosure_lip_and_groove`) builds. Not
-/// yet traced to which pass splices the spur.
+/// The trace along the inner wall `x = 0.2`, leaving the cut's inner corner
+/// `(0.2, 1.8, 0.95)`, once ended at `(0.2, 1.85, 0.95)` one stride later —
+/// a vertex on both the wall's and the cut floor's planes, but 0.05
+/// *behind* the trace's start, outside the wall — and spliced a spur out of
+/// the wall to it. The march now only ends at a vertex ahead of it.
 #[test]
-#[ignore = "remesh splices a spur at an inner corner when the cut reaches past it by less than a tracing stride; see the doc comment"]
 fn narrow_groove() {
     let mut program = enclosure();
     program.push(
