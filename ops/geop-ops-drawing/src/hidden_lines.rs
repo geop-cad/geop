@@ -98,6 +98,9 @@ pub struct ViewLine<S: Scalar> {
     pub visible: bool,
     /// The edge it is a piece of, if it is one.
     pub edge: Option<EdgeId>,
+    /// Which curve it is a piece of, and where: its parameter range there.
+    source: usize,
+    range: (S, S),
 }
 
 /// A part seen from one direction.
@@ -470,7 +473,7 @@ pub fn project_view<S: Scalar>(
         .collect::<GeopResult<Vec<_>>>()?;
     let length = ray_length(&occluders);
     let mut lines = Vec::new();
-    for (source, cuts) in sources.iter().zip(cuts) {
+    for (index, (source, cuts)) in sources.iter().zip(cuts).enumerate() {
         let domain = source.curve.domain();
         let mut ends = vec![domain.0];
         ends.extend(cut_points(cuts, domain));
@@ -498,14 +501,53 @@ pub fn project_view<S: Scalar>(
                 kind: source.kind,
                 visible,
                 edge: source.edge,
+                source: index,
+                range: (a, b),
             });
         }
     }
 
     Ok(ProjectedView {
         frame: *frame,
-        lines: drop_drawn(lines)?,
+        lines: rejoin(&sources, drop_drawn(lines)?)?,
     })
+}
+
+/// `lines` with the pieces of one curve that follow on from each other, and
+/// are both visible or both hidden, joined again: the cuts that did not
+/// change anything undone, so a circle seen round stays a circle.
+fn rejoin<S: Scalar>(sources: &[Source<S>], mut lines: Vec<ViewLine<S>>) -> GeopResult<Vec<ViewLine<S>>> {
+    lines.sort_by(|a, b| {
+        (a.source, a.range.0.to_f64()).partial_cmp(&(b.source, b.range.0.to_f64())).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut joined: Vec<ViewLine<S>> = Vec::new();
+    for line in lines {
+        if let Some(last) = joined.last_mut()
+            && last.source == line.source
+            && last.visible == line.visible
+            && last.range.1.could_be_equal(line.range.0)
+        {
+            last.range.1 = line.range.1;
+            continue;
+        }
+        joined.push(line);
+    }
+    // A closed curve cut at its start joins across it, too.
+    let mut out: Vec<ViewLine<S>> = Vec::new();
+    for mut line in joined {
+        let source = &sources[line.source];
+        let (t0, t1) = source.curve.domain();
+        let whole = line.range.0.could_be_equal(t0) && line.range.1.could_be_equal(t1);
+        if whole {
+            line.curve = source.curve.clone();
+            line.curve3 = source.curve3.clone();
+        } else {
+            line.curve = source.curve.sub_curve(line.range.0, line.range.1)?;
+            line.curve3 = source.curve3.sub_curve(line.range.0, line.range.1)?;
+        }
+        out.push(line);
+    }
+    Ok(out)
 }
 
 /// `lines` without every piece lying on one drawn before it — visible ones

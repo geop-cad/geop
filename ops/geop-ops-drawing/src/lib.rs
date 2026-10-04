@@ -3,11 +3,21 @@
 //! centre marks and a title block ([`sheet`]), written as SVG or DXF, and
 //! the [`Drawing`] operation of a program, which describes one.
 
+pub mod drawing;
+pub mod dxf;
 pub mod hidden_lines;
+pub mod operation;
+pub mod section;
+pub mod sheet;
 pub mod silhouette;
+pub mod svg;
 pub mod view;
 
+pub use drawing::{Dimension, DrawingArgs, Projection, SheetSize, compose};
+pub use dxf::to_dxf;
 pub use hidden_lines::{LineKind, ProjectedView, ViewLine, ViewOptions, project_view};
+pub use operation::Drawing;
+pub use svg::to_svg;
 pub use view::{ViewFrame, ViewKind};
 
 use geop_core_math::scalars::Scalar;
@@ -23,3 +33,5 @@ pub(crate) fn min_subdivision_size<S: Scalar>() -> S {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod writer_tests;

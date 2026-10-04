@@ -331,6 +331,7 @@ dependencies = [
  "geop-core-math",
  "geop-core-topology",
  "geop-ops",
+ "geop-ops-booleans",
  "geop-ops-extrude-revolve",
  "serde",
 ]
