@@ -7,11 +7,18 @@
 //! - [`solve`]: [`Sketch::solve`] / [`Sketch::solve_with_drag`], and
 //!   [`Sketch::enclose`]: the solution as the kernel builds on it.
 //! - [`profile`]: [`Sketch::regions`] and [`ProfileLoop::to_nurbs`].
+//! - [`copies`] and [`offset`]: geometry made from geometry, tied to it by
+//!   constraints — mirrored, patterned, offset.
+//! - [`plain`]: plane geometry in plain numbers, where tools place what
+//!   they build before it is solved.
 //! - [`space`]: 3-D sketches — points, lines, arcs and splines in space,
 //!   solved the same way, joined into chains of NURBS curves: paths and
 //!   rails.
 
+pub mod copies;
 pub mod geometry;
+pub mod offset;
+pub mod plain;
 pub mod profile;
 pub mod sketch;
 pub mod solve;

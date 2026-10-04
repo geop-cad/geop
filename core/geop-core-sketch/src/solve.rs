@@ -338,11 +338,13 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     pt(point, &mut vars);
                     layout.curve_vars(sketch, *curve, &mut vars);
                 }
-                Symmetric { a, b, line } => {
+                Symmetric { a, b, line } | Moved { a, b, by: line } => {
                     pt(a, &mut vars);
                     pt(b, &mut vars);
                     layout.curve_vars(sketch, *line, &mut vars);
                 }
+                // Only the two sweeps.
+                EqualSweep { a, b } => vars.extend([layout.curve_var[a], layout.curve_var[b]]),
                 Horizontal { line: curve }
                 | Vertical { line: curve }
                 | Length { curve, .. }
@@ -354,6 +356,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 | Tangent { a, b }
                 | Equal { a, b }
                 | Concentric { a, b }
+                | Offset { a, b, .. }
                 | Angle { a, b, .. } => {
                     layout.curve_vars(sketch, *a, &mut vars);
                     layout.curve_vars(sketch, *b, &mut vars);
@@ -479,6 +482,45 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 out.push(line_distance(s, e, mid)?);
                 out.push(pb.sub(pa).dot(e.sub(s).unit()?));
             }
+            Moved { a, b, by } => {
+                // The motion carrying `by`'s start `s` onto its end `e`:
+                // `q ↦ e + R(q - s)`, `R` the turn by its sweep — none
+                // along a line. Smooth through a straight arc, where it is
+                // the shift along the chord.
+                let from = geo.point(a);
+                let image = match geo.arc(by) {
+                    Some(arc) => {
+                        let turn = arc.half.mul(c(S::TWO));
+                        arc.e.add(from.sub(arc.s).rotate(turn.cos(), turn.sin()))
+                    }
+                    None => {
+                        let (s, e) = geo.line(by);
+                        e.add(from.sub(s))
+                    }
+                };
+                let to = geo.point(b);
+                out.extend([to.x.sub(image.x), to.y.sub(image.y)]);
+            }
+            EqualSweep { a, b } => {
+                let half = |k: CurveId| geo.var(self.layout.curve_var[&k]);
+                out.push(half(b).sub(half(a)).mul(scale));
+            }
+            Offset { a, b, value } => match self.sketch.curves[&a].kind {
+                CurveKind::Line { .. } => {
+                    // Both ends of `b` the same distance from `a`'s line:
+                    // parallel, and that distance `value`.
+                    let (sa, ea) = geo.line(a);
+                    let (sb, eb) = geo.line(b);
+                    let (ds, de) = (line_distance(sa, ea, sb)?, line_distance(sa, ea, eb)?);
+                    out.push(ds.sub(de));
+                    out.push(ds.abs().sub(c(value)));
+                }
+                _ => {
+                    let ((ca, ra), (cb, rb)) = (geo.round(a)?, geo.round(b)?);
+                    out.extend([ca.x.sub(cb.x), ca.y.sub(cb.y)]);
+                    out.push(rb.sub(ra).abs().sub(c(value)));
+                }
+            },
             PointLineDistance { point, line, value } => {
                 let (s, e) = geo.line(line);
                 out.push(line_distance(s, e, geo.point(point))?.abs().sub(c(value)));

@@ -7,7 +7,8 @@ use geop_ops::{
     parameters::{evaluate, is_formula, number},
 };
 
-use super::drawing::{Built, Hints, angle_between, construct, curve_ending_at, wrap};
+use super::drawing::{Built, Hints, construct, curve_ending_at};
+use crate::geometry::{angle_between, wrap};
 use super::trim::Plan;
 use super::*;
 use crate::geometry::segments_cross;

@@ -9,7 +9,7 @@
 use std::f64::consts::{PI, TAU};
 
 use super::*;
-use crate::geometry::{cross, dot, scale, sweep_through};
+use crate::geometry::{angle_between, cross, dot, perp, rotate, scale, sweep_through, unit, wrap};
 
 /// Lines drawn within this slope of horizontal or vertical get that
 /// constraint.
@@ -65,33 +65,6 @@ impl Placed {
 
 fn new_point(sketch: &mut Sketch, at: P2) -> PointId {
     sketch.add_point(Design::from_f64(at[0]), Design::from_f64(at[1]))
-}
-
-fn unit(v: P2) -> Option<P2> {
-    let n = v[0].hypot(v[1]);
-    (n > 0.0).then(|| scale(v, 1.0 / n))
-}
-
-/// `v` turned a quarter counter-clockwise.
-fn perp(v: P2) -> P2 {
-    [-v[1], v[0]]
-}
-
-/// `v` turned counter-clockwise by `angle`.
-fn rotate(v: P2, angle: f64) -> P2 {
-    let (s, c) = angle.sin_cos();
-    [v[0] * c - v[1] * s, v[0] * s + v[1] * c]
-}
-
-/// `angle` brought into `(-π, π]`.
-pub(super) fn wrap(angle: f64) -> f64 {
-    let a = (angle + PI).rem_euclid(TAU) - PI;
-    if a == -PI { PI } else { a }
-}
-
-/// The counter-clockwise angle from `a` to `b`, in `(-π, π]`.
-pub(super) fn angle_between(a: P2, b: P2) -> f64 {
-    cross(a, b).atan2(dot(a, b))
 }
 
 /// A line from `a` to `b`, horizontal or vertical by constraint if it is

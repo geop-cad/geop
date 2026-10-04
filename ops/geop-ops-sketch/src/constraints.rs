@@ -19,7 +19,7 @@ use geop_ops::Design;
 
 use crate::{
     Constraint, CurveKind, Sketch,
-    geometry::{P2, add, cross, dot, polyline, polyline_mid, scale, xy},
+    geometry::{P2, add, cross, dot, polyline, polyline_mid, scale, sub, unit, xy},
 };
 
 /// A point or a curve of the sketch, as selected.
@@ -621,7 +621,8 @@ pub fn value(c: &Constraint) -> Option<f64> {
         | PointLineDistance { value, .. }
         | Length { value, .. }
         | Radius { value, .. }
-        | Diameter { value, .. } => Some(value.to_f64()),
+        | Diameter { value, .. }
+        | Offset { value, .. } => Some(value.to_f64()),
         Angle { value, .. } => Some(value.to_f64().to_degrees()),
         _ => None,
     }
@@ -638,6 +639,7 @@ pub fn set_value(c: &mut Constraint, v: f64) {
     | Length { value, .. }
     | Radius { value, .. }
     | Diameter { value, .. }
+    | Offset { value, .. }
     | Angle { value, .. } = c
     {
         *value = Design::from_f64(v);
@@ -705,6 +707,10 @@ pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool) -> Option<(String, 
             let f = if formula { "ƒ " } else { "" };
             (format!("{f}{:.1}°", value.to_f64().to_degrees()), mid(b))
         }
+        // A pattern's copies show they are copies.
+        Moved { .. } => return None,
+        EqualSweep { b, .. } => ("⌒=".into(), mid(b)),
+        Offset { b, value, .. } => (shown("⇥ ", value), mid(b)),
     })
 }
 
@@ -717,11 +723,6 @@ pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool) -> Option<(String, 
 pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2>> {
     use geop_core_sketch::Constraint::*;
     let p = |point: PointId| xy(sketch, point);
-    let sub = |a: P2, b: P2| [a[0] - b[0], a[1] - b[1]];
-    let unit = |v: P2| {
-        let n = v[0].hypot(v[1]);
-        (n > 0.0).then(|| scale(v, 1.0 / n))
-    };
     let line_ends = |curve: CurveId| match sketch.curves[&curve].kind {
         CurveKind::Line { start, end } => Some((p(start), p(end))),
         _ => None,
@@ -764,11 +765,32 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
             Some((a, b)) => linear(a, b, sub(b, a)),
             None => vec![vec![polyline_mid(&polyline(sketch, curve)), label]],
         },
-        PointLineDistance { point, line, .. } => {
-            let Some((a, b)) = line_ends(line) else {
+        Offset { a, b, .. } if line_ends(a).is_none() => {
+            // Across from one rim to the other, towards the label.
+            let (Some((center, ra)), Some((_, rb))) = (round(a), round(b)) else {
                 return Vec::new();
             };
-            let q = p(point);
+            let Some(d) = unit(sub(label, center)) else {
+                return Vec::new();
+            };
+            let (inner, outer) = (ra.min(rb), ra.max(rb));
+            let to = if dot(sub(label, center), d) > outer {
+                label
+            } else {
+                add(center, scale(d, outer))
+            };
+            vec![vec![add(center, scale(d, inner)), to]]
+        }
+        PointLineDistance { .. } | Offset { .. } => {
+            // From a point — the offset line's start — square to the line.
+            let (q, line) = match *c {
+                PointLineDistance { point, line, .. } => (Some(p(point)), line),
+                Offset { a, b, .. } => (line_ends(b).map(|(start, _)| start), a),
+                _ => unreachable!("matched above"),
+            };
+            let (Some(q), Some((a, b))) = (q, line_ends(line)) else {
+                return Vec::new();
+            };
             let Some(u) = unit(sub(b, a)) else {
                 return Vec::new();
             };
@@ -859,6 +881,9 @@ pub fn name(c: &Constraint) -> String {
         Radius { curve, .. } => format!("Radius {curve}"),
         Diameter { curve, .. } => format!("Diameter {curve}"),
         Angle { a, b, .. } => format!("Angle {a}→{b} (°)"),
+        Moved { a, b, by } => format!("{b} is {a} moved by {by}"),
+        EqualSweep { a, b } => format!("Equal sweep {a}, {b}"),
+        Offset { a, b, .. } => format!("Offset {a}–{b}"),
     }
 }
 
