@@ -112,14 +112,25 @@ fn check_straight_route_between_facing_connectors<S: Scalar>() {
     });
     let part = route(part, &args).unwrap();
     assert_valid(&part);
-    assert_eq!(part.topology().faces.len(), 4 + 2, "a cylinder of four quarters, capped");
+    assert_eq!(
+        part.topology().faces.len(),
+        4 + 2,
+        "a cylinder of four quarters, capped"
+    );
     let cable = part.cable("route(r)").unwrap();
-    assert!(cable.length.could_be_equal(S::from_f64(120.0)), "{:?}", cable.length);
+    assert!(
+        cable.length.could_be_equal(S::from_f64(120.0)),
+        "{:?}",
+        cable.length
+    );
     assert!(cable.length.width().to_f64() < 1e-6, "{:?}", cable.length);
     assert!(cable.tightest_bend.is_none());
     assert_eq!(cable.wires.len(), 2);
     for wire in &cable.wires {
-        assert!(wire.cut_length.could_be_equal(S::from_f64(150.0)), "{wire:?}");
+        assert!(
+            wire.cut_length.could_be_equal(S::from_f64(150.0)),
+            "{wire:?}"
+        );
     }
     assert_eq!(cable.wires[1].gauge, Some(20));
     let d2 = cable.wires[1].diameter;
@@ -150,7 +161,11 @@ fn check_quarter_turn_is_a_quarter_circle<S: Scalar>() {
     assert!(cable.length.could_be_equal(quarter), "{:?}", cable.length);
     let scalar = std::any::type_name::<S>();
     // Fixed point at this scale holds the arcs' centres to a few millionths.
-    assert!(cable.length.width().to_f64() < 1e-4, "{scalar}: {:?}", cable.length);
+    assert!(
+        cable.length.width().to_f64() < 1e-4,
+        "{scalar}: {:?}",
+        cable.length
+    );
     let tightest = cable.tightest_bend.unwrap();
     assert!(tightest.could_be_equal(S::from_f64(r)), "{tightest:?}");
     // Halfway round, the bundle's centre passes `R (1 - 1/sqrt 2)` off
@@ -162,7 +177,10 @@ fn check_quarter_turn_is_a_quarter_circle<S: Scalar>() {
         let vertex = part.vertex_id(&format!("route(r,p{p},m0)")).unwrap();
         let at = model.get_vertex(vertex).unwrap().point;
         let off = at.sub(&centre).norm();
-        assert!(off.could_be_equal(S::ONE), "{at:?} is {off:?} off the centre");
+        assert!(
+            off.could_be_equal(S::ONE),
+            "{at:?} is {off:?} off the centre"
+        );
     }
 }
 #[test]
@@ -278,9 +296,17 @@ fn check_route_through_a_clip<S: Scalar>() {
     let turn = |l: f64| 2.0 * (10.0 / l).atan();
     let radius = |l: f64| l / (2.0 * turn(l).sin());
     let tightest = cable.tightest_bend.unwrap();
-    assert!(encloses(tightest, radius(45.0)), "{tightest:?} vs {}", radius(45.0));
+    assert!(
+        encloses(tightest, radius(45.0)),
+        "{tightest:?} vs {}",
+        radius(45.0)
+    );
     let expected = [55.0, 45.0].map(|l| 2.0 * turn(l) * radius(l)).iter().sum();
-    assert!(encloses(cable.length, expected), "{:?} vs {expected}", cable.length);
+    assert!(
+        encloses(cable.length, expected),
+        "{:?} vs {expected}",
+        cable.length
+    );
 }
 #[test]
 fn route_through_a_clip() {
@@ -292,7 +318,11 @@ fn route_through_a_clip() {
 /// as much before it as after.
 fn check_free_points_choose_their_directions<S: Scalar>() {
     let mut part = Part::<S>::new();
-    for (name, at) in [("a", v(0.0, 0.0, 0.0)), ("b", v(50.0, 0.0, 0.0)), ("c", v(100.0, 30.0, 0.0))] {
+    for (name, at) in [
+        ("a", v(0.0, 0.0, 0.0)),
+        ("b", v(50.0, 0.0, 0.0)),
+        ("c", v(100.0, 30.0, 0.0)),
+    ] {
         part.add_datum(
             Datum {
                 kind: DatumKind::Point,
@@ -306,7 +336,11 @@ fn check_free_points_choose_their_directions<S: Scalar>() {
     let cable = straight.cable("route(r)").unwrap();
     assert!(cable.length.could_be_equal(S::from_f64(50.0)));
 
-    let bent = route(part, &args(vec![datum("a"), datum("b"), datum("c")], 2.0, 5.0)).unwrap();
+    let bent = route(
+        part,
+        &args(vec![datum("a"), datum("b"), datum("c")], 2.0, 5.0),
+    )
+    .unwrap();
     assert_valid(&bent);
     // The middle point is passed along the bisector of the chords to its
     // neighbours; each free end bends into it in one arc.
@@ -343,7 +377,10 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
         ],
     );
     let rim = clip(&mut part, "clip", v(10.0, 0.0, 0.0));
-    for (name, at) in [("below", v(10.0, -40.0, 0.0)), ("above", v(10.0, 60.0, 0.0))] {
+    for (name, at) in [
+        ("below", v(10.0, -40.0, 0.0)),
+        ("above", v(10.0, 60.0, 0.0)),
+    ] {
         part.add_datum(
             Datum {
                 kind: DatumKind::Point,
@@ -353,14 +390,10 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
         )
         .unwrap();
     }
-    let refused = |through: Vec<EntityRef>| {
-        refusal(part.clone(), &args(through, 2.0, 5.0))
-    };
+    let refused = |through: Vec<EntityRef>| refusal(part.clone(), &args(through, 2.0, 5.0));
     let axis = EntityRef::datum_component(
         "origin",
-        geop_core_math::primitives::DatumComponent::Axis(
-            geop_core_math::primitives::FrameAxis::Z,
-        ),
+        geop_core_math::primitives::DatumComponent::Axis(geop_core_math::primitives::FrameAxis::Z),
     );
     let message = refused(vec![datum("start"), axis]);
     assert!(message.contains("point 2 (origin z axis)"), "{message}");
@@ -382,7 +415,9 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
         datum("above"),
     ]);
     assert!(
-        message.contains(&format!("the axis of point 2 ({rim}) could lie square to the route")),
+        message.contains(&format!(
+            "the axis of point 2 ({rim}) could lie square to the route"
+        )),
         "{message}"
     );
 
@@ -420,7 +455,9 @@ fn waypoint_configurations_route_or_are_refused() {
         v(10.0, -20.0, 35.0),
         v(-30.0, 25.0, 15.0),
     ];
-    let middles: [Option<(Vector3<S>, Option<Vector3<S>>)>; 3] = [
+    // Where a middle point is, and the z axis of the frame there, if any.
+    type Middle = Option<(Vector3<S>, Option<Vector3<S>>)>;
+    let middles: [Middle; 3] = [
         None,
         Some((v(25.0, 15.0, 10.0), None)),
         Some((v(20.0, -10.0, 5.0), Some(v(0.0, 0.0, 1.0)))),
@@ -433,7 +470,10 @@ fn waypoint_configurations_route_or_are_refused() {
                     let mut part = Part::<S>::new();
                     connectors(
                         &mut part,
-                        &[("start", v(0.0, 0.0, 0.0), *start), ("end", *end, *end_heading)],
+                        &[
+                            ("start", v(0.0, 0.0, 0.0), *start),
+                            ("end", *end, *end_heading),
+                        ],
                     );
                     let mut through = vec![datum("start")];
                     let mut points = vec![v::<S>(0.0, 0.0, 0.0)];
@@ -456,7 +496,8 @@ fn waypoint_configurations_route_or_are_refused() {
                     }
                     through.push(datum("end"));
                     points.push(*end);
-                    let case = format!("{start:?} -> {middle:?} -> {end:?} heading {end_heading:?}");
+                    let case =
+                        format!("{start:?} -> {middle:?} -> {end:?} heading {end_heading:?}");
                     let args = args(through, 1.0, 1.0);
                     let part = match route(part, &args) {
                         Ok(part) => part,
@@ -478,7 +519,11 @@ fn waypoint_configurations_route_or_are_refused() {
                         .windows(2)
                         .map(|w| w[1].sub(&w[0]).norm().to_f64())
                         .sum();
-                    assert!(cable.length.upper().to_f64() >= chords, "{case}: {:?}", cable.length);
+                    assert!(
+                        cable.length.upper().to_f64() >= chords,
+                        "{case}: {:?}",
+                        cable.length
+                    );
                     let waypoints: Vec<Waypoint<S>> = args
                         .through
                         .iter()
@@ -491,9 +536,8 @@ fn waypoint_configurations_route_or_are_refused() {
                         .curves
                         .iter()
                         .map(|curve| {
-                            let at = |k: usize| {
-                                curve.evaluate(S::from_f64(k as f64 / 64.0)).unwrap()
-                            };
+                            let at =
+                                |k: usize| curve.evaluate(S::from_f64(k as f64 / 64.0)).unwrap();
                             (0..64)
                                 .map(|k| at(k + 1).sub(&at(k)).norm().to_f64())
                                 .sum::<f64>()
@@ -515,4 +559,3 @@ fn waypoint_configurations_route_or_are_refused() {
     }
     assert!(built > refused, "{built} built, {refused} refused");
 }
-

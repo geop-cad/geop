@@ -56,10 +56,7 @@ fn assembly() -> Program {
     program.push(
         "cable",
         RouteArgs {
-            through: vec![
-                EntityRef::datum("a/origin"),
-                EntityRef::datum("b/origin"),
-            ],
+            through: vec![EntityRef::datum("a/origin"), EntityRef::datum("b/origin")],
             wires: vec![Wire {
                 size: WireSize::Diameter(0.2),
                 ..Wire::new("signal")
@@ -70,7 +67,10 @@ fn assembly() -> Program {
         },
     );
     let at = |x: f64| ParamValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
-    program.state = State::from([(pose_parameter("a"), at(0.0)), (pose_parameter("b"), at(4.0))]);
+    program.state = State::from([
+        (pose_parameter("a"), at(0.0)),
+        (pose_parameter("b"), at(4.0)),
+    ]);
     program
 }
 

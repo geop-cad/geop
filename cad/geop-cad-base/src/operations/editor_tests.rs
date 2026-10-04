@@ -639,8 +639,14 @@ fn new_route_is_picked_and_its_wires_chosen() {
     // on the box's top, then its rim on its floor, through the hole — both
     // halfway between the vertices that split each circle.
     let rim = 1.0 + 0.4 * std::f64::consts::FRAC_1_SQRT_2;
-    editor.handle(click(pointer([rim + 4.0, rim + 4.0, 1.0 + 5.0], [-4.0, -4.0, -5.0])));
-    editor.handle(click(pointer([rim - 0.3, rim - 0.3, 1.5], [0.3, 0.3, -1.0])));
+    editor.handle(click(pointer(
+        [rim + 4.0, rim + 4.0, 1.0 + 5.0],
+        [-4.0, -4.0, -5.0],
+    )));
+    editor.handle(click(pointer(
+        [rim - 0.3, rim - 0.3, 1.5],
+        [0.3, 0.3, -1.0],
+    )));
     // The box's bottom corner at `(2, 2, 0)`, from below.
     let update = editor.handle(click(pointer([2.0, 2.0, -10.0], [0.0, 0.0, 1.0])));
     let step = update.step.expect("the route is edited");
@@ -662,7 +668,10 @@ fn new_route_is_picked_and_its_wires_chosen() {
     // The default wire bundles 1.4 across, which may bend no tighter than
     // 7.2: the turn out to the corner is far tighter.
     let error = step.error.expect("too tight a bend is refused");
-    assert!(error.contains("may bend no tighter than radius 7.18"), "{error}");
+    assert!(
+        error.contains("may bend no tighter than radius 7.18"),
+        "{error}"
+    );
     assert!(error.contains("between point 2"), "{error}");
     assert!(
         step.presentation
@@ -683,7 +692,12 @@ fn new_route_is_picked_and_its_wires_chosen() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     assert!(
-        update.scene.unwrap().part.solids.contains(&"route(route1)".into()),
+        update
+            .scene
+            .unwrap()
+            .part
+            .solids
+            .contains(&"route(route1)".into()),
         "the bundle is drawn"
     );
 
@@ -709,5 +723,8 @@ fn new_route_is_picked_and_its_wires_chosen() {
     };
     let detail = items[0].detail.as_deref().unwrap();
     let cut_length = cable.wires[0].cut_length.to_f64();
-    assert!(detail.ends_with(&format!("cut {cut_length:.1}")), "{detail}");
+    assert!(
+        detail.ends_with(&format!("cut {cut_length:.1}")),
+        "{detail}"
+    );
 }

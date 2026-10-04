@@ -386,11 +386,7 @@ fn piece<S: Scalar>(
 ) -> GeopResult<Option<Piece<S>>> {
     let (first, second) = (q.sub(a), b.sub(q));
     let dot = first.prod_dot(&second);
-    if first
-        .prod_cross(&second)
-        .norm_sq()
-        .could_be_equal(S::ZERO)
-    {
+    if first.prod_cross(&second).norm_sq().could_be_equal(S::ZERO) {
         if !dot.definitely_greater(S::ZERO) {
             return Ok(None);
         }

@@ -397,11 +397,16 @@ impl Operation for Route {
                     );
                 }
             }
-            f.color("wire_colour", "colour", wire.colour.clone(), move |args, c| {
-                if let Some(wire) = args.wires.get_mut(i) {
-                    wire.colour = c.to_string();
-                }
-            });
+            f.color(
+                "wire_colour",
+                "colour",
+                wire.colour.clone(),
+                move |args, c| {
+                    if let Some(wire) = args.wires.get_mut(i) {
+                        wire.colour = c.to_string();
+                    }
+                },
+            );
         }
 
         f.heading("bundle_heading", "Bundle");
@@ -418,8 +423,7 @@ impl Operation for Route {
         );
         f.number(
             "service_loop",
-            Number::new("service loop per end", args.service_loop, Unit::Length)
-                .range(0.0, 200.0),
+            Number::new("service loop per end", args.service_loop, Unit::Length).range(0.0, 200.0),
             |args, v| args.service_loop = v,
         );
         if let Some(cable) = cable {
