@@ -3,6 +3,7 @@ mod evaluate;
 mod fit_pcurve;
 mod normal;
 mod offset;
+mod patch;
 mod project;
 mod reverse;
 mod split;
