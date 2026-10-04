@@ -64,7 +64,7 @@ fn examples_round_trip_through_step() {
         if !chosen.contains(&name) {
             continue;
         }
-        let part = program.build(&NoFiles).unwrap();
+        let part = program().build(&NoFiles).unwrap();
         let text = write_step(&part, name).unwrap();
         let back = imported(text);
         assert_eq!(

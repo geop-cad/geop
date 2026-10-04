@@ -113,6 +113,13 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         self.aabb = compute_aabb(&self.control_points);
     }
 
+    /// Whether the two patches could share a point: `false` proves they do
+    /// not, as the boxes around their control points — which hold each
+    /// whole patch, by the convex hull property — are apart.
+    pub fn could_overlap(&self, other: &Self) -> bool {
+        crate::aabb::aabb_could_overlap(&self.aabb, &other.aabb, D - 1)
+    }
+
     /// The diagonal of the box around the control points: by the convex
     /// hull property, a length the whole patch fits within — the size of
     /// the feature it is part of, for choices that should scale with it.

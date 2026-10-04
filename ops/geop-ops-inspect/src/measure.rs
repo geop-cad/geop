@@ -112,8 +112,9 @@ fn alone<S: Scalar>(
             let per_mm3 = S::from_f64(density).div(S::from_f64(1e9))?;
             let mass = owner
                 .topology()
-                .mass_properties(owner.solid_id(name)?, per_mm3)
-                .with_context(&ctx)?;
+                .mass_properties(owner.solid_id(name)?)
+                .with_context(&ctx)?
+                .with_density(per_mm3);
             out.values.push(measured("Volume", mass.volume, "mm³"));
             out.values.push(measured("Area", mass.area, "mm²"));
             out.values.push(measured("Mass", mass.mass, "kg"));

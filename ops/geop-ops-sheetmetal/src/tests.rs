@@ -551,7 +551,7 @@ fn flanged_bracket_mass_properties_converge() {
     let part = EdgeFlange.apply(part, "back", &back, &NoFiles).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("edge_flange(back)").unwrap();
-    let mass = part.topology().mass_properties(solid, S::ONE).unwrap();
+    let mass = part.topology().mass_properties(solid).unwrap();
     assert!(mass.converged, "{mass:?}");
 }
 

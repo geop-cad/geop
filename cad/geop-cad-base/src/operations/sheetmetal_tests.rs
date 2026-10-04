@@ -6,7 +6,6 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::{
     NoFiles, Part,
     ui::{Button, Pointer, Reach, StepEditEvent, Value},
@@ -15,18 +14,10 @@ use geop_ops_sheetmetal::{FlatPatternArgs, FlatPatternData, Sheet};
 
 use crate::{Command, Editor, PartOperation, examples};
 
+/// `validate_manifold` runs `validate` first: once is enough.
 fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    if let Err(errors) = validate(&params, part.topology()) {
-        let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
-        panic!(
-            "{} validation error(s):\n{}",
-            messages.len(),
-            messages.join("\n")
-        );
-    }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{errors:?}");
+    if let Err(report) = super::regression_tests::check_valid(part) {
+        panic!("{report}");
     }
 }
 

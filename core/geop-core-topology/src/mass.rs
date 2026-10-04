@@ -71,11 +71,13 @@ const INNER: Quadrature = Quadrature {
 pub struct MassProperties<S: Scalar> {
     pub volume: S,
     pub area: S,
-    /// The volume times the density.
+    /// The volume times the density: the volume itself, until a density
+    /// is given (see [`MassProperties::with_density`]).
     pub mass: S,
     pub center: Vector3<S>,
     /// The inertia tensor about `center`, along the world's axes:
-    /// `I_ij = ∫ ρ (|r|² δ_ij - r_i r_j) dV`, `r` measured from `center`.
+    /// `I_ij = ∫ ρ (|r|² δ_ij - r_i r_j) dV`, `r` measured from `center` —
+    /// with `ρ = 1` until a density is given.
     pub inertia: [[S; 3]; 3],
     pub converged: bool,
 }
@@ -109,12 +111,15 @@ impl<S: Scalar> Model<S> {
         Ok((integral.value[0], integral.converged))
     }
 
-    /// The mass properties of `solid`, of uniform `density`.
+    /// The mass properties of `solid`, of density one: what its shape
+    /// alone decides, and a material scales (see
+    /// [`MassProperties::with_density`]) — so they can be kept for a
+    /// shape, whatever it is made of.
     ///
     /// Fails for a solid whose faces do not enclose a volume definitely
     /// greater than zero — its faces pointing into the material, or its
     /// volume not resolved by the quadrature — naming it.
-    pub fn mass_properties(&self, solid: SolidId, density: S) -> GeopResult<MassProperties<S>> {
+    pub fn mass_properties(&self, solid: SolidId) -> GeopResult<MassProperties<S>> {
         let ctx = |e: GeopError| e.with_context(format!("Model::mass_properties(solid={solid})"));
         let faces = self.solid_faces(solid).with_context(&ctx)?;
         let reference = self.reference_point(&faces).with_context(&ctx)?;
@@ -171,13 +176,13 @@ impl<S: Scalar> Model<S> {
         for a in 0..3 {
             for b in 0..3 {
                 let delta = if a == b { trace } else { S::ZERO };
-                inertia[a][b] = delta.sub(jc[a][b]).mul(density);
+                inertia[a][b] = delta.sub(jc[a][b]);
             }
         }
         Ok(MassProperties {
             volume,
             area,
-            mass: volume.mul(density),
+            mass: volume,
             center: reference.add(&offset),
             inertia,
             converged,
@@ -218,6 +223,11 @@ impl<S: Scalar> Model<S> {
         // `G(u, v)`: from the start of the domain to `u`, split at every
         // knot passed on the way.
         let inner = |u: S, v: S| -> GeopResult<Vec<S>> {
+            // On the domain's own start — along a seam or a boundary of the
+            // untrimmed surface there — the integral is over nothing.
+            if u.is_sharp() && u.could_be_equal(u0) {
+                return Ok(vec![S::ZERO; components]);
+            }
             let mut breaks = vec![u0];
             breaks.extend(u_breaks[1..].iter().filter(|k| k.definitely_less(u)));
             breaks.push(u);
@@ -270,6 +280,16 @@ impl<S: Scalar> Model<S> {
 }
 
 impl<S: Scalar> MassProperties<S> {
+    /// The body of density one (see [`Model::mass_properties`]) made of a
+    /// uniform `density`: its mass and inertia that many times.
+    pub fn with_density(&self, density: S) -> Self {
+        Self {
+            mass: self.volume.mul(density),
+            inertia: self.inertia.map(|row| row.map(|i| i.mul(density))),
+            ..*self
+        }
+    }
+
     /// The body moved by `pose`: its centre moved, its inertia turned with
     /// it (`R I Rᵀ`).
     pub fn placed(&self, pose: &Pose<S>) -> GeopResult<Self> {
@@ -351,7 +371,7 @@ mod tests {
     fn check_unit_cube<S: Scalar>() {
         let mut model = Model::<S>::new();
         let solid = test_cube_solid(&mut model);
-        let mass = model.mass_properties(solid, S::TWO).unwrap();
+        let mass = model.mass_properties(solid).unwrap().with_density(S::TWO);
         assert!(mass.converged);
         assert!(mass.volume.could_be_equal(S::ONE), "{:?}", mass.volume);
         assert!(

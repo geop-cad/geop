@@ -281,7 +281,7 @@ const KNOWN_TO_FAIL: [(&str, ViewKind); 2] = [
 fn every_example_draws() {
     let mut failures = Vec::new();
     for (name, program) in examples::all() {
-        let part = build(&program);
+        let part = build(&program());
         for kind in ViewKind::ALL {
             let model = part.topology();
             let v = match project_view(

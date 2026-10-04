@@ -21,7 +21,7 @@ use crate::Program;
 /// outside, `B` wide, their edges chamfered by `r`, with the gap between
 /// the rings — where the balls and shields are — a shallow groove in
 /// either side.
-pub fn ball_bearing() -> GeopResult<StandardPart> {
+pub fn ball_bearing(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: Some(Material {
@@ -69,7 +69,7 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
-        file: "std:ball_bearing.geop",
+        file,
         title: "Deep-groove ball bearing",
         designation: "Ball bearing",
         base: "side",
@@ -178,19 +178,19 @@ fn tslot(
     })
 }
 
-pub fn tslot_2020() -> GeopResult<StandardPart> {
+pub fn tslot_2020(file: &'static str) -> GeopResult<StandardPart> {
     tslot(
         1,
-        "std:tslot_2020.geop",
+        file,
         "T-slot aluminium extrusion 20x20, B-type slot 6",
         "T-slot 2020",
     )
 }
 
-pub fn tslot_2040() -> GeopResult<StandardPart> {
+pub fn tslot_2040(file: &'static str) -> GeopResult<StandardPart> {
     tslot(
         2,
-        "std:tslot_2040.geop",
+        file,
         "T-slot aluminium extrusion 20x40, B-type slot 6",
         "T-slot 2040",
     )
@@ -201,7 +201,7 @@ pub fn tslot_2040() -> GeopResult<StandardPart> {
 /// pilot boss 22 across and 2 high, a shaft 5 across standing 24 out, and
 /// four M3 holes 4.5 deep on a 31 square. The body is its outline extruded
 /// `L` down, the boss and the shaft one profile turned on its face.
-pub fn nema17() -> GeopResult<StandardPart> {
+pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: Some(Material {
@@ -286,7 +286,7 @@ pub fn nema17() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "face", "0");
     Ok(StandardPart {
-        file: "std:nema17_stepper.geop",
+        file,
         title: "NEMA 17 stepper motor",
         designation: "NEMA 17 stepper",
         base: "face",

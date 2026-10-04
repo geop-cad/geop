@@ -554,7 +554,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     let mut compiled = Vec::new();
     for (name, program) in singles.iter().filter(|(n, _)| chosen(n)) {
         let path = args.out_dir.join(format!("{name}.geop"));
-        write(&path, program)?;
+        write(&path, &program())?;
         let output = args.out_dir.join(format!("{name}.stl"));
         compiled.push(
             compile_to(path, output)
@@ -564,7 +564,8 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     for (name, files) in workspaces.iter().filter(|(n, _)| chosen(n)) {
         let dir = args.out_dir.join(name);
         std::fs::create_dir_all(&dir).map_err(dir_err(&dir))?;
-        for (file, program) in files {
+        let files = files();
+        for (file, program) in &files {
             write(&dir.join(file), program)?;
         }
         let (main, _) = files.first().expect("an example has files");
@@ -731,7 +732,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "box_with_drill_hole")
             .unwrap()
-            .1;
+            .1();
         let path = dir.join("box.geop");
         std::fs::write(&path, program.to_json().unwrap()).unwrap();
         let compiled = compile(&CompileArgs {
@@ -762,7 +763,7 @@ mod tests {
         let dir = scratch("examples");
         for (name, program) in examples::all() {
             let path = dir.join(format!("{name}.geop"));
-            std::fs::write(&path, program.to_json().unwrap()).unwrap();
+            std::fs::write(&path, program().to_json().unwrap()).unwrap();
             let compiled = compile(&args(path)).unwrap();
             assert_eq!(compiled.output, dir.join(format!("{name}.stl")));
             assert!(compiled.triangles > 0, "{name}: no triangles");
@@ -790,7 +791,7 @@ mod tests {
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
         for (name, files) in examples::workspaces() {
-            for (file, _) in files {
+            for (file, _) in files() {
                 assert!(dir.join(name).join(file).is_file(), "{name}/{file}");
             }
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
@@ -807,6 +808,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "arm")
             .unwrap();
+        let files = files();
         for (file, program) in &files {
             std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
         }
@@ -843,6 +845,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "bolted_plate")
             .unwrap();
+        let files = files();
         for (file, program) in &files {
             std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
         }
@@ -875,6 +878,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "pin_in_plate")
             .unwrap();
+        let files = files();
         {
             for (file, program) in &files {
                 std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();

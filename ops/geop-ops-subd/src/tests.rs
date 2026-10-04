@@ -16,18 +16,17 @@ use geop_ops::{NoFiles, Part, operation::Operation};
 
 use crate::{Cage, Mirror, Subd, SubdArgs};
 
+/// Valid, and a manifold (`validate_manifold` runs `validate` first: once
+/// is enough), its names checked.
 fn assert_valid<S: Scalar>(part: &Part<S>) {
     let params = ValidationParameters::default();
-    if let Err(errors) = validate(&params, part.topology()) {
+    if let Err(errors) = validate_manifold(&params, part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
         panic!(
             "{} validation errors:\n{}",
             messages.len(),
             messages.join("\n")
         );
-    }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{errors:#?}");
     }
     part.check_names().unwrap();
 }
@@ -264,7 +263,6 @@ fn plane_and_prism_build() {
 /// A cylinder's ends are octagons, and a sphere-like cage has eight
 /// vertices of three faces: both build valid solids.
 #[test]
-#[ignore = "slow: validating 24-32 curved faces — run with `cargo test -- --ignored`"]
 fn round_primitives_build() {
     type S = ScalInF64;
     let part = built::<S>(Cage::cylinder(1.0, 2.0, 8), Mirror::None);

@@ -189,10 +189,10 @@ fn socket(program: &mut Program, top: &str, target: &str) -> GeopResult<()> {
     )
 }
 
-pub fn iso4762() -> GeopResult<StandardPart> {
+pub fn iso4762(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Cylinder, tables::iso4762())?;
     Ok(StandardPart {
-        file: "std:iso4762_socket_head_cap_screw.geop",
+        file,
         title: "ISO 4762 socket head cap screw",
         designation: "ISO 4762",
         base: "seat",
@@ -201,10 +201,10 @@ pub fn iso4762() -> GeopResult<StandardPart> {
     })
 }
 
-pub fn iso7380() -> GeopResult<StandardPart> {
+pub fn iso7380(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Dome, tables::iso7380())?;
     Ok(StandardPart {
-        file: "std:iso7380_button_head_screw.geop",
+        file,
         title: "ISO 7380 button head screw",
         designation: "ISO 7380",
         base: "seat",
@@ -213,10 +213,10 @@ pub fn iso7380() -> GeopResult<StandardPart> {
     })
 }
 
-pub fn iso10642() -> GeopResult<StandardPart> {
+pub fn iso10642(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Countersunk, tables::iso10642())?;
     Ok(StandardPart {
-        file: "std:iso10642_countersunk_screw.geop",
+        file,
         title: "ISO 10642 countersunk screw",
         designation: "ISO 10642",
         base: "top",
@@ -225,10 +225,10 @@ pub fn iso10642() -> GeopResult<StandardPart> {
     })
 }
 
-pub fn iso4017() -> GeopResult<StandardPart> {
+pub fn iso4017(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = screw(Head::Hex, tables::iso4017())?;
     Ok(StandardPart {
-        file: "std:iso4017_hex_head_screw.geop",
+        file,
         title: "ISO 4017 hex head screw",
         designation: "ISO 4017",
         base: "seat",
@@ -288,10 +288,10 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
     Ok((program, swept("body", "profile", bore_line)))
 }
 
-pub fn iso4032() -> GeopResult<StandardPart> {
+pub fn iso4032(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = nut(tables::iso4032(), false)?;
     Ok(StandardPart {
-        file: "std:iso4032_hex_nut.geop",
+        file,
         title: "ISO 4032 hex nut",
         designation: "ISO 4032",
         base: "base",
@@ -300,10 +300,10 @@ pub fn iso4032() -> GeopResult<StandardPart> {
     })
 }
 
-pub fn iso10511() -> GeopResult<StandardPart> {
+pub fn iso10511(file: &'static str) -> GeopResult<StandardPart> {
     let (program, threaded) = nut(tables::iso10511(), true)?;
     Ok(StandardPart {
-        file: "std:iso10511_nylon_insert_nut.geop",
+        file,
         title: "ISO 10511 nylon insert lock nut",
         designation: "ISO 10511",
         base: "base",
@@ -344,9 +344,9 @@ fn washer(table: Table, chamfered: bool) -> GeopResult<Program> {
     Ok(program)
 }
 
-pub fn iso7089() -> GeopResult<StandardPart> {
+pub fn iso7089(file: &'static str) -> GeopResult<StandardPart> {
     Ok(StandardPart {
-        file: "std:iso7089_washer.geop",
+        file,
         title: "ISO 7089 plain washer",
         designation: "ISO 7089",
         base: "base",
@@ -355,9 +355,9 @@ pub fn iso7089() -> GeopResult<StandardPart> {
     })
 }
 
-pub fn iso7090() -> GeopResult<StandardPart> {
+pub fn iso7090(file: &'static str) -> GeopResult<StandardPart> {
     Ok(StandardPart {
-        file: "std:iso7090_chamfered_washer.geop",
+        file,
         title: "ISO 7090 chamfered washer",
         designation: "ISO 7090",
         base: "base",
@@ -367,7 +367,7 @@ pub fn iso7090() -> GeopResult<StandardPart> {
 }
 
 /// ISO 8734: a pin `d` across and `l` long, both ends chamfered by `c`.
-pub fn iso8734() -> GeopResult<StandardPart> {
+pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = sized(tables::iso8734());
     let (r, c, l) = (format!("{} / 2", col("d")), col("c"), col("l"));
     let mut drawing = Drawing::new(&program.parameters)?;
@@ -390,7 +390,7 @@ pub fn iso8734() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     Ok(StandardPart {
-        file: "std:iso8734_dowel_pin.geop",
+        file,
         title: "ISO 8734 dowel pin",
         designation: "ISO 8734",
         base: "base",
@@ -401,7 +401,7 @@ pub fn iso8734() -> GeopResult<StandardPart> {
 
 /// A hex standoff `s` across its flats and `l` long, bored `d` through —
 /// threaded from both ends: a hexagon around the bore, extruded `l`.
-pub fn hex_standoff() -> GeopResult<StandardPart> {
+pub fn hex_standoff(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = sized(tables::hex_standoffs());
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &col("s"))?;
@@ -421,7 +421,7 @@ pub fn hex_standoff() -> GeopResult<StandardPart> {
         .map(|piece| format!("extrude(standoff,hex,{bore}{piece})"))
         .to_vec();
     Ok(StandardPart {
-        file: "std:hex_standoff.geop",
+        file,
         title: "Hex standoff, female",
         designation: "Hex standoff",
         base: "base",

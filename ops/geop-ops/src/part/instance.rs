@@ -3,9 +3,9 @@
 //! [`crate::assembly`]). Named like any other entity.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     sync::{
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -16,6 +16,8 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
+
+use geop_core_topology::{SolidId, mass::MassProperties};
 
 use super::Part;
 use super::ids::InstanceId;
@@ -38,6 +40,8 @@ pub struct Component<S: Scalar> {
     build: u64,
     view: OnceLock<PartView<S>>,
     bounds: OnceLock<Option<[Vector3<S>; 2]>>,
+    /// Its solids' mass properties, of density one, as far as asked for.
+    mass: Mutex<HashMap<SolidId, MassProperties<S>>>,
 }
 
 /// The build number the next component gets.
@@ -52,7 +56,23 @@ impl<S: Scalar> Component<S> {
             build: NEXT_BUILD.fetch_add(1, Ordering::Relaxed),
             view: OnceLock::new(),
             bounds: OnceLock::new(),
+            mass: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The mass properties of its part's solid `solid`, of density one
+    /// (see [`geop_core_topology::Model::mass_properties`]): integrated the
+    /// first time they are asked for, and kept for as long as the
+    /// component is — every bill of materials, mass report and robot
+    /// description of it, however often it is placed, integrates it once.
+    pub fn mass_properties(&self, solid: SolidId) -> GeopResult<MassProperties<S>> {
+        let kept = || self.mass.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(&properties) = kept().get(&solid) {
+            return Ok(properties);
+        }
+        let properties = self.part.topology.mass_properties(solid)?;
+        kept().insert(solid, properties);
+        Ok(properties)
     }
 
     /// The box around every vertex of the part and of the parts placed in

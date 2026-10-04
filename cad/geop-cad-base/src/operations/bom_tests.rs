@@ -71,6 +71,7 @@ fn the_bolted_plate_lists_its_screw_and_nut() {
         .into_iter()
         .find(|(name, _)| *name == "bolted_plate")
         .unwrap();
+    let files = files();
     let program = files[0].1.clone();
     let files = files
         .into_iter()

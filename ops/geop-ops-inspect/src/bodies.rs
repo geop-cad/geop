@@ -9,7 +9,7 @@ use geop_core_math::{
     vector::{Vector, Vector3},
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
-use geop_ops::{EntityRef, Part, operation::INSTANCE_SEPARATOR};
+use geop_ops::{Component, EntityRef, Part, operation::INSTANCE_SEPARATOR};
 
 use crate::mass::material_of;
 
@@ -19,6 +19,9 @@ pub struct PlacedSolid<'p, S: Scalar> {
     pub name: String,
     /// The part it is a solid of — whose material it is made of.
     pub part: &'p Part<S>,
+    /// The component `part` is, if it is a placed part's: which keeps its
+    /// solids' mass properties once integrated.
+    pub component: Option<&'p Component<S>>,
     pub solid: SolidId,
     /// Where its part is placed; `None` for the part's own solids.
     pub pose: Option<Pose<S>>,
@@ -31,7 +34,11 @@ impl<S: Scalar> PlacedSolid<'_, S> {
     pub fn mass_properties(&self) -> GeopResult<MassProperties<S>> {
         let (_, density, _) = material_of(self.part);
         let per_mm3 = S::from_f64(density).div(S::from_f64(1e9))?;
-        let own = self.part.topology().mass_properties(self.solid, per_mm3)?;
+        let shape = match self.component {
+            Some(component) => component.mass_properties(self.solid)?,
+            None => self.part.topology().mass_properties(self.solid)?,
+        };
+        let own = shape.with_density(per_mm3);
         match &self.pose {
             Some(pose) => own.placed(pose),
             None => Ok(own),
@@ -86,12 +93,13 @@ pub fn apart<S: Scalar>(a: &Box3<S>, b: &Box3<S>) -> bool {
 /// part's own before those placed.
 pub fn placed_solids<S: Scalar>(part: &Part<S>) -> GeopResult<Vec<PlacedSolid<'_, S>>> {
     let mut out = Vec::new();
-    collect(part, "", None, &mut out)?;
+    collect(part, None, "", None, &mut out)?;
     Ok(out)
 }
 
 fn collect<'p, S: Scalar>(
     part: &'p Part<S>,
+    component: Option<&'p Component<S>>,
     prefix: &str,
     pose: Option<Pose<S>>,
     out: &mut Vec<PlacedSolid<'p, S>>,
@@ -101,6 +109,7 @@ fn collect<'p, S: Scalar>(
             solid: part.solid_id(&name)?,
             name: format!("{prefix}{name}"),
             part,
+            component,
             pose,
         });
     }
@@ -113,7 +122,13 @@ fn collect<'p, S: Scalar>(
             None => instance.pose,
         };
         let prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
-        collect(instance.part(), &prefix, Some(inner), out)?;
+        collect(
+            instance.part(),
+            Some(&instance.component),
+            &prefix,
+            Some(inner),
+            out,
+        )?;
     }
     Ok(())
 }
