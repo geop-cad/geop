@@ -141,7 +141,7 @@ impl Operation for ImportStep {
             return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
         }
         let namer = Namer::new("import", operation_id).with_context(ctx)?;
-        let text = library.read(&args.file).with_context(ctx)?;
+        let (_, text) = library.read(&args.file).with_context(ctx)?;
         let bodies = read_step::<S>(&text).with_context(ctx)?;
         if bodies.is_empty() {
             return Err(GeopError::new(format!("{} has no solids or sheets", args.file)))

@@ -894,7 +894,7 @@ impl<S: Scalar> Builder<'_, S> {
             }
             _ => revolved.profile_curve::<S>(vb, vt)?,
         };
-        Ok(profile.place(&turn))
+        Ok(profile.transform(&turn.motion()))
     }
 
     /// The description of the body, and the names of what it is made of.

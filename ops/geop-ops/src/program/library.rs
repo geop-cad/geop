@@ -49,9 +49,10 @@ pub trait Library<S: Scalar> {
     /// and any other.
     fn files(&self) -> Vec<String>;
 
-    /// The text of the file `file`, relative to the program being built:
-    /// a file a step reads as data, as an import reads a STEP file.
-    fn read(&self, file: &str) -> GeopResult<String>;
+    /// The file `file`, relative to the program being built — a file a
+    /// step reads as data, as an import reads a STEP file: its path, as
+    /// the library names files (see [`Component::files`]), and its text.
+    fn read(&self, file: &str) -> GeopResult<(String, String)>;
 }
 
 /// Whether the file `path` is a program, which a part can be placed from:
@@ -74,7 +75,7 @@ impl<S: Scalar> Library<S> for NoFiles {
         Vec::new()
     }
 
-    fn read(&self, file: &str) -> GeopResult<String> {
+    fn read(&self, file: &str) -> GeopResult<(String, String)> {
         Err(GeopError::new(format!(
             "cannot read {file:?}: this program is built without any other files"
         )))
@@ -346,8 +347,10 @@ impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
             .collect()
     }
 
-    fn read(&self, file: &str) -> GeopResult<String> {
-        self.workspace.files.read(&resolve(&self.file, file))
+    fn read(&self, file: &str) -> GeopResult<(String, String)> {
+        let path = resolve(&self.file, file);
+        let text = self.workspace.files.read(&path)?;
+        Ok((path, text))
     }
 }
 

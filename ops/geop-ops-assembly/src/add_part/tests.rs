@@ -38,7 +38,7 @@ impl Library<S> for Shelf {
         self.0.keys().cloned().collect()
     }
 
-    fn read(&self, file: &str) -> GeopResult<String> {
+    fn read(&self, file: &str) -> GeopResult<(String, String)> {
         Err(GeopError::new(format!("no file {file:?} to read")))
     }
 }
