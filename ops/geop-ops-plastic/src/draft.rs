@@ -35,6 +35,7 @@ use geop_core_geometry::{
     shape::{Arc, Axis, Circle, Plane},
 };
 use geop_core_math::{
+    polygon::loops_contain,
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
@@ -454,11 +455,26 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             .enumerate()
             .map(|(f, face)| {
                 let lp = |coedges: &Vec<CoedgeSpec<S>>| self.face_loop(f, coedges);
-                Ok(FaceSpec {
+                let drafted_face = FaceSpec {
                     surface: self.surfaces[f].clone(),
                     outer: lp(&face.outer)?,
                     holes: face.holes.iter().map(lp).collect::<GeopResult<_>>()?,
-                })
+                };
+                // Drafted so far that a wall's two sides cross, the face
+                // between them — a shelled rim — runs into its own hole.
+                let outline = |lp: &[CoedgeSpec<S>]| -> GeopResult<Vec<Vector2<S>>> {
+                    lp.iter().map(|c| Ok(pcurve_ends(&c.pcurve)?.0)).collect()
+                };
+                let outer = outline(&drafted_face.outer)?;
+                for hole in &drafted_face.holes {
+                    if !outline(hole)?.iter().all(|p| loops_contain(std::slice::from_ref(&outer), p)) {
+                        return Err(GeopError::new(format!(
+                            "the draft is too steep: face {} runs into its own hole — the sides of a wall would cross",
+                            self.names.faces[f]
+                        )));
+                    }
+                }
+                Ok(drafted_face)
             })
             .collect::<GeopResult<_>>()?;
         Ok(BodySpec {

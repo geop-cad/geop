@@ -9,7 +9,8 @@ use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_fillet::FilletArgs;
-use geop_ops_plastic::{DraftArgs, GrooveArgs, LipArgs};
+use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_plastic::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
 use geop_ops_shell::ShellArgs;
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
@@ -17,17 +18,22 @@ use crate::Program;
 use crate::examples::n;
 
 fn assert_valid(part: &Part<S>) {
+    assert_valid_case(part, "");
+}
+
+/// [`assert_valid`], saying which `case` of a sweep it is.
+fn assert_valid_case(part: &Part<S>, case: &str) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate(&params, part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
         panic!(
-            "{} validation error(s):\n{}",
+            "{case}: {} validation error(s):\n{}",
             messages.len(),
             messages.join("\n")
         );
     }
     if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{errors:?}");
+        panic!("{case}: {errors:?}");
     }
 }
 
@@ -75,14 +81,14 @@ fn boxed() -> Program {
 
 const WALLS: [&str; 4] = ["c4", "c5", "c6", "c7"];
 
-fn wall(c: &str) -> String {
+pub(super) fn wall(c: &str) -> String {
     format!("extrude(box,outline,{c})")
 }
 
 /// The box, shelled 0.2 thick open at its top: the solid `shell(s)`, its
 /// inner walls `shell(s,extrude(box,outline,c4))` and so on, its rim
 /// `shell(s,extrude(box,end))`.
-fn enclosure() -> Program {
+pub(super) fn enclosure() -> Program {
     let mut program = boxed();
     program.push(
         "s",
@@ -267,4 +273,195 @@ fn lip_along_opposite_edges_is_refused() {
     };
     let message = format!("{error}");
     assert!(message.contains("not one chain"), "{message}");
+}
+
+/// The enclosure with a reference plane through its middle, `middle`, at
+/// `y = 1` — offset from the `-y` wall, whose plane runs `u` along `x` and
+/// `v` along `z` — and on it the sketch `rib_sketch` of a line across the
+/// cavity at height 0.7, from `x = 0.5` to `x = 1.5`.
+pub(super) fn enclosure_with_rib_sketch() -> Program {
+    let mut program = enclosure();
+    program.push(
+        "middle",
+        AddDatumArgs {
+            selection: vec![face(&wall("c4"))],
+            construction: Construction::Offset { distance: -1.0 },
+        },
+    );
+    let mut s = Sketch::new();
+    let a = s.add_point(n(0.5), n(0.7));
+    let b = s.add_point(n(1.5), n(0.7));
+    s.add_line(a, b);
+    program.push(
+        "rib_sketch",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum("middle")),
+            sketch: s,
+            ..Default::default()
+        },
+    );
+    program
+}
+
+fn rib(direction: RibDirection, side: RibSide, flipped: bool) -> RibArgs {
+    RibArgs {
+        sketch: "rib_sketch".into(),
+        solid: "shell(s)".into(),
+        thickness: 0.05,
+        side,
+        direction,
+        flipped,
+    }
+}
+
+/// A rib from a line across the cavity, grown parallel to its sketch down
+/// to the floor, its ends run on into the walls.
+#[test]
+fn enclosure_rib() {
+    let mut program = enclosure_with_rib_sketch();
+    program.push("r", rib(RibDirection::Parallel, RibSide::Symmetric, true));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert!(part.solid_id("rib(r)").is_ok());
+}
+
+/// The same line grown the other way, up out of the open top, meets
+/// nothing that stops it: refused.
+#[test]
+fn rib_out_of_the_top_is_refused() {
+    let mut program = enclosure_with_rib_sketch();
+    program.push("r", rib(RibDirection::Parallel, RibSide::First, false));
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("a rib out of the top is refused");
+    };
+    let message = format!("{error}");
+    assert!(message.contains("without meeting it all along"), "{message}");
+}
+
+/// A rib, grown normal to its sketch — across the cavity from the `-y`
+/// wall to the `+y` one — with its line running across the cavity.
+#[test]
+fn enclosure_rib_normal_to_its_sketch() {
+    let mut program = enclosure();
+    program.push(
+        "level",
+        AddDatumArgs {
+            selection: vec![face("shell(s,extrude(box,start))")],
+            construction: Construction::Offset { distance: 0.5 },
+        },
+    );
+    let mut s = Sketch::new();
+    let a = s.add_point(n(0.5), n(1.0));
+    let b = s.add_point(n(1.5), n(1.0));
+    s.add_line(a, b);
+    program.push(
+        "rib_sketch",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum("level")),
+            sketch: s,
+            ..Default::default()
+        },
+    );
+    program.push("r", rib(RibDirection::Normal, RibSide::Symmetric, true));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+}
+
+/// The sweep: ribs of several thicknesses, either side, both directions;
+/// lips and grooves of several sizes; drafts of several angles.
+#[test]
+#[ignore = "slow: rib, lip, groove and draft sweep — run with `cargo test -- --ignored`"]
+fn plastic_sweep() {
+    for thickness in [0.02, 0.05, 0.1] {
+        for side in [RibSide::Symmetric, RibSide::First, RibSide::Second] {
+            let mut program = enclosure_with_rib_sketch();
+            let mut args = rib(RibDirection::Parallel, side, true);
+            args.thickness = thickness;
+            program.push("r", args);
+            let part = program
+                .build::<S>(&NoFiles)
+                .unwrap_or_else(|e| panic!("rib {thickness} {side:?}: {e}"));
+            assert_valid_case(&part, &format!("rib {thickness} {side:?}"));
+        }
+    }
+    for (width, height, clearance) in [(0.08, 0.05, 0.0), (0.1, 0.2, 0.01), (0.15, 0.1, 0.03)] {
+        let mut program = enclosure();
+        program.push(
+            "l",
+            LipArgs {
+                face: RIM.into(),
+                edges: Vec::new(),
+                width,
+                height,
+            },
+        );
+        assert_valid_case(&program.build::<S>(&NoFiles).unwrap(), &format!("lip {width} {height}"));
+        let mut program = enclosure();
+        program.push(
+            "g",
+            GrooveArgs {
+                face: RIM.into(),
+                edges: Vec::new(),
+                width,
+                height,
+                clearance,
+            },
+        );
+        let part = program
+            .build::<S>(&NoFiles)
+            .unwrap_or_else(|e| panic!("groove {width} {height} {clearance}: {e}"));
+        assert_valid_case(&part, &format!("groove {width} {height} {clearance}"));
+    }
+    for angle in [0.5, 1.0, 3.0, 7.0, 10.0, -3.0] {
+        let mut program = enclosure();
+        let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
+        program.push("d", draft(&walls, angle));
+        let part = program
+            .build::<S>(&NoFiles)
+            .unwrap_or_else(|e| panic!("draft {angle}: {e}"));
+        assert_valid_case(&part, &format!("draft {angle}"));
+    }
+}
+
+/// A groove for a lip 0.05 wide and high, no clearance: its cut reaches
+/// 0.05 past the enclosure's inner corners, less than the boolean's tracing
+/// stride (0.1).
+///
+/// Fails in the boolean: the inner wall `x = 0.2` ends up with a spur edge
+/// from its corner `(0.2, 1.8, 0.95)` out to `(0.2, 1.85, 0.95)` — where the
+/// cut's floor edge pierces the wall's (extended) surface, outside the wall
+/// face — and the line across the wall at `z = 0.95` is never imprinted, so
+/// the wall is left straddling the cut. The same groove with the cut
+/// reaching 0.1 past the corners (`enclosure_lip_and_groove`) builds. Not
+/// yet traced to which pass splices the spur.
+#[test]
+#[ignore = "remesh splices a spur at an inner corner when the cut reaches past it by less than a tracing stride; see the doc comment"]
+fn narrow_groove() {
+    let mut program = enclosure();
+    program.push(
+        "g",
+        GrooveArgs {
+            face: RIM.into(),
+            edges: Vec::new(),
+            width: 0.05,
+            height: 0.05,
+            clearance: 0.0,
+        },
+    );
+    assert_valid(&program.build::<S>(&NoFiles).unwrap());
+}
+
+/// Drafted 15 degrees, the enclosure's 0.2 thick walls would lean in by
+/// 0.27 at the top, past their inner side: refused, naming the rim.
+#[test]
+fn too_steep_a_draft_is_refused() {
+    let mut program = enclosure();
+    let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
+    program.push("d", draft(&walls, 15.0));
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("a draft crossing the walls is refused");
+    };
+    let message = format!("{error}");
+    assert!(message.contains("too steep"), "{message}");
+    assert!(message.contains(RIM), "{message}");
 }

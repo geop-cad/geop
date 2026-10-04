@@ -3,21 +3,26 @@
 
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
+    primitives::CoordinateSystem,
     scalars::{ScalInF64, Scalar},
-    vector::Vector3,
+    vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
     Body, FaceId, SolidId,
     validation::{ValidationParameters, validate, validate_manifold},
 };
 use geop_ops::{Namer, Part};
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::{
+    common::{Profile, polyline},
+    shapes::cube_solid,
+};
 use geop_ops_rasterize::{rasterize, stl::stl_triangles};
 use geop_ops_shell::shell::shell;
 
 use crate::{
     draft::draft,
     lip::{LipSize, groove, lip},
+    rib::{Growth, rib},
 };
 
 type S = ScalInF64;
@@ -219,4 +224,91 @@ fn enclosure_groove() {
         (taken - expected).abs() < VOLUME_TOLERANCE,
         "{taken} vs {expected}"
     );
+}
+
+/// A rib across the enclosure's cavity from the line `line` in `plane`,
+/// grown `growth` down to the floor, its ends run on into the walls — and
+/// the volume it adds: the cavity's width 1.6, from the line at 0.7 down
+/// to the floor at 0.2, 0.05 thick.
+fn check_rib(plane: CoordinateSystem<S>, line: [[f64; 2]; 2], growth: Growth) {
+    let (mut part, solid) = enclosure(0.2);
+    let before = volume(&part, solid);
+    let profile = Profile::open(polyline(&[q(line[0]), q(line[1])]).unwrap());
+    let namer = Namer::new("rib", "r").unwrap();
+    let half = S::from_f64(0.025);
+    rib(
+        &mut part,
+        &namer,
+        "r",
+        &plane,
+        &profile,
+        solid,
+        (S::from_f64(-0.025), half),
+        growth,
+    )
+    .unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("rib(r)").unwrap();
+    let added = volume(&part, solid) - before;
+    let expected = 1.6 * 0.5 * 0.05;
+    assert!(
+        (added - expected).abs() < VOLUME_TOLERANCE,
+        "{added} vs {expected}"
+    );
+}
+
+fn q(p: [f64; 2]) -> Vector2<S> {
+    Vector2::from_array(p.map(S::from_f64))
+}
+
+/// The plane through the enclosure's middle, `u` along `x` and `v` along
+/// `z`, at `y = 1`.
+fn middle_plane() -> CoordinateSystem<S> {
+    CoordinateSystem::try_new(v(0., 1., 0.), v(1., 0., 0.), v(0., 0., 1.), v(0., -1., 0.)).unwrap()
+}
+
+/// Grown parallel to its sketch, down from the line to the floor.
+#[test]
+fn rib_parallel_to_its_sketch() {
+    check_rib(
+        middle_plane(),
+        [[0.5, 0.7], [1.5, 0.7]],
+        Growth::Parallel { flipped: true },
+    );
+}
+
+/// Grown normal to its sketch, a plane across the cavity at 0.7, down to
+/// the floor.
+#[test]
+fn rib_normal_to_its_sketch() {
+    check_rib(
+        CoordinateSystem::world_at(v(0., 0., 0.7)),
+        [[0.5, 1.0], [1.5, 1.0]],
+        Growth::Normal { flipped: true },
+    );
+}
+
+/// A rib grown up, out of the open top, meets nothing that stops it: it is
+/// refused, saying so.
+#[test]
+fn rib_growing_out_of_the_top_is_refused() {
+    let (mut part, solid) = enclosure(0.2);
+    let plane = CoordinateSystem::world_at(v(0., 0., 0.7));
+    let profile = Profile::open(polyline(&[q([0.5, 1.0]), q([1.5, 1.0])]).unwrap());
+    let namer = Namer::new("rib", "r").unwrap();
+    let half = S::from_f64(0.025);
+    let Err(error) = rib(
+        &mut part,
+        &namer,
+        "r",
+        &plane,
+        &profile,
+        solid,
+        (S::from_f64(-0.025), half),
+        Growth::Normal { flipped: false },
+    ) else {
+        panic!("a rib out of the top is refused");
+    };
+    let message = format!("{error}");
+    assert!(message.contains("without meeting it all along"), "{message}");
 }

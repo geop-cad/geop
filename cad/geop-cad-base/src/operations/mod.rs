@@ -5,7 +5,8 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! ribs, lips, grooves and drafts in `geop_ops_plastic`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -21,7 +22,7 @@ use geop_ops_extrude_revolve::{
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
-use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs};
+use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -111,6 +112,9 @@ pub enum PartOperation {
     Lip(LipArgs),
     /// Cut the groove that takes a lip into the rim of the other half.
     Groove(GrooveArgs),
+    /// Grow a thin wall from an open sketch profile up to a solid's faces,
+    /// and join it.
+    Rib(RibArgs),
 }
 
 /// A program of the editor's operations.

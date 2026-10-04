@@ -1,5 +1,5 @@
-//! The plastic features as operations of a program: [`Draft`], [`Lip`] and
-//! [`Groove`].
+//! The plastic features as operations of a program: [`Rib`], [`Lip`],
+//! [`Groove`] and [`Draft`].
 
 use geop_core_geometry::shape::Plane;
 use geop_core_topology::{EdgeId, FaceId};
@@ -11,13 +11,17 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
-    ui::{Form, Number, Unit},
+    ui::{Choice, Form, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
+
+use geop_core_sketch::Shape;
+use geop_ops_extrude_revolve::operation::shape_loops;
 
 use crate::{
     draft::draft,
     lip::{LipSize, groove, lip},
+    rib::{Growth, rib},
 };
 
 /// Faces by name, as a reference field holds them.
@@ -402,6 +406,224 @@ impl Operation for Groove {
         let clearance = S::from_f64(args.clearance);
         groove(&mut part, &namer, operation_id, face, &edges, size, clearance)
             .with_context(ctx)?;
+        Ok(part)
+    }
+}
+
+/// Which side of its profile a rib is thick on: both alike, its first side
+/// — to the profile's left, growing normal to the sketch; along the
+/// sketch plane's normal, growing parallel to it — or its second.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RibSide {
+    #[default]
+    Symmetric,
+    First,
+    Second,
+}
+
+/// Which way a rib grows from its profile: along the sketch plane's normal,
+/// or in the sketch plane, square to the chord between the profile's ends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RibDirection {
+    #[default]
+    Parallel,
+    Normal,
+}
+
+/// Grows a rib `thickness` thick from the open profile of a sketch — lines
+/// and arcs — until it meets the solid `solid`, its ends run on into the
+/// walls they point at, and joins it (see [`crate::rib::rib`]), for the
+/// operation `R`: the result is named `rib(R)`. Growing normal to the
+/// sketch, the rib's caps are `rib(R,start)` on the sketch's plane; its
+/// sides along a profile piece `K,X` are `rib(R,K,X)` and `rib(R,K,X,far)`.
+/// Parallel, its sides on either side of the sketch's plane are
+/// `rib(R,start)` and `rib(R,end)`, its edge along the profile `rib(R,K,X)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Rib;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RibArgs {
+    /// The sketch of the profile: one open chain.
+    pub sketch: String,
+    /// The solid it grows up to and joins.
+    pub solid: String,
+    pub thickness: f64,
+    #[serde(default)]
+    pub side: RibSide,
+    #[serde(default)]
+    pub direction: RibDirection,
+    /// Grow the other way.
+    #[serde(default)]
+    pub flipped: bool,
+}
+
+impl Operation for Rib {
+    type Args = RibArgs;
+    type Session = ();
+
+    /// The newest sketch and solid, 0.05 thick, symmetric, parallel to the
+    /// sketch.
+    fn new_args<S: Scalar>(&self, before: &Part<S>) -> RibArgs {
+        RibArgs {
+            sketch: before.sketch_names().pop().unwrap_or_default(),
+            solid: before.solid_names().pop().unwrap_or_default(),
+            thickness: 0.05,
+            side: RibSide::Symmetric,
+            direction: RibDirection::Parallel,
+            flipped: false,
+        }
+    }
+
+    /// The sketch and the solid, picked, the thickness and its side, which
+    /// way it grows.
+    fn form<'a, S: Scalar>(
+        &self,
+        _: Context<'a, S>,
+        args: &RibArgs,
+        _: &(),
+        _: &[String],
+    ) -> Form<'a, S, RibArgs> {
+        let mut f = Form::<S, RibArgs>::new();
+        let one = |entity: Option<EntityRef>| entity.into_iter().collect::<Vec<_>>();
+        f.reference(
+            "sketch",
+            "sketch",
+            one((!args.sketch.is_empty()).then(|| EntityRef::Sketch {
+                name: args.sketch.clone(),
+            })),
+            &[Role::Sketch],
+            None,
+            false,
+            |e, picked| {
+                e.args.sketch = match picked.as_slice() {
+                    [EntityRef::Sketch { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            },
+        );
+        f.reference(
+            "solid",
+            "solid",
+            one((!args.solid.is_empty()).then(|| EntityRef::Solid {
+                name: args.solid.clone(),
+            })),
+            &[Role::Solid],
+            None,
+            false,
+            |e, picked| {
+                e.args.solid = match picked.as_slice() {
+                    [EntityRef::Solid { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            },
+        );
+        f.number(
+            "thickness",
+            Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0),
+            |args, t| args.thickness = t,
+        );
+        const SIDES: [(RibSide, &str, &str); 3] = [
+            (RibSide::Symmetric, "symmetric", "Symmetric"),
+            (RibSide::First, "first", "First side"),
+            (RibSide::Second, "second", "Second side"),
+        ];
+        f.select(
+            "side",
+            "thickness side",
+            SIDES.iter().find(|s| s.0 == args.side).map_or("", |s| s.1),
+            SIDES.iter().map(|&(_, v, l)| Choice::new(v, l)).collect(),
+            false,
+            |args, value| {
+                if let Some(&(side, ..)) = SIDES.iter().find(|s| s.1 == value) {
+                    args.side = side;
+                }
+            },
+        );
+        const DIRECTIONS: [(RibDirection, &str, &str); 2] = [
+            (RibDirection::Parallel, "parallel", "Parallel to sketch"),
+            (RibDirection::Normal, "normal", "Normal to sketch"),
+        ];
+        f.select(
+            "direction",
+            "direction",
+            DIRECTIONS
+                .iter()
+                .find(|d| d.0 == args.direction)
+                .map_or("", |d| d.1),
+            DIRECTIONS.iter().map(|&(_, v, l)| Choice::new(v, l)).collect(),
+            false,
+            |args, value| {
+                if let Some(&(direction, ..)) = DIRECTIONS.iter().find(|d| d.1 == value) {
+                    args.direction = direction;
+                }
+            },
+        );
+        f.checkbox("flipped", "flip direction", args.flipped, |args, b| {
+            args.flipped = b
+        });
+        f
+    }
+
+    fn apply<S: Scalar>(
+        &self,
+        mut part: Part<S>,
+        operation_id: &str,
+        args: &RibArgs,
+        _library: &dyn Library<S>,
+    ) -> GeopResult<Part<S>> {
+        let ctx = with_context!("rib({operation_id}, {args:?})");
+        let namer = Namer::new("rib", operation_id)?;
+        let placed = part
+            .sketch(part.sketch_id(&args.sketch).with_context(ctx)?)?
+            .clone();
+        let target = part.solid_id(&args.solid).with_context(ctx)?;
+        let sketch = &placed.sketch;
+        let geometry = sketch.enclose::<S>().with_context(ctx)?;
+        let chain = match sketch.shape().with_context(ctx)? {
+            chain @ Shape::Chain(_) => chain,
+            Shape::Region(_) => {
+                return Err(GeopError::new(format!(
+                    "sketch {:?} encloses an area: a rib grows from an open profile",
+                    args.sketch
+                )))
+                .with_context(ctx);
+            }
+        };
+        let profile = shape_loops(&args.sketch, sketch, &geometry, chain)
+            .with_context(ctx)?
+            .remove(0)
+            .profile;
+        finite("thickness", args.thickness).with_context(ctx)?;
+        let t = S::from_f64(args.thickness);
+        let thickness = match args.side {
+            RibSide::Symmetric => {
+                let half = S::from_f64(args.thickness / 2.0);
+                (half.neg(), half)
+            }
+            RibSide::First => (S::ZERO, t),
+            RibSide::Second => (t.neg(), S::ZERO),
+        };
+        let growth = match args.direction {
+            RibDirection::Normal => Growth::Normal {
+                flipped: args.flipped,
+            },
+            RibDirection::Parallel => Growth::Parallel {
+                flipped: args.flipped,
+            },
+        };
+        rib(
+            &mut part,
+            &namer,
+            operation_id,
+            &placed.plane,
+            &profile,
+            target,
+            thickness,
+            growth,
+        )
+        .with_context(ctx)?;
         Ok(part)
     }
 }

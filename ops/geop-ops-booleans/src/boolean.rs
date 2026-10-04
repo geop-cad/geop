@@ -459,16 +459,26 @@ fn reach_up_to_next<S: Scalar>(
     }
 
     let origin_is = |face: &FaceId, name: &str| origins.get(face).is_some_and(|o| o == name);
-    let mut reached: HashSet<usize> = HashSet::new();
-    for (i, face) in tool_faces.iter().enumerate() {
-        if !origin_is(face, start) {
-            continue;
-        }
-        let piece = pieces.find(i);
-        if kind[&piece] == wanted_inside {
-            reached.insert(piece);
-        } else {
-            let next = neighbours.get(&piece).into_iter().flatten();
+    // The start may lie partly on either side of the target — a rib's
+    // profile running on into the walls it stands between. Its pieces of
+    // the kind wanted are the first ones it reaches; only where it has none
+    // are the pieces next to it the first. Taking the pieces next to its
+    // other fragments too would take a second piece, reached through the
+    // target: the rest of the tool on the walls' far side.
+    let start_pieces: HashSet<usize> = tool_faces
+        .iter()
+        .enumerate()
+        .filter(|(_, face)| origin_is(face, start))
+        .map(|(i, _)| pieces.find(i))
+        .collect();
+    let mut reached: HashSet<usize> = start_pieces
+        .iter()
+        .copied()
+        .filter(|p| kind[p] == wanted_inside)
+        .collect();
+    if reached.is_empty() {
+        for piece in &start_pieces {
+            let next = neighbours.get(piece).into_iter().flatten();
             reached.extend(next.filter(|p| kind[p] == wanted_inside));
         }
     }

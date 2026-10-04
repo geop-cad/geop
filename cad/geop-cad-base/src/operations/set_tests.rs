@@ -32,7 +32,8 @@ fn every_operation_is_offered() {
             "add_part",
             "draft",
             "lip",
-            "groove"
+            "groove",
+            "rib"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");
