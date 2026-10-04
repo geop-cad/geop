@@ -12,11 +12,12 @@
 //! pitch, so that its turns never touch.
 
 use geop_core_geometry::{
-    nurb_curve::Handedness,
+    nurb_curve::{Handedness, cos_sin},
     shape::{Axis, Cylinder},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    primitives::CoordinateSystem,
     scalars::Scalar,
     vector::{Vector2, Vector3},
     with_context,
@@ -325,6 +326,48 @@ impl<S: Scalar> ThreadPlacement<S> {
         Ok(())
     }
 
+    /// Where a modelled thread of `pitch` is swept from, and how far, on
+    /// `wall`: where it is to run, but with each of its ends that is an end
+    /// of the wall moved a pitch off it — out beyond an open end, where it
+    /// runs out of the solid, and back from a closed one, a shoulder or a
+    /// hole's bottom, which a thread stops short of.
+    ///
+    /// Swept from exactly the end of the wall, its end face would cut the
+    /// face there through the middle of its profile, right where the wall's
+    /// rim crosses it — three faces through one point that the booleans did
+    /// not splice (the trace along the end face and the shank's end ran into
+    /// two corners at the rim). A pitch off, the profile, less than a pitch
+    /// wide, is clear of that face altogether.
+    pub fn swept(&self, wall: &Wall<S>, pitch: f64) -> GeopResult<(Vector3<S>, f64)> {
+        let axis = &wall.cylinder.axis;
+        let along = |p: &Vector3<S>| p.sub(&axis.point).prod_dot(&axis.direction);
+        let ends = [(wall.from, wall.open[0]), (wall.to, wall.open[1])];
+        // How far out past the wall's end at `at`, if it is one.
+        let past = |at: S| {
+            ends.iter()
+                .find(|(end, _)| at.could_be_equal(*end))
+                .map_or(0.0, |&(_, open)| if open { pitch } else { -pitch })
+        };
+        let start = along(&self.start);
+        let end = start.add(
+            axis.direction
+                .prod_dot(&self.direction)
+                .mul(S::from_f64(self.length)),
+        );
+        let (before, after) = (past(start), past(end));
+        let length = self.length + before + after;
+        if length <= 0.0 {
+            return Err(GeopError::new(format!(
+                "a thread {} long is too short to model: it stops a pitch short of the wall's closed ends",
+                self.length
+            )));
+        }
+        let start = self
+            .start
+            .sub(&self.direction.prod_scalar(S::from_f64(before)));
+        Ok((start, length))
+    }
+
     /// The thread of `size`, as recorded on `face`.
     pub fn cosmetic(&self, size: &MetricSize, face: String) -> GeopResult<CosmeticThread<S>> {
         Ok(CosmeticThread {
@@ -342,17 +385,70 @@ impl<S: Scalar> ThreadPlacement<S> {
     }
 }
 
-/// The solid that cuts the thread of `size` at `placement` — a bolt's
-/// groove, or in a hole a bolt's tooth (see the module docs) — swept along
-/// its helix from where it starts as far as it runs: a solid named `solid`,
-/// its faces `N(c0,q)` .. `N(c3,q)` for each quarter turn `q` and its ends
-/// `N(start)` and `N(end)` by `namer`.
+/// The angle, in degrees from `frame.u()` towards `frame.v()`, a thread
+/// turning `turns` times in `frame` starts at, so that none of its
+/// stations — its ends, and where each span of a quarter turn at most
+/// meets the next, every one a half-plane through the axis with edges in it
+/// — lies in a half-plane through a corner of `wall`. Where on its circle a
+/// thread starts is a free choice; one that puts a station through a
+/// corner the wall already has asks the boolean to cross that corner with
+/// the station's edges, a degenerate configuration (it failed to splice a
+/// tooth into a tapped hole whose seams lay in the stations' half-planes).
+/// So of every half degree, take the one farthest from all of them.
+fn clear_start<S: Scalar>(
+    part: &Part<S>,
+    wall: &Wall<S>,
+    frame: &CoordinateSystem<S>,
+    turns: f64,
+) -> GeopResult<f64> {
+    let model = part.topology();
+    let mut corners = Vec::new();
+    for &f in &wall.faces {
+        for coedge in model.iterate_face_coedges(f) {
+            let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry else {
+                continue;
+            };
+            let e = model.get_edge(edge)?;
+            for v in [e.start_vertex, e.end_vertex] {
+                let q = frame.to_uvw(&model.get_vertex(v)?.point);
+                corners.push(q[1].to_f64().atan2(q[0].to_f64()).to_degrees());
+            }
+        }
+    }
+    let spans = (turns * 4.0).ceil() as usize;
+    let step = 360.0 * turns / spans as f64;
+    let apart = |a: f64, b: f64| {
+        let d = (a - b).rem_euclid(360.0);
+        d.min(360.0 - d)
+    };
+    let clearance = |start: f64| {
+        (0..=spans)
+            .flat_map(|k| {
+                corners
+                    .iter()
+                    .map(move |&c| apart(start + k as f64 * step, c))
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    Ok((0..720)
+        .map(|k| k as f64 / 2.0)
+        .max_by(|&a, &b| clearance(a).total_cmp(&clearance(b)))
+        .expect("there are candidates"))
+}
+
+/// The solid that cuts the thread of `size` at `placement` on `wall` — a
+/// bolt's groove, or in a hole a bolt's tooth (see the module docs) — swept
+/// along its helix from where it starts as far as it runs, starting at an
+/// angle clear of the wall's corners ([`clear_start`]): a solid named
+/// `solid`, its faces `N(c0,q)` .. `N(c3,q)` for each quarter turn `q` and
+/// its ends `N(start)` and `N(end)` by `namer`.
 pub fn thread_tool<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
     solid: &str,
     size: &MetricSize,
     placement: &ThreadPlacement<S>,
+    wall: &Wall<S>,
 ) -> GeopResult<SolidId> {
     let pitch = size.pitch;
     let h = TRIANGLE_HEIGHT * pitch;
@@ -379,14 +475,25 @@ pub fn thread_tool<S: Scalar>(
         p(inner.0, inner.1),
     ];
     let profile = Profile::closed(polygon(&corners)?);
-    let axes = frame_along(placement.start, &placement.direction)?;
+    // Where it starts and ends, moved off the wall's ends (see
+    // `ThreadPlacement::swept`).
+    let (start, length) = placement.swept(wall, pitch)?;
+    let turns = length / pitch;
+    let frame = frame_along(start, &placement.direction)?;
+    let (c, s) = cos_sin(clear_start(part, wall, &frame, turns)?);
+    let u = frame
+        .u()
+        .prod_scalar(S::from_f64(c))
+        .add(&frame.v().prod_scalar(S::from_f64(s)));
+    let w = *frame.w();
+    let axes = CoordinateSystem::try_new(start, u, w.prod_cross(&u), w)?;
     screw(
         part,
         namer,
         solid,
         &axes,
         S::from_f64(pitch),
-        placement.length / pitch,
+        turns,
         Handedness::Right,
         &[SweepLoop::plain(profile)],
     )

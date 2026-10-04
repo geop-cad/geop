@@ -959,8 +959,15 @@ impl Operation for Thread {
             .name_of(solid)
             .ok_or_else(|| GeopError::new(format!("{solid} has no name")))?
             .to_string();
-        let tool = thread_tool(&mut part, &namer, &namer.name(&["tool"]), size, &placement)
-            .with_context(ctx)?;
+        let tool = thread_tool(
+            &mut part,
+            &namer,
+            &namer.name(&["tool"]),
+            size,
+            &placement,
+            &wall,
+        )
+        .with_context(ctx)?;
         Combine::Difference { target }
             .apply(
                 &mut part,

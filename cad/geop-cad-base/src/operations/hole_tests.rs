@@ -651,12 +651,27 @@ fn cosmetic_thread_on_a_shaft() {
     assert!(error.root_message().contains("needs a shaft of"), "{error}");
 }
 
-/// A modelled M6 thread cut into the shank, 5 turns from its free end.
+/// The volume a modelled ISO thread of `pitch` cuts per turn out of a
+/// shaft of `radius` whose minor diameter is `minor`: the groove's section
+/// inside the shaft — a trapezoid `P / 4` wide at the minor diameter,
+/// widening at 30° per flank — swept once round (Pappus).
+fn groove_per_turn(radius: f64, minor: f64, pitch: f64) -> f64 {
+    let depth = radius - minor / 2.0;
+    let (inner, outer) = (pitch / 4.0, pitch / 4.0 + 2.0 * depth / 3f64.sqrt());
+    let area = (inner + outer) / 2.0 * depth;
+    let centroid = minor / 2.0 + depth * (inner + 2.0 * outer) / (3.0 * (inner + outer));
+    area * 2.0 * PI * centroid
+}
+
+/// A modelled M6 thread cut into the shank, 5 turns down from its free
+/// end: valid, and short of what the groove takes — but for the first
+/// half turn, where the groove starts above the shank's end.
 #[test]
-#[ignore = "slow, and the boolean of a helical groove with the shaft is not robust yet — see the report in the test"]
+#[ignore = "slow: a modelled thread's booleans take half a minute — run with `cargo test -- --ignored`"]
 fn modelled_thread_on_a_shaft() {
     let program = shaft();
-    let side = shaft_side(&program.build::<S>(&NoFiles).unwrap());
+    let blank = program.build::<S>(&NoFiles).unwrap();
+    let side = shaft_side(&blank);
     let mut threaded = program;
     threaded.push(
         "t",
@@ -670,6 +685,50 @@ fn modelled_thread_on_a_shaft() {
     );
     let part = threaded.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
+    assert!(
+        part.names()
+            .iter()
+            .any(|(_, name)| name.starts_with("thread(t,c")),
+        "no face of the thread is left"
+    );
+    let size = metric("M6").unwrap();
+    let removed = volume(&blank, "extrude(shank)") - volume(&part, "thread(t)");
+    let groove = 5.0 * groove_per_turn(3.0, size.minor_diameter(), size.pitch);
+    assert!(
+        removed > 0.85 * groove && removed < 1.02 * groove,
+        "removed {removed}, the groove {groove}"
+    );
+}
+
+/// A modelled M6 thread cut into the wall of a tapped hole through the
+/// plate, from the face it was drilled into, all the way.
+#[test]
+#[ignore = "slow: a modelled thread's booleans take half a minute or more — run with `cargo test -- --ignored`"]
+fn modelled_thread_in_a_tapped_hole() {
+    let mut program = plate(&[[20.0, 20.0]]);
+    program.push(
+        "h",
+        PartOperation::Hole(hole(
+            HoleKind::Tapped,
+            iso("M6", Fit::Normal),
+            Extent::ThroughAll,
+        )),
+    );
+    program.push(
+        "t",
+        PartOperation::Thread(ThreadArgs {
+            face: "hole(h,centres,p0,wall,q0)".into(),
+            size: "M6".into(),
+            length: Some(6.0),
+            reversed: false,
+            modelled: true,
+        }),
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let before = plate_volume() - cylinder(5.0, PLATE[2]);
+    let removed = before - volume(&part, "thread(t)");
+    assert!(removed > 0.0, "removed {removed}");
 }
 
 /// Every ISO size, every kind of hole, blind and through all, in a plate
