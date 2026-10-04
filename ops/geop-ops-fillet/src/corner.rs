@@ -26,11 +26,16 @@
 //! a convex corner and inside at a concave one, where the boolean cuts or
 //! fills nothing but the region between the faces and the ball.
 //!
+//! Where the radius varies along the edges, they have to meet the corner
+//! with one radius — the corner's vertex given a radius of its own, say —
+//! the ball's, which each fillet then reaches where it meets the ball.
+//!
 //! A corner where every edge is filleted but more than three meet, or the
-//! radius varies, or the edges bend different ways — a pocket's rim, its
-//! upright edge filled in where the rim is cut away — is refused by name
-//! rather than left with the fillets crossing in a point or overlapping. A
-//! chamfered corner is left to its chamfers, which cross in a point.
+//! fillets meet with different radii, or the edges bend different ways — a
+//! pocket's rim, its upright edge filled in where the rim is cut away — is
+//! refused by name rather than left with the fillets crossing in a point
+//! or overlapping. A chamfered corner is left to its chamfers, which cross
+//! in a point.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -44,7 +49,7 @@ use geop_ops::{Namer, Part};
 
 use crate::{
     blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
-    rolling::{Chain, ChainCorner, chain_bend, foot, normal_at, seed_on, sharp_in},
+    rolling::{Chain, ChainCorner, RadiusLaw, chain_bend, foot, normal_at, seed_on, sharp_in},
     tool::{Corner, CornerEnd},
 };
 
@@ -165,10 +170,20 @@ pub(crate) fn plan_corners<S: Scalar>(
             )))
             .with_context(ctx);
         }
-        if !radii.is_constant() {
-            return Err(GeopError::new(
-                "every edge at the corner is filleted with a radius that varies: a corner is only rounded where the radius is the same all along",
-            ))
+        // The fillets' radii at the corner: the ball's, where they agree.
+        let mut at_corner = Vec::new();
+        for &reach in &reaching {
+            at_corner.push(match reach {
+                Reaching::Swept(_) => radii.radius,
+                Reaching::Chain(k, at_end) => RadiusLaw::new(part, &chains[k].1, radii)
+                    .with_context(ctx)?
+                    .at_end(usize::from(at_end)),
+            });
+        }
+        if at_corner.iter().any(|&r| r != at_corner[0]) {
+            return Err(GeopError::new(format!(
+                "every edge at the corner is filleted, but with the radii {at_corner:?} there: a corner is only rounded where its fillets meet with one radius — give the corner's vertex a radius of its own"
+            )))
             .with_context(ctx);
         }
         let corner = plan_corner(
@@ -180,7 +195,7 @@ pub(crate) fn plan_corners<S: Scalar>(
             chains,
             &reaching,
             bends[0],
-            radii.radius,
+            at_corner[0],
             &mut planned.chains,
         )
         .with_context(ctx)?;

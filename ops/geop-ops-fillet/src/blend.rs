@@ -37,8 +37,8 @@
 //!   solid, and a fill ends flush with it. Where the edge runs into it — a
 //!   wall the material goes on behind — cut and fill both end flush with
 //!   it, as running on would blend what lies behind. A flush end needs that
-//!   face square to the edge. Anything else is refused rather than blended
-//!   wrongly.
+//!   face square to the edge — but for a mitre (below), which ends the tool
+//!   at any wall. Anything else is refused rather than blended wrongly.
 //! - a **circular** edge between faces turning around its axis — planes
 //!   across the axis, cylinders and cones on it — is revolved a full turn.
 //!   So the edge has to be part of a whole circle of such edges (a circle
@@ -46,25 +46,33 @@
 //!   of its arcs are picked.
 //! - **any other edge** — or any edge whose fillet radius varies — is
 //!   rounded by a ball rolled along it and its tangent chain, its tool
-//!   skinned through the ball's sections (see [`crate::rolling`]). A chamfer
-//!   is only swept.
+//!   skinned through the ball's sections (see [`crate::rolling`]); bevelled
+//!   alike, its sections the chords.
 //!
 //! A blend has to meet both faces inside them — checked halfway along the
 //! edge — so one too large for its faces, or ending exactly on another of
 //! their edges, is refused.
 //!
 //! Several edges are blended one after the other, every tool built from the
-//! solid as it was before the first: where two blended edges meet at a
-//! corner, their blends cross there rather than rolling a ball round it.
-//! At an outward corner — two edges leaving the solid there — the tools run
-//! out past it, and what they cut together meets along the plane halving
-//! the corner. At an inward corner — two convex edges running into each
-//! other's walls, a pocket's rim — stopping flush would leave the corner
-//! between the walls uncut, so the two tools are *mitred* instead: each
-//! runs out past the corner and is cut off at the plane halving it, and the
-//! two are joined into one tool before it is applied. That is exact where
-//! their cross-sections mirror each other in that plane; elsewhere it is
-//! refused.
+//! solid as it was before the first. Where two blended edges meet at a
+//! corner:
+//!
+//! - at an outward corner — two edges leaving the solid there — the tools
+//!   run out past it, and what they cut together meets along the plane
+//!   halving the corner;
+//! - where *every* edge of a corner is filleted, the fillets end at the
+//!   ball touching all its faces, whose piece rounds the corner, and the
+//!   tools are joined there into one (see [`crate::corner`]);
+//! - at an inward corner — two convex edges running into each other's
+//!   walls, a pocket's rim — stopping flush would leave the corner between
+//!   the walls uncut, so the two tools are *mitred* instead: each runs on
+//!   to the plane halving the corner, where their sections are one, and
+//!   they are joined there into one tool (see [`tool::build_tools`]). That
+//!   is exact where their cross-sections mirror each other in that plane;
+//!   elsewhere it is refused, and so are rolled blends meeting there.
+//!
+//! Tools joined at corners and mitres are built whole, each such set one
+//! solid, and applied by one boolean.
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
@@ -1071,8 +1079,8 @@ fn round_plan<S: Scalar>(
 /// How the edge named `name` is blended into `shape`. A straight edge
 /// between two planes, on its own, and a whole circle between planes across
 /// its axis and cylinders and cones around it, are swept exactly — when the
-/// radius is the same all along; a chamfer is only swept. Every other
-/// fillet is rolled along the edge's tangent chain.
+/// radius is the same all along. Every other blend is rolled along the
+/// edge's tangent chain.
 fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopResult<Planned<S>> {
     let model = part.topology();
     let edge = part.edge_id(name)?;

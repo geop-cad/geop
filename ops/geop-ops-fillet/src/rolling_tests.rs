@@ -571,3 +571,72 @@ fn wide_d_shaft_chamfer_flat_side() {
         },
     );
 }
+
+/// The vertex at `p` of `part`, by name.
+fn vertex_at(part: &Part<S>, p: [f64; 3]) -> String {
+    let p = v::<S>(p[0], p[1], p[2]);
+    let (&id, _) = part
+        .topology()
+        .vertices
+        .iter()
+        .find(|(_, vertex)| vertex.point.could_be_equal(&p))
+        .expect("a vertex there");
+    part.name_of(id).unwrap().to_string()
+}
+
+/// The three edges at the cube's corner `(0, 0, 1)` rounded with a radius
+/// growing from 0.1 at their far ends to 0.2 at the corner, given a radius
+/// of its own: rolled, each reaching 0.2 where it meets the corner's ball,
+/// whose piece rounds the corner.
+#[test]
+fn cube_corner_rounded_with_a_varying_radius() {
+    let mut part = unit_cube();
+    let corner = vertex_at(&part, [0.0, 0.0, 1.0]);
+    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
+        .map(String::from)
+        .to_vec();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            radius: 0.1,
+            end_radius: None,
+            at_vertices: vec![(corner, 0.2)],
+        },
+    };
+    blended(&mut part, &edges, &shape);
+    let balls: Vec<_> = part
+        .topology()
+        .faces
+        .iter()
+        .filter(|&(&id, _)| part.name_of(id).unwrap().ends_with(",corner)"))
+        .collect();
+    assert_eq!(balls.len(), 1);
+    let center = v::<S>(0.2, 0.2, 0.8);
+    for p in samples(&balls[0].1.surface, 4) {
+        let off = v::<S>(p[0], p[1], p[2]).sub(&center).norm().to_f64() - 0.2;
+        assert!(off.abs() <= 1e-9, "{p:?} is {off:e} off the ball");
+    }
+}
+
+/// The same edges with a radius from 0.1 to 0.2 along each: they meet the
+/// corner with different radii, as they run to or from it — refused, there
+/// being no one ball to round it with.
+#[test]
+fn cube_corner_with_mixed_radii_is_refused() {
+    let part = unit_cube();
+    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
+        .map(String::from)
+        .to_vec();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            radius: 0.1,
+            end_radius: Some(0.2),
+            at_vertices: Vec::new(),
+        },
+    };
+    let namer = Namer::new("fillet", "F").unwrap();
+    let why = match blend(&mut part.clone(), &namer, &edges, &shape) {
+        Ok(()) => panic!("mixed radii at the corner are not refused"),
+        Err(e) => format!("{e:?}"),
+    };
+    assert!(why.contains("with the radii"), "{why}");
+}

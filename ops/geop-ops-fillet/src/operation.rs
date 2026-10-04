@@ -70,7 +70,10 @@ fn edges_field<'a, S: Scalar, A: 'a>(
 /// it, which also takes its tangent chain along. With `end_radius` the
 /// radius changes linearly along each chain, from `radius` where its first
 /// picked edge starts to `end_radius` where the chain ends; `vertex_radii`
-/// set it at vertices along a chain, linearly in between.
+/// set it at vertices along a chain, linearly in between. A corner every
+/// edge of which is rounded, with one radius, is rounded by the ball
+/// touching its three faces, `fillet(F,V,corner)` for its vertex `V` (see
+/// [`crate::corner`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Fillet;
 
@@ -246,7 +249,10 @@ impl Operation for Fillet {
 /// of each edge as it runs (seen from outside the solid) and `distance2`
 /// into the one on its right — for the operation `C`: the solid is consumed
 /// and the result named `chamfer(C)`, the bevel face of edge `E`
-/// `chamfer(C,E,chamfer)`, named like a [`Fillet`]'s otherwise.
+/// `chamfer(C,E,chamfer)`, named like a [`Fillet`]'s otherwise. Any edge is
+/// bevelled: a straight one between two planes and a circle around its
+/// faces' axis exactly, every other one along its tangent chain by chords
+/// the distances into the faces, square to the edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Chamfer;
 

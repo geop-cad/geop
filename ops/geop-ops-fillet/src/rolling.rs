@@ -57,7 +57,9 @@
 //! them, and the tool's spline breaks there (see [`crossing`]): across it
 //! the faces' curvature may jump. So it does at every vertex of a chain
 //! whose radius varies, where the radius changes its rate. Rolling over a
-//! crease is refused. A closed chain's tool breaks at four stations at
+//! crease is refused: a ball rolling over it would touch the crease's edge
+//! itself, along a stretch where the blend's boundary is that edge, which
+//! no boolean takes. A closed chain's tool breaks at four stations at
 //! least, so that no face of it closes onto itself.
 //!
 //! **Ends.** A closed chain has none. An open one ends as a straight blend
@@ -65,8 +67,18 @@
 //! third a plane — run out past it where a cut leaves the solid through it,
 //! flush with it otherwise — but only where the ball's section at the
 //! corner lies in that plane, so that the tool crosses it exactly there.
-//! Two blends meeting at an inward corner are only mitred between straight
-//! edges of constant radius.
+//! Where every edge of a corner is filleted, it ends at the ball rounding
+//! the corner instead, set back from it (see [`crate::corner`]): its last
+//! station that ball's great arc, untilted, the corner's piece of the ball
+//! sharing it. Two blends meeting at an inward corner are only mitred
+//! between straight edges of constant radius.
+//!
+//! **Chamfers.** A chamfer of any other edge than a straight one between
+//! planes or a whole circle is rolled the same way (see [`plan_chamfer`]),
+//! its sections chords. Placing them is what differs (see [`Placing`]):
+//! a chord at each station, and where its point on a side moves from face
+//! to face — across a seam or a crease, both of which a chord crosses —
+//! the chord whose point lies on the edge between them.
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
@@ -420,14 +432,20 @@ const LENGTH_SAMPLES: usize = 32;
 /// designer's choice and this is how it is laid out — and along each edge
 /// linear in its parameter, so that the radius is as smooth along an edge
 /// as the edge is and changes its rate only at the chain's vertices.
-struct RadiusLaw {
+///
+/// Where an open chain ends at a corner's ball (see [`crate::corner`]),
+/// the radius at its end vertex is the ball's, and is reached where the
+/// chain meets the ball, set back from the vertex: the end link's
+/// fraction there, `ends`, its last for the radius.
+pub(crate) struct RadiusLaw {
     /// Per vertex of the chain, in order — round a closed one to the first
     /// again — its radius.
     at_vertices: Vec<f64>,
+    ends: [Option<f64>; 2],
 }
 
 impl RadiusLaw {
-    fn new<S: Scalar>(part: &Part<S>, chain: &Chain, radii: &Radii) -> GeopResult<Self> {
+    pub(crate) fn new<S: Scalar>(part: &Part<S>, chain: &Chain, radii: &Radii) -> GeopResult<Self> {
         let model = part.topology();
         // The length along the chain to each of its vertices.
         let mut lengths = vec![0.0];
@@ -484,14 +502,38 @@ impl RadiusLaw {
         };
         Ok(RadiusLaw {
             at_vertices: lengths.iter().map(|&s| at_length(s)).collect(),
+            ends: [None, None],
         })
+    }
+
+    /// The radius at the chain's start (`k = 0`) or end vertex: what a
+    /// corner's ball there has to have.
+    pub(crate) fn at_end(&self, k: usize) -> f64 {
+        if k == 0 {
+            self.at_vertices[0]
+        } else {
+            *self.at_vertices.last().expect("vertices")
+        }
     }
 
     /// The radius `fraction` of the way along link `link`, sharp: the law is
     /// a choice, and this is it.
     fn radius<S: Scalar>(&self, link: usize, fraction: f64) -> S {
         let (r0, r1) = (self.at_vertices[link], self.at_vertices[link + 1]);
-        S::from_f64(r0 + fraction * (r1 - r0))
+        let last = self.at_vertices.len() - 2;
+        let mut f = fraction;
+        if let (0, Some(from)) = (link, self.ends[0]) {
+            f = ((f - from) / (1.0 - from)).max(0.0);
+        }
+        if let (true, Some(to)) = (link == last, self.ends[1]) {
+            let start = if link == 0 {
+                self.ends[0].unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            f = ((fraction - start) / (to - start)).min(1.0);
+        }
+        S::from_f64(r0 + f * (r1 - r0))
     }
 
     /// Whether the radius changes along the chain.
@@ -2078,7 +2120,7 @@ pub(crate) fn plan_rolled<S: Scalar>(
     corners: [Option<ChainCorner<S>>; 2],
 ) -> GeopResult<Rolled<S>> {
     let model = part.topology();
-    let law = RadiusLaw::new(part, &chain, radii)?;
+    let mut law = RadiusLaw::new(part, &chain, radii)?;
     let bend = chain_bend(model, &chain)?;
     let side = bend.side::<S>();
     // The stations where the chain meets a corner's ball, exactly, and how
@@ -2112,6 +2154,11 @@ pub(crate) fn plan_rolled<S: Scalar>(
         )
         .with_context(ctx)?;
         let position = corner_position(model, &chain, k, &corner.center).with_context(ctx)?;
+        // The radius reaches the corner's where the chain meets its ball.
+        let (link, fraction) = locate(&chain, position);
+        if (k == 0 && link == 0) || (k == 1 && link == chain.links.len() - 1) {
+            law.ends[k] = Some(fraction);
+        }
         at_corners[k] = Some((position, station));
         meeting_ends[k] = Some(End::Corner {
             setback: S::from_f64(position),
