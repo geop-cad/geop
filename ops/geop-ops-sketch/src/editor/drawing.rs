@@ -590,7 +590,9 @@ fn build(
             let turn = sweep.signum() * PI;
             let outer = sketch.add_arc(p[0], p[1], Design::from_f64(sweep));
             let round_b = sketch.add_arc(p[1], p[2], Design::from_f64(turn));
-            let inner = sketch.add_arc(p[2], p[3], Design::from_f64(-sweep));
+            // The inner side turns the way the centerline does, from `a`'s
+            // end to `b`'s.
+            let inner = sketch.add_arc(p[3], p[2], Design::from_f64(sweep));
             let round_a = sketch.add_arc(p[3], p[0], Design::from_f64(turn));
             for (x, y) in [
                 (outer, round_b),
@@ -600,12 +602,20 @@ fn build(
             ] {
                 sketch.constrain(Constraint::Tangent { a: x, b: y });
             }
-            for side in [outer, inner] {
-                sketch.constrain(Constraint::Concentric {
-                    a: centerline,
-                    b: side,
-                });
-            }
+            // The outer side about the center; the inner side, touching
+            // both ends, is then one of a family of arcs, and turning as
+            // far as the centerline picks the one about the center too.
+            // (Concentric as well would say one thing twice — consistent
+            // on the solution, but only there, which leaves its proof
+            // singular.)
+            sketch.constrain(Constraint::Concentric {
+                a: centerline,
+                b: outer,
+            });
+            sketch.constrain(Constraint::EqualSweep {
+                a: centerline,
+                b: inner,
+            });
             sketch.constrain(Constraint::Center {
                 point: b,
                 curve: round_b,

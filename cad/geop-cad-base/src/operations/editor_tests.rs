@@ -2161,3 +2161,120 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     // Three holes, each one circle.
     assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 3, "{dxf}");
 }
+
+/// The sketch tools the way the front end uses them: a plate drawn as a
+/// rectangle with a chamfered corner, an arc slot and a circumscribed hex
+/// hole in it, and round it all an offset rim — a second sketch offset into
+/// a ring by clicks. Each extrudes into a valid solid.
+#[test]
+fn sketch_tools_draw_profiles_that_extrude() {
+    let mut editor = Editor::<S>::new();
+    let event = |editor: &mut Editor<S>, event: StepEditEvent<S>| {
+        let update = editor.handle(Command::Event { event });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        update
+    };
+    let click = |editor: &mut Editor<S>, x: f64, y: f64| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: pointer([x, y, 10.0], [0.0, 0.0, -1.0]),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    let hover = |editor: &mut Editor<S>, x: f64, y: f64| {
+        event(
+            editor,
+            StepEditEvent::Hover {
+                pointer: pointer([x, y, 10.0], [0.0, 0.0, -1.0]),
+                shift: false,
+            },
+        )
+    };
+    let key = |editor: &mut Editor<S>, key: &str| {
+        event(editor, StepEditEvent::Key { key: key.into() })
+    };
+    let tool = |editor: &mut Editor<S>, name: &str| {
+        editor.handle(dialog("tool", Value::Choice(name.into())))
+    };
+    let extruded = |editor: &mut Editor<S>| {
+        let update = editor.handle(Command::Commit);
+        assert!(update.error.is_none(), "{:?}", update.error);
+        editor.handle(Command::New {
+            kind: "extrude".into(),
+        });
+        editor.handle(dialog("distance", Value::Number(0.3)));
+        let update = editor.handle(Command::Commit);
+        assert!(update.error.is_none(), "{:?}", update.error);
+        let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+        if let Err(e) = super::regression_tests::check_valid(&part) {
+            panic!("{e}");
+        }
+        part
+    };
+    // A new sketch on the origin's xy plane, seen from above.
+    let new_sketch = |editor: &mut Editor<S>| {
+        editor.handle(Command::New {
+            kind: "add_sketch".into(),
+        });
+        click(editor, 0.04, 0.04);
+    };
+
+    new_sketch(&mut editor);
+    tool(&mut editor, "rectangle");
+    click(&mut editor, 0.2, 0.2);
+    click(&mut editor, 2.6, 1.8);
+    tool(&mut editor, "chamfer");
+    let update = click(&mut editor, 2.6, 1.8);
+    let prompt = update.step.unwrap().presentation.prompt;
+    assert!(prompt.is_some(), "the chamfer's size is asked for");
+    editor.handle(dialog("prompt", Value::Text("0.2".into())));
+    // An arc slot about (1.2, 0.6), its arc from (1.6, 0.6) half round.
+    tool(&mut editor, "arc_slot");
+    click(&mut editor, 1.2, 0.6);
+    click(&mut editor, 1.6, 0.6);
+    hover(&mut editor, 1.2, 1.0);
+    click(&mut editor, 0.8, 0.6);
+    click(&mut editor, 1.7, 0.6);
+    // A hexagon 0.3 across its flats.
+    tool(&mut editor, "polygon");
+    editor.handle(dialog("circumscribed", Value::Bool(true)));
+    click(&mut editor, 2.1, 0.7);
+    let update = click(&mut editor, 2.25, 0.7);
+    let step = update.step.unwrap();
+    match step.presentation.dialog.get("status") {
+        Some(Control::Text { text, tone }) => {
+            assert!(text.contains("1 region"), "{text}");
+            assert_ne!(*tone, Tone::Error, "{text}");
+        }
+        other => panic!("{other:?}"),
+    }
+    key(&mut editor, "Escape");
+    let part = extruded(&mut editor);
+    assert_eq!(part.solid_names().len(), 1);
+
+    // A rim round a 1 x 1 square, offset outwards by clicks.
+    new_sketch(&mut editor);
+    tool(&mut editor, "rectangle");
+    click(&mut editor, 4.0, 0.2);
+    click(&mut editor, 5.0, 1.2);
+    key(&mut editor, "o");
+    click(&mut editor, 4.5, 0.2);
+    hover(&mut editor, 4.5, 0.05);
+    click(&mut editor, 4.5, 0.05);
+    editor.handle(dialog("prompt", Value::Text("0.1".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch(rim) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a sketch");
+    };
+    let regions = rim.sketch.regions().unwrap();
+    assert_eq!(regions.len(), 1, "a ring");
+    assert_eq!(regions[0].holes.len(), 1, "round the square");
+    let id = editor.program().steps.last().unwrap().id.clone();
+    editor.handle(Command::Open { id });
+    extruded(&mut editor);
+}

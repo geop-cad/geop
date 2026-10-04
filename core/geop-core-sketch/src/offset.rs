@@ -13,7 +13,10 @@
 //!   arc round the corner, tangent to both offsets ([`Corners::Round`]), or
 //!   by extending both offsets until they meet ([`Corners::Extend`]);
 //! - where it turns towards the offset side, the offsets cross: both are
-//!   cut back to where they meet.
+//!   cut back to where they meet;
+//! - where it runs on straight — the corner's offsets end closer than the
+//!   solver tells points apart, as the halves of a mirrored outline meet
+//!   on the mirror line — they meet square to the corner.
 //!
 //! An arc round a corner has the corner as its center, so its radius is the
 //! distance of both offsets it touches. Where offsets meet, a construction
@@ -29,6 +32,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
+use geop_core_solve::RELATIVE_TOLERANCE;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -199,6 +203,17 @@ impl<S: Scalar> Sketch<S> {
         }
 
         let n = pieces_of.len();
+        // The finest the solver tells points apart, in this sketch: one
+        // part in `RELATIVE_TOLERANCE` of its size.
+        let resolution = {
+            let points: Vec<P2> = self.points.keys().map(|&p| xy(self, p)).collect();
+            let span = |k: usize| {
+                let lo = points.iter().map(|q| q[k]).fold(f64::MAX, f64::min);
+                let hi = points.iter().map(|q| q[k]).fold(f64::MIN, f64::max);
+                hi - lo
+            };
+            span(0).hypot(span(1)).max(1.0) / RELATIVE_TOLERANCE as f64
+        };
         let pieces: Vec<Plain> = pieces_of
             .iter()
             .map(|&(c, r)| oriented(self, c, r))
@@ -217,12 +232,20 @@ impl<S: Scalar> Sketch<S> {
         // Each joint: where the offsets of the pieces before and after it
         // end and start, and what joins them.
         enum Joint {
-            /// They meet at one point — and the corner keeps them at one
-            /// distance by a construction circle, unless they run on
-            /// smoothly.
-            Shared { at: P2, circle: bool },
+            /// They meet at one point, held there as `by` says.
+            Shared { at: P2, by: Held },
             /// An arc round the corner, turning by `sweep`.
             Round { from: P2, to: P2, sweep: f64 },
+        }
+        /// What keeps offsets meeting at one point at one distance.
+        enum Held {
+            /// They run on smoothly: tangent there too.
+            Tangent,
+            /// A construction circle about the corner touching both.
+            Circle,
+            /// They run on straight: the point square to the corner, as an
+            /// open end is.
+            Square,
         }
         let joints = if chain.closed { n } else { n - 1 };
         let mut joint_of = Vec::new();
@@ -239,36 +262,61 @@ impl<S: Scalar> Sketch<S> {
                 )));
             }
             let turn = cross(ti, tj);
+            // How far apart the offsets end at the corner: no further than
+            // the solver tells points apart, and there is no corner to
+            // speak of — two lines of a mirrored outline meeting on the
+            // mirror line, say.
+            let (from, to) = (add(p, scale(normal, d)), add(p, scale(perp(tj), d)));
+            let straight = dist(from, to) <= resolution && dot(ti, tj) > 0.0;
+            let lines = matches!(
+                (offsets[i], offsets[j]),
+                (Plain::Line { .. }, Plain::Line { .. })
+            );
             joint_of.push(if smooth {
                 Joint::Shared {
-                    at: add(p, scale(normal, d)),
-                    circle: false,
+                    at: from,
+                    by: Held::Tangent,
+                }
+            } else if straight {
+                Joint::Shared {
+                    at: from,
+                    by: Held::Square,
                 }
             } else if turn * d < 0.0 && corners == Corners::Round {
                 Joint::Round {
-                    from: add(p, scale(normal, d)),
-                    to: add(p, scale(perp(tj), d)),
+                    from,
+                    to,
                     sweep: angle_between(ti, tj),
+                }
+            } else if lines {
+                // Where the offset lines, extended, meet: along the
+                // corner's bisector, well defined however small the turn.
+                if dot(ti, tj) <= -1.0 {
+                    return Err(GeopError::new(format!(
+                        "{ci} and {cj} fold back on each other where they meet: their offsets would cross"
+                    )));
+                }
+                Joint::Shared {
+                    at: add(p, scale(add(normal, perp(tj)), d / (1.0 + dot(ti, tj)))),
+                    by: Held::Circle,
                 }
             } else {
                 // Where the offsets, extended, meet — the crossing nearest
                 // the corner's own offset.
-                let near = add(p, scale(add(normal, perp(tj)), d / 2.0));
+                let near = scale(add(from, to), 0.5);
                 let crossings = offsets[i].full().crossings(&offsets[j].full(), false);
-                let at = match crossings
+                let Some(at) = crossings
                     .into_iter()
                     .min_by(|a, b| dist(*a, near).total_cmp(&dist(*b, near)))
-                {
-                    Some(at) => at,
-                    // Running on straight: they meet where they part.
-                    None if turn == 0.0 && dot(ti, tj) > 0.0 => add(p, scale(normal, d)),
-                    None => {
-                        return Err(GeopError::new(format!(
-                            "the offsets of {ci} and {cj} by {d} do not meet: round their corner instead"
-                        )));
-                    }
+                else {
+                    return Err(GeopError::new(format!(
+                        "the offsets of {ci} and {cj} by {d} do not meet: round their corner instead"
+                    )));
                 };
-                Joint::Shared { at, circle: true }
+                Joint::Shared {
+                    at,
+                    by: Held::Circle,
+                }
             });
         }
 
@@ -409,10 +457,19 @@ impl<S: Scalar> Sketch<S> {
                 if reversed { s } else { e }
             };
             match *joint {
-                Joint::Shared { circle: false, .. } => {
+                Joint::Shared {
+                    by: Held::Tangent, ..
+                } => {
                     self.constrain(Constraint::Tangent { a: oi, b: oj });
                 }
-                Joint::Shared { circle: true, .. } => {
+                Joint::Shared {
+                    by: Held::Square, ..
+                } => {
+                    self.square_end(pieces_of[i].0, corner, ends[i]);
+                }
+                Joint::Shared {
+                    by: Held::Circle, ..
+                } => {
                     let circle = self.add_circle(corner, value);
                     self.set_construction(circle, true);
                     self.constrain(Constraint::Tangent { a: oi, b: circle });
@@ -739,5 +796,117 @@ mod tests {
         // Inside a counter-clockwise loop is to its left.
         assert!((s.chain_side(&chain, [1.0, 0.25]).unwrap() - 0.25).abs() < 1e-12);
         assert!((s.chain_side(&chain, [1.0, -0.5]).unwrap() + 0.5).abs() < 1e-12);
+    }
+
+    /// Two lines running on in one line — the halves of a mirrored outline
+    /// meeting on the mirror line — have no corner to round: their offsets
+    /// meet where they part.
+    #[test]
+    fn lines_in_line_offset_straight_on() {
+        let mut s = Sketch::<T>::new();
+        let p = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
+        let a = s.add_line(p[0], p[1]);
+        let b = s.add_line(p[1], p[2]);
+        for (q, at) in [(p[0], 0.0), (p[1], 1.0), (p[2], 2.0)] {
+            s.constrain(Constraint::Fix {
+                point: q,
+                x: n(at),
+                y: n(0.0),
+            });
+        }
+        for corners in [Corners::Round, Corners::Extend] {
+            for d in [0.25, -0.25] {
+                let mut s = s.clone();
+                let made = s.offset(&[a, b], n(d), corners).unwrap();
+                assert_eq!(made.curves.len(), 2, "{corners:?} {d}");
+                let report = s.solve().unwrap();
+                assert!(report.converged && report.dof == 0, "{report:?}");
+                assert!(
+                    near(bounds(&s, &made.curves), [0.0, d, 2.0, d]),
+                    "{:?}",
+                    bounds(&s, &made.curves)
+                );
+                s.enclose::<T>().unwrap();
+            }
+        }
+    }
+
+    /// A rounded rectangle — a `w` x `h` one, its corners filleted by `r` —
+    /// fully constrained, counter-clockwise: its curves.
+    fn rounded(s: &mut Sketch<T>, w: f64, h: f64, r: f64) -> Vec<CurveId> {
+        let q = |x: f64, y: f64| [x, y];
+        let corners = [
+            (q(r, 0.0), q(w - r, 0.0)),
+            (q(w, r), q(w, h - r)),
+            (q(w - r, h), q(r, h)),
+            (q(0.0, h - r), q(0.0, r)),
+        ];
+        let mut points = Vec::new();
+        for (a, b) in corners {
+            points.push(s.add_point(n(a[0]), n(a[1])));
+            points.push(s.add_point(n(b[0]), n(b[1])));
+        }
+        let mut curves = Vec::new();
+        for k in 0..4 {
+            let line = s.add_line(points[2 * k], points[2 * k + 1]);
+            let arc = s.add_arc(points[2 * k + 1], points[(2 * k + 2) % 8], n(PI / 2.0));
+            curves.extend([line, arc]);
+        }
+        for k in 0..8 {
+            s.constrain(Constraint::Tangent {
+                a: curves[k],
+                b: curves[(k + 1) % 8],
+            });
+        }
+        for (k, at) in points.iter().zip([
+            q(r, 0.0),
+            q(w - r, 0.0),
+            q(w, r),
+            q(w, h - r),
+            q(w - r, h),
+            q(r, h),
+            q(0.0, h - r),
+            q(0.0, r),
+        ]) {
+            s.constrain(Constraint::Fix {
+                point: *k,
+                x: n(at[0]),
+                y: n(at[1]),
+            });
+        }
+        curves
+    }
+
+    /// Offsets of closed chains, in and out, rounded and extended, of
+    /// several sizes: each solved, fully constrained, and its solution
+    /// proven.
+    #[test]
+    fn closed_offsets_are_proven() {
+        let mut failures = Vec::new();
+        for (w, h) in [(2.0, 1.0), (1.0, 1.0), (3.0, 0.5), (1.3, 0.7)] {
+            for d in [0.1, 0.2, -0.1, -0.3] {
+                for corners in [Corners::Round, Corners::Extend] {
+                    for shape in ["rectangle", "rounded"] {
+                        let mut s = Sketch::<T>::new();
+                        let curves = match shape {
+                            "rectangle" => rectangle(&mut s, w, h).0,
+                            _ => rounded(&mut s, w, h, 0.2),
+                        };
+                        assert!(s.solve().unwrap().converged);
+                        let case = format!("{shape} {w}x{h} by {d}, {corners:?}");
+                        let Ok(_) = s.offset(&curves, n(d), corners) else {
+                            continue;
+                        };
+                        let report = s.solve().unwrap();
+                        if !report.converged || report.dof != 0 {
+                            failures.push(format!("{case}: {report:?}"));
+                        } else if let Err(e) = s.enclose::<T>() {
+                            failures.push(format!("{case}: {}", e.root_message()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

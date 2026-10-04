@@ -965,3 +965,147 @@ fn colours_are_picked_without_rebuilding() {
         "picking a colour took {took:?}, loading {load:?}"
     );
 }
+
+/// Sketches made with the sketch tools — patterns, mirror, offset — extrude
+/// into valid solids.
+mod tools {
+    use std::f64::consts::PI;
+
+    use geop_core_sketch::{copies::Step, offset::Corners};
+    use geop_ops::Design;
+    use geop_ops_booleans::Combine;
+    use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
+    use geop_ops_sketch::Constraint;
+
+    use super::*;
+    use crate::examples::{circle, n, rectangle, solved};
+    use crate::operations::regression_tests::check_valid;
+
+    /// `sketch`, solved, on the origin's `xy` plane, extruded up by
+    /// `height`: the part, checked to be valid.
+    fn extruded(sketch: Sketch, height: f64) -> Part<S> {
+        let mut program = Program::new();
+        program.push(
+            "outline",
+            AddSketchArgs {
+                plane: Some(origin_plane(FrameAxis::Z)),
+                sketch: solved(sketch),
+                ..Default::default()
+            },
+        );
+        program.push(
+            "body",
+            ExtrudeArgs {
+                sketch: "outline".into(),
+                extent: Extents::blind(height),
+                face: false,
+                combine: Combine::NewBody,
+            },
+        );
+        let part = program.build::<S>(&NoFiles).unwrap();
+        if let Err(e) = check_valid(&part) {
+            panic!("{e}");
+        }
+        assert_eq!(part.solid_names().len(), 1);
+        part
+    }
+
+    /// A 4 x 3 plate with a bolt circle of six holes round its middle and a
+    /// row of three along its bottom: each a pattern of one hole.
+    #[test]
+    fn a_plate_with_patterned_holes_extrudes() {
+        let mut sketch = Sketch::new();
+        let sides = rectangle(&mut sketch, [0.0, 0.0], 4.0, 3.0);
+        let middle = sketch.add_point(n(2.0), n(1.7));
+        sketch.constrain(Constraint::Fix {
+            point: middle,
+            x: n(2.0),
+            y: n(1.7),
+        });
+        let bolt = circle(&mut sketch, [2.8, 1.7], 0.15);
+        sketch
+            .pattern(
+                &[bolt],
+                &Step::Round {
+                    center: middle,
+                    angle: n(PI / 3.0),
+                },
+                6,
+            )
+            .unwrap();
+        let first = circle(&mut sketch, [0.8, 0.4], 0.1);
+        sketch
+            .pattern(
+                &[first],
+                &Step::Along {
+                    along: sides[0],
+                    backwards: false,
+                    spacing: n(1.2),
+                },
+                3,
+            )
+            .unwrap();
+        let part = extruded(sketch, 0.4);
+        // The plate's six faces and a wall for each of the nine holes, at
+        // least: none of them merged or lost.
+        assert!(part.topology().faces.len() >= 15, "{}", part.topology().faces.len());
+    }
+
+    /// Half a slot right of the `y` axis, its ends on the axis, mirrored
+    /// into the whole slot, and offset outwards into a ring round it.
+    #[test]
+    fn a_mirrored_slot_offset_into_a_ring_extrudes() {
+        let mut sketch = Sketch::new();
+        let o = sketch.add_fixed_point(n(0.0), n(0.0));
+        let up = sketch.add_fixed_point(n(0.0), n(1.0));
+        let axis = sketch.add_line(o, up);
+        sketch.set_construction(axis, true);
+        let p = [[0.02, 0.0], [1.0, 0.03], [1.0, 1.0], [0.0, 1.02]]
+            .map(|q| sketch.add_point(n(q[0]), n(q[1])));
+        let bottom = sketch.add_line(p[0], p[1]);
+        let round = sketch.add_arc(p[1], p[2], n(PI));
+        let top = sketch.add_line(p[2], p[3]);
+        for (a, b) in [(bottom, round), (round, top)] {
+            sketch.constrain(Constraint::Tangent { a, b });
+        }
+        for point in [p[0], p[3]] {
+            sketch.constrain(Constraint::PointOnCurve { point, curve: axis });
+        }
+        sketch.constrain(Constraint::Fix {
+            point: p[0],
+            x: n(0.0),
+            y: n(0.0),
+        });
+        sketch.constrain(Constraint::Horizontal { line: bottom });
+        sketch.constrain(Constraint::Horizontal { line: top });
+        sketch.constrain(Constraint::Length {
+            curve: bottom,
+            value: n(1.0),
+        });
+        sketch.constrain(Constraint::Radius {
+            curve: round,
+            value: n(0.5),
+        });
+        let mirrored = sketch.mirror(&[bottom, round, top], axis).unwrap();
+        let mut slot = vec![bottom, round, top];
+        slot.extend(mirrored);
+        let report = sketch.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        let chain = sketch.chain(&slot).unwrap();
+        assert!(chain.closed);
+        // Outwards: the slot's bottom runs to the right, so to its right.
+        let ring = sketch
+            .offset(&slot, Design::from_f64(-0.2), Corners::Round)
+            .unwrap();
+        assert_eq!(ring.curves.len(), 6, "a curve round each of the slot's");
+        let part = extruded(sketch, 0.3);
+        let z = |k: usize| {
+            part.topology()
+                .vertices
+                .values()
+                .map(|v| v.point[k].to_f64())
+                .fold(f64::MIN, f64::max)
+        };
+        assert!((z(0) - 1.7).abs() < 1e-9 && (z(1) - 1.2).abs() < 1e-9, "{} {}", z(0), z(1));
+    }
+}

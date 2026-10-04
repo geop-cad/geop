@@ -1606,6 +1606,18 @@ fn arc_slots_bend_round_their_center() {
     // Center, radius, start, sweep, width.
     assert_eq!(report.dof, 6, "{report:?}");
     assert_eq!(e.sketch().regions().unwrap().len(), 1);
+    e.sketch().enclose::<S>().unwrap();
+    // Half round: its ends' centers and its center on one line.
+    let mut e = drawing();
+    e.act("tool", "arc_slot");
+    e.click(1.2, 0.6);
+    e.click(1.6, 0.6);
+    e.hover(1.2, 1.0);
+    e.click(0.8, 0.6);
+    e.click(1.7, 0.6);
+    let report = e.report();
+    assert!(report.converged && report.dof == 6, "{report:?}");
+    e.sketch().enclose::<S>().unwrap();
 }
 
 /// Circumscribed, a polygon's sides touch its circle: the second click is
@@ -1633,6 +1645,7 @@ fn circumscribed_polygons_touch_their_circle() {
         "{corners:?}"
     );
     assert!(e.has(|c| matches!(c, Constraint::Tangent { .. })));
+    e.sketch().enclose::<S>().unwrap();
 }
 
 /// A chamfer bevels a corner: both sides cut back by one distance, given
@@ -1663,6 +1676,7 @@ fn chamfers_bevel_corners() {
         })
         .expect("the bevel");
     assert!((dist(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6, "{bevel:?}");
+    e.sketch().enclose::<S>().unwrap();
 }
 
 /// An arc drawn on from a line's end, running on smoothly from it, is made
@@ -1684,4 +1698,35 @@ fn arcs_from_a_line_run_on_tangentially() {
     e.click(4.0, 1.5);
     e.click(3.6, 1.0);
     assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 1);
+}
+
+/// A plate drawn with several tools — a rectangle with a chamfered corner,
+/// an arc slot and a circumscribed hexagon in it — is one region whose
+/// solution is proven, as extruding it needs.
+#[test]
+fn a_plate_of_several_tools_is_proven() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.2, 0.2);
+    e.click(2.6, 1.8);
+    e.act("tool", "chamfer");
+    e.click(2.6, 1.8);
+    e.dialog("prompt", Value::Text("0.2".into()));
+    e.sketch().enclose::<S>().unwrap();
+    e.act("tool", "arc_slot");
+    e.click(1.2, 0.6);
+    e.click(1.6, 0.6);
+    e.hover(1.2, 1.0);
+    e.click(0.8, 0.6);
+    e.click(1.7, 0.6);
+    // The rectangle's four freedoms, the chamfer's none, the slot's six.
+    assert_eq!(e.report().dof, 10, "{:?}", e.report());
+    e.sketch().enclose::<S>().unwrap();
+    e.act("tool", "polygon");
+    e.dialog("circumscribed", Value::Bool(true));
+    e.click(2.1, 0.7);
+    e.click(2.25, 0.7);
+    assert!(e.report().converged, "{:?}", e.report());
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+    e.sketch().enclose::<S>().unwrap();
 }
