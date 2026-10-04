@@ -44,17 +44,17 @@ fn blended(part: &mut Part<S>, edges: &[String], shape: &BlendShape) {
         let text = format!("{e:?}");
         let model = part.topology();
         let mut names = Vec::new();
-        for (&id, _) in &model.vertices {
+        for &id in model.vertices.keys() {
             if text.contains(&format!("{id:?}")) {
                 names.push(format!("{id:?} = {:?}", part.name_of(id)));
             }
         }
-        for (&id, _) in &model.edges {
+        for &id in model.edges.keys() {
             if text.contains(&format!("{id:?}")) {
                 names.push(format!("{id:?} = {:?}", part.name_of(id)));
             }
         }
-        for (&id, _) in &model.faces {
+        for &id in model.faces.keys() {
             if text.contains(&format!("{id:?}")) {
                 names.push(format!("{id:?} = {:?}", part.name_of(id)));
             }
