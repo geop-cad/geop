@@ -844,3 +844,54 @@ fn fillet_rim_over_creases_is_refused() {
     let error = format!("{error:?}");
     assert!(error.contains("meet at a crease"), "{error}");
 }
+
+/// The slot's rim rounded with radii set at two of its vertices, where its
+/// sides meet its half circles — 0.15 at `(1, -0.5)`, 0.05 at `(-1, 0.5)`
+/// — changing linearly along the rim between them and the radius 0.1
+/// where the picked side starts. At each of those vertices the round meets
+/// the top and the wall as far from the rim as its radius there.
+#[test]
+fn fillet_slot_rim_with_radii_at_vertices() {
+    let mut program = slot();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
+    let vertex_at = |p: [f64; 3]| {
+        let (&id, _) = before
+            .topology()
+            .vertices
+            .iter()
+            .find(|(_, v)| (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-9))
+            .unwrap();
+        before.name_of(id).unwrap().to_string()
+    };
+    let radii = [([1.0, -0.5, 1.0], 0.15), ([-1.0, 0.5, 1.0], 0.05)];
+    program.push(
+        "round",
+        FilletArgs {
+            vertex_radii: radii
+                .iter()
+                .map(|&(p, radius)| VertexRadius {
+                    vertex: vertex_at(p),
+                    radius,
+                })
+                .collect(),
+            ..FilletArgs::constant(side, 0.1)
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let near = |p: [f64; 3]| {
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-6))
+    };
+    for p in [
+        [1.0, -0.35, 1.0],
+        [1.0, -0.5, 0.85],
+        [-1.0, 0.45, 1.0],
+        [-1.0, 0.5, 0.95],
+    ] {
+        assert!(near(p), "no vertex at {p:?}");
+    }
+}

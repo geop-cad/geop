@@ -402,87 +402,71 @@ impl Radii {
     }
 }
 
-/// Samples per edge of the length table a varying radius is laid out by.
+/// Samples per edge its length is measured by, to lay a varying radius
+/// out along a chain.
 const LENGTH_SAMPLES: usize = 32;
 
-/// A fillet's radius along one chain (see [`Radii`]): the length along the
-/// chain of points of each link — a table of plain numbers, since the
-/// radius law is the designer's choice and this is how it is laid out —
-/// and the radius at lengths along it, linear between.
+/// A fillet's radius along one chain (see [`Radii`]): at every vertex of
+/// the chain, linear in the length along it between the vertices given a
+/// radius — lengths measured in plain numbers, since the law is the
+/// designer's choice and this is how it is laid out — and along each edge
+/// linear in its parameter, so that the radius is as smooth along an edge
+/// as the edge is and changes its rate only at the chain's vertices.
 struct RadiusLaw {
-    /// Per link: the length along the chain at `i / LENGTH_SAMPLES` of its
-    /// parameter.
-    lengths: Vec<Vec<f64>>,
-    /// `(length, radius)`, by increasing length; for a closed chain the
-    /// first again at the total length.
-    knots: Vec<(f64, f64)>,
+    /// Per vertex of the chain, in order — round a closed one to the first
+    /// again — its radius.
+    at_vertices: Vec<f64>,
 }
 
 impl RadiusLaw {
     fn new<S: Scalar>(part: &Part<S>, chain: &Chain, radii: &Radii) -> GeopResult<Self> {
         let model = part.topology();
-        let mut lengths = Vec::new();
-        let mut total = 0.0;
+        // The length along the chain to each of its vertices.
+        let mut lengths = vec![0.0];
         for link in &chain.links {
-            let mut table = vec![total];
             let mut last = link.at(model, S::ZERO)?.0;
+            let mut length = *lengths.last().expect("a length");
             for i in 1..=LENGTH_SAMPLES {
                 let f = S::from_ratio(i as i64, LENGTH_SAMPLES as i64)?;
                 let p = link.at(model, f)?.0;
-                total += p.sub(&last).norm().midpoint().to_f64();
-                table.push(total);
+                length += p.sub(&last).norm().midpoint().to_f64();
                 last = p;
             }
-            lengths.push(table);
+            lengths.push(length);
         }
-        let vertices = chain.vertices(model)?;
-        let given = |v: VertexId| {
-            part.name_of(v)
-                .and_then(|name| radii.at_vertices.iter().find(|(n, _)| n == name))
-                .map(|(_, r)| *r)
-        };
-        let mut knots = Vec::new();
-        for (k, &v) in vertices.iter().enumerate() {
-            let at = if k < chain.links.len() {
-                lengths[k][0]
-            } else {
-                total
-            };
-            let first = k == 0;
-            let last = !chain.closed && k + 1 == vertices.len();
-            let r = match given(v) {
-                Some(r) => Some(r),
-                None if first => Some(radii.radius),
-                None if last => Some(radii.end_radius.unwrap_or(radii.radius)),
-                None => None,
-            };
-            if let Some(r) = r {
-                knots.push((at, r));
-            }
-        }
+        let mut vertices = chain.vertices(model)?;
         if chain.closed {
             if radii.end_radius.is_some() {
                 return Err(GeopError::new(
                     "the edge's tangent chain is closed, so it has no end for an end radius: give radii at its vertices instead",
                 ));
             }
-            knots.push((total, knots[0].1));
+            vertices.push(vertices[0]);
         }
-        Ok(RadiusLaw { lengths, knots })
-    }
-
-    /// The radius `fraction` of the way along link `link`, sharp: the law is
-    /// a choice, and this is it.
-    fn radius<S: Scalar>(&self, link: usize, fraction: f64) -> S {
-        let table = &self.lengths[link];
-        let x = fraction * LENGTH_SAMPLES as f64;
-        let i = (x.floor() as usize).min(LENGTH_SAMPLES - 1);
-        let s = table[i] + (x - i as f64) * (table[i + 1] - table[i]);
-        let r = match self.knots.iter().position(|&(at, _)| at >= s) {
-            None => self.knots.last().expect("a knot").1,
-            Some(0) => self.knots[0].1,
+        let given = |v: VertexId| {
+            part.name_of(v)
+                .and_then(|name| radii.at_vertices.iter().find(|(n, _)| n == name))
+                .map(|(_, r)| *r)
+        };
+        let last = vertices.len() - 1;
+        let mut knots: Vec<(f64, f64)> = Vec::new();
+        for (k, &v) in vertices.iter().enumerate() {
+            let r = match given(v) {
+                Some(r) => Some(r),
+                None if k == 0 => Some(radii.radius),
+                None if k == last && chain.closed => Some(knots[0].1),
+                None if k == last => Some(radii.end_radius.unwrap_or(radii.radius)),
+                None => None,
+            };
+            if let Some(r) = r {
+                knots.push((lengths[k], r));
+            }
+        }
+        let at_length = |s: f64| match knots.iter().position(|&(at, _)| at >= s) {
+            None => knots.last().expect("a knot").1,
+            Some(0) => knots[0].1,
             Some(j) => {
-                let ((s0, r0), (s1, r1)) = (self.knots[j - 1], self.knots[j]);
+                let ((s0, r0), (s1, r1)) = (knots[j - 1], knots[j]);
                 if s1 > s0 {
                     r0 + (s - s0) / (s1 - s0) * (r1 - r0)
                 } else {
@@ -490,7 +474,29 @@ impl RadiusLaw {
                 }
             }
         };
-        S::from_f64(r)
+        Ok(RadiusLaw {
+            at_vertices: lengths.iter().map(|&s| at_length(s)).collect(),
+        })
+    }
+
+    /// The radius `fraction` of the way along link `link`, sharp: the law is
+    /// a choice, and this is it.
+    fn radius<S: Scalar>(&self, link: usize, fraction: f64) -> S {
+        let (r0, r1) = (self.at_vertices[link], self.at_vertices[link + 1]);
+        S::from_f64(r0 + fraction * (r1 - r0))
+    }
+
+    /// Whether the radius changes along the chain.
+    fn varies(&self) -> bool {
+        self.at_vertices.windows(2).any(|w| w[0] != w[1])
+    }
+
+    /// The smallest radius along the chain.
+    fn smallest(&self) -> f64 {
+        self.at_vertices
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min)
     }
 }
 
@@ -626,7 +632,13 @@ fn place<S: Scalar>(
     } else {
         across
     }
-    .normalize()?;
+    .normalize()
+    .map_err(|_| {
+        GeopError::new(format!(
+            "faces {} and {} could meet tangentially at {p:?} on edge {}: there is no corner to blend there (normals {:?} and {:?})",
+            own.faces[0], own.faces[1], own.edge, normals[0], normals[1]
+        ))
+    })?;
     let sides = sides(chain);
     // The pairs of faces to try: the link's own first.
     let mut pairs = vec![own.faces];
@@ -1139,6 +1151,27 @@ fn roll_chain<S: Scalar>(
             ));
         }
     }
+    // Where a varying radius changes its rate — at the chain's vertices —
+    // a station too, unless the ball rolls onto the next face right there.
+    if law.varies() {
+        let inner = if chain.closed { 0 } else { 1 };
+        for v in inner..chain.links.len() {
+            let c = v as f64;
+            let near = |x: f64| {
+                let d = (x - c).abs();
+                let d = if chain.closed { d.min(links - d) } else { d };
+                d < 0.25 / n as f64
+            };
+            if crossings.iter().any(|(x, _)| near(*x)) {
+                continue;
+            }
+            let before = positions
+                .iter()
+                .rposition(|&x| x < c)
+                .unwrap_or(positions.len() - 1);
+            crossings.push((c, place_at(c, Some(&regular[before]))?));
+        }
+    }
     let mut all: Vec<(f64, Station<S>, bool)> = positions
         .iter()
         .zip(regular)
@@ -1501,9 +1534,15 @@ pub(crate) fn plan_rolled<S: Scalar>(
         let (p, t) = link.at(model, fraction)?;
         let n_l = normal_at(model, link.faces[0], &p)?;
         let n_r = normal_at(model, link.faces[1], &p)?;
+        if n_l.prod_cross(&n_r).norm_sq().could_be_equal(S::ZERO) {
+            return Err(GeopError::new(format!(
+                "faces {} and {} could meet tangentially at edge {}: there is no corner to blend",
+                link.faces[0], link.faces[1], link.edge
+            )));
+        }
         bend(n_l.prod_cross(&t).prod_dot(&n_r))
     };
-    let bend = bend_at(first, S::ZERO)?;
+    let bend = bend_at(first, S::from_f64(0.5))?;
     for (i, link) in chain.links.iter().enumerate().skip(1) {
         if bend_at(link, S::from_f64(0.5))? != bend {
             return Err(GeopError::new(format!(
@@ -1514,11 +1553,7 @@ pub(crate) fn plan_rolled<S: Scalar>(
     }
     let decided_ends = chain_ends(model, &chain, bend)?;
     let side = bend.side::<S>();
-    let smallest = law
-        .knots
-        .iter()
-        .map(|&(_, r)| r)
-        .fold(f64::INFINITY, f64::min);
+    let smallest = law.smallest();
 
     let mut n = FIRST_STATIONS;
     let mut before = f64::INFINITY;

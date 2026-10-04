@@ -46,7 +46,9 @@ ops/geop-ops-edit             edits of existing bodies: delete a body,
 ops/geop-ops-extrude-revolve  extrude/revolve, sweeps along paths, lofts;
                                their operations, and basic shapes for tests
 ops/geop-ops-fillet           fillets and chamfers on straight and circular
-                               edges, cut or filled in with a boolean
+                               edges, rolling-ball fillets of any other edge
+                               and tangent chain, radius varying along them,
+                               cut or filled in with a boolean
 ops/geop-ops-shell            shelling: a solid hollowed to walls of one
                                thickness, open at picked faces, the shell
                                operation
