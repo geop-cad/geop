@@ -114,7 +114,7 @@ fn largest_kink(part: &Part<ScalInF64>) -> (f64, f64) {
     type S = ScalInF64;
     let model = part.topology();
     let (mut largest, mut at_ends): (f64, f64) = (0.0, 0.0);
-    for (&edge, _) in &model.edges {
+    for &edge in model.edges.keys() {
         let coedges: Vec<_> = model
             .coedges
             .values()

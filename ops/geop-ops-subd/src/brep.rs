@@ -244,7 +244,7 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
     for (f, face) in mesh.faces.iter().enumerate() {
         let n = face.len();
         if n == 4 {
-            let mut grid = vec![Vector3::zero(); 49];
+            let mut grid = [Vector3::zero(); 49];
             for k in 0..4 {
                 let patch = net.patch(&sub, sub.face_start[f] + k, 0);
                 for (i, row) in patch.iter().enumerate() {
