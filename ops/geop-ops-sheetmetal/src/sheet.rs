@@ -33,9 +33,7 @@ use geop_core_math::{
 };
 use geop_core_topology::Sense;
 use geop_ops::Namer;
-use geop_ops_extrude_revolve::common::{
-    arc3, embed_curve, end_point, line2, line3, start_point,
-};
+use geop_ops_extrude_revolve::common::{arc3, embed_curve, end_point, line2, line3, start_point};
 use serde::{Deserialize, Serialize};
 
 use crate::thicken::{SheetCoedge, SheetEdge, SheetFace, SheetSurface, SheetVertex, translate2};
@@ -235,9 +233,8 @@ impl<S: Scalar> FlatEdge<S> {
 
     /// Its ends, in sheet coordinates, if it is straight.
     pub fn line(&self) -> Option<GeopResult<[Vector2<S>; 2]>> {
-        (self.curve.degree == 1 && self.curve.control_points.len() == 2).then(|| {
-            Ok([start_point(&self.curve)?, end_point(&self.curve)?])
-        })
+        (self.curve.degree == 1 && self.curve.control_points.len() == 2)
+            .then(|| Ok([start_point(&self.curve)?, end_point(&self.curve)?]))
     }
 }
 
@@ -349,7 +346,11 @@ impl<S: Scalar> BendFrame<S> {
     /// The vector `x` turned by the bend: `m` towards the side it turns
     /// to, about its axis.
     pub fn rotate(&self, x: &Vector3<S>) -> Vector3<S> {
-        let (along_m, along_tau, along_n) = (x.prod_dot(&self.m), x.prod_dot(&self.tau), x.prod_dot(&self.n));
+        let (along_m, along_tau, along_n) = (
+            x.prod_dot(&self.m),
+            x.prod_dot(&self.tau),
+            x.prod_dot(&self.n),
+        );
         let sigma_sin = self.sigma.mul(self.sin);
         let m = self
             .m
@@ -446,9 +447,9 @@ impl<S: Scalar> Sheet<S> {
     /// Bend `bend`'s developed length: its angle times the radius of the
     /// neutral surface, `radius + k_factor * thickness`.
     pub fn developed_length(&self, bend: &Bend<S>) -> S {
-        let neutral = bend.radius.add(
-            S::from_f64(self.rules.k_factor).mul(S::from_f64(self.rules.thickness)),
-        );
+        let neutral = bend
+            .radius
+            .add(S::from_f64(self.rules.k_factor).mul(S::from_f64(self.rules.thickness)));
         bend.angle.mul(neutral)
     }
 
@@ -574,7 +575,8 @@ impl<S: Scalar> Sheet<S> {
             let (face, s0, s1) = match shifts {
                 None => {
                     let frame = self.bend_frame(bend).with_context(ctx)?;
-                    let apex = |p: &Vector3<S>, r: S| p.add(&frame.m.prod_scalar(r.mul(frame.half_tan)));
+                    let apex =
+                        |p: &Vector3<S>, r: S| p.add(&frame.m.prod_scalar(r.mul(frame.half_tan)));
                     let w = frame.half_cos;
                     let arc = |p: &SheetVertex<S>, c: &SheetVertex<S>| -> GeopResult<_> {
                         Ok((
@@ -643,7 +645,11 @@ impl<S: Scalar> Sheet<S> {
                     let straight = |p: &SheetVertex<S>, c: &SheetVertex<S>| -> GeopResult<_> {
                         Ok((line3(p.a, c.a)?, line3(p.b, c.b)?))
                     };
-                    ((surfaces, pcurves), straight(&v(pa), &v(ca))?, straight(&v(pb), &v(cb))?)
+                    (
+                        (surfaces, pcurves),
+                        straight(&v(pa), &v(ca))?,
+                        straight(&v(pb), &v(cb))?,
+                    )
                 }
             };
             let ((a, b), [p0, p1, p2, p3]) = face;

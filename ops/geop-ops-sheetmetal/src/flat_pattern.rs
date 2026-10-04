@@ -108,12 +108,20 @@ impl Operation for FlatPattern {
             })
             .into_iter()
             .collect();
-        f.reference("solid", "body", solid, &[Role::Solid], None, false, |e, picked| {
-            e.args.solid = match picked.as_slice() {
-                [EntityRef::Solid { name }] => name.clone(),
-                _ => String::new(),
-            }
-        });
+        f.reference(
+            "solid",
+            "body",
+            solid,
+            &[Role::Solid],
+            None,
+            false,
+            |e, picked| {
+                e.args.solid = match picked.as_slice() {
+                    [EntityRef::Solid { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            },
+        );
         f.checkbox("keep", "keep bent body", args.keep, |args, b| args.keep = b);
         f
     }

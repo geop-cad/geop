@@ -256,6 +256,24 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M13 1.5 L13 4.8" strokeWidth="1" />
     </>
   ),
+  base_flange: (
+    <>
+      <path d="M3 13 L10 16.5 L17 13 L10 9.5 Z" />
+      <path d="M3 13 L3 14.5 L10 18 L17 14.5 L17 13" strokeWidth="1" />
+    </>
+  ),
+  edge_flange: (
+    <>
+      <path d="M3 15 L12 15 Q15 15 15 12 L15 4" />
+      <path d="M3 17 L12 17 Q17 17 17 12 L17 4" />
+    </>
+  ),
+  flat_pattern: (
+    <>
+      <rect x="3" y="7" width="14" height="6" />
+      <path d="M8 7 L8 13 M12 7 L12 13" strokeDasharray="1.5 1.5" />
+    </>
+  ),
   drag: (
     <>
       <path d="M10 2.5 L10 17.5 M2.5 10 L17.5 10" />

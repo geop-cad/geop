@@ -17,7 +17,7 @@ use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    sheet::{BendFrame, Bend, Flat, FlatEdge, Placement, Relief, Sheet, SheetMetalRules, straight},
+    sheet::{Bend, BendFrame, Flat, FlatEdge, Placement, Relief, Sheet, SheetMetalRules, straight},
     thicken::thicken,
 };
 
@@ -151,7 +151,13 @@ impl Operation for BaseFlange {
         }
         .with_context(ctx)?;
         let solid = namer.root();
-        thicken(&mut part, &sheet.folded().with_context(ctx)?, &solid, &|n| n).with_context(ctx)?;
+        thicken(
+            &mut part,
+            &sheet.folded().with_context(ctx)?,
+            &solid,
+            &|n| n,
+        )
+        .with_context(ctx)?;
         part.set_body_data(&solid, sheet).with_context(ctx)?;
         Ok(part)
     }
@@ -247,7 +253,9 @@ fn plate<S: Scalar>(
             .collect()
     };
     let mut loops = loops.iter().map(edges);
-    let outer = loops.next().ok_or_else(|| GeopError::new("the sketch has no area"))?;
+    let outer = loops
+        .next()
+        .ok_or_else(|| GeopError::new("the sketch has no area"))?;
     Ok(Sheet {
         rules: args.rules.clone(),
         flats: vec![Flat {
@@ -341,7 +349,11 @@ fn strip<S: Scalar>(
             start: a.to_string(),
             end: b.to_string(),
         };
-        pieces.push(if edge.reversed { piece.reversed() } else { piece });
+        pieces.push(if edge.reversed {
+            piece.reversed()
+        } else {
+            piece
+        });
     }
     if args.flip {
         pieces = pieces.into_iter().rev().map(Piece::reversed).collect();
@@ -370,7 +382,15 @@ fn strip<S: Scalar>(
     for piece in &pieces {
         if piece.sweep.is_none() {
             if let Some(&last) = lines.last() {
-                turns.push(turn(last, piece, arc.take(), &direction, &w, t, &args.rules)?);
+                turns.push(turn(
+                    last,
+                    piece,
+                    arc.take(),
+                    &direction,
+                    &w,
+                    t,
+                    &args.rules,
+                )?);
             }
             lines.push(piece);
             continue;

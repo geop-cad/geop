@@ -4,8 +4,8 @@
 use std::f64::consts::PI;
 
 use geop_core_math::{
-    primitives::CoordinateSystem,
     geop_error::GeopResult,
+    primitives::CoordinateSystem,
     scalars::{Field, Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
@@ -27,14 +27,18 @@ fn d(x: f64) -> Design {
 fn sketched(sketch: Sketch<Design>) -> Part<S> {
     let mut part = Part::<S>::new();
     let plane = CoordinateSystem::world_at(Vector3::zero());
-    part.add_sketch(PlacedSketch { plane, sketch }, "k").unwrap();
+    part.add_sketch(PlacedSketch { plane, sketch }, "k")
+        .unwrap();
     part
 }
 
 /// The open chain of lines through `points`.
 fn chain(points: &[[f64; 2]]) -> Sketch<Design> {
     let mut s = Sketch::new();
-    let p: Vec<_> = points.iter().map(|c| s.add_point(d(c[0]), d(c[1]))).collect();
+    let p: Vec<_> = points
+        .iter()
+        .map(|c| s.add_point(d(c[0]), d(c[1])))
+        .collect();
     for w in p.windows(2) {
         s.add_line(w[0], w[1]);
     }
@@ -44,7 +48,10 @@ fn chain(points: &[[f64; 2]]) -> Sketch<Design> {
 /// The closed polygon through `points`.
 fn polygon(points: &[[f64; 2]]) -> Sketch<Design> {
     let mut s = Sketch::new();
-    let p: Vec<_> = points.iter().map(|c| s.add_point(d(c[0]), d(c[1]))).collect();
+    let p: Vec<_> = points
+        .iter()
+        .map(|c| s.add_point(d(c[0]), d(c[1])))
+        .collect();
     for i in 0..p.len() {
         s.add_line(p[i], p[(i + 1) % p.len()]);
     }
@@ -103,7 +110,11 @@ fn assert_valid(part: &Part<S>) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate(&params, part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
-        panic!("{} validation error(s):\n{}", messages.len(), messages.join("\n"));
+        panic!(
+            "{} validation error(s):\n{}",
+            messages.len(),
+            messages.join("\n")
+        );
     }
     if let Err(errors) = validate_manifold(&params, part.topology()) {
         panic!("{errors:?}");
@@ -149,7 +160,11 @@ fn area(part: &Part<S>, name: &str) -> f64 {
 #[test]
 fn l_bracket_from_a_chain_unfolds_to_its_developed_length() {
     let (t, r, k) = (0.1, 0.2, 0.4);
-    let part = base(sketched(chain(&[[0.0, 1.0], [0.0, 0.0], [1.5, 0.0]])), rules(t, r, k), 0.8);
+    let part = base(
+        sketched(chain(&[[0.0, 1.0], [0.0, 0.0], [1.5, 0.0]])),
+        rules(t, r, k),
+        0.8,
+    );
     assert_valid(&part);
     let sheet = part.body_data::<Sheet<S>>("base_flange(b)").unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (2, 1));
@@ -176,11 +191,14 @@ fn l_bracket_from_a_chain_unfolds_to_its_developed_length() {
     assert!(y.could_be_equal(developed), "{y:?} against {developed:?}");
     assert!(x.could_be_equal(s(t)), "{x:?}");
     assert!(z.could_be_equal(s(0.8)), "{z:?}");
-    let data = flat.body_data::<FlatPatternData>("flat_pattern(fp)").unwrap();
+    let data = flat
+        .body_data::<FlatPatternData>("flat_pattern(fp)")
+        .unwrap();
     assert_eq!(data.bends.len(), 1);
     assert_eq!(data.bends[0].bend, "base_flange(b,k,p1)");
     flat.sketch_id("flat_pattern(fp,bend_lines)").unwrap();
-    flat.face_id("flat_pattern(fp,base_flange(b,k,p1,a))").unwrap();
+    flat.face_id("flat_pattern(fp,base_flange(b,k,p1,a))")
+        .unwrap();
 }
 
 /// A chain with an arc between its lines bends along the arc, at its
@@ -229,7 +247,10 @@ fn plate_with_two_flanges_and_reliefs_unfolds_area_for_area() {
         .apply(part, "f2", &flange("base_flange(b,k,c5,b)"), &NoFiles)
         .unwrap();
     assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("edge_flange(f2)").unwrap().clone();
+    let sheet = part
+        .body_data::<Sheet<S>>("edge_flange(f2)")
+        .unwrap()
+        .clone();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
     // The flanges stand up along +z, the B side's way, half a unit high.
     let [_, _, z] = extent(&part);
@@ -241,8 +262,15 @@ fn plate_with_two_flanges_and_reliefs_unfolds_area_for_area() {
     let [_, _, z] = extent(&flat);
     assert!(z.could_be_equal(S::from_f64(t)), "{z:?}");
     let relative = |a: f64, b: f64| ((a - b) / b).abs();
-    for face in ["base_flange(b,plate,a)", "edge_flange(f1,flange,b)", "edge_flange(f2,flange,a)"] {
-        let (bent, laid) = (area(&folded, face), area(&flat, &format!("flat_pattern(fp,{face})")));
+    for face in [
+        "base_flange(b,plate,a)",
+        "edge_flange(f1,flange,b)",
+        "edge_flange(f2,flange,a)",
+    ] {
+        let (bent, laid) = (
+            area(&folded, face),
+            area(&flat, &format!("flat_pattern(fp,{face})")),
+        );
         assert!(relative(laid, bent) < 1e-9, "{face}: {laid} against {bent}");
     }
     // Bent up, towards the B side: that is their inside.
@@ -252,7 +280,10 @@ fn plate_with_two_flanges_and_reliefs_unfolds_area_for_area() {
         let outer = area(&folded, &face("a"));
         let neutral = (1.0 - k) * inner + k * outer;
         let laid = area(&flat, &format!("flat_pattern(fp,{})", face("a")));
-        assert!(relative(laid, neutral) < 1e-3, "{bend}: {laid} against {neutral}");
+        assert!(
+            relative(laid, neutral) < 1e-3,
+            "{bend}: {laid} against {neutral}"
+        );
     }
 }
 
@@ -313,13 +344,19 @@ fn what_is_not_sheet_metal_is_refused() {
         .apply(part, "f1", &flange("base_flange(b,k,c4,b)"), &NoFiles)
         .unwrap();
     // The bend's own edge is no flat edge to bend.
-    let err = refused(EdgeFlange
-        .apply(part.clone(), "f2", &flange("edge_flange(f1,line,b)"), &NoFiles)
-        );
+    let err = refused(EdgeFlange.apply(
+        part.clone(),
+        "f2",
+        &flange("edge_flange(f1,line,b)"),
+        &NoFiles,
+    ));
     assert!(err.contains("already bent"), "{err}");
-    let err = refused(EdgeFlange
-        .apply(part.clone(), "f2", &flange("edge_flange(f1,bend,s0,a)"), &NoFiles)
-        );
+    let err = refused(EdgeFlange.apply(
+        part.clone(),
+        "f2",
+        &flange("edge_flange(f1,bend,s0,a)"),
+        &NoFiles,
+    ));
     assert!(err.contains("no edge of a sheet-metal body"), "{err}");
 
     // A plate with a round hole: its rim is no straight edge to bend.
@@ -339,17 +376,15 @@ fn what_is_not_sheet_metal_is_refused() {
     plain
         .rename(plain.solid_id("edge_flange(f1)").unwrap(), "other")
         .unwrap();
-    let err = refused(FlatPattern
-        .apply(
-            plain,
-            "fp",
-            &FlatPatternArgs {
-                solid: "other".into(),
-                keep: false,
-            },
-            &NoFiles,
-        )
-        );
+    let err = refused(FlatPattern.apply(
+        plain,
+        "fp",
+        &FlatPatternArgs {
+            solid: "other".into(),
+            keep: false,
+        },
+        &NoFiles,
+    ));
     assert!(err.contains("not a sheet-metal body"), "{err}");
 
     // Relief that does not fit beside a flange set in less than its width.
@@ -441,7 +476,10 @@ fn sweep_angles_radii_and_k_factors() {
                         let lowest = setback.sub(neutral).sub(s(1.5).sub(setback));
                         let developed = s(2.0).sub(lowest.min(S::ZERO));
                         let [_, y, _] = extent(&flat);
-                        assert!(y.could_be_equal(developed), "{ctx}: {y:?} against {developed:?}");
+                        assert!(
+                            y.could_be_equal(developed),
+                            "{ctx}: {y:?} against {developed:?}"
+                        );
                     }
                 }
 
@@ -455,9 +493,18 @@ fn sweep_angles_radii_and_k_factors() {
                     depth: 0.5,
                     flip: false,
                 };
-                let part = BaseFlange
-                    .apply(part, "b", &args, &NoFiles)
-                    .unwrap_or_else(|e| panic!("{ctx}: {e}"));
+                let part = match BaseFlange.apply(part, "b", &args, &NoFiles) {
+                    Ok(part) => part,
+                    Err(e) => {
+                        // A sharp bend of a large radius sets back further
+                        // than its legs are long.
+                        assert!(
+                            e.to_string().contains("too short for its bends"),
+                            "{ctx}: {e}"
+                        );
+                        continue;
+                    }
+                };
                 assert_valid(&part);
                 let sheet = part.body_data::<Sheet<S>>("base_flange(b)").unwrap();
                 let bend = &sheet.bends[0];
@@ -469,7 +516,10 @@ fn sweep_angles_radii_and_k_factors() {
                 let flat = unfold(part, "base_flange(b)");
                 assert_valid(&flat);
                 let [x, _, _] = extent(&flat);
-                assert!(x.could_be_equal(developed), "{ctx}: {x:?} against {developed:?}");
+                assert!(
+                    x.could_be_equal(developed),
+                    "{ctx}: {x:?} against {developed:?}"
+                );
             }
         }
     }

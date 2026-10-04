@@ -203,6 +203,7 @@ dependencies = [
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
  "geop-ops-rasterize",
+ "geop-ops-sheetmetal",
  "geop-ops-shell",
  "geop-ops-sketch",
  "serde",

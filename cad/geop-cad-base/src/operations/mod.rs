@@ -5,7 +5,8 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! sheet metal in `geop_ops_sheetmetal`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -19,6 +20,9 @@ use geop_ops_extrude_revolve::{
     Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_sheetmetal::{
+    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs,
+};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
@@ -39,6 +43,8 @@ mod program_tests;
 mod regression_tests;
 #[cfg(test)]
 mod set_tests;
+#[cfg(test)]
+mod sheetmetal_tests;
 #[cfg(test)]
 mod shell_tests;
 #[cfg(test)]
@@ -101,6 +107,16 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Start a sheet-metal body: a plate from a sketch's area, or a bent
+    /// strip from a chain of lines and arcs.
+    #[operation(label = "Base flange")]
+    BaseFlange(BaseFlangeArgs),
+    /// Bend a flange up from a straight edge of a sheet-metal body.
+    #[operation(label = "Edge flange")]
+    EdgeFlange(EdgeFlangeArgs),
+    /// Unfold a sheet-metal body into its flat pattern.
+    #[operation(label = "Flat pattern")]
+    FlatPattern(FlatPatternArgs),
 }
 
 /// A program of the editor's operations.

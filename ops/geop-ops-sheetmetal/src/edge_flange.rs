@@ -130,12 +130,20 @@ impl Operation for EdgeFlange {
             })
             .into_iter()
             .collect();
-        f.reference("edge", "edge", edge, &[Role::Line], None, false, |e, picked| {
-            e.args.edge = match picked.as_slice() {
-                [EntityRef::Edge { name }] => name.clone(),
-                _ => String::new(),
-            }
-        });
+        f.reference(
+            "edge",
+            "edge",
+            edge,
+            &[Role::Line],
+            None,
+            false,
+            |e, picked| {
+                e.args.edge = match picked.as_slice() {
+                    [EntityRef::Edge { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            },
+        );
         f.number(
             "angle",
             Number::new("angle", args.angle, Unit::Angle).range(0.0, 180.0),
@@ -267,7 +275,9 @@ fn add_flange<S: Scalar>(
     let edge = &flat.outer[k];
     let name = edge.key();
     let [a, b] = edge.line().ok_or_else(|| {
-        GeopError::new(format!("edge {name} is not straight: a flange is bent along a straight edge"))
+        GeopError::new(format!(
+            "edge {name} is not straight: a flange is bent along a straight edge"
+        ))
     })??;
     if sheet.is_bent(&name) {
         return Err(GeopError::new(format!("edge {name} is already bent")));
@@ -280,7 +290,9 @@ fn add_flange<S: Scalar>(
     }
     let radius = args.radius.unwrap_or(rules.bend_radius);
     if !(radius.is_finite() && radius > 0.0) {
-        return Err(GeopError::new(format!("the bend radius must be positive, not {radius}")));
+        return Err(GeopError::new(format!(
+            "the bend radius must be positive, not {radius}"
+        )));
     }
     for (what, offset) in [("start", args.offset_start), ("end", args.offset_end)] {
         if !(offset.is_finite() && offset >= 0.0) {
@@ -318,7 +330,10 @@ fn add_flange<S: Scalar>(
     let edge_length = b.sub(&a).norm();
     let tau = b.sub(&a).normalize()?;
     let inward = Vector2::from_array([tau[1].neg(), tau[0]]);
-    let at = |along: S, into: S| a.add(&tau.prod_scalar(along)).add(&inward.prod_scalar(into));
+    let at = |along: S, into: S| {
+        a.add(&tau.prod_scalar(along))
+            .add(&inward.prod_scalar(into))
+    };
     let d = set_back.unwrap_or(S::ZERO);
     let relief = rules.relief_size().map(s);
     let depth = relief.map(|w| d.add(w));
@@ -359,9 +374,17 @@ fn add_flange<S: Scalar>(
     // the reliefs — must lie inside it: no corner of the flat in it.
     let full = (inset_start == 0.0, inset_end == 0.0);
     let notched = relief.is_some() && !(full.0 && full.1);
-    let height = if notched { depth.expect("a relief has a depth") } else { d };
+    let height = if notched {
+        depth.expect("a relief has a depth")
+    } else {
+        d
+    };
     if height.definitely_greater(S::ZERO) {
-        let w = if notched { relief.expect("a relief") } else { S::ZERO };
+        let w = if notched {
+            relief.expect("a relief")
+        } else {
+            S::ZERO
+        };
         let lo = if full.0 { S::ZERO } else { s0.sub(w) };
         let hi = if full.1 { edge_length } else { s1.add(w) };
         for e in std::iter::once(&flat.outer).chain(&flat.holes).flatten() {
@@ -399,15 +422,12 @@ fn add_flange<S: Scalar>(
         }
     } else {
         run.push((a, namer.scoped("before")));
-        match (relief, depth) {
-            (Some(w), Some(depth)) => {
-                fits(s0.sub(w), &name, "start")?;
-                let relief = namer.scoped("relief0");
-                run.push((at(s0.sub(w), S::ZERO), relief.scoped("in")));
-                run.push((at(s0.sub(w), depth), relief.scoped("across")));
-                run.push((at(s0, depth), relief.scoped("out")));
-            }
-            _ => {}
+        if let (Some(w), Some(depth)) = (relief, depth) {
+            fits(s0.sub(w), &name, "start")?;
+            let relief = namer.scoped("relief0");
+            run.push((at(s0.sub(w), S::ZERO), relief.scoped("in")));
+            run.push((at(s0.sub(w), depth), relief.scoped("across")));
+            run.push((at(s0, depth), relief.scoped("out")));
         }
         run.push((at(s0, d), namer.scoped("line")));
     }
@@ -524,7 +544,10 @@ fn trim_point<S: Scalar>(
         .expect("the edge is in its flat")];
     let [a, b] = this.line().expect("the edge is straight")?;
     let along = q.sub(&p).normalize()?;
-    if !along.prod_dot(&b.sub(&a).normalize()?).could_be_equal(S::ZERO) {
+    if !along
+        .prod_dot(&b.sub(&a).normalize()?)
+        .could_be_equal(S::ZERO)
+    {
         return Err(refuse("does not meet it at a right angle"));
     }
     if !q.sub(&p).norm().definitely_greater(d) {

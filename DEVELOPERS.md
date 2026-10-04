@@ -54,6 +54,9 @@ ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, drag it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
+ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
+                               and reliefs, the flat pattern; the sheet model
+                               recorded on the body and thickened into it
 cad/geop-cad-base             the operations the editor offers, the editor engine,
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
