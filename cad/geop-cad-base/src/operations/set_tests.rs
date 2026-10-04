@@ -23,6 +23,8 @@ fn every_operation_is_offered() {
             "delete_body",
             "extract_face",
             "project_curve",
+            "fillet",
+            "chamfer",
             "add_datum",
             "add_part"
         ]
@@ -58,5 +60,5 @@ fn new_steps_start_from_what_was_built() {
         let step = PartOperation::new_step(info.kind, part).unwrap();
         assert_eq!(step.kind(), info.kind);
     }
-    assert!(PartOperation::new_step("fillet", part).is_err());
+    assert!(PartOperation::new_step("no_such_operation", part).is_err());
 }

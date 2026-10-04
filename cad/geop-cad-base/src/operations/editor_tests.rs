@@ -124,7 +124,7 @@ fn bad_commands_are_refused() {
         },
         Command::Commit,
         Command::New {
-            kind: "fillet".into(),
+            kind: "no_such_operation".into(),
         },
     ] {
         let update = editor.handle(bad);

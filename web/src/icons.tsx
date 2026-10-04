@@ -216,6 +216,13 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M9 5 L9 11.5 M7.5 10 L9 11.5 L10.5 10" strokeWidth="1" />
     </>
   ),
+  // `fillet` is the sketch tool's icon above, and the fillet operation's.
+  chamfer: (
+    <>
+      <path d="M4 16 L4 10 L10 4 L16 4" />
+      <path d="M4 10 L4 4 L10 4" strokeDasharray="1.5 1.5" />
+    </>
+  ),
   add_datum: (
     <>
       <path d="M2.5 13 L7 8 L17.5 8 L13 13 Z" />

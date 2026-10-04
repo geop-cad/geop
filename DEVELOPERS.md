@@ -45,6 +45,8 @@ ops/geop-ops-edit             edits of existing bodies: delete a body,
                                extract a face, project a sketch onto a face
 ops/geop-ops-extrude-revolve  extrude/revolve, the extrude and revolve
                                operations, and basic shapes for tests
+ops/geop-ops-fillet           fillets and chamfers on straight and circular
+                               edges, cut or filled in with a boolean
 ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, drag it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
