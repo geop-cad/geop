@@ -164,7 +164,7 @@ impl<S: Scalar> Aspects<S> {
                 end: pose.apply(&arc.end),
             }),
             round: self.round.map(axis),
-            curve: self.curve.map(|c| c.place(placement)),
+            curve: self.curve.map(|c| c.transform(pose)),
             frame: frame(self.frame)?,
             face: self.face,
             solid: self.solid,

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    primitives::Motion,
     scalars::Scalar,
     vector::Vector3,
 };
@@ -201,6 +202,58 @@ impl<S: Scalar> Part<S> {
             solid,
         };
         self.build_body(spec, names)
+    }
+
+    /// Copies the whole of `body` — a solid, its shells kept apart, or a
+    /// sheet — into a body of its own that shares nothing with it. The copy
+    /// of each entity named `X`, the solid included, is named `rename(X)`.
+    pub fn copy_body(
+        &mut self,
+        body: Body,
+        rename: impl Fn(&str) -> String,
+    ) -> GeopResult<BuiltBody> {
+        let faces = self.topology.body_faces(body)?;
+        let solid = match body {
+            Body::Solid(solid) => Some(rename(self.names.name_of(solid).ok_or_else(|| {
+                GeopError::new(format!("Part::copy_body: {solid} has no name"))
+            })?)),
+            Body::Sheet(_) => None,
+        };
+        let (mut spec, sources) = self.topology.body_spec(&faces, solid.is_some())?;
+        // `body_spec` puts every face into one shell; a solid with a void
+        // has more, which the copy keeps.
+        let mut shells: Vec<(ShellId, Vec<usize>)> = Vec::new();
+        for (index, &face) in sources.faces.iter().enumerate() {
+            let shell = self.topology.get_face(face)?.shell;
+            match shells.iter_mut().find(|(s, _)| *s == shell) {
+                Some((_, members)) => members.push(index),
+                None => shells.push((shell, vec![index])),
+            }
+        }
+        spec.shells = shells.into_iter().map(|(_, members)| members).collect();
+        let copied = |ids: Vec<super::RefId>| -> GeopResult<Vec<String>> {
+            ids.into_iter()
+                .map(|id| {
+                    let name = self.names.name_of(id).ok_or_else(|| {
+                        GeopError::new(format!("Part::copy_body: {id} has no name"))
+                    })?;
+                    Ok(rename(name))
+                })
+                .collect()
+        };
+        let names = BodyNames {
+            vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
+            edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
+            faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
+            solid,
+        };
+        self.build_body(spec, names)
+    }
+
+    /// Forwards to [`geop_core_topology::Model::transform_body`]. Creates
+    /// and deletes nothing, so every entity keeps its name.
+    pub fn transform_body(&mut self, body: Body, motion: &Motion<S>) -> GeopResult<()> {
+        self.topology.transform_body(body, motion)
     }
 
     /// Forwards to [`geop_core_topology::Model::assemble_solid`], naming the

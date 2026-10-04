@@ -9,3 +9,4 @@ mod merge_vertex;
 pub(crate) mod reverse_face;
 pub mod splice_edge_into_face;
 mod split_edge_at_vertex;
+mod transform_body;

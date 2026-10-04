@@ -9,6 +9,7 @@ mod split;
 mod sweep;
 mod tangent;
 mod translate;
+pub(crate) use translate::transform_control_point;
 
 use std::fmt::Display;
 

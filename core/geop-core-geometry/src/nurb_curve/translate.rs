@@ -1,5 +1,5 @@
 use geop_core_math::{
-    primitives::Pose,
+    primitives::Motion,
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
@@ -40,29 +40,35 @@ impl<S: Scalar> NurbCurve<S, 4> {
     }
 }
 
+/// The homogeneous control point `cp = (w p, w)` moved by `motion`: an
+/// isometry is affine, so it goes to `(w (A p + t), w) = (A (w p) + w t, w)`
+/// without dividing by the weight. A weight of exactly one — every control
+/// point of a polynomial curve or patch — multiplies nothing: rounding
+/// `1 t` outward would only widen the point. For a translation `A` is the
+/// identity and is not applied either, so the point moves by one addition
+/// per coordinate.
+pub(crate) fn transform_control_point<S: Scalar>(cp: &Vector4<S>, motion: &Motion<S>) -> Vector4<S> {
+    let w = cp[3];
+    let p = motion.rotate(&Vector3::from_array([cp[0], cp[1], cp[2]]));
+    let mut t = motion.position();
+    if !(w.is_sharp() && w.to_f64() == 1.0) {
+        t = t.map(|x| x.mul(w));
+    }
+    Vector4::from_array([p[0].add(t[0]), p[1].add(t[1]), p[2].add(t[2]), w])
+}
+
 impl<S: Scalar> NurbCurve<S, 4> {
-    /// This 3-D curve moved by the rigid motion `pose` — same shape and
-    /// parametrization. A rigid motion is affine, so it moves each
-    /// homogeneous control point `(w p, w)` to `(w (R p + t), w)` without
-    /// dividing by the weight.
-    pub fn place(&self, pose: &Pose<S>) -> Self {
-        let motion = pose.motion();
-        let position = pose.position();
-        let mut control_points = Vec::with_capacity(self.control_points.len());
-        for cp in &self.control_points {
-            let w = cp[3];
-            let p = motion.rotate(&Vector3::from_array([cp[0], cp[1], cp[2]]));
-            let t = position.map(|x| x.mul(w));
-            control_points.push(Vector4::from_array([
-                p[0].add(t[0]),
-                p[1].add(t[1]),
-                p[2].add(t[2]),
-                w,
-            ]));
-        }
+    /// This 3-D curve moved by `motion` — a rigid motion, a translation or
+    /// a mirror — with the same parametrization: each control point moved
+    /// (see [`transform_control_point`]), weights and knots untouched.
+    pub fn transform(&self, motion: &Motion<S>) -> Self {
         let mut curve = Self {
             degree: self.degree,
-            control_points,
+            control_points: self
+                .control_points
+                .iter()
+                .map(|cp| transform_control_point(cp, motion))
+                .collect(),
             knot_vector: self.knot_vector.clone(),
             aabb: self.aabb,
         };
@@ -107,7 +113,7 @@ mod tests {
 
     /// A rational curve (a weight other than one) placed by a pose
     /// evaluates to the pose applied to its points.
-    fn check_place_moves_evaluated_points<S: Scalar>() {
+    fn check_transform_moves_evaluated_points<S: Scalar>() {
         let curve = NurbCurve3D::try_new(
             2,
             vec![
@@ -128,7 +134,7 @@ mod tests {
             [30.0, -10.0, 75.0].map(S::from_f64),
         )
         .unwrap();
-        let placed = curve.place(&pose);
+        let placed = curve.transform(&pose.motion());
         for t in [0.0, 0.3, 0.8, 1.0] {
             let a = placed.evaluate(S::from_f64(t)).unwrap();
             let b = pose
@@ -138,7 +144,7 @@ mod tests {
         }
     }
     #[test]
-    fn place_moves_evaluated_points() {
-        for_all_scalars!(check_place_moves_evaluated_points);
+    fn transform_moves_evaluated_points() {
+        for_all_scalars!(check_transform_moves_evaluated_points);
     }
 }
