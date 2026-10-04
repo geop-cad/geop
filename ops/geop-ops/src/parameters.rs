@@ -157,6 +157,19 @@ impl Parameters {
         self.values.iter().find(|p| p.name == name)
     }
 
+    /// The parameter `from` named `to`, and every formula of the others
+    /// reading it reading `to` (see [`rename_in`]).
+    pub fn rename(&mut self, from: &str, to: &str) {
+        for p in &mut self.values {
+            if p.name == from {
+                p.name = to.to_string();
+            }
+            if let ParameterKind::Number { expression, .. } = &mut p.kind {
+                *expression = rename_in(expression, from, to);
+            }
+        }
+    }
+
     /// Checks every name — valid, and unique — every table, and the colour.
     /// Formulas are checked as they are resolved: one that fails is said
     /// for that parameter, not for the program.
@@ -414,6 +427,14 @@ impl Formula {
         }
     }
 
+    /// The formula it follows, to change, if it is one.
+    pub fn expression_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Formula::Plain(_) => None,
+            Formula::Expression(text) => Some(text),
+        }
+    }
+
     /// Its value as the step building `part` reads it: every parameter
     /// the formula reads declared read (see [`crate::Part::evaluate`]).
     pub fn evaluate<S: Scalar>(&self, part: &mut crate::Part<S>) -> GeopResult<f64> {
@@ -431,6 +452,77 @@ impl Formula {
             Formula::Expression(text) => evaluate(text, |name| number(inputs, name)),
         }
     }
+}
+
+/// The texts of those of `formulas` that are formulas, not plain numbers:
+/// what an operation lists as its formulas (see
+/// [`crate::operation::Operation::formulas`]).
+pub fn expressions<'a>(formulas: impl IntoIterator<Item = &'a mut Formula>) -> Vec<&'a mut String> {
+    formulas
+        .into_iter()
+        .filter_map(Formula::expression_mut)
+        .collect()
+}
+
+/// The parameter a name in a formula reads: itself, or for a table's
+/// column, `size.diameter`, the table `size`.
+pub fn parameter_of(name: &str) -> &str {
+    name.split('.').next().unwrap_or(name)
+}
+
+/// `expression` reading the parameter `to` wherever it read `from` — and,
+/// for a table, `to.column` for `from.column`. Numbers, functions and
+/// everything else stay as they are written.
+pub fn rename_in(expression: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(expression.len());
+    let mut rest = expression;
+    while let Some(c) = rest.chars().next() {
+        let len = if c.is_ascii_digit() || c == '.' {
+            number_len(rest)
+        } else if c.is_ascii_alphabetic() || c == '_' {
+            let len = name_len(rest);
+            let name = &rest[..len];
+            match name.strip_prefix(from) {
+                Some(column) if column.is_empty() || column.starts_with('.') => {
+                    out.push_str(to);
+                    out.push_str(column);
+                }
+                _ => out.push_str(name),
+            }
+            rest = &rest[len..];
+            continue;
+        } else {
+            c.len_utf8()
+        };
+        out.push_str(&rest[..len]);
+        rest = &rest[len..];
+    }
+    out
+}
+
+/// How long the number `text` starts with is: digits and points, then
+/// perhaps an exponent, `1e-3`.
+fn number_len(text: &str) -> usize {
+    let mut len = text
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(text.len());
+    let rest = &text[len..];
+    if rest.starts_with(['e', 'E']) {
+        let digits = rest[1..].trim_start_matches(['+', '-']);
+        if digits.starts_with(|c: char| c.is_ascii_digit()) {
+            len += rest.len() - digits.len();
+            len += digits
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(digits.len());
+        }
+    }
+    len
+}
+
+/// How long the name `text` starts with is: letters, digits, `_` and `.`.
+fn name_len(text: &str) -> usize {
+    text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+        .unwrap_or(text.len())
 }
 
 /// The names of parameters `expression` reads, in order, each once.
@@ -552,32 +644,14 @@ impl<F: FnMut(&str) -> Option<f64>> Parser<'_, F> {
         let start = self.at;
         match self.peek() {
             Some(c) if c.is_ascii_digit() || c == '.' => {
-                while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '.') {
-                    self.at += 1;
-                }
-                // An exponent: `1e-3`.
-                let rest = &self.text[self.at..];
-                if rest.starts_with(['e', 'E']) {
-                    let digits = rest[1..].trim_start_matches(['+', '-']);
-                    if digits.starts_with(|c: char| c.is_ascii_digit()) {
-                        self.at += rest.len() - digits.len();
-                        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                            self.at += 1;
-                        }
-                    }
-                }
+                self.at += number_len(&self.text[start..]);
                 let number = &self.text[start..self.at];
                 number
                     .parse()
                     .map_err(|_| GeopError::new(format!("{number:?} is no number")))
             }
             Some(c) if c.is_ascii_alphabetic() || c == '_' => {
-                while self
-                    .peek()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-                {
-                    self.at += 1;
-                }
+                self.at += name_len(&self.text[start..]);
                 let name = &self.text[start..self.at];
                 if self.eat('(') {
                     let Some(&(_, arity)) = FUNCTIONS.iter().find(|(f, _)| *f == name) else {
@@ -752,5 +826,17 @@ mod tests {
         assert!(bad.validate().is_err());
         bad.values[1].name = "sin".into();
         assert!(bad.validate().is_err());
+    }
+
+    /// A rename touches the name and a table's columns, and nothing that
+    /// only looks alike: a longer name, a number's exponent, a function.
+    #[test]
+    fn renaming_reads_names_as_the_parser_does() {
+        assert_eq!(
+            rename_in("w/2 + widths + 1e5 + w.col*min(w, 2e-3)", "w", "width"),
+            "width/2 + widths + 1e5 + width.col*min(width, 2e-3)"
+        );
+        assert_eq!(rename_in("e + 2e3 + E", "e", "x"), "x + 2e3 + E");
+        assert_eq!(names_in("2e3 * e"), ["e"]);
     }
 }

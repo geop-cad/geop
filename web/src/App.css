@@ -163,6 +163,12 @@ button.small {
   color: #ff8080;
   font-size: 0.68rem;
 }
+/* What an action will break, before it is done. */
+.warning-text {
+  color: #ffc266;
+  font-size: 0.75rem;
+  margin: 0;
+}
 
 .viewport {
   flex: 1;

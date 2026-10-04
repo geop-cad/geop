@@ -415,6 +415,8 @@ export type Command =
   | { command: "visibility"; name: string; visible: boolean }
   /** The program's parameters are now these. */
   | { command: "parameters"; parameters: Parameters }
+  /** Rename the parameter `from` to `to`, and every formula reading it. */
+  | { command: "rename_parameter"; from: string; to: string }
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
   | { command: "drag_tool"; on: boolean }
   /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
@@ -502,6 +504,8 @@ export interface ProgramState {
   materials: Material[];
   /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
   parameters: { values: Record<string, ParamValue>; errors: Record<string, string> };
+  /** What reads each parameter, by name: the steps and other parameters whose formulas do — what fails if it goes. */
+  parameter_uses: Record<string, string[]>;
   operations: OperationInfo[];
   examples: string[];
   /** Examples of several files, for [[Command]] `load_workspace_example`. */

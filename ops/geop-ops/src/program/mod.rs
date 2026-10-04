@@ -13,7 +13,7 @@ pub use library::{Files, FilesMut, Library, NoFiles, Workspace, is_program};
 
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
 };
 
@@ -25,7 +25,10 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Component, Part, operation::Operations, parameters::Parameters, part::State,
+    Component, Part,
+    operation::Operations,
+    parameters::{Parameters, names_in, parameter_of, rename_in, validate_name},
+    part::State,
     validate_operation_id,
 };
 
@@ -120,6 +123,64 @@ impl<O: Operations> Program<O> {
             .map(|n| format!("{base}{n}"))
             .find(|id| self.steps.iter().all(|s| &s.id != id))
             .expect("some number is free")
+    }
+
+    /// What reads each parameter, by its name: the ids of the steps, and
+    /// the names of the other parameters, whose formulas name it — what
+    /// fails if it goes. A name no parameter has is listed too: what reads
+    /// it fails already.
+    pub fn parameter_uses(&self) -> BTreeMap<String, Vec<String>> {
+        let mut uses: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut note = |reader: &str, formula: &str| {
+            for name in names_in(formula) {
+                let readers = uses.entry(parameter_of(&name).to_string()).or_default();
+                if !readers.iter().any(|r| r == reader) {
+                    readers.push(reader.to_string());
+                }
+            }
+        };
+        for p in &self.parameters.values {
+            if let crate::parameters::ParameterKind::Number { expression, .. } = &p.kind {
+                note(&p.name, expression);
+            }
+        }
+        for step in &self.steps {
+            let mut operation = step.operation.clone();
+            for formula in operation.formulas() {
+                note(&step.id, formula);
+            }
+        }
+        uses
+    }
+
+    /// The parameter `from` named `to`, and every formula reading it —
+    /// the other parameters', every step's (see
+    /// [`crate::operation::Operation::formulas`]) — reading `to`, as does
+    /// the program's state. Fails for a parameter there is none of, and
+    /// for a name that is taken or no name.
+    pub fn rename_parameter(&mut self, from: &str, to: &str) -> GeopResult<()> {
+        if self.parameters.get(from).is_none() {
+            return Err(GeopError::new(format!("there is no parameter {from:?}")));
+        }
+        if from == to {
+            return Ok(());
+        }
+        validate_name(to)?;
+        if self.parameters.get(to).is_some() {
+            return Err(GeopError::new(format!(
+                "there is a parameter {to:?} already"
+            )));
+        }
+        self.parameters.rename(from, to);
+        for step in &mut self.steps {
+            for formula in step.operation.formulas() {
+                *formula = rename_in(formula, from, to);
+            }
+        }
+        if let Some(value) = self.state.remove(from) {
+            self.state.insert(to.to_string(), value);
+        }
+        Ok(())
     }
 
     /// Checks that every step id is a valid operation id and unique: every

@@ -249,6 +249,31 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   return `${stats}, volume ${volume} mm³`;
 });
 
+await check("a parameter renamed is renamed where it is read, and removing one read warns", async () => {
+  await fresh();
+  await fileMenu(page, "Parametric plate");
+  const before = await builtCleanly();
+  const dialog = page.locator(".modal[aria-label^='Parameter']");
+  await page.locator("button[aria-label='Edit width']").click();
+  const readers = await dialog.locator(".parameter-readers").innerText();
+  expect(readers.includes("depth") && readers.includes("outline"), `width is read by: ${readers}`);
+  const name = dialog.locator(".modal-field", { hasText: "Name" }).locator("input");
+  await name.fill("plate_width");
+  await name.press("Enter");
+  const after = await builtCleanly();
+  expect(after === before, `renamed, the part is ${after}, not ${before}`);
+  await dialog.locator("button", { hasText: "Done" }).click();
+  expect((await page.locator(".parameter-name").allInnerTexts()).includes("plate_width"), "width was not renamed");
+  // Removing what the plate's extrusion reads says so first, and removes nothing yet.
+  await page.locator("button[aria-label='Edit thickness']").click();
+  await dialog.locator("button.danger").click();
+  const warning = await dialog.locator(".warning-text").innerText();
+  expect(warning.includes("plate"), `no warning that the plate reads thickness: ${warning}`);
+  await dialog.locator("button", { hasText: "Done" }).click();
+  expect((await page.locator(".parameter-name").allInnerTexts()).includes("thickness"), "thickness was removed");
+  return builtCleanly();
+});
+
 await check("a kernel that crashes is restarted with the program", async () => {
   await fresh();
   await fileMenu(page, "Box with drill hole");

@@ -117,6 +117,13 @@ pub enum Command<S: Scalar> {
     Parameters {
         parameters: Parameters,
     },
+    /// Name the parameter `from` `to`, and every formula reading it read
+    /// `to` (see [`geop_ops::Program::rename_parameter`]): the other
+    /// parameters', the steps'. Refused while a step is edited.
+    RenameParameter {
+        from: String,
+        to: String,
+    },
     /// Show the datum, sketch, solid or placed part `name` of the part
     /// drawn, or hide it — whatever the editor would do by itself — for as
     /// long as the same file is edited.
@@ -286,6 +293,10 @@ pub struct ProgramState {
     /// What the program's parameters resolve to, and why those that do
     /// not resolve fail.
     pub parameters: Resolved,
+    /// What reads each parameter, by name: the steps and the other
+    /// parameters whose formulas do, which fail if it goes (see
+    /// [`geop_ops::Program::parameter_uses`]).
+    pub parameter_uses: BTreeMap<String, Vec<String>>,
     /// Every operation a step can be.
     pub operations: Vec<OperationInfo>,
     /// The names of the example programs [`Command::LoadExample`] loads.
@@ -952,6 +963,11 @@ impl<S: Scalar> Editor<S> {
                 self.program.parameters = parameters;
                 Changed::Program
             }
+            Command::RenameParameter { from, to } => {
+                idle(self)?;
+                self.program.rename_parameter(&from, &to)?;
+                Changed::Program
+            }
             Command::Remove { id } => {
                 idle(self)?;
                 let index = self.program.index_of(&id)?;
@@ -1607,6 +1623,7 @@ impl<S: Scalar> Editor<S> {
                 })
                 .collect(),
             parameters: self.program.parameters.resolve(&self.program.state),
+            parameter_uses: self.program.parameter_uses(),
             operations: PartOperation::infos(),
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),

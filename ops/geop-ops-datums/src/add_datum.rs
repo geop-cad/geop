@@ -21,11 +21,29 @@ use serde::{Deserialize, Serialize};
 use geop_ops::{
     Context, Library, Part,
     operation::{Aspects, EntityRef, Operation, Role, frame_along},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Form, Unit},
 };
 
 use crate::editor;
+
+/// A value a construction takes besides its selection, as
+/// [`Construction::formulas`] lists it: a number's formula, or nothing.
+trait Value {
+    fn formula(&mut self) -> Option<&mut Formula>;
+}
+
+impl Value for Formula {
+    fn formula(&mut self) -> Option<&mut Formula> {
+        Some(self)
+    }
+}
+
+impl Value for bool {
+    fn formula(&mut self) -> Option<&mut Formula> {
+        None
+    }
+}
 
 /// What kind of value a construction takes besides its selection.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,6 +124,17 @@ macro_rules! constructions {
         )*];
 
         impl Construction {
+            /// The formulas of its numbers (see [`Operation::formulas`]).
+            pub fn formulas(&mut self) -> Vec<&mut String> {
+                let mut formulas = Vec::new();
+                match self {
+                    $(Construction::$variant { $($param),* } => {
+                        $(formulas.extend(Value::formula($param));)*
+                    })*
+                }
+                expressions(formulas)
+            }
+
             /// How it is described among [`CONSTRUCTIONS`].
             pub fn schema(&self) -> &'static ConstructionSchema {
                 let method = match self {
@@ -595,6 +624,10 @@ impl Construction {
 impl Operation for AddDatum {
     type Args = AddDatumArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut AddDatumArgs) -> Vec<&'a mut String> {
+        args.construction.formulas()
+    }
 
     /// Nothing selected yet, and the first construction.
     fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddDatumArgs {

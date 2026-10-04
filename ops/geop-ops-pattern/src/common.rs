@@ -52,6 +52,13 @@ impl Spacing {
         }
     }
 
+    /// The number it holds, to change.
+    pub fn value_mut(&mut self) -> &mut Formula {
+        match self {
+            Spacing::Step(v) | Spacing::Extent(v) => v,
+        }
+    }
+
     /// The same kind of spacing, holding `value`.
     fn with_value(&self, value: Formula) -> Self {
         match self {

@@ -10,6 +10,10 @@ interface Props {
   enabled: boolean;
   /** The parameters are now these; settled once the part is built with them. */
   onChange: (parameters: Parameters) => Promise<unknown> | void;
+  /** What reads each parameter, by name: steps, and other parameters. */
+  uses: Record<string, string[]>;
+  /** Rename the parameter `from` to `to`, and every formula reading it. */
+  onRename: (from: string, to: string) => void;
   /** The materials the part's can be picked from; any other is given by its density. */
   materials: Material[];
 }
@@ -277,22 +281,32 @@ function TableEditor({ table, onChange }: { table: Table; onChange: (t: Table) =
   );
 }
 
-/** One parameter's details, in a popup: its name, and its formula and slider range or its table. */
+/**
+ * One parameter's details, in a popup: its name, and its formula and slider
+ * range or its table, and what reads it. A new name is given everywhere it
+ * is read; removing one that is read says what will fail first.
+ */
 function ParameterDialog({
   parameter,
   value,
   error,
+  readers,
   onChange,
+  onRename,
   onRemove,
   onClose,
 }: {
   parameter: Parameter;
   value: ParamValue | undefined;
   error: string | undefined;
+  /** The steps and other parameters that read it. */
+  readers: string[];
   onChange: (p: Parameter) => void;
+  onRename: (name: string) => void;
   onRemove: () => void;
   onClose: () => void;
 }) {
+  const [removing, setRemoving] = useState(false);
   return (
     <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" role="dialog" aria-label={`Parameter ${parameter.name}`}>
@@ -305,8 +319,15 @@ function ParameterDialog({
         </div>
         <label className="modal-field">
           <span>Name</span>
-          <Field value={parameter.name} onChange={(name) => onChange({ ...parameter, name })} />
+          <Field
+            value={parameter.name}
+            title="Renamed in every formula that reads it, too"
+            onChange={(name) => onRename(name.trim())}
+          />
         </label>
+        <p className="hint parameter-readers">
+          {readers.length > 0 ? `Read by ${readers.join(", ")}.` : "Nothing reads it yet."}
+        </p>
         {parameter.type === "number" ? (
           <>
             <label className="modal-field">
@@ -340,9 +361,17 @@ function ParameterDialog({
           </>
         )}
         {error && <p className="op-error-text">{error}</p>}
+        {removing && (
+          <p className="warning-text">
+            {readers.join(", ")} {readers.length === 1 ? "reads" : "read"} {parameter.name}, and will fail without it.
+          </p>
+        )}
         <div className="modal-actions">
-          <button className="danger" onClick={onRemove}>
-            Remove parameter
+          <button
+            className="danger"
+            onClick={() => (readers.length > 0 && !removing ? setRemoving(true) : onRemove())}
+          >
+            {removing ? "Remove anyway" : "Remove parameter"}
           </button>
           <button className="primary" onClick={onClose}>
             Done
@@ -360,7 +389,7 @@ function ParameterDialog({
  * dimensions read them by name; a program placing the part gives them other
  * values. One compact row each; the details open in a popup.
  */
-export function ParametersPanel({ parameters, resolved, enabled, onChange, materials }: Props) {
+export function ParametersPanel({ parameters, resolved, enabled, onChange, materials, uses, onRename }: Props) {
   const values = parameters.values ?? [];
   const [editing, setEditing] = useState<number | null>(null);
   const set = (index: number, parameter: Parameter) =>
@@ -477,7 +506,9 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange, mater
           parameter={open}
           value={resolved.values[open.name]}
           error={resolved.errors[open.name]}
+          readers={uses[open.name] ?? []}
           onChange={(p) => set(editing, p)}
+          onRename={(name) => onRename(open.name, name)}
           onRemove={() => {
             onChange({ ...parameters, values: values.filter((_, i) => i !== editing) });
             setEditing(null);

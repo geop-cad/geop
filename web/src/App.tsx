@@ -609,7 +609,9 @@ function App() {
         resolved={program?.parameters ?? { values: {}, errors: {} }}
         enabled={wasmReady}
         materials={program?.materials ?? []}
+        uses={program?.parameter_uses ?? {}}
         onChange={(parameters) => dispatch({ command: "parameters", parameters })}
+        onRename={(from, to) => dispatch({ command: "rename_parameter", from, to })}
       />
       {(program?.joints.length ?? 0) > 0 && (
         <>

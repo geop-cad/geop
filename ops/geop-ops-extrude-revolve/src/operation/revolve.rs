@@ -185,6 +185,10 @@ impl Operation for Revolve {
     type Args = RevolveArgs;
     type Session = ();
 
+    fn formulas<'a>(&self, args: &'a mut RevolveArgs) -> Vec<&'a mut String> {
+        args.extent.formulas()
+    }
+
     /// The newest sketch a full turn around its axis line, joined to the
     /// newest solid if there is one.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> RevolveArgs {

@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Form, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,10 @@ fn face_refs(names: &[String]) -> Vec<EntityRef> {
 impl Operation for Shell {
     type Args = ShellArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut ShellArgs) -> Vec<&'a mut String> {
+        expressions([&mut args.thickness])
+    }
 
     /// The newest solid, closed all round, a tenth thick.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> ShellArgs {

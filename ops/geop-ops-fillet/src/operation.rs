@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Form, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
@@ -132,6 +132,10 @@ impl FilletArgs {
 impl Operation for Fillet {
     type Args = FilletArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut FilletArgs) -> Vec<&'a mut String> {
+        expressions(std::iter::once(&mut args.radius).chain(args.end_radius.as_mut()))
+    }
 
     /// No edges yet, and a small radius.
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> FilletArgs {
@@ -278,6 +282,10 @@ impl ChamferArgs {
 impl Operation for Chamfer {
     type Args = ChamferArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut ChamferArgs) -> Vec<&'a mut String> {
+        expressions(std::iter::once(&mut args.distance).chain(args.distance2.as_mut()))
+    }
 
     /// No edges yet, and a small distance, the same into both faces.
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> ChamferArgs {
