@@ -19,3 +19,6 @@ pub use operation::{ImportStep, ImportStepArgs, add_bodies, is_step_file};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod corpus;
