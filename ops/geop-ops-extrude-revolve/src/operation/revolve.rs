@@ -241,7 +241,7 @@ impl Operation for Revolve {
             "angle",
             |angle, second| {
                 let label = if second { "angle 2" } else { "angle" };
-                Number::new(label, angle, Unit::Angle).range(-360.0, 360.0)
+                Number::formula(label, angle, before.inputs(), Unit::Angle).range(-360.0, 360.0)
             },
             360.0,
             |args| &mut args.extent,
@@ -413,7 +413,7 @@ impl Operation for Revolve {
         };
         let plan = args
             .extent
-            .plan(|sign| match &hull {
+            .plan(&mut part, |sign| match &hull {
                 Some(hull) => turn_past(hull, &axes, sign),
                 None => Err(no_target()),
             })

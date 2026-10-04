@@ -226,23 +226,25 @@ pub fn integrate<S: Scalar>(
         // rules smaller than their own enclosures' widths is rounding, not
         // truncation, and no halving reduces it.
         let width = total(&panels, |p| &p.width);
-        let open: Vec<usize> = (0..components)
+        let pending: Vec<usize> = (0..components)
             .filter(|&c| error[c] > quadrature.relative_tolerance * scale[c] && error[c] > width[c])
             .collect();
-        if open.is_empty() {
+        if pending.is_empty() {
             break true;
         }
         if panels.len() >= quadrature.max_panels {
             break false;
         }
         // The panel contributing most to the component furthest from
-        // converging — among those that have not: a component already
-        // resolved, down to rounding, say, only looks far off relative to
-        // its own tiny scale, and halving where it is largest would spend
-        // the whole budget on rounding while the component still open is
-        // never refined.
+        // converging — of those not converged yet. A converged component
+        // that is all rounding, its scale nearly zero (the `z` moments of a
+        // vertical wall), has relative errors far above any other's, and
+        // ranked with the rest it drew every halving to its noise while the
+        // panel holding a pending component's error was never halved.
         let worst = |p: &Panel<S>| {
-            open.iter()
+            pending
+                .iter()
+                .filter(|&&c| scale[c] > 0.0)
                 .map(|&c| p.error[c] / scale[c])
                 .fold(0.0, f64::max)
         };
@@ -274,6 +276,41 @@ mod tests {
         for_all_scalars,
         scalars::{Field, Ring, Scalar},
     };
+
+    /// A peak that needs halving, beside a component that is all rounding
+    /// — nearly zero, noisy, converged by its width — on the other half of
+    /// the range. The noise's relative errors are far above the peak's, and
+    /// ranked with them they drew every halving away from the peak: the
+    /// moments of a hole's wall did not converge.
+    #[test]
+    fn halving_follows_the_components_not_converged() {
+        type S = crate::scalars::ScalInF64;
+        let f = |x: S| {
+            let t = x.to_f64();
+            let peak = 1.0 / (1.0 + 1e4 * (t + 0.5) * (t + 0.5));
+            let noise = if t > 0.0 {
+                1e-18 * (1e7 * t).sin()
+            } else {
+                0.0
+            };
+            Ok(vec![
+                S::from_f64(peak),
+                S::from_f64(noise - 1e-15).union(S::from_f64(noise + 1e-15)),
+            ])
+        };
+        let quadrature = Quadrature {
+            relative_tolerance: 1e-10,
+            max_panels: 64,
+        };
+        let integral = integrate(f, &[S::from_f64(-1.0), S::ONE], 2, &quadrature).unwrap();
+        assert!(integral.converged, "{integral:?}");
+        // ∫ 1 / (1 + 10⁴ (x + ½)²) = (atan(50) + atan(150)) / 100.
+        let exact = (50.0_f64.atan() + 150.0_f64.atan()) / 100.0;
+        assert!(
+            integral.value[0].could_be_equal(S::from_f64(exact)),
+            "{integral:?}"
+        );
+    }
 
     fn check_polynomials_are_exact<S: Scalar>() {
         // x^5 - 2x^2 + 1 on [0, 2]: 64/6 - 16/3 + 2 = 22/3.
@@ -341,31 +378,5 @@ mod tests {
         let integral = integrate(f, &[S::ZERO, S::ONE], 1, &tight).unwrap();
         assert!(!integral.converged);
         assert!(integral.value[0].could_be_equal(S::from_ratio(2, 3).unwrap()));
-    }
-
-    /// A component resolved down to its rounding does not take the budget
-    /// from one still open: here the first is a wiggle far below its own
-    /// enclosure's width — relative to its tiny scale it looks far off on
-    /// every panel — and the second needs its panels halved near `x = 0.9`,
-    /// where its peak is.
-    #[test]
-    fn a_resolved_component_does_not_starve_an_open_one() {
-        use crate::scalars::ScalInF64 as S;
-        let f = |x: S| {
-            let noise = S::from_f64(1e-20).mul(S::from_f64(1e6).mul(x).sin());
-            let rounding = S::from_f64(-1e-17).union(S::from_f64(1e-17));
-            let d = x.sub(S::from_f64(0.9));
-            let peak = S::ONE.div(S::ONE.add(S::from_f64(400.0).mul(d).mul(d)))?;
-            Ok(vec![noise.add(rounding), peak])
-        };
-        let budget = Quadrature {
-            relative_tolerance: 1e-10,
-            max_panels: 24,
-        };
-        let integral = integrate(f, &[S::ZERO, S::ONE], 2, &budget).unwrap();
-        assert!(integral.converged, "{integral:?}");
-        // atan(20 (x - 0.9)) / 20 from 0 to 1.
-        let exact = (2.0f64.atan() + 18.0f64.atan()) / 20.0;
-        assert!(integral.value[1].could_be_equal(S::from_f64(exact)));
     }
 }

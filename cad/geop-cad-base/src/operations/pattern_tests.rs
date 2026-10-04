@@ -145,8 +145,8 @@ fn row_of_holes_cut_by_a_patterned_tool() {
             first: Direction {
                 along: axis(FrameAxis::X),
                 reversed: false,
-                count: 4,
-                spacing: Spacing::Step(2.0),
+                count: 4.0.into(),
+                spacing: Spacing::step(2.0),
             },
             second: None,
             combine: Combine::Difference {
@@ -189,8 +189,8 @@ fn bolt_circle_cut_by_a_patterned_tool() {
             bodies: solid("extrude(pin)"),
             axis: axis(FrameAxis::Z),
             reversed: false,
-            count: 6,
-            angle: Spacing::Extent(360.0),
+            count: 6.0.into(),
+            angle: Spacing::extent(360.0),
             combine: Combine::Difference {
                 target: "extrude(plate)".into(),
             },
@@ -317,11 +317,11 @@ fn tool_moved_into_place_and_cut() {
 #[ignore = "slow: circular patterns of up to 24 copies at awkward angles — run with `cargo test -- --ignored`"]
 fn circular_patterns_sweep() {
     for (count, angle, joined) in [
-        (24, Spacing::Extent(360.0), false),
-        (7, Spacing::Step(37.3), false),
-        (5, Spacing::Extent(-251.7), false),
-        (2, Spacing::Step(13.0), true),
-        (12, Spacing::Extent(360.0), true),
+        (24, Spacing::extent(360.0), false),
+        (7, Spacing::step(37.3), false),
+        (5, Spacing::extent(-251.7), false),
+        (2, Spacing::step(13.0), true),
+        (12, Spacing::extent(360.0), true),
     ] {
         let mut program = Program::new();
         extruded(
@@ -336,8 +336,8 @@ fn circular_patterns_sweep() {
                 bodies: solid("extrude(b)"),
                 axis: axis(FrameAxis::Z),
                 reversed: false,
-                count,
-                angle,
+                count: (count as f64).into(),
+                angle: angle.clone(),
                 combine: if joined {
                     Combine::Union {
                         target: "extrude(b)".into(),
@@ -498,8 +498,8 @@ fn turned_copy_joined_stays_tight() {
             bodies: solid("extrude(b)"),
             axis: axis(FrameAxis::Z),
             reversed: false,
-            count: 2,
-            angle: Spacing::Step(13.0),
+            count: 2.0.into(),
+            angle: Spacing::step(13.0),
             combine: Combine::Union {
                 target: "extrude(b)".into(),
             },
@@ -535,14 +535,14 @@ fn linear_patterns_and_moves_sweep() {
                 first: Direction {
                     along: axis(FrameAxis::X),
                     reversed: false,
-                    count: along,
-                    spacing: Spacing::Step(1.2),
+                    count: (along as f64).into(),
+                    spacing: Spacing::step(1.2),
                 },
                 second: (across > 1).then(|| Direction {
                     along: axis(FrameAxis::Y),
                     reversed: false,
-                    count: across,
-                    spacing: Spacing::Extent(1.3 * (across - 1) as f64),
+                    count: (across as f64).into(),
+                    spacing: Spacing::extent(1.3 * (across - 1) as f64),
                 }),
                 combine: Combine::Difference {
                     target: "extrude(plate)".into(),

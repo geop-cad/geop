@@ -9,6 +9,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Form, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
@@ -77,10 +78,11 @@ pub struct Fillet;
 pub struct FilletArgs {
     /// The edges to round, all of one solid.
     pub edges: Vec<String>,
-    pub radius: f64,
+    /// The radius: a number, or a formula of the part's parameters.
+    pub radius: Formula,
     /// The radius at the end of every chain, if it changes along it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_radius: Option<f64>,
+    pub end_radius: Option<Formula>,
     /// Radii at vertices along the chains.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vertex_radii: Vec<VertexRadius>,
@@ -94,11 +96,12 @@ pub struct VertexRadius {
 }
 
 impl FilletArgs {
-    /// Round `edges` with `radius`, the same all along.
-    pub fn constant(edges: Vec<String>, radius: f64) -> Self {
+    /// Round `edges` with `radius` — a number, or a formula's text — the
+    /// same all along.
+    pub fn constant(edges: Vec<String>, radius: impl Into<Formula>) -> Self {
         FilletArgs {
             edges,
-            radius,
+            radius: radius.into(),
             end_radius: None,
             vertex_radii: Vec::new(),
         }
@@ -109,16 +112,20 @@ impl FilletArgs {
         self.end_radius.is_some() || !self.vertex_radii.is_empty()
     }
 
-    fn radii(&self) -> Radii {
-        Radii {
-            radius: self.radius,
-            end_radius: self.end_radius,
+    /// The radii, as the step building `part` reads them.
+    fn radii<S: Scalar>(&self, part: &mut Part<S>) -> GeopResult<Radii> {
+        Ok(Radii {
+            radius: self.radius.evaluate(part)?,
+            end_radius: match &self.end_radius {
+                Some(r) => Some(r.evaluate(part)?),
+                None => None,
+            },
             at_vertices: self
                 .vertex_radii
                 .iter()
                 .map(|v| (v.vertex.clone(), v.radius))
                 .collect(),
-        }
+        })
     }
 }
 
@@ -135,16 +142,17 @@ impl Operation for Fillet {
     /// end and at vertices picked, each a number of its own.
     fn form<'a, S: Scalar>(
         &self,
-        _: Context<'a, S>,
+        context: Context<'a, S>,
         args: &FilletArgs,
         _: &(),
         _: &[String],
     ) -> Form<'a, S, FilletArgs> {
+        let inputs = context.before.inputs();
         let mut f = Form::<S, FilletArgs>::new();
         edges_field(&mut f, &args.edges, |a| &mut a.edges);
-        f.number(
+        f.formula(
             "radius",
-            Number::new("radius", args.radius, Unit::Length).range(0.0, 1.0),
+            Number::formula("radius", &args.radius, inputs, Unit::Length).range(0.0, 1.0),
             |args, radius| args.radius = radius,
         );
         f.checkbox(
@@ -152,21 +160,17 @@ impl Operation for Fillet {
             "variable radius",
             args.variable(),
             |args, on| {
-                args.end_radius = on.then_some(args.radius);
+                args.end_radius = on.then(|| args.radius.clone());
                 if !on {
                     args.vertex_radii.clear();
                 }
             },
         );
         if args.variable() {
-            f.number(
+            let end = args.end_radius.as_ref().unwrap_or(&args.radius);
+            f.formula(
                 "end_radius",
-                Number::new(
-                    "end radius",
-                    args.end_radius.unwrap_or(args.radius),
-                    Unit::Length,
-                )
-                .range(0.0, 1.0),
+                Number::formula("end radius", end, inputs, Unit::Length).range(0.0, 1.0),
                 |args, radius| args.end_radius = Some(radius),
             );
             let vertices = args
@@ -183,8 +187,9 @@ impl Operation for Fillet {
                 &[Role::Point],
                 None,
                 true,
-                |e, picked| {
-                    let radius = e.args.radius;
+                move |e, picked| {
+                    // A new vertex starts at the radius as it is now.
+                    let radius = e.args.radius.peek(inputs).unwrap_or(0.1);
                     let old = std::mem::take(&mut e.args.vertex_radii);
                     e.args.vertex_radii = picked
                         .iter()
@@ -229,7 +234,7 @@ impl Operation for Fillet {
         let ctx = with_context!("fillet({operation_id}, {args:?})");
         let namer = Namer::new("fillet", operation_id)?;
         let shape = BlendShape::Fillet {
-            radii: args.radii(),
+            radii: args.radii(&mut part).with_context(ctx)?,
         };
         blend(&mut part, &namer, &args.edges, &shape).with_context(ctx)?;
         Ok(part)
@@ -249,16 +254,24 @@ pub struct Chamfer;
 pub struct ChamferArgs {
     /// The edges to bevel, all of one solid.
     pub edges: Vec<String>,
-    pub distance: f64,
+    /// How far into the faces: a number, or a formula of the part's
+    /// parameters.
+    pub distance: Formula,
     /// The distance into the face on each edge's right, if it differs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub distance2: Option<f64>,
+    pub distance2: Option<Formula>,
 }
 
 impl ChamferArgs {
-    /// Into the face on the left and on the right of each edge.
-    fn distances(&self) -> [f64; 2] {
-        [self.distance, self.distance2.unwrap_or(self.distance)]
+    /// Into the face on the left and on the right of each edge, as the
+    /// step building `part` reads them.
+    fn distances<S: Scalar>(&self, part: &mut Part<S>) -> GeopResult<[f64; 2]> {
+        let left = self.distance.evaluate(part)?;
+        let right = match &self.distance2 {
+            Some(d) => d.evaluate(part)?,
+            None => left,
+        };
+        Ok([left, right])
     }
 }
 
@@ -270,7 +283,7 @@ impl Operation for Chamfer {
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> ChamferArgs {
         ChamferArgs {
             edges: Vec::new(),
-            distance: 0.1,
+            distance: Formula::Plain(0.1),
             distance2: None,
         }
     }
@@ -279,28 +292,29 @@ impl Operation for Chamfer {
     /// distance of its own.
     fn form<'a, S: Scalar>(
         &self,
-        _: Context<'a, S>,
+        context: Context<'a, S>,
         args: &ChamferArgs,
         _: &(),
         _: &[String],
     ) -> Form<'a, S, ChamferArgs> {
+        let inputs = context.before.inputs();
         let mut f = Form::<S, ChamferArgs>::new();
         edges_field(&mut f, &args.edges, |a| &mut a.edges);
-        f.number(
+        f.formula(
             "distance",
-            Number::new("distance", args.distance, Unit::Length).range(0.0, 1.0),
+            Number::formula("distance", &args.distance, inputs, Unit::Length).range(0.0, 1.0),
             |args, distance| args.distance = distance,
         );
         f.checkbox(
             "two_distances",
             "two distances",
             args.distance2.is_some(),
-            |args, on| args.distance2 = on.then_some(args.distance),
+            |args, on| args.distance2 = on.then(|| args.distance.clone()),
         );
-        if let Some(distance2) = args.distance2 {
-            f.number(
+        if let Some(distance2) = &args.distance2 {
+            f.formula(
                 "distance2",
-                Number::new("distance 2", distance2, Unit::Length).range(0.0, 1.0),
+                Number::formula("distance 2", distance2, inputs, Unit::Length).range(0.0, 1.0),
                 |args, distance| args.distance2 = Some(distance),
             );
         }
@@ -316,15 +330,10 @@ impl Operation for Chamfer {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("chamfer({operation_id}, {args:?})");
         let namer = Namer::new("chamfer", operation_id)?;
-        blend(
-            &mut part,
-            &namer,
-            &args.edges,
-            &BlendShape::Chamfer {
-                distances: args.distances(),
-            },
-        )
-        .with_context(ctx)?;
+        let shape = BlendShape::Chamfer {
+            distances: args.distances(&mut part).with_context(ctx)?,
+        };
+        blend(&mut part, &namer, &args.edges, &shape).with_context(ctx)?;
         Ok(part)
     }
 }

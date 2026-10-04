@@ -325,7 +325,7 @@ impl Operation for Hole {
                 size: "M6".into(),
                 fit: Fit::Normal,
             },
-            end: Extent::Blind(10.0),
+            end: Extent::blind(10.0),
             drill_point: false,
             thread_length: None,
         }
@@ -491,7 +491,7 @@ impl Operation for Hole {
             Ok(text) => f.text("dimensions", text, Tone::Hint),
             Err(e) => f.text("dimensions", e.root_message(), Tone::Error),
         };
-        let mode = match args.end {
+        let mode = match &args.end {
             Extent::Blind(_) => "blind",
             Extent::UpToNext => "up_to_next",
             Extent::ThroughAll => "through_all",
@@ -507,19 +507,19 @@ impl Operation for Hole {
             ],
             false,
             |args, value| {
-                args.end = match (value, args.end) {
-                    ("blind", Extent::Blind(d)) => Extent::Blind(d),
-                    ("blind", _) => Extent::Blind(10.0),
+                args.end = match (value, &args.end) {
+                    ("blind", Extent::Blind(d)) => Extent::Blind(d.clone()),
+                    ("blind", _) => Extent::blind(10.0),
                     ("up_to_next", _) => Extent::UpToNext,
                     ("through_all", _) => Extent::ThroughAll,
-                    (_, end) => end,
+                    (_, end) => end.clone(),
                 }
             },
         );
-        if let Extent::Blind(depth) = args.end {
-            f.number(
+        if let Extent::Blind(depth) = &args.end {
+            f.formula(
                 "depth",
-                Number::new("depth", depth, Unit::Length).range(0.0, 100.0),
+                Number::formula("depth", depth, before.inputs(), Unit::Length).range(0.0, 100.0),
                 |args, d| args.end = Extent::Blind(d),
             );
             f.checkbox(
@@ -530,8 +530,8 @@ impl Operation for Hole {
             );
         }
         if args.kind == HoleKind::Tapped {
-            let full = match args.end {
-                Extent::Blind(depth) => Some(depth),
+            let full = match &args.end {
+                Extent::Blind(depth) => depth.peek(before.inputs()).ok(),
                 _ => None,
             };
             let length = args.thread_length.or(full);
@@ -630,8 +630,8 @@ impl Operation for Hole {
                 .with_context(ctx);
             }
         }
-        let blind = match args.end {
-            Extent::Blind(depth) => Some(depth),
+        let blind = match &args.end {
+            Extent::Blind(depth) => Some(depth.evaluate(&mut part).with_context(ctx)?),
             Extent::UpToNext | Extent::ThroughAll => None,
         };
         let hull = match blind {
@@ -692,8 +692,11 @@ impl Operation for Hole {
         if let Some(size) = shape.thread {
             let result = part.solid_id(&namer.root()).with_context(ctx)?;
             for (scope, axes) in placed {
-                record_tapped_thread(&mut part, &namer, result, scope, &axes, &shape, size, args)
-                    .with_context(ctx)?;
+                let length = args.thread_length.or(blind);
+                record_tapped_thread(
+                    &mut part, &namer, result, scope, &axes, &shape, size, length,
+                )
+                .with_context(ctx)?;
             }
         }
         Ok(part)
@@ -702,7 +705,8 @@ impl Operation for Hole {
 
 /// Records the cosmetic thread of the tapped hole drilled at `axes` — its
 /// wall in `solid` — as the thread `hole(H,X,thread)` for the scope `X`:
-/// from the face down, as far as `args` says, or all the way.
+/// from the face down, `length` far — a blind hole as deep as it was
+/// drilled, unless told otherwise — or, if none, all the way.
 #[allow(clippy::too_many_arguments)]
 fn record_tapped_thread<S: Scalar>(
     part: &mut Part<S>,
@@ -712,7 +716,7 @@ fn record_tapped_thread<S: Scalar>(
     axes: &CoordinateSystem<S>,
     shape: &HoleShape,
     size: &MetricSize,
-    args: &HoleArgs,
+    length: Option<f64>,
 ) -> GeopResult<()> {
     let ctx = with_context!("the thread of the hole at {scope}");
     let into = axes.w().neg();
@@ -740,12 +744,7 @@ fn record_tapped_thread<S: Scalar>(
     } else {
         entry.sub(wall.from)
     };
-    // A blind hole is threaded as deep as it was drilled, unless told.
-    let length = match (args.thread_length, args.end) {
-        (Some(length), _) => length,
-        (None, Extent::Blind(depth)) => depth,
-        (None, _) => runs.to_f64(),
-    };
+    let length = length.unwrap_or_else(|| runs.to_f64());
     if S::from_f64(length).definitely_greater(runs) {
         return Err(GeopError::new(format!(
             "the thread runs {length} deep, but the hole at {scope} only {}",

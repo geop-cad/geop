@@ -593,7 +593,7 @@ fn bracket_with_torus(
         ExtrudeArgs {
             sketch: "sketch1".into(),
             extent: Extents {
-                side2: Some(geop_ops_extrude_revolve::Extent::Blind(1.0)),
+                side2: Some(geop_ops_extrude_revolve::Extent::blind(1.0)),
                 ..Extents::blind(1.0)
             },
             face: false,

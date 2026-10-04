@@ -10,6 +10,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
+    parameters::Formula,
     ui::{Choice, Form, Number, Unit},
 };
 use geop_ops_extrude_revolve::common::{line2, start_point};
@@ -93,9 +94,12 @@ pub struct EdgeFlange;
 pub struct EdgeFlangeArgs {
     /// The edge, of a flat face of a sheet-metal body.
     pub edge: String,
-    /// How far the flange turns, in degrees: more than 0, less than 180.
-    pub angle: f64,
-    pub length: f64,
+    /// How far the flange turns, in degrees: more than 0, less than 180 —
+    /// a number, or a formula of the part's parameters.
+    pub angle: Formula,
+    /// How long it is, measured from its `reference`: a number, or a
+    /// formula of the part's parameters.
+    pub length: Formula,
     #[serde(default)]
     pub reference: LengthReference,
     #[serde(default)]
@@ -119,8 +123,8 @@ impl Operation for EdgeFlange {
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> EdgeFlangeArgs {
         EdgeFlangeArgs {
             edge: String::new(),
-            angle: 90.0,
-            length: 0.5,
+            angle: Formula::Plain(90.0),
+            length: Formula::Plain(0.5),
             reference: LengthReference::default(),
             position: FlangePosition::default(),
             radius: None,
@@ -135,7 +139,7 @@ impl Operation for EdgeFlange {
     /// from the edge's ends.
     fn form<'a, S: Scalar>(
         &self,
-        _: Context<'a, S>,
+        context: Context<'a, S>,
         args: &EdgeFlangeArgs,
         _: &(),
         _: &[String],
@@ -161,14 +165,15 @@ impl Operation for EdgeFlange {
                 }
             },
         );
-        f.number(
+        let inputs = context.before.inputs();
+        f.formula(
             "angle",
-            Number::new("angle", args.angle, Unit::Angle).range(0.0, 180.0),
+            Number::formula("angle", &args.angle, inputs, Unit::Angle).range(0.0, 180.0),
             |args, a| args.angle = a,
         );
-        f.number(
+        f.formula(
             "length",
-            Number::new("length", args.length, Unit::Length).range(0.0, 5.0),
+            Number::formula("length", &args.length, inputs, Unit::Length).range(0.0, 5.0),
             |args, l| args.length = l,
         );
         f.select(
@@ -268,7 +273,9 @@ impl Operation for EdgeFlange {
         let namer = Namer::new("edge_flange", operation_id)?;
         let (solid, mut sheet, (f, k, toward_b)) =
             Sheet::with_edge(&part, &args.edge, "a flange").with_context(ctx)?;
-        let shape = args.shape(&sheet.rules).with_context(ctx)?;
+        let angle = args.angle.evaluate(&mut part).with_context(ctx)?;
+        let length = args.length.evaluate(&mut part).with_context(ctx)?;
+        let shape = args.shape(&sheet.rules, angle, length).with_context(ctx)?;
         add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
         sheet
             .replace(&mut part, &solid, &namer.root())
@@ -305,12 +312,17 @@ pub(crate) fn check_offsets(offset_start: f64, offset_end: f64) -> GeopResult<()
 }
 
 impl EdgeFlangeArgs {
-    /// The flange these arguments describe, on a body of `rules`.
-    fn shape<S: Scalar>(&self, rules: &SheetMetalRules) -> GeopResult<FlangeShape<S>> {
-        if !(self.angle > 0.0 && self.angle < 180.0) {
+    /// The flange these arguments describe, on a body of `rules`, turning
+    /// `angle` degrees and `length` long — the values its formulas came to.
+    fn shape<S: Scalar>(
+        &self,
+        rules: &SheetMetalRules,
+        angle: f64,
+        length: f64,
+    ) -> GeopResult<FlangeShape<S>> {
+        if !(angle > 0.0 && angle < 180.0) {
             return Err(GeopError::new(format!(
-                "a flange turns by more than 0 and less than 180 degrees, not {}",
-                self.angle
+                "a flange turns by more than 0 and less than 180 degrees, not {angle}"
             )));
         }
         let radius = self.radius.unwrap_or(rules.bend_radius);
@@ -323,7 +335,7 @@ impl EdgeFlangeArgs {
         let s = S::from_f64;
         let t = s(rules.thickness);
         let r = s(radius);
-        let angle = s(self.angle).mul(S::PI).div(s(180.0))?;
+        let angle = s(angle).mul(S::PI).div(s(180.0))?;
         let half = angle.div(S::TWO)?;
         let half_tan = half.sin().div(half.cos())?;
         let set_back = match self.position {
@@ -331,15 +343,14 @@ impl EdgeFlangeArgs {
             FlangePosition::MaterialOutside => Some(r.mul(half_tan)),
             FlangePosition::BendOutside => None,
         };
-        let flat = s(self.length).sub(match self.reference {
+        let flat = s(length).sub(match self.reference {
             LengthReference::OuterSharp => r.add(t).mul(half_tan),
             LengthReference::InnerSharp => r.mul(half_tan),
             LengthReference::Tangent => S::ZERO,
         });
         if !flat.definitely_greater(S::ZERO) {
             return Err(GeopError::new(format!(
-                "a flange {} long leaves nothing flat after its bend ({flat:?})",
-                self.length
+                "a flange {length} long leaves nothing flat after its bend ({flat:?})"
             )));
         }
         Ok(FlangeShape {

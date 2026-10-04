@@ -9,16 +9,18 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{CurveId, PointId};
+use geop_ops::EntityRef;
 use geop_ops::parameters::Material;
 use geop_ops::parameters::Parameters;
 use geop_ops_booleans::Combine;
+use geop_ops_extrude_revolve::Extents;
 
 use super::{
     StandardPart,
     drawing::Drawing,
     steps::{
-        Around, Through, axis_datum, base_datum, col, cut_to, hexagon, revolve, size, subtract,
-        swept,
+        Around, Through, axis_datum, col, cut_to, extrude, hexagon, outline_plane, plane_datum,
+        revolve, size, swept,
     },
     tables::{self, Table},
 };
@@ -135,20 +137,14 @@ fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
             Through::Both,
         )?;
     } else {
-        // A countersunk head's socket reaches below its top, at `z = 0`.
-        let through = match head {
-            Head::Countersunk => Through::Both,
-            _ => Through::Up,
-        };
-        socket(&mut program, &head.top(), through)?;
-        subtract(&mut program, "screw", "revolve(body)", "extrude(socket)");
+        socket(&mut program, &head.top(), "revolve(body)")?;
     }
     axis_datum(&mut program);
     let seat = match head {
         Head::Countersunk => "top",
         _ => "seat",
     };
-    base_datum(&mut program, seat);
+    plane_datum(&mut program, seat, "0");
     Ok((program, threaded))
 }
 
@@ -173,39 +169,23 @@ impl Chain {
     }
 }
 
-/// The tool a hex socket `s` across and `t` deep is cut with, its floor
-/// `t` below `top`: the solid `extrude(socket)`, a hexagon cut to a
-/// cylinder from the floor up past the top.
-fn socket(program: &mut Program, top: &str, through: Through) -> GeopResult<()> {
+/// Cuts a hex socket `s` across and `t` deep into the solid `target`, its
+/// floor `t` below `top`: a hexagon drawn on the datum plane
+/// `socket_floor` there, extruded up past the top — `extrude(socket)`.
+fn socket(program: &mut Program, top: &str, target: &str) -> GeopResult<()> {
     let (s, t) = (col("s"), col("t"));
-    let mut drawing = Drawing::new(&program.parameters)?;
-    let floor = format!("{top} - {t}");
-    let above = format!("{top} + {s}");
-    let outside = format!("0.7 * {s}");
-    let corners = [
-        ["0".to_string(), floor.clone()],
-        [outside.clone(), floor],
-        [outside, above.clone()],
-        ["0".to_string(), above],
-    ];
-    let lines = drawing.polygon(&corners)?;
-    revolve(
-        program,
-        "socket_envelope",
-        "socket_profile",
-        drawing,
-        Around::Line(lines[3]),
-        Combine::NewBody,
-    )?;
+    plane_datum(program, "socket_floor", &format!("{top} - {t}"));
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &s)?;
-    cut_to(
+    extrude(
         program,
         "socket",
         "socket_hex",
-        outline,
-        "revolve(socket_envelope)",
-        through,
+        (outline, EntityRef::datum("socket_floor")),
+        Extents::blind(format!("{t} + {s}")),
+        Combine::Difference {
+            target: target.into(),
+        },
     )
 }
 
@@ -304,7 +284,7 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
         Through::Up,
     )?;
     axis_datum(&mut program);
-    base_datum(&mut program, "base");
+    plane_datum(&mut program, "base", "0");
     Ok((program, swept("body", "profile", bore_line)))
 }
 
@@ -360,7 +340,7 @@ fn washer(table: Table, chamfered: bool) -> GeopResult<Program> {
         Combine::NewBody,
     )?;
     axis_datum(&mut program);
-    base_datum(&mut program, "base");
+    plane_datum(&mut program, "base", "0");
     Ok(program)
 }
 
@@ -408,7 +388,7 @@ pub fn iso8734() -> GeopResult<StandardPart> {
         Combine::NewBody,
     )?;
     axis_datum(&mut program);
-    base_datum(&mut program, "base");
+    plane_datum(&mut program, "base", "0");
     Ok(StandardPart {
         file: "std:iso8734_dowel_pin.geop",
         title: "ISO 8734 dowel pin",
@@ -420,47 +400,32 @@ pub fn iso8734() -> GeopResult<StandardPart> {
 }
 
 /// A hex standoff `s` across its flats and `l` long, bored `d` through —
-/// threaded from both ends.
+/// threaded from both ends: a hexagon around the bore, extruded `l`.
 pub fn hex_standoff() -> GeopResult<StandardPart> {
     let mut program = sized(tables::hex_standoffs());
-    let (bore, outer, l) = (
-        format!("{} / 2", col("d")),
-        format!("0.65 * {}", col("s")),
-        col("l"),
-    );
-    let mut drawing = Drawing::new(&program.parameters)?;
-    let lines = drawing.polygon(&[
-        [bore.clone(), "0".into()],
-        [outer.clone(), "0".into()],
-        [outer, l.clone()],
-        [bore, l],
-    ])?;
-    revolve(
-        &mut program,
-        "body",
-        "profile",
-        drawing,
-        Around::ZAxis,
-        Combine::NewBody,
-    )?;
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &col("s"))?;
-    cut_to(
+    let bore = outline.circle(outline.origin(), &col("d"))?;
+    extrude(
         &mut program,
         "standoff",
         "hex",
-        outline,
-        "revolve(body)",
-        Through::Up,
+        (outline, outline_plane()),
+        Extents::blind(col("l")),
+        Combine::NewBody,
     )?;
     axis_datum(&mut program);
-    base_datum(&mut program, "base");
+    plane_datum(&mut program, "base", "0");
+    // A circle is swept in four quarters.
+    let threaded = ["", "#1", "#2", "#3"]
+        .map(|piece| format!("extrude(standoff,hex,{bore}{piece})"))
+        .to_vec();
     Ok(StandardPart {
         file: "std:hex_standoff.geop",
         title: "Hex standoff, female",
         designation: "Hex standoff",
         base: "base",
         program,
-        threaded: swept("body", "profile", lines[3]),
+        threaded,
     })
 }

@@ -112,7 +112,7 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
     match &step.operation {
         PartOperation::EdgeFlange(args) => {
             assert_eq!(args.edge, "base_flange(plate,outline,c5,b)", "{args:?}");
-            assert_eq!(args.length, 0.3);
+            assert_eq!(args.length, 0.3.into());
         }
         other => panic!("{other:?}"),
     }

@@ -76,7 +76,7 @@ fn shell(solid: &str, faces: &[&str], thickness: f64) -> ShellArgs {
     ShellArgs {
         solid: solid.into(),
         faces: faces.iter().map(|f| f.to_string()).collect(),
-        thickness,
+        thickness: thickness.into(),
     }
 }
 
@@ -233,7 +233,9 @@ fn offset_plane_from_a_shelled_face() {
             selection: vec![EntityRef::Face {
                 name: "shell(s,extrude(b,start))".into(),
             }],
-            construction: Construction::Offset { distance: 0.5 },
+            construction: Construction::Offset {
+                distance: 0.5.into(),
+            },
         },
     );
     let part = program.build::<S>(&NoFiles).unwrap();
@@ -264,7 +266,9 @@ fn hole_through_the_walls_of_a_shelled_box() {
                 ORIGIN,
                 DatumComponent::Plane(FrameAxis::Y),
             )],
-            construction: Construction::Offset { distance: 1.0 },
+            construction: Construction::Offset {
+                distance: 1.0.into(),
+            },
         },
     );
     let mut s = Sketch::new();

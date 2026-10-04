@@ -174,12 +174,35 @@ pub struct Report<S: Scalar> {
     pub failed: Vec<usize>,
 }
 
-/// Parameters, which of them a solve may change, and the residuals between
+/// What a solve may do with a parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mobility {
+    /// Nothing: it stays exactly as it is.
+    Fixed,
+    /// Change it as far as the residuals need, and no further: it is held
+    /// where it is, by [`DAMPING`].
+    Held,
+    /// Change it as the residuals have it, and hold it nowhere: it follows
+    /// the others — a joint's coordinate, measured from its bodies. Held as
+    /// well, it would pull against them: a hand on a turned forearm kept
+    /// only part of its turn in the world, the rest given to its joint's
+    /// coordinate, which the damping held as stiffly as the hand.
+    Follows,
+}
+
+impl Mobility {
+    /// Whether a solve may change it.
+    pub fn free(self) -> bool {
+        self != Mobility::Fixed
+    }
+}
+
+/// Parameters, what a solve may do with each, and the residuals between
 /// them.
 pub struct System<'r, S: Scalar, const N: usize> {
     pub params: Vec<Param<S>>,
-    /// Per parameter: whether a solve may change it.
-    pub free: Vec<bool>,
+    /// Per parameter: what a solve may do with it.
+    pub free: Vec<Mobility>,
     pub residuals: Vec<&'r dyn Residual<S, N>>,
     /// Its characteristic size: what turns angles into lengths, and what
     /// [`RELATIVE_TOLERANCE`] is relative to. At least 1.
@@ -201,7 +224,7 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
             .iter()
             .zip(&self.free)
             .map(|(p, &free)| {
-                free.then(|| {
+                free.free().then(|| {
                     n += p.vars();
                     n - p.vars()
                 })
@@ -214,7 +237,7 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
         self.params
             .iter()
             .zip(&self.free)
-            .filter(|(_, free)| **free)
+            .filter(|(_, free)| free.free())
             .map(|(p, _)| p.vars())
             .sum()
     }
@@ -451,13 +474,14 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
         Ok((result.iterations, result.stop))
     }
 
-    /// Every free parameter but `except`, held where it is, by [`DAMPING`].
+    /// Every parameter that is [`Mobility::Held`] but `except`, held where
+    /// it is, by [`DAMPING`].
     fn stays(&self, except: &[usize]) -> Vec<(Pull<S>, S)> {
         self.params
             .iter()
             .zip(&self.free)
             .enumerate()
-            .filter(|(param, (_, free))| **free && !except.contains(param))
+            .filter(|(param, (_, free))| **free == Mobility::Held && !except.contains(param))
             .map(|(param, (p, _))| {
                 let stay = match *p {
                     Param::Scalar(target) => Pull::Scalar { param, target },

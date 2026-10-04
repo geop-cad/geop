@@ -97,7 +97,7 @@ fn along(a: FrameAxis, count: usize, spacing: Spacing) -> Direction {
     Direction {
         along: axis(a),
         reversed: false,
-        count,
+        count: (count as f64).into(),
         spacing,
     }
 }
@@ -108,7 +108,7 @@ fn along(a: FrameAxis, count: usize, spacing: Spacing) -> Direction {
 fn row_of_new_bodies() {
     let args = LinearPatternArgs {
         bodies: cube(),
-        first: along(FrameAxis::X, 3, Spacing::Step(2.0)),
+        first: along(FrameAxis::X, 3, Spacing::step(2.0)),
         second: None,
         combine: Combine::NewBody,
     };
@@ -135,7 +135,7 @@ fn row_of_new_bodies() {
 /// Spread over a total, reversed: four over six against `y`, two apart.
 #[test]
 fn row_over_a_total_reversed() {
-    let mut first = along(FrameAxis::Y, 4, Spacing::Extent(6.0));
+    let mut first = along(FrameAxis::Y, 4, Spacing::extent(6.0));
     first.reversed = true;
     let args = LinearPatternArgs {
         bodies: cube(),
@@ -159,7 +159,7 @@ fn row_over_a_total_reversed() {
 fn overlapping_copies_joined_to_the_seed() {
     let args = LinearPatternArgs {
         bodies: cube(),
-        first: along(FrameAxis::X, 3, Spacing::Step(0.5)),
+        first: along(FrameAxis::X, 3, Spacing::step(0.5)),
         second: None,
         combine: Combine::Union {
             target: "cube(c)".into(),
@@ -178,8 +178,8 @@ fn overlapping_copies_joined_to_the_seed() {
 fn grid_of_new_bodies() {
     let args = LinearPatternArgs {
         bodies: cube(),
-        first: along(FrameAxis::X, 2, Spacing::Step(2.0)),
-        second: Some(along(FrameAxis::Y, 3, Spacing::Step(1.5))),
+        first: along(FrameAxis::X, 2, Spacing::step(2.0)),
+        second: Some(along(FrameAxis::Y, 3, Spacing::step(1.5))),
         combine: Combine::NewBody,
     };
     let part = LinearPattern
@@ -202,8 +202,8 @@ fn grid_of_new_bodies() {
 fn parallel_grid_is_refused() {
     let args = LinearPatternArgs {
         bodies: cube(),
-        first: along(FrameAxis::X, 2, Spacing::Step(2.0)),
-        second: Some(along(FrameAxis::X, 2, Spacing::Step(3.0))),
+        first: along(FrameAxis::X, 2, Spacing::step(2.0)),
+        second: Some(along(FrameAxis::X, 2, Spacing::step(3.0))),
         combine: Combine::NewBody,
     };
     let error = LinearPattern
@@ -221,8 +221,8 @@ fn full_turn_around_an_axis() {
         bodies: cube(),
         axis: axis(FrameAxis::Z),
         reversed: false,
-        count: 6,
-        angle: Spacing::Extent(360.0),
+        count: 6.0.into(),
+        angle: Spacing::extent(360.0),
         combine: Combine::NewBody,
     };
     let part = CircularPattern
@@ -245,8 +245,8 @@ fn coming_round_again_is_refused() {
         bodies: cube(),
         axis: axis(FrameAxis::Z),
         reversed: false,
-        count: 7,
-        angle: Spacing::Step(60.0),
+        count: 7.0.into(),
+        angle: Spacing::step(60.0),
         combine: Combine::NewBody,
     };
     let error = CircularPattern
@@ -344,7 +344,7 @@ fn sheets_are_copied_not_combined() {
     }];
     let mut args = LinearPatternArgs {
         bodies: sheet,
-        first: along(FrameAxis::Z, 2, Spacing::Step(2.0)),
+        first: along(FrameAxis::Z, 2, Spacing::step(2.0)),
         second: None,
         combine: Combine::NewBody,
     };

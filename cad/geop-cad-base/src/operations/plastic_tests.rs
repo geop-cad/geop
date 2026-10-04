@@ -95,7 +95,7 @@ pub(super) fn enclosure() -> Program {
         ShellArgs {
             solid: "extrude(box)".into(),
             faces: vec!["extrude(box,end)".into()],
-            thickness: 0.2,
+            thickness: 0.2.into(),
         },
     );
     program
@@ -282,7 +282,9 @@ pub(super) fn enclosure_with_rib_sketch() -> Program {
         "middle",
         AddDatumArgs {
             selection: vec![face(&wall("c4"))],
-            construction: Construction::Offset { distance: -1.0 },
+            construction: Construction::Offset {
+                distance: (-1.0).into(),
+            },
         },
     );
     let mut s = Sketch::new();
@@ -347,7 +349,9 @@ fn enclosure_rib_normal_to_its_sketch() {
         "level",
         AddDatumArgs {
             selection: vec![face("shell(s,extrude(box,start))")],
-            construction: Construction::Offset { distance: 0.5 },
+            construction: Construction::Offset {
+                distance: 0.5.into(),
+            },
         },
     );
     let mut s = Sketch::new();

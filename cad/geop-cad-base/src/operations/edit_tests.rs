@@ -41,9 +41,9 @@ fn extrude(sketch: &str, from: f64, to: f64) -> ExtrudeArgs {
     ExtrudeArgs {
         sketch: sketch.into(),
         extent: Extents {
-            side1: Extent::Blind(to),
+            side1: Extent::blind(to),
             symmetric: false,
-            side2: (from != 0.0).then_some(Extent::Blind(-from)),
+            side2: (from != 0.0).then_some(Extent::blind(-from)),
             reversed: false,
         },
         face: false,

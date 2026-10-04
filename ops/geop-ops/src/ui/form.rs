@@ -18,6 +18,7 @@ use super::{
 use crate::{
     assembly::Drag,
     operation::{EntityRef, Role},
+    parameters::Formula,
     part::State,
 };
 
@@ -208,6 +209,29 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
                 set(edit.args, v);
             }
         })
+    }
+
+    /// A number field that also takes a formula of the part's parameters
+    /// (see [`Number::formula`]): text typed sets it — plain if it is a
+    /// number, a formula otherwise — and a number slid or dragged sets it
+    /// plain. A formula that does not evaluate is kept, as typed, its field
+    /// saying why: the step then fails naming it, and the text is there to
+    /// be corrected.
+    pub fn formula(
+        &mut self,
+        key: &str,
+        number: Number<S>,
+        set: impl Fn(&mut A, Formula) + 'a,
+    ) -> &mut Self {
+        self.field(
+            key,
+            Control::Number(number),
+            move |edit, value| match value {
+                Value::Number(v) => set(edit.args, Formula::Plain(v)),
+                Value::Text(text) if !text.trim().is_empty() => set(edit.args, Formula::from(text)),
+                _ => {}
+            },
+        )
     }
 
     /// One of `options`, by value — found by typing, if `searchable`.

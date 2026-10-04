@@ -354,9 +354,9 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
             operation: AddDatumArgs {
                 selection: vec![EntityRef::datum("plate/origin")],
                 construction: Construction::Point {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
+                    x: 0.0.into(),
+                    y: 0.0.into(),
+                    z: 0.0.into(),
                 },
             }
             .into(),
@@ -1124,7 +1124,8 @@ fn the_arm_is_dragged_up_to_its_limit() {
     // would be past its limit too.
     assert_eq!(
         report.at_limit,
-        ["add_part(fore,m1).angle", "add_part(hand,m1).angle"]
+        ["add_part(fore,m1).angle", "add_part(hand,m1).angle"],
+        "{report:?} {moved:?}"
     );
     assert_eq!(
         moved["add_part(hand,m1).angle"],

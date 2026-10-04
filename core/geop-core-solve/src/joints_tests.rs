@@ -494,6 +494,13 @@ fn a_six_axis_arm_reaches_random_poses() {
         }
         let report = assembly.solve(&[]).unwrap();
         assert!(report.converged, "pose {pose} {angles:?}: {report:?}");
+        // By the constrained minimization itself, within its steps — not
+        // rescued by the least-squares pass after it.
+        assert!(
+            report.phases.len() == 1
+                && report.phases[0].stop != geop_core_math::least_squares::Stop::Budget,
+            "pose {pose} {angles:?}: {report:?}"
+        );
         for (i, joint) in assembly.joints.iter().enumerate() {
             let [measured, along] =
                 joint.measure(|b| b.map_or(Pose::identity(), |b| assembly.bodies[b].pose));
@@ -506,6 +513,76 @@ fn a_six_axis_arm_reaches_random_poses() {
             assert!(along.abs() < 1e-6, "pose {pose}, joint {i}: {along} along");
         }
     }
+}
+
+/// The 6-axis arm of [`a_six_axis_arm_reaches_random_poses`] on free
+/// revolute joints, its tip dragged to `targets` random points one after
+/// the other. Returns, per drag, the report.
+fn drag_jointed_arm(targets: usize) -> Vec<SolveReport<S>> {
+    let axes = [
+        Z,
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+    ];
+    let bodies = (0..6)
+        .map(|i| Body {
+            center: v([0.0, 0.0, 0.5]),
+            ..body([0.0, 0.0, i as f64])
+        })
+        .collect();
+    let joints = axes
+        .iter()
+        .enumerate()
+        .map(|(i, &axis)| Joint {
+            kind: revolute(None, None),
+            a: end(
+                i.checked_sub(1),
+                if i == 0 { [0.0; 3] } else { [0.0, 0.0, 1.0] },
+                axis,
+            ),
+            b: end(Some(i), [0.0; 3], axis),
+            angle: Coordinate::free(n(0.0)),
+            distance: Coordinate::free(n(0.0)),
+        })
+        .collect();
+    let mut assembly = Assembly {
+        scale: n(6.0),
+        ..joints_of(bodies, joints)
+    };
+    let mut seed: u64 = 12345;
+    let mut random = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+    };
+    (0..targets)
+        .map(|_| {
+            let target = [random() * 2.0, random() * 2.0, 1.0 + random() * 2.0];
+            assembly.solve(&[drag(5, [0.0, 0.0, 1.0], target)]).unwrap()
+        })
+        .collect()
+}
+
+/// A jointed 6-axis arm follows its tip dragged about, every joint met by
+/// the constrained minimization itself. Before turns were well conditioned
+/// through a half turn and steps corrected onto the joints, nearly every
+/// drag ran out of steps and was rescued by the least-squares pass.
+#[test]
+fn a_jointed_arm_follows_its_tip() {
+    let unmet = unmet(&drag_jointed_arm(8));
+    assert!(unmet.is_empty(), "{}", unmet.join("\n"));
+}
+
+/// [`a_jointed_arm_follows_its_tip`], through 40 drags.
+#[test]
+#[ignore = "slow: a jointed arm dragged 40 times — run with `cargo test -- --ignored`"]
+fn a_jointed_arm_follows_its_tip_through_every_drag() {
+    let unmet = unmet(&drag_jointed_arm(40));
+    assert!(unmet.is_empty(), "{}", unmet.join("\n"));
 }
 
 fn joints_of(bodies: Vec<Body<S>>, joints: Vec<Joint<S>>) -> Assembly<S> {

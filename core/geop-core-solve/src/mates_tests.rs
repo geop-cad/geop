@@ -374,6 +374,46 @@ fn distances_and_angles_hold() {
     assert!((angle - 30.0).abs() < 1e-6, "{angle}");
 }
 
+/// An angle mate closes two lines to parallel at 0° and 180°, and opens
+/// them from nearly parallel: one row of slope one per turn where the angle
+/// is not 0° or 180°, held as parallel lines are where it is. The length of
+/// a cross product had no slope at parallel lines, so a solve could not
+/// finish there. (From exactly parallel lines, no direction to open in is
+/// any better than another: `d·e` is stationary there, and the mate stays
+/// unmet.)
+#[test]
+fn an_angle_closes_to_parallel_and_opens_from_near_it() {
+    let solve = |start: f64, value: f64| {
+        let mut assembly = Assembly {
+            bodies: vec![Body {
+                pose: pose([0.0; 3], [0.0, 0.0, start]),
+                free: true,
+                center: v([0.0; 3]),
+            }],
+            constraints: vec![Constraint {
+                kind: Kind::Angle { value: n(value) },
+                a: on(0, line([0.0; 3], [1.0, 0.0, 0.0])),
+                b: ground(line([0.0; 3], [1.0, 0.0, 0.0])),
+            }],
+            joints: Vec::new(),
+            couplings: Vec::new(),
+            scale: n(1.0),
+        };
+        let report = assembly.solve(&[]).unwrap();
+        assert!(report.converged, "{start}° to {value}°: {report:?}");
+        assert!(report.iterations < 20, "{start}° to {value}°: {report:?}");
+        let x = at(&assembly.bodies[0].pose, [1.0, 0.0, 0.0]);
+        x[0].clamp(-1.0, 1.0).acos().to_degrees()
+    };
+    for (start, value) in [(2.0, 40.0), (25.0, 0.0), (160.0, 180.0), (90.0, 30.0)] {
+        let angle = solve(start, value);
+        assert!(
+            (angle - value).abs() < 1e-6,
+            "{start}° to {value}°: {angle}°"
+        );
+    }
+}
+
 #[test]
 fn an_angle_at_a_point_is_refused() {
     let assembly = Assembly {
@@ -680,15 +720,39 @@ fn drag_mated_arm(targets: usize) -> Vec<SolveReport<S>> {
         .collect()
 }
 
+/// The drags of `reports` whose mates the constrained minimization did not
+/// meet by itself — left for the least-squares pass after it.
+fn unmet<T: Scalar>(reports: &[SolveReport<T>]) -> Vec<String> {
+    reports
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.converged || r.phases.len() > 1)
+        .map(|(k, r)| format!("drag {k}: {r:?}"))
+        .collect()
+}
+
 /// A mated 6-axis arm follows its tip dragged about: every drag ends with
-/// every mate holding. Concentric axes hold by two rows of constant rank;
-/// as a cross product, three rows that lose one as the axes close, the
-/// first drag already failed.
+/// every mate holding, met by the constrained minimization itself.
+/// Concentric axes hold by two rows of constant rank; as a cross product,
+/// three rows that lose one as the axes close, the first drag already
+/// failed. Drag 6 once ran its turn variables off towards a half turn, and
+/// drag 10 wandered off the mates by whole lengths (see `Placed` and
+/// `least_squares::corrected`).
 #[test]
 fn a_mated_arm_follows_its_tip() {
-    for (k, report) in drag_mated_arm(5).iter().enumerate() {
-        assert!(report.converged, "drag {k}: {report:?}");
-    }
+    let unmet = unmet(&drag_mated_arm(12));
+    assert!(unmet.is_empty(), "{}", unmet.join("\n"));
+}
+
+/// [`a_mated_arm_follows_its_tip`], through 40 drags. (A few still spend
+/// every step on the preferences once the mates hold and the tip is there:
+/// the model's curvature leaves out the constraints' where it is negative,
+/// which a BFGS estimate cannot learn.)
+#[test]
+#[ignore = "slow: a mated arm dragged 40 times — run with `cargo test -- --ignored`"]
+fn a_mated_arm_follows_its_tip_through_every_drag() {
+    let unmet = unmet(&drag_mated_arm(40));
+    assert!(unmet.is_empty(), "{}", unmet.join("\n"));
 }
 
 #[path = "joints_tests.rs"]

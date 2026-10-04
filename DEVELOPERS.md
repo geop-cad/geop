@@ -34,8 +34,10 @@ ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is
                                edited (events, dialogs, visuals, hit tests),
-                               parameters and the formulas reading them,
-                               programs, the files they place parts from, and
+                               parameters and the formulas reading them —
+                               a sketch dimension, an operation's length,
+                               angle or count — programs, the
+                               files they place parts from, and
                                running them — a workspace rebuilds only what
                                a changed file reaches, and a scene sends
                                placed parts as changes (+ `geop-ops-derive`)
@@ -83,9 +85,11 @@ ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
                                the editor, built as its Catmull-Clark limit
                                surface, a solid of B-spline faces; the subd
                                operation
-ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
-                               and reliefs, the flat pattern; the sheet model
-                               recorded on the body and thickened into it
+ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends,
+                               reliefs and open or closed corners, hems, cuts
+                               across bends unrolled, the flat pattern and its
+                               DXF for cutting; the sheet model recorded on
+                               the body, laid out flat and folded into it
 ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                and clips as lines and arcs, bend radius
                                checked, the bundle swept, cut lengths; the

@@ -25,6 +25,8 @@ pub enum Layer {
     Dimension,
     Hatch,
     Border,
+    /// Thin continuous lines: a cosmetic thread seen.
+    Thread,
     /// What a laser or a punch cuts: a flat pattern's outline and holes.
     Cut,
     /// Where a flat pattern is bent, and how.
@@ -32,13 +34,14 @@ pub enum Layer {
 }
 
 impl Layer {
-    pub const ALL: [Layer; 8] = [
+    pub const ALL: [Layer; 9] = [
         Layer::Visible,
         Layer::Hidden,
         Layer::Center,
         Layer::Dimension,
         Layer::Hatch,
         Layer::Border,
+        Layer::Thread,
         Layer::Cut,
         Layer::Bend,
     ];
@@ -52,6 +55,7 @@ impl Layer {
             Layer::Dimension => "DIMENSIONS",
             Layer::Hatch => "HATCH",
             Layer::Border => "BORDER",
+            Layer::Thread => "THREAD",
             Layer::Cut => "CUT",
             Layer::Bend => "BEND",
         }
