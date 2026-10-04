@@ -544,6 +544,25 @@ points, Newton seeds, which meridian to leave a pole along, where to split a
 curve at a matched point. Validity is the minimum. When a choice is free,
 choose the well-conditioned one.
 
+## Decide a rank over the box you prove, not at a point
+
+`System::enclose` chose its independent constraint rows by eliminating the
+Jacobian at the solved point. A redundant constraint (an arc slot's second
+`Concentric`, a rectangle's fourth right angle) holds only *on* the
+solution, and the solved point is a solution only to the solver's
+tolerance; there its row looked independent by a pivot as small as that
+tolerance. Taken as independent, it turned the solution into a curve, and
+no Krawczyk box could be proven. The sketch tools had to avoid redundancy
+by hand.
+
+The rows are now chosen over a box around the point, widened from the
+point itself through the solver's tolerance: a pivot that could be zero
+anywhere in the box is no pivot. The rows left out are then checked over
+the proven box, and one that does not enclose zero there is a conflict,
+reported by name. Interval arithmetic can prove a conflict, never its
+absence, so say "consistent to what the box resolves", not "implied".
+The old code proved an "exact solution" for two lengths 1e-11 apart.
+
 ## Refuse what you do not support: early, by name, and say why
 
 An operation that only handles some configurations must recognise the rest

@@ -944,4 +944,43 @@ mod tests {
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
+
+    /// A closed offset says one thing twice: going round the loop, every
+    /// offset is at the distance from its source, and each joint holds it
+    /// there again, so the last joint's tie says what the others already
+    /// do. Round a crooked pentagon — no side level, no corner square, so
+    /// no rounding is exactly zero — in and out, rounded and extended, the
+    /// redundancy holds where the rest does and the solution is proven.
+    #[test]
+    fn closed_offsets_of_a_crooked_outline_are_proven() {
+        let corners = [[0.0, 0.0], [2.1, 0.3], [2.6, 1.7], [1.2, 2.4], [-0.3, 1.3]];
+        let mut failures = Vec::new();
+        for d in [0.15, -0.15, 0.4] {
+            for corners_as in [Corners::Round, Corners::Extend] {
+                let mut s = Sketch::<T>::new();
+                let p = corners.map(|q| s.add_point(n(q[0]), n(q[1])));
+                let sides: Vec<CurveId> =
+                    (0..5).map(|i| s.add_line(p[i], p[(i + 1) % 5])).collect();
+                for (&point, q) in p.iter().zip(corners) {
+                    s.constrain(Constraint::Fix {
+                        point,
+                        x: n(q[0]),
+                        y: n(q[1]),
+                    });
+                }
+                let case = format!("by {d}, {corners_as:?}");
+                if let Err(e) = s.offset(&sides, n(d), corners_as) {
+                    failures.push(format!("{case}: {}", e.root_message()));
+                    continue;
+                }
+                let report = s.solve().unwrap();
+                if !report.converged || report.dof != 0 {
+                    failures.push(format!("{case}: {report:?}"));
+                } else if let Err(e) = s.enclose::<T>() {
+                    failures.push(format!("{case}: {}", e.root_message()));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 }
