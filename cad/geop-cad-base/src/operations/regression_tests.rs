@@ -40,13 +40,9 @@ fn assert_builds_valid(program: &Program) {
 /// error's root message, one per line, and the names of the entities they
 /// mention.
 pub(crate) fn check_valid(part: &Part<S>) -> Result<(), String> {
-    let params = ValidationParameters::default();
-    let errors = match validate(&params, part.topology()) {
-        Err(errors) => errors,
-        Ok(()) => match validate_manifold(&params, part.topology()) {
-            Err(errors) => errors,
-            Ok(()) => return Ok(()),
-        },
+    // `validate_manifold` runs `validate` first.
+    let Err(errors) = validate_manifold(&ValidationParameters::default(), part.topology()) else {
+        return Ok(());
     };
     let all = errors
         .iter()

@@ -36,7 +36,7 @@ mod fillet_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
-mod regression_tests;
+pub(crate) mod regression_tests;
 #[cfg(test)]
 mod set_tests;
 #[cfg(test)]
@@ -109,6 +109,8 @@ pub type Program = geop_ops::Program<PartOperation>;
 pub type Step = geop_ops::Step<PartOperation>;
 /// Builds a [`Program`] incrementally.
 pub type ProgramRunner<S> = geop_ops::ProgramRunner<S, PartOperation>;
-/// The program files a [`Program`] places parts from.
+/// The program files a [`Program`] places parts from: `F`'s, and the
+/// standard parts (see [`crate::stdlib`]). Made with
+/// `Workspace::new(WithStandardParts(files))`.
 pub type Workspace<S, F = std::collections::BTreeMap<String, String>> =
-    geop_ops::Workspace<PartOperation, S, F>;
+    geop_ops::Workspace<PartOperation, S, crate::stdlib::WithStandardParts<F>>;

@@ -12,6 +12,11 @@
 //! the naming — `bolt.geop`, `../parts/bolt.geop` — so a folder of files
 //! can be moved as a whole. [`resolve`] turns such a reference into the
 //! path a workspace knows the file by, [`relative`] goes back.
+//!
+//! A file of a library every workspace shares — the standard parts an
+//! application offers — is named by a scheme instead: `std:hex_nut.geop`
+//! (see [`is_shared`]). Such a name means the same file from anywhere, so
+//! it is never relative.
 
 use std::{
     cell::RefCell,
@@ -284,10 +289,24 @@ impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
     }
 }
 
+/// Whether `reference` names a file of a library every workspace shares,
+/// by a scheme of two letters or more and `:` — `std:hex_nut.geop`. It
+/// names the same file from anywhere: it is never relative. (A single
+/// letter before the `:` is a drive, `C:/parts/bolt.geop`.)
+pub fn is_shared(reference: &str) -> bool {
+    reference
+        .split_once(':')
+        .is_some_and(|(scheme, _)| scheme.len() >= 2 && scheme.chars().all(|c| c.is_ascii_alphabetic()))
+}
+
 /// The path of the file `reference` names, from the file `from`: relative
-/// to the folder `from` is in, unless it starts with `/`. `.` and `..` are
-/// taken out where they can be, and `\` read as `/`.
+/// to the folder `from` is in, unless it starts with `/` or is a shared
+/// library's (see [`is_shared`]). `.` and `..` are taken out where they
+/// can be, and `\` read as `/`.
 pub fn resolve(from: &str, reference: &str) -> String {
+    if is_shared(reference) {
+        return reference.to_string();
+    }
     let reference = reference.replace('\\', "/");
     let from = from.replace('\\', "/");
     let joined = match (reference.starts_with('/'), from.rsplit_once('/')) {
@@ -311,8 +330,12 @@ pub fn resolve(from: &str, reference: &str) -> String {
 }
 
 /// How the file `from` names the file `to`, both paths as [`resolve`]
-/// gives them: relative to the folder `from` is in.
+/// gives them: relative to the folder `from` is in — a shared library's
+/// file by its own name (see [`is_shared`]).
 pub fn relative(from: &str, to: &str) -> String {
+    if is_shared(to) {
+        return to.to_string();
+    }
     let folders: Vec<&str> = from.split('/').collect();
     let folders = &folders[..folders.len() - 1];
     let target: Vec<&str> = to.split('/').collect();
@@ -344,6 +367,16 @@ mod tests {
         );
         assert_eq!(resolve("a/asm.geop", "/b/bolt.geop"), "/b/bolt.geop");
         assert_eq!(resolve("asm.geop", "../bolt.geop"), "../bolt.geop");
+        assert_eq!(resolve("a/b/asm.geop", "std:nut.geop"), "std:nut.geop");
+        assert_eq!(resolve("asm.geop", "C:/b/bolt.geop"), "C:/b/bolt.geop");
+    }
+
+    #[test]
+    fn shared_files_are_named_alike_from_anywhere() {
+        assert!(is_shared("std:nut.geop"));
+        assert!(!is_shared("C:/parts/nut.geop"));
+        assert!(!is_shared("parts/nut.geop"));
+        assert_eq!(relative("a/b/asm.geop", "std:nut.geop"), "std:nut.geop");
     }
 
     #[test]

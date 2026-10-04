@@ -17,7 +17,7 @@ use geop_ops_sketch::{
     references::{Reference, Source},
 };
 
-use crate::{Program, Workspace, examples};
+use crate::{Program, Workspace, examples, stdlib::WithStandardParts};
 
 /// The plane of the origin's `plane`.
 fn origin_plane(plane: FrameAxis) -> EntityRef {
@@ -171,10 +171,10 @@ fn dimensions_follow_parameters() {
 /// where nothing is given.
 #[test]
 fn placed_parts_take_the_parameters_given() {
-    let workspace = Workspace::<S>::new(BTreeMap::from([(
+    let workspace = Workspace::<S>::new(WithStandardParts(BTreeMap::from([(
         "plate.geop".to_string(),
         examples::parametric_plate().to_json().unwrap(),
-    )]));
+    )])));
     let part = examples::plates_assembly()
         .build::<S>(&workspace.scope("plates.geop"))
         .unwrap();

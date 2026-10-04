@@ -19,7 +19,7 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{Editor, Program, Workspace};
+use geop_cad_base::{Editor, Program, Workspace, stdlib::WithStandardParts};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{Pose, TriangleFace},
@@ -184,7 +184,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     };
     let path = args.program.to_string_lossy();
     let mut program = Program::from_json(&Disk.read(&path)?)?;
-    let workspace = Workspace::<S, Disk>::new(Disk);
+    let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
     let library = workspace.scope(&path);
     let mut part = program.build(&library)?;
     // State stale — a file it places changed since it was saved — are
