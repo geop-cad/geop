@@ -8,6 +8,38 @@ use geop_core_math::{
     vector::Vector,
 };
 
+/// The distinct knots strictly inside the domain of a curve of `degree`
+/// with `num_points` control points, each with its multiplicity — knots
+/// that could be equal counted as one, their enclosures united.
+pub(crate) fn interior_knots<S: Scalar>(knots: &[S], degree: usize, num_points: usize) -> Vec<(S, usize)> {
+    let (start, end) = (knots[degree], knots[num_points]);
+    let mut out: Vec<(S, usize)> = Vec::new();
+    for &k in &knots[degree + 1..num_points] {
+        if !(k.definitely_greater(start) && k.definitely_less(end)) {
+            continue;
+        }
+        match out.last_mut() {
+            Some((u, m)) if u.could_be_equal(k) => {
+                *u = u.union(k);
+                *m += 1;
+            }
+            _ => out.push((k, 1)),
+        }
+    }
+    out
+}
+
+/// Where a spline of `degree` with `num_points` control points stops being
+/// one polynomial piece: the ends of its domain, and every distinct knot
+/// strictly between them — what an integration or a sampling of it should
+/// start its panels at.
+pub(crate) fn breakpoints<S: Scalar>(knots: &[S], degree: usize, num_points: usize) -> Vec<S> {
+    let mut out = vec![knots[degree]];
+    out.extend(interior_knots(knots, degree, num_points).into_iter().map(|(k, _)| k));
+    out.push(knots[num_points]);
+    out
+}
+
 /// The knot span containing `t`: the last index `k` in `[degree, n]` with
 /// `knots[k] <= t < knots[k+1]`, where `n + 1` is the number of control
 /// points.

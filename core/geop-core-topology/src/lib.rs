@@ -10,6 +10,7 @@ pub mod euler;
 pub mod face;
 pub mod ids;
 pub mod loop_sampling;
+pub mod mass;
 pub mod model;
 pub mod shell;
 pub mod solid;

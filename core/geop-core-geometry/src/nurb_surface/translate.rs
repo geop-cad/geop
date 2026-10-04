@@ -1,4 +1,8 @@
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    primitives::Pose,
+    scalars::Scalar,
+    vector::{Vector3, Vector4},
+};
 
 use super::NurbSurface;
 
@@ -37,6 +41,39 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 self.aabb[2].add(offset[2]),
             ],
         }
+    }
+}
+
+impl<S: Scalar> NurbSurface<S, 4> {
+    /// This surface moved by the rigid motion `pose` — same shape and
+    /// parametrization, like [`crate::nurb_curve::NurbCurve::place`]: each
+    /// homogeneous control point `(w p, w)` goes to `(w (R p + t), w)`,
+    /// without dividing by the weight.
+    pub fn place(&self, pose: &Pose<S>) -> Self {
+        let motion = pose.motion();
+        let position = pose.position();
+        let control_points = self
+            .control_points
+            .iter()
+            .map(|cp| {
+                let w = cp[3];
+                let p = motion.rotate(&Vector3::from_array([cp[0], cp[1], cp[2]]));
+                let t = position.map(|x| x.mul(w));
+                Vector4::from_array([p[0].add(t[0]), p[1].add(t[1]), p[2].add(t[2]), w])
+            })
+            .collect();
+        let mut surface = Self {
+            degree_u: self.degree_u,
+            degree_v: self.degree_v,
+            num_u: self.num_u,
+            num_v: self.num_v,
+            control_points,
+            knot_vector_u: self.knot_vector_u.clone(),
+            knot_vector_v: self.knot_vector_v.clone(),
+            aabb: self.aabb,
+        };
+        surface.recompute_aabb();
+        surface
     }
 }
 
@@ -83,5 +120,37 @@ mod tests {
     #[test]
     fn translate_shifts_evaluated_points() {
         for_all_scalars!(check_translate_shifts_evaluated_points);
+    }
+
+    /// A placed surface evaluates to the placed points of the original.
+    #[test]
+    fn place_moves_evaluated_points() {
+        use geop_core_math::{primitives::Pose, scalars::ScalInF64 as S};
+        let p = |x: f64, y: f64, z: f64, w: f64| {
+            geop_core_math::vector::Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
+        };
+        let surface = NurbSurface3D::try_new(
+            1,
+            1,
+            vec![
+                p(0.0, 0.0, 0.0, 1.0),
+                p(0.0, 1.0, 0.0, 2.0),
+                p(1.0, 0.0, 1.0, 1.0),
+                p(1.0, 1.0, 0.0, 1.0),
+            ],
+            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+        )
+        .unwrap();
+        let pose = Pose::from_euler(
+            Vector3::from_array([1.0, -2.0, 0.5].map(S::from_f64)),
+            [30.0, 10.0, -45.0].map(S::from_f64),
+        )
+        .unwrap();
+        let placed = surface.place(&pose);
+        let (u, v) = (S::from_f64(0.3), S::from_f64(0.7));
+        let a = placed.evaluate(u, v).unwrap();
+        let b = pose.apply(&surface.evaluate(u, v).unwrap());
+        assert!(a.could_be_equal(&b));
     }
 }
