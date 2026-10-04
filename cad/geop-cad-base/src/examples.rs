@@ -1337,6 +1337,7 @@ pub fn airfoil_wing() -> Program {
         LoftArgs {
             profiles: vec!["root".into(), "tip".into()],
             matches: Vec::new(),
+            guides: Vec::new(),
             face: false,
             combine: Combine::NewBody,
         },

@@ -10,7 +10,9 @@ use geop_core_topology::validation::{ValidationParameters, validate, validate_ma
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, SweepArgs};
+use geop_ops_extrude_revolve::{
+    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, SweepArgs,
+};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
 use crate::Program;
@@ -102,6 +104,10 @@ fn swept(profile: &str, path: &str) -> SweepArgs {
     SweepArgs {
         profile: profile.into(),
         path: path.into(),
+        orientation: Orientation::FollowPath,
+        twist: 0.0,
+        end_scale: 1.0,
+        rails: Vec::new(),
         face: false,
         combine: Combine::NewBody,
     }
@@ -111,6 +117,7 @@ fn lofted(profiles: &[&str]) -> LoftArgs {
     LoftArgs {
         profiles: profiles.iter().map(|p| p.to_string()).collect(),
         matches: Vec::new(),
+        guides: Vec::new(),
         face: false,
         combine: Combine::NewBody,
     }
@@ -781,4 +788,123 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
         joined(d_bottom, t_bottom),
         "the bottom corners are not joined"
     );
+}
+
+// ── rails, twist, scale and guides ─────────────────────────────────────────
+
+/// A circle swept along a line with one rail drifting out: a cone, its
+/// far end the circle the rail's end lies on.
+#[test]
+fn sweep_along_a_rail_tapers() {
+    let mut program = Program::new();
+    program.push("profile", sketch(base(FrameAxis::X), circle(0.0, 0.0, 0.5)));
+    program.push("path", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])));
+    program.push("rail", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])));
+    program.push(
+        "cone",
+        SweepArgs {
+            rails: vec!["rail".into()],
+            ..swept("profile", "path")
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    let end = part.face_id("sweep(cone,end)").unwrap();
+    for c in model.iterate_face_coedges(end) {
+        let p = model.coedge_start_vertex(c).unwrap().point;
+        let r = (p[1].to_f64().powi(2) + p[2].to_f64().powi(2)).sqrt();
+        assert!((r - 1.0).abs() < 1e-9, "{p:?}");
+    }
+}
+
+/// A square bar twisted a quarter turn and shrunk to half its size along
+/// a bent path.
+#[test]
+fn sweep_a_twisted_tapering_bar() {
+    let mut program = Program::new();
+    program.push("profile", sketch(base(FrameAxis::X), square(0.25)));
+    program.push("path", sketch(base(FrameAxis::Z), bend()));
+    program.push(
+        "bar",
+        SweepArgs {
+            twist: 90.0,
+            end_scale: 0.5,
+            ..swept("profile", "path")
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 3 * 4 + 2);
+}
+
+/// A loft between two squares with a guide bowing out beside them, along
+/// the middle of one side: the walls bulge with it, joined to a block.
+#[test]
+fn loft_along_a_guide() {
+    let mut program = Program::new();
+    program.push("bottom", sketch(base(FrameAxis::Z), square(1.0)));
+    lifted(&mut program, "top_plane", 2.0);
+    program.push("top", sketch(EntityRef::datum("top_plane"), square(1.0)));
+    // In the plane y = 0, drawn in (x, -z): from (1, 0, 0) out to x = 1.5
+    // and back to (1, 0, 2).
+    let mut bow = Sketch::new();
+    let p = [
+        bow.add_point(n(1.0), n(0.0)),
+        bow.add_point(n(1.5), n(-1.0)),
+        bow.add_point(n(1.0), n(-2.0)),
+    ];
+    bow.add_spline(p.to_vec());
+    program.push("guide", sketch(base(FrameAxis::Y), bow));
+    program.push(
+        "bulge",
+        LoftArgs {
+            guides: vec!["guide".into()],
+            ..lofted(&["bottom", "top"])
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    // The edge along the guide bulges out to it.
+    let edge = part.edge_id("loft(bulge,bottom,guide)").unwrap();
+    let curve = &part.topology().edges[&edge].curve;
+    let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
+    assert!(middle[0].to_f64() > 1.2, "{middle:?}");
+}
+
+/// Rails and guides are saved and read back with their steps.
+#[test]
+fn rails_and_guides_round_trip() {
+    let mut program = Program::new();
+    program.push("profile", sketch(base(FrameAxis::X), circle(0.0, 0.0, 0.5)));
+    program.push("path", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])));
+    program.push("rail", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])));
+    program.push(
+        "cone",
+        SweepArgs {
+            rails: vec!["rail".into()],
+            orientation: Orientation::FixedNormal,
+            ..swept("profile", "path")
+        },
+    );
+    program.push(
+        "bar",
+        SweepArgs {
+            twist: 45.0,
+            end_scale: 2.0,
+            ..swept("profile", "path")
+        },
+    );
+    program.push(
+        "skin",
+        LoftArgs {
+            guides: vec!["rail".into()],
+            ..lofted(&["profile", "path"])
+        },
+    );
+    let json = serde_json::to_string(&program).unwrap();
+    assert!(json.contains("\"rails\":[\"rail\"]"), "{json}");
+    assert!(json.contains("\"fixed_normal\""), "{json}");
+    let back: Program = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, program);
 }
