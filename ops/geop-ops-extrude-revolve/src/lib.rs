@@ -14,6 +14,7 @@ pub mod extrude;
 pub mod loft;
 pub mod operation;
 pub mod path_sweep;
+mod plain;
 pub mod revolve;
 #[cfg(any(test, feature = "test-shapes"))]
 pub mod shapes;
@@ -22,3 +23,4 @@ pub mod sweep;
 pub use operation::{
     Extent, Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
+pub use path_sweep::Orientation;

@@ -802,3 +802,72 @@ fn new_route_is_picked_and_its_wires_chosen() {
         "{detail}"
     );
 }
+
+/// A sweep made in the editor: the horn's sketches picked, its rail
+/// dropped for a twist and taper, the profile kept facing one way —
+/// the dialog showing the twist and scale only once there is no rail.
+#[test]
+fn sweep_with_rails_twist_and_orientation() {
+    let mut editor = Editor::new();
+    let update = editor.handle(Command::LoadExample {
+        name: "horn".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let solids = |update: &Update<S>| {
+        let scene = update.scene.as_ref().expect("a scene");
+        scene
+            .structure
+            .iter()
+            .filter(|i| i.kind == crate::editor::StructureKind::Solid)
+            .count()
+    };
+    assert_eq!(solids(&update), 1);
+
+    editor.handle(Command::New {
+        kind: "sweep".into(),
+    });
+    let sketch = |name: &str| Value::Entities(vec![EntityRef::Sketch { name: name.into() }]);
+    editor.handle(dialog("profile", sketch("mouth")));
+    editor.handle(dialog("path", sketch("axis")));
+    let update = editor.handle(dialog("rails", Value::Press));
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Sketch]);
+    let update = editor.handle(dialog("rails", sketch("flare")));
+    let dialog_shown = update.step.unwrap().presentation.dialog;
+    assert!(
+        dialog_shown.get("twist").is_none(),
+        "the rail decides the twist"
+    );
+
+    editor.handle(dialog("rails", Value::Entities(Vec::new())));
+    editor.handle(dialog("orientation", Value::Choice("fixed_normal".into())));
+    editor.handle(dialog("twist", Value::Number(90.0)));
+    let update = editor.handle(dialog("end_scale", Value::Number(0.5)));
+    let step = update.step.unwrap();
+    assert_eq!(step.error, None);
+    let Some(Control::Number(twist)) = step.presentation.dialog.get("twist") else {
+        panic!("the twist is shown without rails");
+    };
+    assert_eq!(twist.value, 90.0);
+    editor.handle(dialog("combine", Value::Choice("new_body".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(solids(&update), 2);
+    let program = editor.program();
+    let PartOperation::Sweep(args) = &program.steps.last().unwrap().operation else {
+        panic!("a sweep");
+    };
+    assert_eq!(
+        (
+            args.twist,
+            args.end_scale,
+            args.orientation,
+            args.rails.len()
+        ),
+        (
+            90.0,
+            0.5,
+            geop_ops_extrude_revolve::Orientation::FixedNormal,
+            0
+        )
+    );
+}

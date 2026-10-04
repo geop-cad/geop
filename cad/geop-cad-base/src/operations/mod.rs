@@ -42,6 +42,7 @@ mod editor_tests;
 mod fillet_tests;
 #[cfg(test)]
 mod pattern_tests;
+#[cfg(test)]
 mod harness_tests;
 #[cfg(test)]
 mod program_tests;

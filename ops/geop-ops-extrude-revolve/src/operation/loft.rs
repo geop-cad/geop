@@ -14,8 +14,11 @@ use geop_ops::{
 use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
-use super::extrude::sketch_profile;
-use crate::loft::{Section, loft, mark};
+use super::{extrude::sketch_profile, sweep::path_chain};
+use crate::{
+    loft::{Section, loft, mark},
+    path_sweep::Guide,
+};
 
 /// Lofts through the profiles of two or more sketches, in order, into a
 /// solid named `loft(L)` for the operation `L` — each sketch's one area, a
@@ -31,6 +34,13 @@ use crate::loft::{Section, loft, mark};
 /// each profile's first with the others' first, its second with their
 /// second, and so on — the curve such a point lies on split there, its
 /// second half named `X#P`.
+///
+/// Or guide curves ([`LoftArgs::guides`]) say which points match: sketches
+/// whose one chain of curves runs from a point of the first profile through
+/// every other to the last. Each guide's point on each profile is matched,
+/// as a joint `K,G` of the profile `K` for the guide `G`, and between
+/// the profiles the walls follow the guides (see [`crate::loft`]) rather
+/// than run straight.
 ///
 /// Named after the first sketch's elements — `X` a piece of a curve and `P`
 /// a joint of the sketch `K` — and the sketches `K`, `M`, ... themselves:
@@ -54,6 +64,10 @@ pub struct LoftArgs {
     /// other.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub matches: Vec<EntityRef>,
+    /// Sketches whose curves guide the loft from the first profile to the
+    /// last — at most three — instead of matching points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<String>,
     /// Loft into faces standing on their own, rather than a solid.
     #[serde(default)]
     pub face: bool,
@@ -73,13 +87,14 @@ impl Operation for Loft {
         LoftArgs {
             profiles: sketches[sketches.len().saturating_sub(2)..].to_vec(),
             matches: Vec::new(),
+            guides: Vec::new(),
             face: false,
             combine: Combine::new_for(before),
         }
     }
 
-    /// The sketches, picked in order; the points matched on them; whether a
-    /// face; and how to combine.
+    /// The sketches, picked in order; the points matched on them, or the
+    /// guide curves; whether a face; and how to combine.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -129,6 +144,29 @@ impl Operation for Loft {
                 },
             );
             f.optional("matches");
+            let guides = args
+                .guides
+                .iter()
+                .map(|name| EntityRef::Sketch { name: name.clone() })
+                .collect();
+            f.reference(
+                "guides",
+                "guide curves",
+                guides,
+                &[Role::Sketch],
+                None,
+                true,
+                |edit, picked| {
+                    edit.args.guides = picked
+                        .into_iter()
+                        .filter_map(|entity| match entity {
+                            EntityRef::Sketch { name } => Some(name),
+                            _ => None,
+                        })
+                        .collect();
+                },
+            );
+            f.optional("guides");
         }
         f.checkbox("face", "face", args.face, |args, b| args.face = b);
         if !args.face {
@@ -152,12 +190,28 @@ impl Operation for Loft {
             .map(|name| section(&part, name, args.face, &matched_points(args, name)?))
             .collect::<GeopResult<Vec<_>>>()
             .with_context(ctx)?;
+        let guides = args
+            .guides
+            .iter()
+            .map(|name| {
+                if args.profiles.contains(name) {
+                    return Err(GeopError::new(format!(
+                        "loft: the guide {name:?} is one of the profiles: a guide is a sketch of its own"
+                    )));
+                }
+                Ok(Guide {
+                    name: name.clone(),
+                    chain: path_chain(&part, name)?,
+                })
+            })
+            .collect::<GeopResult<Vec<_>>>()
+            .with_context(ctx)?;
         if args.face {
-            loft(&mut part, &namer, None, &sections).with_context(ctx)?;
+            loft(&mut part, &namer, None, &sections, &guides).with_context(ctx)?;
             return Ok(part);
         }
         let name = args.combine.built_name(&namer);
-        let built = loft(&mut part, &namer, Some(&name), &sections).with_context(ctx)?;
+        let built = loft(&mut part, &namer, Some(&name), &sections, &guides).with_context(ctx)?;
         let tool = Tool {
             solid: built.solid.expect("lofted as a solid"),
             up_to_next: None,

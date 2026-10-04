@@ -14,7 +14,7 @@ use geop_ops::{
 };
 use geop_ops_extrude_revolve::{
     common::{Profile, arc2, sqrt2_over_2},
-    path_sweep::sweep_along,
+    path_sweep::{Control, sweep_along},
     sweep::SweepLoop,
 };
 use serde::{Deserialize, Serialize};
@@ -235,7 +235,7 @@ impl Operation for Route {
         let plane = frame_along(start, &chain.curves[0].tangent(S::ZERO)?).with_context(ctx)?;
         let section = SweepLoop::plain(Profile::closed(circle(plan.diameter / 2.0)?));
         let name = namer.root();
-        sweep_along(&mut part, &namer, Some(&name), chain, &plane, &[section]).with_context(ctx)?;
+        sweep_along(&mut part, &namer, Some(&name), chain, &plane, &[section], &Control::default()).with_context(ctx)?;
 
         let length = plan.measure.length;
         let extra = S::from_f64(2.0 * args.service_loop);

@@ -226,6 +226,60 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         }
         Ok(out)
     }
+
+    /// The chain `curves`, each starting where the one before ends, as one
+    /// curve on `[0, 1]`, the `i`-th of `n` curves on `[i / n, (i + 1) / n]`:
+    /// each brought onto its own unit domain with its ends weighted one (see
+    /// [`Self::with_unit_end_weights`]) and raised to the highest degree
+    /// among them, their knot vectors laid end to end, every joint a knot
+    /// of full multiplicity. A joint's control point is the end of the curve
+    /// before it — an error if the next curve could not start there. Every
+    /// curve stays the curve it was, on its new piece of the domain.
+    pub fn join(curves: &[Self]) -> GeopResult<Self> {
+        let n = curves.len();
+        if n == 0 {
+            return Err(GeopError::new("join: no curves to join"));
+        }
+        let mut pieces = curves
+            .iter()
+            .map(|c| c.with_unit_domain()?.with_unit_end_weights())
+            .collect::<GeopResult<Vec<_>>>()?;
+        let degree = pieces.iter().map(|c| c.degree).max().unwrap_or(0);
+        for piece in &mut pieces {
+            while piece.degree < degree {
+                *piece = piece.elevate_degree()?;
+            }
+        }
+        if n == 1 {
+            return Ok(pieces.remove(0));
+        }
+        let count = S::from_f64(n as f64);
+        let mut points: Vec<Vector<S, D>> = Vec::new();
+        let mut knots = vec![S::ZERO; degree + 1];
+        for (i, piece) in pieces.iter().enumerate() {
+            let len = piece.control_points.len();
+            if let Some(end) = points.last() {
+                let start = &piece.control_points[0];
+                if !(0..D).all(|k| end[k].could_be_equal(start[k])) {
+                    return Err(GeopError::new(format!(
+                        "join: curve {i} starts at {start:?}, not where the one before ends, {end:?}"
+                    )));
+                }
+                points.extend_from_slice(&piece.control_points[1..]);
+            } else {
+                points.extend_from_slice(&piece.control_points);
+            }
+            for &k in &piece.knot_vector[degree + 1..len] {
+                knots.push(k.add(S::from_f64(i as f64)).div(count)?);
+            }
+            if i + 1 < n {
+                let joint = S::from_ratio((i + 1) as i64, n as i64)?;
+                knots.extend(std::iter::repeat_n(joint, degree));
+            }
+        }
+        knots.extend(std::iter::repeat_n(S::ONE, degree + 1));
+        NurbCurve::try_new(degree, points, knots)
+    }
 }
 
 #[cfg(test)]
@@ -375,5 +429,37 @@ mod tests {
     #[test]
     fn unit_end_weights_keep_the_curve() {
         for_all_scalars!(check_unit_end_weights_keep_the_curve);
+    }
+
+    /// An arc and a line on from its end, joined: one quadratic on
+    /// `[0, 1]`, the arc on its first half, the line on its second. A
+    /// curve starting elsewhere does not join.
+    fn check_join_lays_curves_end_to_end<S: Scalar>() {
+        let f = S::from_f64;
+        let on = NurbCurve::try_new(
+            1,
+            vec![pt(0., 1., 0., 1.), pt(-1., 1., 0., 1.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let arc = quarter_arc::<S>();
+        let joined = NurbCurve::join(&[arc.clone(), on.clone()]).unwrap();
+        assert_eq!(joined.degree, 2);
+        for i in 0..=8 {
+            let t = S::from_ratio(i, 8).unwrap();
+            let half = |k: f64| t.add(f(k)).div(S::TWO).unwrap();
+            let (a, b) = (
+                joined.evaluate(half(0.0)).unwrap(),
+                arc.evaluate(t).unwrap(),
+            );
+            assert!(a.could_be_equal(&b), "{a:?} vs {b:?}");
+            let (a, b) = (joined.evaluate(half(1.0)).unwrap(), on.evaluate(t).unwrap());
+            assert!(a.could_be_equal(&b), "{a:?} vs {b:?}");
+        }
+        assert!(NurbCurve::join(&[arc, line()]).is_err());
+    }
+    #[test]
+    fn join_lays_curves_end_to_end() {
+        for_all_scalars!(check_join_lays_curves_end_to_end);
     }
 }
