@@ -109,8 +109,9 @@ cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
                                each placed component once
 ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
                                B-rep solids and sheets of a file into exact
-                               NURBS bodies, writing a part's bodies as one;
-                               the import operation
+                               NURBS bodies (an assembly flattened), writing
+                               a part as one — an assembly as products and
+                               occurrences; the import operation
 ops/geop-ops-bom              bills of materials: placed parts grouped by
                                file and parameter values, flat or indented,
                                with designations, materials, masses, sheet

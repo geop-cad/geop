@@ -196,6 +196,232 @@ fn a_cylinder_along_a_seam_is_cut_into_sectors() {
     assert!(part.face_id("import(i,s0,f2)").is_ok());
 }
 
+/// A quarter of a pipe bend: a torus' tube of radius 2 round an axis 10
+/// away, from the plane `y = 0` round to `x = 0`, closed by a disc at
+/// either end — the tube face going all the way round its tube along a
+/// seam on its outer equator.
+const PIPE_BEND: &str = "
+#100=TOROIDAL_SURFACE('',#8,10.,2.);
+#101=CARTESIAN_POINT('',(10.,0.,0.));
+#102=DIRECTION('',(0.,1.,0.));
+#103=AXIS2_PLACEMENT_3D('',#101,#102,#7);
+#104=CARTESIAN_POINT('',(0.,10.,0.));
+#105=DIRECTION('',(0.,1.,0.));
+#106=AXIS2_PLACEMENT_3D('',#104,#7,#105);
+#107=DIRECTION('',(0.,-1.,0.));
+#108=AXIS2_PLACEMENT_3D('',#101,#107,#7);
+#109=DIRECTION('',(-1.,0.,0.));
+#110=AXIS2_PLACEMENT_3D('',#104,#109,#105);
+#111=PLANE('',#108);
+#112=PLANE('',#110);
+#120=CARTESIAN_POINT('',(12.,0.,0.));
+#121=VERTEX_POINT('',#120);
+#122=CARTESIAN_POINT('',(0.,12.,0.));
+#123=VERTEX_POINT('',#122);
+#130=CIRCLE('',#8,12.);
+#131=CIRCLE('',#103,2.);
+#132=CIRCLE('',#106,2.);
+#140=EDGE_CURVE('',#121,#123,#130,.T.);
+#141=EDGE_CURVE('',#121,#121,#131,.T.);
+#142=EDGE_CURVE('',#123,#123,#132,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#142,.T.);
+#152=ORIENTED_EDGE('',*,*,#140,.F.);
+#153=ORIENTED_EDGE('',*,*,#141,.T.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('tube',(#155),#100,.T.);
+#160=ORIENTED_EDGE('',*,*,#141,.F.);
+#161=EDGE_LOOP('',(#160));
+#162=FACE_OUTER_BOUND('',#161,.T.);
+#163=ADVANCED_FACE('start',(#162),#111,.T.);
+#170=ORIENTED_EDGE('',*,*,#142,.F.);
+#171=EDGE_LOOP('',(#170));
+#172=FACE_OUTER_BOUND('',#171,.T.);
+#173=ADVANCED_FACE('end',(#172),#112,.T.);
+#180=CLOSED_SHELL('',(#156,#163,#173));
+#999=MANIFOLD_SOLID_BREP('bend',#180);";
+
+#[test]
+fn a_pipe_bend_is_cut_along_parallels() {
+    let part = import(&file(".MILLI.,.METRE.", PIPE_BEND));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    // The tube in pieces between parallels, named after it; the discs
+    // whole.
+    assert!(part.face_id("import(i,s0,f0,q0)").is_ok());
+    assert!(part.face_id("import(i,s0,f0,q1)").is_ok());
+    assert!(part.face_id("import(i,s0,f0)").is_err());
+    assert!(part.edge_id("import(i,s0,f0,m0)").is_ok());
+    assert!(part.face_id("import(i,s0,f1)").is_ok());
+    assert_bounds(model, [0.0, 0.0, -2.0], [12.0, 12.0, 2.0]);
+}
+
+/// A whole torus — an O-ring's — as one face along two seams, a circle round
+/// the tube and the outer equator, meeting at one vertex.
+const TORUS: &str = "
+#100=TOROIDAL_SURFACE('',#8,10.,2.);
+#101=CARTESIAN_POINT('',(10.,0.,0.));
+#102=DIRECTION('',(0.,1.,0.));
+#103=AXIS2_PLACEMENT_3D('',#101,#102,#7);
+#120=CARTESIAN_POINT('',(12.,0.,0.));
+#121=VERTEX_POINT('',#120);
+#130=CIRCLE('',#8,12.);
+#131=CIRCLE('',#103,2.);
+#140=EDGE_CURVE('',#121,#121,#130,.T.);
+#141=EDGE_CURVE('',#121,#121,#131,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#141,.T.);
+#152=ORIENTED_EDGE('',*,*,#140,.F.);
+#153=ORIENTED_EDGE('',*,*,#141,.F.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_OUTER_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('ring',(#155),#100,.T.);
+#180=CLOSED_SHELL('',(#156));
+#999=MANIFOLD_SOLID_BREP('o-ring',#180);";
+
+#[test]
+fn a_whole_torus_is_cut_into_bands_and_sectors() {
+    let part = import(&file(".MILLI.,.METRE.", TORUS));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    // Bands between parallels, each in sectors between meridians.
+    assert!(part.face_id("import(i,s0,f0,b0,q0)").is_ok());
+    assert!(part.face_id("import(i,s0,f0,b1,q0)").is_ok());
+    assert!(part.vertex_id("import(i,s0,f0,m0,v)").is_ok());
+    assert_bounds(model, [-12.0, -12.0, -2.0], [12.0, 12.0, 2.0]);
+}
+
+/// An apple: a torus whose tube, of radius 2, crosses its axis 1 away — the
+/// outside of the circle turned, from where it meets the axis below to where
+/// it meets it above, as one face along a seam.
+const APPLE: &str = "
+#100=TOROIDAL_SURFACE('',#8,1.,2.);
+#101=CARTESIAN_POINT('',(1.,0.,0.));
+#102=DIRECTION('',(0.,1.,0.));
+#103=AXIS2_PLACEMENT_3D('',#101,#102,#7);
+#120=CARTESIAN_POINT('',(0.,0.,-1.7320508075688772));
+#121=VERTEX_POINT('',#120);
+#122=CARTESIAN_POINT('',(0.,0.,1.7320508075688772));
+#123=VERTEX_POINT('',#122);
+#130=CIRCLE('',#103,2.);
+#140=EDGE_CURVE('',#121,#123,#130,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#140,.F.);
+#154=EDGE_LOOP('',(#150,#151));
+#155=FACE_OUTER_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('apple',(#155),#100,.T.);
+#180=CLOSED_SHELL('',(#156));
+#999=MANIFOLD_SOLID_BREP('apple',#180);";
+
+#[test]
+fn a_torus_crossing_its_axis_is_read_between_its_poles() {
+    let part = import(&file(".MILLI.,.METRE.", APPLE));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    assert!(part.face_id("import(i,s0,f0,q1)").is_ok());
+    // Its edges: the meridians it is cut along, at angles 0 and a half turn,
+    // through the circle's highest and lowest points.
+    assert_bounds(model, [-3.0, 0.0, -2.0], [3.0, 0.0, 2.0]);
+}
+
+/// A helix of radius 1 and pitch 1/4 turning 1.5 times, from `(1, 0, z0)`, as
+/// STEP entities from `#first` on: the kernel's own, exactly on its
+/// cylinder. The id of the curve is `#first`.
+fn helix_entities(first: u64, z0: f64) -> String {
+    use geop_core_geometry::nurb_curve::{Handedness, NurbCurve3D};
+    use geop_core_math::primitives::CoordinateSystem;
+    let helix = NurbCurve3D::<S>::helix(
+        &CoordinateSystem::world_at(v(0.0, 0.0, z0)),
+        S::ONE,
+        S::from_f64(0.25),
+        1.5,
+        Handedness::Right,
+    )
+    .unwrap();
+    let mut text = String::new();
+    let mut points = Vec::new();
+    let mut weights = Vec::new();
+    for (k, cp) in helix.control_points.iter().enumerate() {
+        let w = cp[3].to_f64();
+        let id = first + 1 + k as u64;
+        text += &format!(
+            "#{id}=CARTESIAN_POINT('',({:?},{:?},{:?}));\n",
+            cp[0].to_f64() / w,
+            cp[1].to_f64() / w,
+            cp[2].to_f64() / w
+        );
+        points.push(format!("#{id}"));
+        weights.push(format!("{w:?}"));
+    }
+    let mut knots: Vec<(f64, usize)> = Vec::new();
+    for k in &helix.knot_vector {
+        match knots.last_mut() {
+            Some((last, n)) if *last == k.to_f64() => *n += 1,
+            _ => knots.push((k.to_f64(), 1)),
+        }
+    }
+    let multiplicities: Vec<String> = knots.iter().map(|(_, n)| n.to_string()).collect();
+    let values: Vec<String> = knots.iter().map(|(k, _)| format!("{k:?}")).collect();
+    text += &format!(
+        "#{first}=(BOUNDED_CURVE()B_SPLINE_CURVE(2,({}),.UNSPECIFIED.,.F.,.F.)B_SPLINE_CURVE_WITH_KNOTS(({}),({}),.UNSPECIFIED.)CURVE()GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE(({}))REPRESENTATION_ITEM(''));\n",
+        points.join(","),
+        multiplicities.join(","),
+        values.join(","),
+        weights.join(",")
+    );
+    text
+}
+
+/// A thread's flank, as a strip of a cylinder of radius 1 between two
+/// helices a quarter of their pitch apart, turning one and a half times,
+/// their ends joined along the cylinder: cut along meridians into pieces
+/// that each turn less than once. In a thread's proportions: the pcurves
+/// fitted to the kernel's helices drift from them by about 5e-5 of their
+/// pitch, which past a pitch of about 1 is more than the kernel's accuracy
+/// (see `AGENTS.md` on approximated data that is only C1).
+#[test]
+fn a_strip_turning_more_than_once_is_cut_along_meridians() {
+    let body = format!(
+        "
+#100=CYLINDRICAL_SURFACE('',#8,1.);
+{}{}
+#120=CARTESIAN_POINT('',(1.,0.,0.));
+#121=VERTEX_POINT('',#120);
+#122=CARTESIAN_POINT('',(-1.,0.,0.375));
+#123=VERTEX_POINT('',#122);
+#124=CARTESIAN_POINT('',(-1.,0.,0.4375));
+#125=VERTEX_POINT('',#124);
+#126=CARTESIAN_POINT('',(1.,0.,0.0625));
+#127=VERTEX_POINT('',#126);
+#130=VECTOR('',#6,1.);
+#131=LINE('',#122,#130);
+#132=LINE('',#120,#130);
+#140=EDGE_CURVE('',#121,#123,#200,.T.);
+#141=EDGE_CURVE('',#123,#125,#131,.T.);
+#142=EDGE_CURVE('',#127,#125,#300,.T.);
+#143=EDGE_CURVE('',#121,#127,#132,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#141,.T.);
+#152=ORIENTED_EDGE('',*,*,#142,.F.);
+#153=ORIENTED_EDGE('',*,*,#143,.F.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_OUTER_BOUND('',#154,.T.);
+#156=ADVANCED_FACE('flank',(#155),#100,.T.);
+#180=OPEN_SHELL('',(#156));
+#999=SHELL_BASED_SURFACE_MODEL('',(#180));",
+        helix_entities(200, 0.0),
+        helix_entities(300, 0.0625)
+    );
+    let part = import(&file(".MILLI.,.METRE.", &body));
+    let model = part.topology();
+    // One and a half turns, cut every half turn: three pieces at least.
+    assert!(model.faces.len() >= 3, "{} faces", model.faces.len());
+    assert!(part.face_id("import(i,s0,f0,q0)").is_ok());
+    assert!(part.edge_id("import(i,s0,f0,m0)").is_ok());
+    assert_bounds(model, [-1.0, -1.0, 0.0], [1.0, 1.0, 0.4375]);
+}
+
 #[test]
 fn lengths_are_read_in_millimetres() {
     let part = import(&file(".CENTI.,.METRE.", CYLINDER));
@@ -432,4 +658,96 @@ fn a_sheet_round_trips() {
     assert!(text.contains("SHELL_BASED_SURFACE_MODEL"));
     let back = round_trip(&part);
     assert!(back.topology().solids.is_empty());
+}
+
+/// `component` placed at `pose`.
+fn placed(
+    component: &std::sync::Arc<geop_ops::Component<S>>,
+    pose: geop_core_math::primitives::Pose<S>,
+) -> geop_ops::Instance<S> {
+    geop_ops::Instance {
+        component: component.clone(),
+        pose,
+        parameter: None,
+        fixed: true,
+        flexible: false,
+    }
+}
+
+/// An assembly — a base plate placing a peg twice, once turned to lie along
+/// `x`, and a subassembly placing the same peg — is written as products:
+/// one per distinct component, each placement an occurrence. Read back, it
+/// is flattened into its solids where they are placed.
+#[test]
+fn an_assembly_is_written_as_products_and_occurrences() {
+    use geop_core_math::primitives::{Pose, Quaternion};
+    use std::{collections::BTreeSet, sync::Arc};
+    let component = |file: &str, part: Part<S>| {
+        Arc::new(geop_ops::Component::new(
+            file.into(),
+            part,
+            BTreeSet::from([file.to_string()]),
+        ))
+    };
+    let mut peg = Part::new();
+    revolved_cylinder(
+        &mut peg,
+        "c",
+        v(0.0, 0.0, 0.0),
+        S::from_f64(0.5),
+        S::from_f64(2.0),
+    )
+    .unwrap();
+    let peg = component("parts/peg.geop", peg);
+    let at = |x: f64, y: f64, z: f64| Pose::new(v(x, y, z), Quaternion::identity()).unwrap();
+    let mut sub = Part::new();
+    sub.add_instance(placed(&peg, at(0.0, 0.0, 1.0)), "p")
+        .unwrap();
+    let sub = component("sub.geop", sub);
+
+    let mut part = Part::new();
+    cube_solid(&mut part, "base", v(0.0, 0.0, -1.0), v(10.0, 10.0, 0.0)).unwrap();
+    part.add_instance(placed(&peg, at(2.0, 2.0, 0.0)), "a")
+        .unwrap();
+    // About `y` by a quarter turn: the peg's `z` onto `x`.
+    let half = std::f64::consts::FRAC_PI_4;
+    let turned = Pose::new(
+        v(9.0, 8.0, 0.5),
+        Quaternion::new(
+            S::from_f64(half.cos()),
+            S::ZERO,
+            S::from_f64(half.sin()),
+            S::ZERO,
+        ),
+    )
+    .unwrap();
+    part.add_instance(placed(&peg, turned), "b").unwrap();
+    part.add_instance(placed(&sub, at(8.0, 2.0, 0.0)), "s")
+        .unwrap();
+
+    let text = write_step(&part, "robot").unwrap();
+    // To check it in another CAD system: written where STEP_EXPORT_DIR says.
+    if let Some(dir) = std::env::var_os("STEP_EXPORT_DIR") {
+        std::fs::write(std::path::Path::new(&dir).join("robot.step"), &text).unwrap();
+    }
+    let count = |what: &str| text.matches(what).count();
+    assert_eq!(
+        count("=PRODUCT('"),
+        3,
+        "the assembly, the subassembly, the peg"
+    );
+    assert_eq!(count("NEXT_ASSEMBLY_USAGE_OCCURRENCE"), 4);
+    assert_eq!(count("ITEM_DEFINED_TRANSFORMATION"), 4);
+    assert_eq!(
+        count("MANIFOLD_SOLID_BREP"),
+        2,
+        "the base and the peg, once each"
+    );
+    assert!(text.contains("PRODUCT('peg','peg'"));
+
+    let back = import(&text);
+    let model = back.topology();
+    assert_eq!(model.solids.len(), 4, "the base and three pegs");
+    // The pegs reach z = 2 (a), 3 (in the subassembly) and x = 11 (b).
+    assert_bounds(model, [0.0, 0.0, -1.0], [11.0, 10.0, 3.0]);
 }

@@ -6,27 +6,32 @@
 //! weight is not one. Lengths are millimetres: a length of one in the
 //! kernel is one millimetre.
 //!
-//! The parts placed in the part are written flattened: their bodies moved
-//! to where they are placed, as bodies of the one product, not as an
-//! assembly of products.
+//! An assembly is written as one: each distinct component placed in it —
+//! every instance sharing one built component — a product of its own with
+//! its bodies in its own frame, and each placement a
+//! `NEXT_ASSEMBLY_USAGE_OCCURRENCE` of it in the product it is placed in,
+//! with an `ITEM_DEFINED_TRANSFORMATION` saying where. A part placing
+//! others has a `SHAPE_REPRESENTATION` of the placements, its own bodies
+//! related to it; a part placing none has its bodies' representation as
+//! its shape.
 //!
 //! Every value is written as its interval's midpoint. Entities are named
 //! after the part's names for them, so a face picked as `extrude(E,end)`
 //! here is called that in the file.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::{Motion, Pose},
+    primitives::Pose,
     scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
 };
-use geop_ops::{Part, RefId, operation::INSTANCE_SEPARATOR};
+use geop_ops::{Component, Part, RefId};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 
@@ -36,52 +41,12 @@ use crate::part21::{Exchange, Instance, Record, Value};
 /// topology — far tighter than any feature.
 const UNCERTAINTY: f64 = 1e-7;
 
-/// The part `part` — its bodies and those of the parts placed in it — as
-/// the text of a STEP file whose product is called `name`.
+/// The part `part` — its bodies and the parts placed in it — as the text of
+/// a STEP file whose product is called `name`.
 pub fn write_step<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<String> {
     let mut writer = Writer::default();
     let context = writer.context();
-    let mut solids = Vec::new();
-    let mut sheets = Vec::new();
-    writer.part(part, &Pose::identity(), "", &mut solids, &mut sheets)?;
-
-    let origin = writer.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
-    let product = writer.product(name, context.application);
-    let mut items = vec![Value::Ref(origin)];
-    items.extend(solids.iter().map(|&id| Value::Ref(id)));
-    let shape = writer.add(
-        "ADVANCED_BREP_SHAPE_REPRESENTATION",
-        vec![
-            string(name),
-            Value::List(items),
-            Value::Ref(context.representation),
-        ],
-    );
-    writer.add(
-        "SHAPE_DEFINITION_REPRESENTATION",
-        vec![Value::Ref(product), Value::Ref(shape)],
-    );
-    if !sheets.is_empty() {
-        let mut items = vec![Value::Ref(origin)];
-        items.extend(sheets.iter().map(|&id| Value::Ref(id)));
-        let surfaces = writer.add(
-            "MANIFOLD_SURFACE_SHAPE_REPRESENTATION",
-            vec![
-                string(name),
-                Value::List(items),
-                Value::Ref(context.representation),
-            ],
-        );
-        writer.add(
-            "SHAPE_REPRESENTATION_RELATIONSHIP",
-            vec![
-                string(""),
-                string(""),
-                Value::Ref(shape),
-                Value::Ref(surfaces),
-            ],
-        );
-    }
+    writer.assembly(part, name, &context, &mut HashMap::new())?;
 
     let file_name = format!("{name}.step");
     Ok(Exchange {
@@ -112,6 +77,24 @@ pub fn write_step<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<String> {
         instances: writer.instances,
     }
     .write())
+}
+
+/// The product a component is called: its program's file name, without
+/// folders and extension.
+fn component_name(file: &str) -> &str {
+    let base = file.rsplit(['/', '\\']).next().unwrap_or(file);
+    base.rsplit_once('.').map_or(base, |(stem, _)| stem)
+}
+
+/// A product written: what an assembly placing it refers to.
+#[derive(Clone, Copy)]
+struct Written {
+    /// Its `PRODUCT_DEFINITION`.
+    definition: u64,
+    /// The representation of its shape.
+    shape: u64,
+    /// The placement in `shape` its own frame is.
+    origin: u64,
 }
 
 fn string(s: &str) -> Value {
@@ -273,8 +256,9 @@ impl Writer {
     }
 
     /// The product `name` and its definition, down to the
-    /// `PRODUCT_DEFINITION_SHAPE` its shape representation is attached to.
-    fn product(&mut self, name: &str, application: u64) -> u64 {
+    /// `PRODUCT_DEFINITION_SHAPE` its shape representation is attached to:
+    /// the `PRODUCT_DEFINITION` and that.
+    fn product(&mut self, name: &str, application: u64) -> (u64, u64) {
         let context = self.add(
             "PRODUCT_CONTEXT",
             vec![string(""), Value::Ref(application), string("mechanical")],
@@ -308,20 +292,174 @@ impl Writer {
                 Value::Ref(definition_context),
             ],
         );
-        self.add(
+        let shape = self.add(
             "PRODUCT_DEFINITION_SHAPE",
             vec![string(""), string(""), Value::Ref(definition)],
-        )
+        );
+        (definition, shape)
     }
 
-    /// Every body of `part`, moved by `pose`, and those of the parts placed
-    /// in it: solids onto `solids`, sheets onto `sheets`. Entities are named
-    /// `prefix` and then their names in `part`.
-    fn part<S: Scalar>(
+    /// The placement the pose `pose` moves the frame of what it places to.
+    fn pose<S: Scalar>(&mut self, pose: &Pose<S>) -> u64 {
+        let at = |p: [f64; 3]| {
+            let q = pose.apply(&Vector3::from_array(p.map(S::from_f64)));
+            [q[0].to_f64(), q[1].to_f64(), q[2].to_f64()]
+        };
+        let origin = at([0.0; 3]);
+        let direction = |p: [f64; 3]| {
+            let q = at(p);
+            let d = [q[0] - origin[0], q[1] - origin[1], q[2] - origin[2]];
+            let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            d.map(|c| c / n)
+        };
+        let (axis, reference) = (direction([0.0, 0.0, 1.0]), direction([1.0, 0.0, 0.0]));
+        self.placement(origin, axis, reference)
+    }
+
+    /// The part `part` as the product `name`, and each component placed in
+    /// it as a product of its own — once, however often it is placed:
+    /// `written` keeps those already written, by component.
+    fn assembly<S: Scalar>(
         &mut self,
         part: &Part<S>,
-        pose: &Pose<S>,
-        prefix: &str,
+        name: &str,
+        context: &Context,
+        written: &mut HashMap<*const Component<S>, Written>,
+    ) -> GeopResult<Written> {
+        let mut placed = Vec::new();
+        for (id, instance) in part.instances() {
+            let key = Arc::as_ptr(&instance.component);
+            let child = match written.get(&key) {
+                Some(&child) => child,
+                None => {
+                    let child = self.assembly(
+                        instance.part(),
+                        component_name(&instance.component.file),
+                        context,
+                        written,
+                    )?;
+                    written.insert(key, child);
+                    child
+                }
+            };
+            placed.push((
+                part.name_of(id).unwrap_or_default().to_string(),
+                child,
+                &instance.pose,
+            ));
+        }
+
+        let mut solids = Vec::new();
+        let mut sheets = Vec::new();
+        self.bodies(part, &mut solids, &mut sheets)?;
+        let (definition, product_shape) = self.product(name, context.application);
+        let origin = self.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+        let representation = |writer: &mut Self, kind: &str, items: &[u64]| {
+            let mut all = vec![Value::Ref(origin)];
+            all.extend(items.iter().map(|&id| Value::Ref(id)));
+            writer.add(
+                kind,
+                vec![
+                    string(name),
+                    Value::List(all),
+                    Value::Ref(context.representation),
+                ],
+            )
+        };
+        let relate = |writer: &mut Self, a: u64, b: u64| {
+            writer.add(
+                "SHAPE_REPRESENTATION_RELATIONSHIP",
+                vec![string(""), string(""), Value::Ref(a), Value::Ref(b)],
+            );
+        };
+        let brep = (placed.is_empty() || !solids.is_empty())
+            .then(|| representation(self, "ADVANCED_BREP_SHAPE_REPRESENTATION", &solids));
+        let surfaces = (!sheets.is_empty())
+            .then(|| representation(self, "MANIFOLD_SURFACE_SHAPE_REPRESENTATION", &sheets));
+        let axes: Vec<u64> = placed.iter().map(|(_, _, pose)| self.pose(pose)).collect();
+        // A part placing none is its bodies; one placing others is the
+        // placements, its bodies related to them.
+        let shape = match brep {
+            Some(brep) if placed.is_empty() => brep,
+            _ => {
+                let shape = representation(self, "SHAPE_REPRESENTATION", &axes);
+                if let Some(brep) = brep {
+                    relate(self, shape, brep);
+                }
+                shape
+            }
+        };
+        if let Some(surfaces) = surfaces {
+            relate(self, shape, surfaces);
+        }
+        self.add(
+            "SHAPE_DEFINITION_REPRESENTATION",
+            vec![Value::Ref(product_shape), Value::Ref(shape)],
+        );
+
+        for ((instance, child, _), axis) in placed.iter().zip(axes) {
+            let occurrence = self.add(
+                "NEXT_ASSEMBLY_USAGE_OCCURRENCE",
+                vec![
+                    string(instance),
+                    string(instance),
+                    string(""),
+                    Value::Ref(definition),
+                    Value::Ref(child.definition),
+                    Value::Null,
+                ],
+            );
+            let occurrence_shape = self.add(
+                "PRODUCT_DEFINITION_SHAPE",
+                vec![string(""), string(""), Value::Ref(occurrence)],
+            );
+            let transformation = self.add(
+                "ITEM_DEFINED_TRANSFORMATION",
+                vec![
+                    string(""),
+                    string(""),
+                    Value::Ref(child.origin),
+                    Value::Ref(axis),
+                ],
+            );
+            let record = |name: &str, args: Vec<Value>| Record {
+                name: name.into(),
+                args,
+            };
+            let relationship = self.add_complex(vec![
+                record(
+                    "REPRESENTATION_RELATIONSHIP",
+                    vec![
+                        string(""),
+                        string(""),
+                        Value::Ref(child.shape),
+                        Value::Ref(shape),
+                    ],
+                ),
+                record(
+                    "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION",
+                    vec![Value::Ref(transformation)],
+                ),
+                record("SHAPE_REPRESENTATION_RELATIONSHIP", vec![]),
+            ]);
+            self.add(
+                "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION",
+                vec![Value::Ref(relationship), Value::Ref(occurrence_shape)],
+            );
+        }
+        Ok(Written {
+            definition,
+            shape,
+            origin,
+        })
+    }
+
+    /// Every body of `part` itself, in its own frame: solids onto
+    /// `solids`, sheets onto `sheets`. Entities are named as `part` names
+    /// them.
+    fn bodies<S: Scalar>(
+        &mut self,
+        part: &Part<S>,
         solids: &mut Vec<u64>,
         sheets: &mut Vec<u64>,
     ) -> GeopResult<()> {
@@ -329,8 +467,7 @@ impl Writer {
         let mut body = BodyWriter {
             writer: self,
             model,
-            motion: pose.motion(),
-            name: |id: RefId| format!("{prefix}{}", part.name_of(id).unwrap_or_default()),
+            name: |id: RefId| part.name_of(id).unwrap_or_default().to_string(),
             vertices: HashMap::new(),
             edges: HashMap::new(),
         };
@@ -388,19 +525,6 @@ impl Writer {
                     .add("SHELL_BASED_SURFACE_MODEL", vec![string(""), refs([shell])]),
             );
         }
-        for (id, instance) in part.instances() {
-            let prefix = format!(
-                "{prefix}{}{INSTANCE_SEPARATOR}",
-                part.name_of(id).unwrap_or_default()
-            );
-            self.part(
-                instance.part(),
-                &pose.compose(&instance.pose),
-                &prefix,
-                solids,
-                sheets,
-            )?;
-        }
         Ok(())
     }
 }
@@ -410,24 +534,22 @@ impl Writer {
 struct BodyWriter<'w, 'm, S: Scalar, N> {
     writer: &'w mut Writer,
     model: &'m Model<S>,
-    motion: Motion<S>,
     name: N,
     vertices: HashMap<VertexId, u64>,
     edges: HashMap<EdgeId, u64>,
 }
 
 impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
-    fn moved(&self, p: &Vector3<S>) -> [f64; 3] {
-        let p = self.motion.apply(p);
+    fn coordinates(p: &Vector3<S>) -> [f64; 3] {
         [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
     }
 
     /// The homogeneous control point `cp` as STEP writes it: the point,
-    /// moved, and its weight.
+    /// and its weight.
     fn control_point(&mut self, cp: &geop_core_math::vector::Vector4<S>) -> GeopResult<(u64, f64)> {
         let w = cp[3];
         let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
-        let p = self.moved(&p);
+        let p = Self::coordinates(&p);
         Ok((self.writer.point(p), w.to_f64()))
     }
 
@@ -435,7 +557,7 @@ impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
         if let Some(&step) = self.vertices.get(&id) {
             return Ok(step);
         }
-        let p = self.moved(&self.model.get_vertex(id)?.point);
+        let p = Self::coordinates(&self.model.get_vertex(id)?.point);
         let point = self.writer.point(p);
         let step = self.writer.add(
             "VERTEX_POINT",

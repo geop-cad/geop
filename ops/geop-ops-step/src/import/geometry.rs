@@ -283,7 +283,11 @@ pub enum Profile {
     /// `(r cos v, r sin v)`, `v` from `-pi/2` to `pi/2`.
     Sphere { radius: f64 },
     /// A circle off the axis, `(rho + r cos v, h + r sin v)`: a torus'
-    /// tube, or any circle's.
+    /// tube, or any circle's. One reaching across the axis (`rho <= r`)
+    /// makes two sheets meeting at the poles where it crosses the axis: its
+    /// arc on this side turned, `v` between the poles — an apple — and the
+    /// arc past the axis turned, a lemon inside it (see
+    /// [`Revolved::past_axis`]).
     Circle { rho: f64, h: f64, radius: f64 },
     /// A curve of its own: `v` its parameter.
     Curve(NurbsCurve),
@@ -303,7 +307,26 @@ impl Revolved {
                 h: h0,
                 drho,
                 dh,
-            } => ((rho - r0) * drho + (h - h0) * dh) / (drho * drho + dh * dh),
+            } => {
+                // A line crossing the axis — a cone's — reaches past its
+                // apex to negative radii: a point there is the profile's at
+                // the radius taken negative, half a turn round. Whichever
+                // of the two lies on the line is the point's.
+                let along =
+                    |rho: f64| ((rho - r0) * drho + (h - h0) * dh) / (drho * drho + dh * dh);
+                let off = |rho: f64| ((rho - r0) * dh - (h - h0) * drho).abs();
+                if *drho != 0.0 && off(-rho) < off(rho) {
+                    let angle = angle.map(|a| {
+                        if a > 0.0 {
+                            a - std::f64::consts::PI
+                        } else {
+                            a + std::f64::consts::PI
+                        }
+                    });
+                    return (angle, along(-rho));
+                }
+                along(rho)
+            }
             Profile::Curve(_) => h,
             Profile::Sphere { .. } => h.atan2(rho),
             Profile::Circle { rho: rc, h: hc, .. } => (h - hc).atan2(rho - rc),
@@ -311,16 +334,63 @@ impl Revolved {
         (angle, v)
     }
 
+    /// For a circle crossing the axis, how much nearer `p` lies to the
+    /// sheet its arc past the axis turns into than to the one its arc on
+    /// this side does: positive where `p` is on the sheet past the axis.
+    pub fn past_axis(&self, p: P3) -> Option<f64> {
+        let Profile::Circle {
+            rho: rc,
+            h: hc,
+            radius,
+        } = self.profile
+        else {
+            return None;
+        };
+        if rc > radius {
+            return None;
+        }
+        let [x, y, h] = self.frame.local(p);
+        let rho = x.hypot(y);
+        let off = |rho: f64| ((rho - rc).hypot(h - hc) - radius).abs();
+        Some(off(rho) - off(-rho))
+    }
+
+    /// The sheet the arc of a circle crossing the axis past it turns into,
+    /// as a surface of its own: the circle mirrored in the axis, turned on
+    /// this side. Its profile parameter runs the other way round the
+    /// circle, so its normal is the other way round to the file's.
+    pub fn mirrored(&self) -> Revolved {
+        let profile = match self.profile {
+            Profile::Circle { rho, h, radius } => Profile::Circle {
+                rho: -rho,
+                h,
+                radius,
+            },
+            ref other => other.clone(),
+        };
+        Revolved {
+            profile,
+            ..self.clone()
+        }
+    }
+
     /// Whether the profile's parameter `v` goes once round, as a torus'
     /// does: then it is an angle too.
     pub fn v_is_angle(&self) -> bool {
-        matches!(self.profile, Profile::Circle { .. })
+        matches!(self.profile, Profile::Circle { rho, radius, .. } if rho > radius)
     }
 
     /// Where the profile meets the axis, by its parameter: the poles of the
     /// surface.
     pub fn poles(&self) -> Vec<f64> {
         match &self.profile {
+            // A circle reaching the axis meets it where its radius is none,
+            // either side of its far point from the axis: the surface is
+            // the arc between, turned.
+            Profile::Circle { rho, radius, .. } if rho <= radius => {
+                let v = (-rho / radius).acos();
+                vec![-v, v]
+            }
             Profile::Circle { .. } | Profile::Curve(_) => Vec::new(),
             Profile::Line { drho, .. } if *drho == 0.0 => Vec::new(),
             Profile::Line { rho, drho, .. } => vec![-rho / drho],
@@ -366,6 +436,30 @@ impl Revolved {
             }
             Profile::Curve(curve) => curve.to_nurbs(),
         }
+    }
+
+    /// The parallel at the profile parameter `v` — the circle about the
+    /// axis the profile's point there turns along — from the angle `from`
+    /// counter-clockwise about the axis to `to`: all the way round where
+    /// they are one.
+    pub fn parallel<S: Scalar>(&self, v: f64, from: f64, to: f64) -> GeopResult<NurbCurve3D<S>> {
+        let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
+        let p = self.profile_point(v);
+        let [rho, _, h] = self.frame.local(p);
+        let at =
+            |angle: f64| -> GeopResult<Vector3<S>> { Ok(self.turn::<S>(angle)?.apply(&s3(p))) };
+        let start = at(from)?;
+        let end = if to == from { start } else { at(to)? };
+        Arc {
+            circle: Circle {
+                center: s3(self.frame.point([0.0, 0.0, h])),
+                normal: s3(self.frame.z),
+                radius: S::from_f64(rho),
+            },
+            start,
+            end,
+        }
+        .to_curve()
     }
 
     pub fn axis<S: Scalar>(&self) -> GeopResult<Axis<S>> {
@@ -1017,13 +1111,6 @@ impl<'a> Reader<'a> {
             "TOROIDAL_SURFACE" => {
                 let major = positive(2, "major radius")?;
                 let minor = positive(3, "minor radius")?;
-                if minor >= major {
-                    return Err(unsupported(
-                        id,
-                        instance,
-                        "a torus whose tube reaches its axis (minor radius not less than major)",
-                    ));
-                }
                 revolved(Profile::Circle {
                     rho: major,
                     h: 0.0,
@@ -1130,12 +1217,6 @@ impl<'a> Reader<'a> {
                                 ..frame
                             };
                             (frame, Profile::Sphere { radius }, along)
-                        } else if c[0] < radius {
-                            return Err(unsupported(
-                                id,
-                                instance,
-                                "a surface of revolution of a circle reaching across its axis",
-                            ));
                         } else {
                             (
                                 frame,

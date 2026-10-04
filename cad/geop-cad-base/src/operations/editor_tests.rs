@@ -2020,3 +2020,41 @@ fn the_bill_of_materials_is_asked_for_and_exported() {
     );
     assert!(rows[4].contains("Total"), "{csv}");
 }
+
+/// The arm, exported as STEP the way the front end asks: one product for
+/// the arm and one for the link it places three times, each placement an
+/// occurrence named after its step — and read back, the three links where
+/// the arm has them.
+#[test]
+fn an_assembly_is_exported_as_step_products() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "arm".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let json = editor.handle_json(r#"{"command": "export_step"}"#).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    assert!(
+        update["export"]["name"]
+            .as_str()
+            .unwrap()
+            .ends_with(".step")
+    );
+    let text = update["export"]["text"].as_str().unwrap();
+    assert_eq!(
+        text.matches("=PRODUCT('").count(),
+        2,
+        "the arm and the link"
+    );
+    assert!(text.contains("PRODUCT('link','link'"));
+    for occurrence in ["upper", "fore", "hand"] {
+        assert!(
+            text.contains(&format!("NEXT_ASSEMBLY_USAGE_OCCURRENCE('{occurrence}'")),
+            "{occurrence} is placed"
+        );
+    }
+    let bodies = geop_ops_step::read_step::<S>(text).unwrap();
+    assert_eq!(bodies.len(), 3, "the link, once where each step places it");
+}
