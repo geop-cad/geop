@@ -158,6 +158,33 @@ await check("every operation opens on a part", async () => {
   return result;
 });
 
+// ── a kernel that crashes ───────────────────────────────────────────────
+
+/**
+ * Make the kernel panic, as a bug would (the `crash` command, through the
+ * app's `geopCommand`), and check that the app comes back with the program
+ * as it was, says so, and keeps working. The panic's own console messages
+ * are what is expected, not page errors.
+ */
+async function crashKernel(page, errors) {
+  const before = await builtCleanly();
+  const logged = errors.length;
+  await page.evaluate(() => window.geopCommand({ command: "crash" }));
+  const after = await settle(page);
+  const shown = (await shownErrors(page)).join(" | ");
+  expect(/kernel crashed/.test(shown) && /asked to crash/.test(shown), `the crash was not shown: ${shown || "nothing shown"}`);
+  expect(/restarted/.test(shown), `the restart was not said: ${shown}`);
+  expect(after === before, `the program came back as ${after}, not ${before}`);
+  const unexpected = errors.splice(logged).filter((e) => !/panicked|asked to crash|unreachable/.test(e));
+  errors.push(...unexpected);
+  // It still works: an operation opens, and the error is gone.
+  await operation("Sketch").click();
+  await settle(page);
+  expect((await popup.count()) === 1, "Sketch did not open after the crash");
+  await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
+  return builtCleanly();
+}
+
 // ── a part made by clicks ───────────────────────────────────────────────
 
 /** The operation button `label`. */
@@ -215,6 +242,12 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   const centre = await massRow("Centre");
   expect(Math.abs(centre[1] - 1) < 1e-3, `centre ${centre.join(", ")}, expected y = 1`);
   return `${stats}, volume ${volume} mm³`;
+});
+
+await check("a kernel that crashes is restarted with the program", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  return crashKernel(page, errors);
 });
 
 // ── exports ─────────────────────────────────────────────────────────────

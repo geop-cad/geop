@@ -434,7 +434,9 @@ export type Command =
   /** Write the bill of materials of the part shown as a CSV file: the update's `export`. */
   | { command: "export_bom"; structure: BomStructure }
   /** Write the flat pattern of a sheet-metal body — `solid`, else the newest — as DXF for cutting: the update's `export`. */
-  | { command: "export_flat_pattern"; solid?: string };
+  | { command: "export_flat_pattern"; solid?: string }
+  /** Panic, on purpose: how recovering from a kernel that crashed is checked (`e2e/`). */
+  | { command: "crash" };
 
 /** A question asked of the part as drawn — see `geop_cad_base::inspect::Query`. */
 export type Query = "mass_properties" | "interference" | { bom: { structure: BomStructure } };

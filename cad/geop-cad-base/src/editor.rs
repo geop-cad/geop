@@ -191,6 +191,10 @@ pub enum Command<S: Scalar> {
         #[serde(default)]
         solid: Option<String>,
     },
+    /// Panic, on purpose: how the front ends' recovery from a kernel that
+    /// crashed is checked (`web/e2e/`). A panic anywhere else is a bug;
+    /// this one stands in for it.
+    Crash,
 }
 
 /// How finely the curved faces of an exported mesh — an STL file, a robot's
@@ -1082,6 +1086,7 @@ impl<S: Scalar> Editor<S> {
                 });
                 Changed::Nothing
             }
+            Command::Crash => panic!("the kernel was asked to crash"),
             Command::ExportFlatPattern { solid } => {
                 let (_, dxf) =
                     geop_ops_sheetmetal::flat_pattern_dxf(self.runner.part(), solid.as_deref())?;

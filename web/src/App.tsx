@@ -24,7 +24,8 @@ import {
   type Update,
   type Value,
 } from "./geop";
-import { host } from "./backend";
+import { host, onRestart } from "./backend";
+import { KernelCrashed } from "./crash";
 import { DEFAULT_POSE, headOnPose, type CameraPose, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
 import { Explorer } from "./Explorer";
@@ -191,6 +192,16 @@ function App() {
       }
       return update;
     } catch (e) {
+      if (e instanceof KernelCrashed) {
+        // A fresh kernel has the program as it was before: show it.
+        const shown = await dispatch({ command: "show" });
+        if (shown) {
+          setError(
+            `${e.message}. This is a bug in geop: please report it. The kernel was restarted with your program as it was before.`,
+          );
+        }
+        return null;
+      }
       setError(String(e));
       return null;
     } finally {
@@ -198,7 +209,24 @@ function App() {
     }
   }
 
+  // Any command, run as the app runs it: for the end-to-end checks
+  // (`e2e/`) and the browser's console.
   useEffect(() => {
+    (window as unknown as { geopCommand: typeof dispatch }).geopCommand = dispatch;
+  });
+
+  useEffect(() => {
+    // In the browser, a kernel that crashed is restarted with the files,
+    // and the one edited as the kernel last had it (see `backend.ts`).
+    if (!host) {
+      onRestart(() => {
+        const { files, active } = workspaceRef.current;
+        return [
+          JSON.stringify({ command: "files", files } satisfies Command),
+          JSON.stringify({ command: "load", program: parseProgram(files[active]), path: active } satisfies Command),
+        ];
+      });
+    }
     loadGeop()
       .then(async () => {
         if (host) {
