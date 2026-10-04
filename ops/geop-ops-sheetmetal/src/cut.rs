@@ -10,7 +10,6 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::Shape;
-use geop_core_topology::Body;
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
@@ -19,10 +18,7 @@ use geop_ops::{
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    sheet::{Cut, FlatEdge, Placement, Sheet},
-    thicken::thicken,
-};
+use crate::sheet::{Cut, FlatEdge, Placement, Sheet};
 
 /// Cuts through a sheet-metal body along a sketch, for the operation `C`:
 /// the body is consumed and rebuilt as `sheet_cut(C)`, every face, edge and
@@ -148,13 +144,9 @@ impl Operation for SheetCut {
             loops,
             name: namer.clone(),
         });
-        let folded = sheet.folded().with_context(ctx)?;
-        let id = part.solid_id(&solid)?;
-        part.assemble_sheet(&[Body::Solid(id)], &[])
+        sheet
+            .replace(&mut part, &solid, &namer.root())
             .with_context(ctx)?;
-        let name = namer.root();
-        thicken(&mut part, &folded, &name, &|n| n).with_context(ctx)?;
-        part.set_body_data(&name, sheet).with_context(ctx)?;
         Ok(part)
     }
 }

@@ -260,7 +260,11 @@ struct Wrap<S: Scalar> {
     out: Vector2<S>,
     length: S,
     neutral: S,
-    angle: S,
+    /// How many rational quadratic spans its arcs are built of (see
+    /// [`spans`]), and the angle each turns.
+    spans: usize,
+    step: S,
+    /// `tan(step / 4)`.
     quarter_tan: S,
     /// Its faces, A side and B side.
     strips: (NurbSurface3D<S>, NurbSurface3D<S>),
@@ -288,18 +292,18 @@ impl<S: Scalar> Wrap<S> {
             let place = &sheet.flats[*f].place;
             Ok((place.point(own), place.offset(t).point(own)))
         };
-        let apex = |p: &Vector3<S>, r: S| p.add(&frame.m.prod_scalar(r.mul(frame.half_tan)));
-        let w = frame.half_cos;
-        let arc = |p: Pair<S>, c: Pair<S>| -> GeopResult<(NurbCurve3D<S>, NurbCurve3D<S>)> {
-            Ok((
-                arc3(p.0, apex(&p.0, frame.r_a), c.0, w)?,
-                arc3(p.1, apex(&p.1, frame.r_b), c.1, w)?,
-            ))
+        let (s0, s1) = {
+            let turn = |p: Pair<S>, c: Pair<S>| -> GeopResult<(NurbCurve3D<S>, NurbCurve3D<S>)> {
+                Ok((
+                    turn(&frame, p.0, c.0, S::ZERO, bend.angle, frame.r_a)?,
+                    turn(&frame, p.1, c.1, S::ZERO, bend.angle, frame.r_b)?,
+                ))
+            };
+            (
+                turn(corner(pa)?, corner(ca)?).with_context(ctx)?,
+                turn(corner(pb)?, corner(cb)?).with_context(ctx)?,
+            )
         };
-        let (s0, s1) = (
-            arc(corner(pa)?, corner(ca)?).with_context(ctx)?,
-            arc(corner(pb)?, corner(cb)?).with_context(ctx)?,
-        );
         // `u` from the parent across to the child, `v` along the parent's
         // edge: `∂u × ∂v = m × tau = n`.
         let strip = |a: &NurbCurve3D<S>, b: &NurbCurve3D<S>| {
@@ -320,14 +324,20 @@ impl<S: Scalar> Wrap<S> {
         let run = layout.vertices[pb].at.sub(&origin);
         let along = run.normalize().with_context(ctx)?;
         let neutral = bend.radius.add(S::from_f64(sheet.rules.k_factor).mul(t));
-        let quarter = bend.angle.div(S::from_f64(4.0))?;
+        let spans = spans(bend.angle);
+        let step = match spans {
+            1 => bend.angle,
+            n => bend.angle.div(S::from_i64(n as i64))?,
+        };
+        let quarter = step.div(S::from_f64(4.0))?;
         Ok(Self {
             origin,
             out: Vector2::from_array([along[1], along[0].neg()]),
             along,
             length: run.norm(),
             neutral,
-            angle: bend.angle,
+            spans,
+            step,
             quarter_tan: quarter.sin().div(quarter.cos())?,
             strips,
             sides: [s0, s1],
@@ -373,11 +383,22 @@ impl<S: Scalar> Wrap<S> {
     }
 
     /// The parameters on the bend's faces of a point `along` the axis at
-    /// angle `theta`.
+    /// angle `theta`: in the span the angle falls in — at a joint between
+    /// two, either gives the same point, so which is a free choice.
     fn uv(&self, along: S, theta: S) -> GeopResult<Vector2<S>> {
-        let half = theta.sub(self.angle.div(S::TWO)?).div(S::TWO)?;
+        let span =
+            ((theta.to_f64() / self.step.to_f64()).floor().max(0.0) as usize).min(self.spans - 1);
+        let local = match span {
+            0 => theta,
+            j => theta.sub(self.step.mul(S::from_i64(j as i64))),
+        };
+        let half = local.sub(self.step.div(S::TWO)?).div(S::TWO)?;
         let tan = half.sin().div(half.cos())?;
-        let u = S::ONE.add(tan.div(self.quarter_tan)?).div(S::TWO)?;
+        let t = S::ONE.add(tan.div(self.quarter_tan)?).div(S::TWO)?;
+        let u = match self.spans {
+            1 => t,
+            n => t.add(S::from_i64(span as i64)).div(S::from_i64(n as i64))?,
+        };
         Ok(Vector2::from_array([u, along.div(self.length)?]))
     }
 
@@ -464,31 +485,12 @@ impl<S: Scalar> Wrap<S> {
                 let (_, from) = self.coords(&start_point(&edge.curve)?)?;
                 let (_, to) = self.coords(&end_point(&edge.curve)?)?;
                 Ok((
-                    self.arc(start.0, end.0, from, to, self.frame.r_a)?,
-                    self.arc(start.1, end.1, from, to, self.frame.r_b)?,
+                    turn(&self.frame, start.0, end.0, from, to, self.frame.r_a)?,
+                    turn(&self.frame, start.1, end.1, from, to, self.frame.r_b)?,
                 ))
             }
             Run::Wrapped => self.wrapped(&edge.curve, start, end),
         }
-    }
-
-    /// The arc round the axis from `p`, at angle `from`, to `q`, at angle
-    /// `to`, `radius` from it: through where its end tangents meet.
-    fn arc(
-        &self,
-        p: Vector3<S>,
-        q: Vector3<S>,
-        from: S,
-        to: S,
-        radius: S,
-    ) -> GeopResult<NurbCurve3D<S>> {
-        let f = &self.frame;
-        let half = to.sub(from).div(S::TWO)?;
-        let tangent =
-            f.m.prod_scalar(from.cos())
-                .add(&f.n.prod_scalar(f.sigma.mul(from.sin())));
-        let apex = p.add(&tangent.prod_scalar(radius.mul(half.sin().div(half.cos())?)));
-        arc3(p, apex, q, half.cos())
     }
 
     /// The layout curve `curve` wrapped onto both sides, from `start` to
@@ -569,6 +571,90 @@ impl<S: Scalar> Wrap<S> {
             .collect::<GeopResult<Vec<Vec<_>>>>()?;
         NurbCurve2D::interpolate_enclosing(&points, &inside, 3)
     }
+}
+
+/// How many rational quadratic spans an arc turning `angle` is built of:
+/// one up to 120°, its middle weight `cos(angle / 2)` then at least a half,
+/// two beyond — up to the half turn of a hem, which one span cannot take.
+fn spans<S: Scalar>(angle: S) -> usize {
+    if angle.abs().to_f64() <= 2.0 * std::f64::consts::PI / 3.0 {
+        1
+    } else {
+        2
+    }
+}
+
+/// The arc round the axis of the bend `frame` from `p`, at angle `from`,
+/// to `q`, at angle `to`, `radius` from the axis: of [`spans`] rational
+/// quadratic spans, each through the point where its end tangents meet.
+fn turn<S: Scalar>(
+    frame: &BendFrame<S>,
+    p: Vector3<S>,
+    q: Vector3<S>,
+    from: S,
+    to: S,
+    radius: S,
+) -> GeopResult<NurbCurve3D<S>> {
+    let starts_flat = from.is_sharp() && from.could_be_equal(S::ZERO);
+    let delta = if starts_flat { to } else { to.sub(from) };
+    let n = spans(delta);
+    let step = match n {
+        1 => delta,
+        n => delta.div(S::from_i64(n as i64))?,
+    };
+    let half = step.div(S::TWO)?;
+    let (tan, weight) = (half.sin().div(half.cos())?, half.cos());
+    let direction = |theta: S, flat: bool| {
+        // Along the arc, and out from the axis, at `theta`.
+        if flat {
+            (frame.m, frame.n.prod_scalar(frame.sigma.neg()))
+        } else {
+            let (c, s) = (theta.cos(), theta.sin());
+            (
+                frame
+                    .m
+                    .prod_scalar(c)
+                    .add(&frame.n.prod_scalar(frame.sigma.mul(s))),
+                frame
+                    .m
+                    .prod_scalar(s)
+                    .sub(&frame.n.prod_scalar(frame.sigma.mul(c))),
+            )
+        }
+    };
+    if n == 1 {
+        let (tangent, _) = direction(from, starts_flat);
+        return arc3(p, p.add(&tangent.prod_scalar(radius.mul(tan))), q, weight);
+    }
+    let homogeneous =
+        |x: &Vector3<S>, w: S| Vector4::from_array([x[0].mul(w), x[1].mul(w), x[2].mul(w), w]);
+    let mut control_points = vec![homogeneous(&p, S::ONE)];
+    let mut knots = vec![S::ZERO; 3];
+    let mut at = p;
+    for j in 0..n {
+        let theta = if j == 0 {
+            from
+        } else {
+            from.add(step.mul(S::from_i64(j as i64)))
+        };
+        let (tangent, radial) = direction(theta, j == 0 && starts_flat);
+        let apex = at.add(&tangent.prod_scalar(radius.mul(tan)));
+        let next = if j + 1 == n {
+            q
+        } else {
+            let (_, out) = direction(from.add(step.mul(S::from_i64(j as i64 + 1))), false);
+            at.add(&out.sub(&radial).prod_scalar(radius))
+        };
+        control_points.push(homogeneous(&apex, weight));
+        control_points.push(homogeneous(&next, S::ONE));
+        if j + 1 < n {
+            let knot = S::from_f64((j + 1) as f64 / n as f64);
+            knots.extend([knot, knot]);
+        }
+        at = next;
+    }
+    knots.extend([S::ONE; 3]);
+    NurbCurve::try_new(2, control_points, knots)
 }
 
 /// How a curve of a bend's strip runs.

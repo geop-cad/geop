@@ -28,9 +28,12 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
 };
-use geop_ops::Namer;
+use geop_core_topology::Body;
+use geop_ops::{Namer, Part};
 use geop_ops_extrude_revolve::common::{embed_curve, end_point, line2, start_point};
 use serde::{Deserialize, Serialize};
+
+use crate::thicken::thicken;
 
 /// How a body's sheet metal is made and bent: what the base flange sets
 /// and every flange and the flat pattern of the body follow.
@@ -306,11 +309,6 @@ pub struct BendFrame<S: Scalar> {
     pub r_b: S,
     pub cos: S,
     pub sin: S,
-    /// `tan(angle / 2)`: how far the virtual sharp lies from where the bend
-    /// starts, per unit of radius.
-    pub half_tan: S,
-    /// `cos(angle / 2)`: the weight of the arcs' middle control points.
-    pub half_cos: S,
     /// A point on the axis.
     pub center: Vector3<S>,
 }
@@ -335,8 +333,6 @@ impl<S: Scalar> BendFrame<S> {
         } else {
             (S::ONE.neg(), radius, radius.add(thickness))
         };
-        let half = angle.div(S::TWO)?;
-        let half_cos = half.cos();
         Ok(Self {
             center: place.point(&a).add(&n.prod_scalar(sigma.mul(r_a))),
             tau,
@@ -347,8 +343,6 @@ impl<S: Scalar> BendFrame<S> {
             r_b,
             cos: angle.cos(),
             sin: angle.sin(),
-            half_tan: half.sin().div(half_cos)?,
-            half_cos,
         })
     }
 
@@ -492,6 +486,41 @@ impl<S: Scalar> Sheet<S> {
                 })
             })
             .collect()
+    }
+}
+
+impl<S: Scalar> Sheet<S> {
+    /// Builds the solid of this sheet, as it is bent, in `part` in place of
+    /// the solid `old` — named `name`, and recorded on it.
+    pub(crate) fn replace(self, part: &mut Part<S>, old: &str, name: &str) -> GeopResult<()> {
+        let folded = self.folded()?;
+        let id = part.solid_id(old)?;
+        part.assemble_sheet(&[Body::Solid(id)], &[])?;
+        thicken(part, &folded, name, &|n| n)?;
+        part.set_body_data(name, self)
+    }
+
+    /// The sheet-metal body of `part` with the edge `edge` on a flat's
+    /// outline: the solid, its sheet, and the edge as
+    /// [`Sheet::edge_named`] finds it. `what` is for the error: what is
+    /// bent from such an edge.
+    pub(crate) fn with_edge(
+        part: &Part<S>,
+        edge: &str,
+        what: &str,
+    ) -> GeopResult<(String, Self, (usize, usize, bool))> {
+        part.solid_names()
+            .into_iter()
+            .find_map(|solid| {
+                let sheet = part.body_data::<Sheet<S>>(&solid)?;
+                let at = sheet.edge_named(edge)?;
+                Some((solid, sheet.clone(), at))
+            })
+            .ok_or_else(|| {
+                GeopError::new(format!(
+                    "{edge:?} is no edge of a sheet-metal body's flat face on its outline: {what} is bent from one of those"
+                ))
+            })
     }
 }
 

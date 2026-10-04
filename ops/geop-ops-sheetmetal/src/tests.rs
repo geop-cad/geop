@@ -15,9 +15,9 @@ use geop_ops::{Design, NoFiles, Operation, Part, PlacedSketch};
 use geop_ops_rasterize::rasterize;
 
 use crate::{
-    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlangePosition, FlatPattern,
-    FlatPatternArgs, FlatPatternData, LengthReference, Relief, Sheet, SheetCut, SheetCutArgs,
-    SheetMetalRules,
+    BaseFlange, BaseFlangeArgs, Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, FlatPattern,
+    FlatPatternArgs, FlatPatternData, Hem, HemArgs, HemKind, LengthReference, Relief, Sheet,
+    SheetCut, SheetCutArgs, SheetMetalRules,
 };
 
 fn d(x: f64) -> Design {
@@ -88,6 +88,7 @@ fn flange(edge: &str) -> EdgeFlangeArgs {
         radius: None,
         offset_start: 0.0,
         offset_end: 0.0,
+        corner: Corner::Open,
     }
 }
 
@@ -781,4 +782,98 @@ fn notches_and_refused_cuts() {
         "base_flange(b,plate,b)",
     ));
     assert!(err.contains("not parallel"), "{err}");
+}
+
+/// A closed hem and an open one fold a plate's edges right back over it:
+/// valid bodies, as high as the fold — two thicknesses and the gap — and
+/// laid flat as long as the plate short of the fold, the half turn on the
+/// neutral surface, and the hem's flat.
+#[test]
+fn hems_fold_back_and_unfold_to_their_developed_length() {
+    let (t, r, k) = (0.1, 0.1, 0.44);
+    let square = || {
+        base(
+            sketched(polygon(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])),
+            rules(t, r, k),
+            1.0,
+        )
+    };
+    let hem = |kind, gap| HemArgs {
+        edge: "base_flange(b,k,c4,b)".into(),
+        kind,
+        length: 0.3,
+        gap,
+        offset_start: 0.0,
+        offset_end: 0.0,
+    };
+    for (kind, gap, inner) in [(HemKind::Closed, 0.0, r), (HemKind::Open, 0.06, 0.03)] {
+        let part = Hem.apply(square(), "h", &hem(kind, gap), &NoFiles).unwrap();
+        assert_valid(&part);
+        let sheet = part.body_data::<Sheet<S>>("hem(h)").unwrap();
+        assert!(sheet.bends[0].angle.could_be_equal(S::PI));
+        // Between vertices: the fold's outside, flush with the old edge,
+        // is no vertex.
+        let [x, y, z] = extent(&part);
+        assert!(x.could_be_equal(S::from_f64(1.0)), "{x:?}");
+        assert!(y.could_be_equal(S::from_f64(1.0 - (t + inner))), "{y:?}");
+        assert!(
+            z.could_be_equal(S::from_f64(2.0 * (t + inner))),
+            "{kind:?}: {z:?}"
+        );
+        let flat = unfold(part, "hem(h)");
+        assert_valid(&flat);
+        let s = S::from_f64;
+        let fold = s(inner + t);
+        let developed = s(1.0)
+            .sub(fold)
+            .add(S::PI.mul(s(inner).add(s(k * t))))
+            .add(s(0.3).sub(fold));
+        let [_, y, _] = extent(&flat);
+        assert!(
+            y.could_be_equal(developed),
+            "{kind:?}: {y:?} against {developed:?}"
+        );
+    }
+    let err = refused(Hem.apply(square(), "h", &hem(HemKind::Open, 0.0), &NoFiles));
+    assert!(err.contains("gap must be positive"), "{err}");
+    let mut short = hem(HemKind::Closed, 0.0);
+    short.length = 0.2;
+    let err = refused(Hem.apply(square(), "h", &short, &NoFiles));
+    assert!(err.contains("leaves nothing flat"), "{err}");
+}
+
+/// A second flange closing its corner with the first: its bend keeps the
+/// corner gap from the first's, its flat reaches on to the gap from the
+/// first flange's inside. Valid folded and laid flat; a closed corner of
+/// two radii is refused.
+#[test]
+fn a_closed_corner_reaches_to_the_flange_beside_it() {
+    let (t, r) = (0.1, 0.1);
+    let part = base(
+        sketched(polygon(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])),
+        rules(t, r, 0.44),
+        1.0,
+    );
+    let part = EdgeFlange
+        .apply(part, "f1", &flange("base_flange(b,k,c4,b)"), &NoFiles)
+        .unwrap();
+    let mut second = flange("base_flange(b,k,c5,b)");
+    second.corner = Corner::Closed;
+    let mut other_radius = second.clone();
+    other_radius.radius = Some(0.05);
+    let err = refused(EdgeFlange.apply(part.clone(), "f2", &other_radius, &NoFiles));
+    assert!(err.contains("radii differ"), "{err}");
+    let part = EdgeFlange.apply(part, "f2", &second, &NoFiles).unwrap();
+    assert_valid(&part);
+    part.face_id("edge_flange(f2,flange,corner0)").unwrap();
+    // The first flange's inside is a thickness in from the plate's front
+    // edge; the second's flat stops the corner gap short of it.
+    let gap = SheetMetalRules::default().corner_gap;
+    let reach = part.topology().vertices.values().any(|v| {
+        v.point[0].could_be_equal(S::from_f64(1.0))
+            && v.point[1].could_be_equal(S::from_f64(t + gap))
+            && v.point[2].could_be_equal(S::from_f64(t + r))
+    });
+    assert!(reach, "the second flange's flat does not reach the first");
+    assert_valid(&unfold(part, "edge_flange(f2)"));
 }
