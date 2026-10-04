@@ -614,3 +614,22 @@ listing crates, or a JSX entry cut mid-element, needs a hand edit. The merge
 is not done until the full workspace suite and the web build pass on the
 merged branch. Each branch passing its own tests says nothing about the
 combination, or about paths that only the editor exercises (see above).
+
+## An approximate tangency dips through the face
+
+A surface that is only approximately tangent to a face — a rolling-ball
+blend skinned through exact stations, tangent at each, interpolated between
+— crosses the face as often as not between the stations, by a hair. A
+boolean then has to cut the face along every such crossing: near-duplicate
+vertices next to the contact, "nothing to split" errors. Tangency to within
+the approximation's error is no tangency to the boolean. The blend in
+`geop-ops-fillet/src/rolling.rs` leaves each face at a millionth of a radian
+towards the ball, and checks between stations that it really leaves on
+that side, so that it meets the face in its contact curve alone.
+
+Where the approximated data is only C1 — a face's curvature jumping across
+an edge, a radius changing its rate at a vertex — no number of stations
+makes a cubic follow it to that accuracy. Put a station exactly there and
+break the spline: the ball's contact on the edge between the two faces
+(found on that edge, not near it), a station at the vertex where the radius
+law kinks.

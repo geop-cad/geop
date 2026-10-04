@@ -130,21 +130,20 @@ fn basis_funs<S: Scalar>(span: usize, t: S, degree: usize, knots: &[S]) -> Vec<S
 }
 
 /// Solve the `m x m` interpolation system (one row per data point, one
-/// column per control point) for the Cartesian control points, via
-/// Gaussian elimination without pivoting. Safe without pivoting because the
+/// column per control point) for the control points, via Gaussian
+/// elimination without pivoting. Safe without pivoting because the
 /// collocation matrix of a B-spline basis evaluated at parameters chosen by
 /// `averaging_knots` is totally positive and nonsingular (Piegl & Tiller
 /// §9.2.1) — the same reason the reference algorithm doesn't pivot either.
 ///
-/// Generic over the Cartesian dimension `C` of `points` and the homogeneous
-/// dimension `D` of the returned control points; callers must pick `D = C +
-/// 1` (a weight of `1` is appended to each solved Cartesian point).
-fn solve_interpolation_system<S: Scalar, const C: usize, const D: usize>(
+/// Generic over the dimension `C` of `points`, which are solved for as they
+/// are: Cartesian points (see [`with_unit_weights`]) or homogeneous ones.
+fn solve_interpolation_system<S: Scalar, const C: usize>(
     t: &[S],
     knots: &[S],
     degree: usize,
     points: &[Vector<S, C>],
-) -> GeopResult<Vec<Vector<S, D>>> {
+) -> GeopResult<Vec<Vector<S, C>>> {
     let m = points.len();
     let p = degree;
 
@@ -194,14 +193,31 @@ fn solve_interpolation_system<S: Scalar, const C: usize, const D: usize>(
     Ok(ctrl
         .into_iter()
         .map(|c| {
-            let mut v = Vector::<S, D>::zero();
+            let mut v = Vector::<S, C>::zero();
             for (i, &val) in c.iter().enumerate() {
                 v[i] = val;
+            }
+            v
+        })
+        .collect())
+}
+
+/// The Cartesian points `points` as homogeneous control points of weight
+/// one (`D = C + 1`).
+fn with_unit_weights<S: Scalar, const C: usize, const D: usize>(
+    points: Vec<Vector<S, C>>,
+) -> Vec<Vector<S, D>> {
+    points
+        .into_iter()
+        .map(|p| {
+            let mut v = Vector::<S, D>::zero();
+            for c in 0..C {
+                v[c] = p[c];
             }
             v[C] = S::ONE;
             v
         })
-        .collect())
+        .collect()
 }
 
 /// Where, within interval `i` of `intervals` between consecutive samples, a
@@ -265,7 +281,7 @@ where
 
     let t = chord_length_params(through);
     let knots = averaging_knots(&t, p);
-    let control_points = solve_interpolation_system::<S, C, D>(&t, &knots, p, through)?;
+    let control_points = with_unit_weights(solve_interpolation_system(&t, &knots, p, through)?);
 
     let mut curve = NurbCurve::try_new(p, control_points, knots)?;
     if let Some(between) = between {
@@ -321,6 +337,20 @@ fn widen_to_enclose<S: Scalar, const C: usize, const D: usize>(
 where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {
+    let pad = enclosing_pad(curve, checks)?;
+    widen(curve, &pad);
+    Ok(())
+}
+
+/// How far, per coordinate, `curve` has to be widened to enclose every
+/// check's point (see [`widen_to_enclose`]).
+fn enclosing_pad<S: Scalar, const C: usize, const D: usize>(
+    curve: &NurbCurve<S, D>,
+    checks: &[(S, Vector<S, C>)],
+) -> GeopResult<[S; C]>
+where
+    NurbCurve<S, D>: ParameterRefinable<S, C>,
+{
     let (lo, hi) = curve.domain();
     let mut pad = [S::ZERO; C];
     for &(guess, q) in checks {
@@ -349,6 +379,13 @@ where
             pad[k] = pad[k].union(above).union(below).upper();
         }
     }
+    Ok(pad)
+}
+
+/// `curve` widened by `±pad[k]` in each coordinate `k`, everywhere: every
+/// control point by that much (times its weight, in homogeneous form) —
+/// the basis is non-negative and sums to one.
+fn widen<S: Scalar, const C: usize, const D: usize>(curve: &mut NurbCurve<S, D>, pad: &[S; C]) {
     for cp in &mut curve.control_points {
         let w = cp[D - 1];
         for k in 0..C {
@@ -357,6 +394,23 @@ where
         }
     }
     curve.recompute_aabb();
+}
+
+/// Checks `params` are parameters to interpolate `m` values at: as many,
+/// strictly increasing, from exactly 0 to exactly 1.
+fn check_params<S: Scalar>(params: &[S], m: usize) -> GeopResult<()> {
+    let increasing = params.windows(2).all(|w| w[0].definitely_less(w[1]));
+    let ends = params
+        .first()
+        .is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ZERO))
+        && params
+            .last()
+            .is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ONE));
+    if params.len() != m || m < 2 || !increasing || !ends {
+        return Err(GeopError::new(format!(
+            "NurbCurve::interpolate_homogeneous: {m} values need as many parameters, strictly increasing from 0 to 1, not {params:?}"
+        )));
+    }
     Ok(())
 }
 
@@ -528,6 +582,45 @@ impl<S: Scalar> NurbCurve<S, 4> {
         degree: usize,
     ) -> GeopResult<Self> {
         interpolate::<S, 3, 4>(points, Some(between), degree)
+    }
+
+    /// The rational curve of `degree` whose homogeneous control points
+    /// interpolate the homogeneous points `values` — `(w p, w)`, the point
+    /// `p` of weight `w` — at the strictly increasing `params`, from 0 to 1,
+    /// on the knots their averages give: it passes through each `p` at its
+    /// parameter. Curves interpolated at the same parameters share one knot
+    /// vector, so they are the rows of a surface skinned through curves
+    /// whose control points are the values (see
+    /// [`crate::nurb_surface::NurbSurface::try_new`]), its iso-curve at each
+    /// parameter exactly the curve there.
+    ///
+    /// The values are solved for as they are: interval values carry their
+    /// width into the control points (sharpen a value that is a free choice
+    /// first). An error if a control point's weight comes out not positive.
+    pub fn interpolate_homogeneous(
+        values: &[Vector4<S>],
+        params: &[S],
+        degree: usize,
+    ) -> GeopResult<Self> {
+        check_params(params, values.len())?;
+        let p = degree.max(1).min(values.len() - 1);
+        let knots = averaging_knots(params, p);
+        let control_points = solve_interpolation_system(params, &knots, p, values)?;
+        NurbCurve::try_new(p, control_points, knots)
+    }
+
+    /// How far, per coordinate, this curve has to be widened (see
+    /// [`Self::widen`]) to enclose every check's point: `(t, q)`, the true
+    /// point `q`, near the curve at about `t` — exactly as
+    /// [`Self::interpolate_enclosing`] widens an interpolant to enclose the
+    /// curve it was sampled from.
+    pub fn enclosing_pad(&self, checks: &[(S, Vector3<S>)]) -> GeopResult<[S; 3]> {
+        enclosing_pad(self, checks)
+    }
+
+    /// This curve widened by `±pad[k]` in each coordinate `k`, everywhere.
+    pub fn widen(&mut self, pad: &[S; 3]) {
+        widen(self, pad)
     }
 }
 

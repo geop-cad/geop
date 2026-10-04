@@ -58,7 +58,9 @@ ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
                                and splines in space, placed on the part and
                                constrained — paths and rails for sweeps
 ops/geop-ops-fillet           fillets and chamfers on straight and circular
-                               edges, cut or filled in with a boolean
+                               edges, rolling-ball fillets of any other edge
+                               and tangent chain, radius varying along them,
+                               cut or filled in with a boolean
 ops/geop-ops-shell            shelling: a solid hollowed to walls of one
                                thickness, open at picked faces, the shell
                                operation

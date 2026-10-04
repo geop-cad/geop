@@ -416,7 +416,9 @@ fn split_piercing_crossings<S: Scalar>(
                 naming.provisional(),
             )
             .with_context(&|e: GeopError| {
-                e.with_context(format!("edge={edge_id}, t={t:?}, vertex={vertex_id}"))
+                e.with_context(format!(
+                    "edge={edge_id}, t={t:?}, vertex={vertex_id}, piercing face={face_id}"
+                ))
             })
             .with_context(&ctx)?;
         naming.edge_split(edge_id, new_edge, vertex_id)?;

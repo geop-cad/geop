@@ -44,6 +44,10 @@
 //!   So the edge has to be part of a whole circle of such edges (a circle
 //!   is built of quarter arcs): the whole circle is blended, once, whichever
 //!   of its arcs are picked.
+//! - **any other edge** — or any edge whose fillet radius varies — is
+//!   rounded by a ball rolled along it and its tangent chain, its tool
+//!   skinned through the ball's sections (see [`crate::rolling`]). A chamfer
+//!   is only swept.
 //!
 //! A blend has to meet both faces inside them — checked halfway along the
 //! edge — so one too large for its faces, or ending exactly on another of
@@ -91,15 +95,36 @@ use geop_ops_extrude_revolve::{
     sweep::SweepLoop,
 };
 
+use crate::rolling::{self, Radii, Rolled, tangent_chain};
+
 /// What a blend replaces an edge's corner with (see the module docs).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BlendShape {
-    /// A round of `radius`, tangent to both faces.
-    Fillet { radius: f64 },
+    /// A round tangent to both faces, of the radius `radii` lay along the
+    /// edges.
+    Fillet { radii: Radii },
     /// A bevel `distances[0]` into the face on the left of the edge as it
     /// runs (seen from outside the solid), `distances[1]` into the one on
     /// its right.
     Chamfer { distances: [f64; 2] },
+}
+
+impl BlendShape {
+    /// A round of `radius`, the same all along.
+    pub fn round(radius: f64) -> Self {
+        BlendShape::Fillet {
+            radii: Radii::constant(radius),
+        }
+    }
+
+    /// The radius, where it is the same all along: what the swept blends
+    /// of straight and circular edges need.
+    fn constant_radius(&self) -> Option<f64> {
+        match self {
+            BlendShape::Fillet { radii } if radii.is_constant() => Some(radii.radius),
+            _ => None,
+        }
+    }
 }
 
 /// How an edge's cross-section is swept into a tool.
@@ -125,9 +150,10 @@ enum Sweep<S: Scalar> {
     },
 }
 
-/// How a tool along a straight edge ends, at one end of the edge.
+/// How a tool along a straight edge — or a rolling-ball blend's open chain
+/// (see [`crate::rolling`]) — ends, at one end of it.
 #[derive(Clone, Debug)]
-enum End<S: Scalar> {
+pub(crate) enum End<S: Scalar> {
     /// Run out past the end — as far again as the tool is wide, over how
     /// squarely the edge leaves the solid there: `d · n` of the face it
     /// leaves through, `d` running on along the edge. What a cut does where
@@ -149,7 +175,7 @@ enum End<S: Scalar> {
 
 /// Which way an edge bends: whether its blend cuts material away or adds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Bend {
+pub(crate) enum Bend {
     /// Less than a half turn of material between the faces: cut away.
     Convex,
     /// More: filled in.
@@ -160,7 +186,7 @@ impl Bend {
     /// Which side of both faces the blend's circle lies on: `-1` behind
     /// them, in the material, for a convex edge; `+1` in front for a concave
     /// one.
-    fn side<S: Scalar>(self) -> S {
+    pub(crate) fn side<S: Scalar>(self) -> S {
         match self {
             Bend::Convex => S::ONE.neg(),
             Bend::Concave => S::ONE,
@@ -246,7 +272,7 @@ fn coedges<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<[CoedgeId; 2
 }
 
 /// The two faces of `edge`, left first (see [`coedges`]).
-fn faces<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<[FaceId; 2]> {
+pub(crate) fn faces<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<[FaceId; 2]> {
     let [l, r] = coedges(model, edge)?;
     Ok([model.get_coedge(l)?.face, model.get_coedge(r)?.face])
 }
@@ -259,11 +285,12 @@ fn face_frame<S: Scalar>(n: &Vector3<S>, c: &Vector3<S>) -> GeopResult<(Vector3<
     Ok((n, n.prod_cross(c).normalize()?))
 }
 
-/// Which way an edge bends: convex where the face on its left runs into the
-/// side of the right one's plane the solid lies on. An error if the faces
-/// could be tangent there — there is no corner to blend.
-fn bend<S: Scalar>(into: &[Vector2<S>; 2], out: &[Vector2<S>; 2]) -> GeopResult<Bend> {
-    let bend = into[0].prod_dot(&out[1]);
+/// Which way an edge bends, from `bend` — the direction running into the
+/// face on its left, dotted with the right one's outward normal: convex
+/// where the left face runs into the side of the right one's tangent plane
+/// the solid lies on. An error if the faces could be tangent there — there
+/// is no corner to blend.
+pub(crate) fn bend<S: Scalar>(bend: S) -> GeopResult<Bend> {
     if bend.definitely_less(S::ZERO) {
         Ok(Bend::Convex)
     } else if bend.definitely_greater(S::ZERO) {
@@ -302,11 +329,12 @@ fn straight_section<S: Scalar>(
     let (e1, e2) = (basis[0], basis[1]);
     let into = [in_plane(&t_l, &e1, &e2), in_plane(&t_r, &e1, &e2)];
     let out = [in_plane(&n_l, &e1, &e2), in_plane(&n_r, &e1, &e2)];
-    let bend = bend(&into, &out)?;
+    let bend = bend(into[0].prod_dot(&out[1]))?;
     let mut ends = Vec::new();
     for (vertex, leaving) in [(e.start_vertex, d.neg()), (e.end_vertex, d)] {
         let ctx = with_context!("the edge's end at vertex {vertex}");
-        ends.push(tool_end(model, vertex, [left, right], &leaving, bend).with_context(ctx)?);
+        let (end, _) = tool_end(model, vertex, [left, right], &leaving, bend).with_context(ctx)?;
+        ends.push(end);
     }
     let ends = [ends[0].clone(), ends[1].clone()];
     Ok(Section {
@@ -333,14 +361,14 @@ fn straight_section<S: Scalar>(
 /// through it and the tool cuts, flush with it otherwise — where the tool
 /// fills, or the edge runs into it — which needs it square to the edge.
 /// Anything else, and a tool along the edge would cut or fill what it
-/// should not.
-fn tool_end<S: Scalar>(
+/// should not. The end, and that third face.
+pub(crate) fn tool_end<S: Scalar>(
     model: &Model<S>,
     vertex: VertexId,
     faces: [FaceId; 2],
     leaving: &Vector3<S>,
     bend: Bend,
-) -> GeopResult<End<S>> {
+) -> GeopResult<(End<S>, FaceId)> {
     let mut others: Vec<FaceId> = Vec::new();
     for (&id, coedge) in &model.coedges {
         if coedge.edge().is_ok()
@@ -372,7 +400,7 @@ fn tool_end<S: Scalar>(
         return unsupported("the third face could run along the edge");
     };
     if leaves && bend == Bend::Convex {
-        return Ok(End::RunOut { squareness });
+        return Ok((End::RunOut { squareness }, *other));
     }
     if !normal.prod_cross(leaving).norm_sq().could_be_equal(S::ZERO) {
         return unsupported(if leaves {
@@ -381,11 +409,12 @@ fn tool_end<S: Scalar>(
             "the edge runs into the third face, which does not stand square to it"
         });
     }
-    Ok(if leaves || bend == Bend::Concave {
+    let end = if leaves || bend == Bend::Concave {
         End::Flush
     } else {
         End::Wall
-    })
+    };
+    Ok((end, *other))
 }
 
 /// The circle `curve` is an arc of, if it is one.
@@ -405,36 +434,26 @@ fn same_circle<S: Scalar>(a: &Circle<S>, b: &Circle<S>) -> bool {
 
 /// The outward normal of `face`, turning around `circle`'s axis, at the
 /// point `p` of the circle — with `radial` the unit direction from the
-/// center to `p` — or why the face cannot be blended there. A plane has to
-/// stand across the axis; any other face has to be a surface of revolution
-/// around it whose profile is one straight line (a cylinder, a cone), so
-/// that it traces a line in every cross-section.
+/// center to `p` — or none where the face is not one a revolved blend
+/// handles. A plane has to stand across the axis; any other face has to be
+/// a surface of revolution around it whose profile is one straight line (a
+/// cylinder, a cone), so that it traces a line in every cross-section.
 fn round_face_normal<S: Scalar>(
     surface: &NurbSurface3D<S>,
     circle: &Circle<S>,
     radial: &Vector3<S>,
-) -> GeopResult<Vector3<S>> {
+) -> GeopResult<Option<Vector3<S>>> {
     let axis = &circle.normal;
     if let Some(plane) = surface.as_plane()? {
-        if !plane
+        let across = plane
             .normal
             .prod_cross(axis)
             .norm_sq()
-            .could_be_equal(S::ZERO)
-        {
-            return Err(GeopError::new(
-                "a planar face of a circular edge has to stand across the circle's axis",
-            ));
-        }
-        return Ok(plane.normal);
+            .could_be_equal(S::ZERO);
+        return Ok(across.then_some(plane.normal));
     }
-    let not_round = || {
-        GeopError::new(
-            "a curved face of a circular edge has to be a cylinder or a cone around the circle's axis",
-        )
-    };
     let Some(turns) = surface.axis_of_revolution()? else {
-        return Err(not_round());
+        return Ok(None);
     };
     if !turns
         .direction
@@ -443,7 +462,7 @@ fn round_face_normal<S: Scalar>(
         .could_be_equal(S::ZERO)
         || !turns.could_contain(&circle.center)
     {
-        return Err(not_round());
+        return Ok(None);
     }
     // The profile: the one straight direction, of two rows. Its first
     // control point lies on the surface, where the profile starts.
@@ -452,7 +471,7 @@ fn round_face_normal<S: Scalar>(
     } else if surface.degree_v == 1 && surface.num_v == 2 {
         [0, 1]
     } else {
-        return Err(not_round());
+        return Ok(None);
     };
     let start = point(&surface.control_points[profile[0]])?;
     // The normal where the profile starts, in its own half-plane through the
@@ -461,18 +480,21 @@ fn round_face_normal<S: Scalar>(
     let normal = surface.normal(u0, v0)?;
     let off = start.sub(&circle.center);
     let off_axis = off.sub(&axis.prod_scalar(off.prod_dot(axis)));
-    let start_radial = off_axis.normalize().map_err(|_| not_round())?;
+    let Ok(start_radial) = off_axis.normalize() else {
+        return Ok(None);
+    };
     let (nr, nz) = (normal.prod_dot(&start_radial), normal.prod_dot(axis));
-    Ok(radial.prod_scalar(nr).add(&axis.prod_scalar(nz)))
+    Ok(Some(radial.prod_scalar(nr).add(&axis.prod_scalar(nz))))
 }
 
 /// The cross-section of the circular edge `edge`, an arc of `circle`,
-/// halfway along it.
+/// halfway along it — none where one of its faces is not one a revolved
+/// blend handles (see [`round_face_normal`]).
 fn round_section<S: Scalar>(
     model: &Model<S>,
     edge: EdgeId,
     circle: &Circle<S>,
-) -> GeopResult<Section<S>> {
+) -> GeopResult<Option<Section<S>>> {
     let e = model.get_edge(edge)?;
     let (t0, t1) = e.curve.domain();
     let t = t0.add(t1).div(S::TWO)?;
@@ -484,8 +506,12 @@ fn round_section<S: Scalar>(
         .sub(&axis.prod_scalar(off.prod_dot(&axis)))
         .normalize()?;
     let [left, right] = faces(model, edge)?;
-    let n_l = round_face_normal(&model.get_face(left)?.surface, circle, &radial)?;
-    let n_r = round_face_normal(&model.get_face(right)?.surface, circle, &radial)?;
+    let Some(n_l) = round_face_normal(&model.get_face(left)?.surface, circle, &radial)? else {
+        return Ok(None);
+    };
+    let Some(n_r) = round_face_normal(&model.get_face(right)?.surface, circle, &radial)? else {
+        return Ok(None);
+    };
     let (n_l, t_l) = face_frame(&n_l, &c)?;
     let (n_r, t_r) = face_frame(&n_r, &c.neg())?;
     let into = [
@@ -496,8 +522,8 @@ fn round_section<S: Scalar>(
         in_plane(&n_l, &radial, &axis),
         in_plane(&n_r, &radial, &axis),
     ];
-    let bend = bend(&into, &out)?;
-    Ok(Section {
+    let bend = bend(into[0].prod_dot(&out[1]))?;
+    Ok(Some(Section {
         sweep: Sweep::Round {
             center: circle.center,
             radial,
@@ -508,7 +534,7 @@ fn round_section<S: Scalar>(
         corner: in_plane(&off, &radial, &axis),
         into,
         out,
-    })
+    }))
 }
 
 /// The edges of the whole circle `edge` is an arc of, `edge` first: walking
@@ -576,16 +602,12 @@ struct ToolProfile<S: Scalar> {
 
 /// The cross-section of the tool that blends `section`'s corner into
 /// `shape` (see the module docs).
-fn tool_profile<S: Scalar>(section: &Section<S>, shape: BlendShape) -> GeopResult<ToolProfile<S>> {
+fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResult<ToolProfile<S>> {
     let e = section.corner;
     let (curves, control, touches) = match shape {
-        BlendShape::Fillet { radius } => {
-            if radius.is_nan() || radius <= 0.0 {
-                return Err(GeopError::new(format!(
-                    "a fillet's radius has to be positive, not {radius}"
-                )));
-            }
-            let r = S::from_f64(radius);
+        BlendShape::Fillet { radii } => {
+            radii.check()?;
+            let r = S::from_f64(radii.radius);
             let [t_a, t_b] = &section.into;
             let [n_a, n_b] = &section.out;
             // `C = E + alpha t_a + beta t_b`, `r` from both lines on the
@@ -841,52 +863,103 @@ fn sweep_tool<S: Scalar>(
         .ok_or_else(|| GeopError::new("the blend's tool came out as no solid"))
 }
 
-/// One tool to cut: the section of the edge it was built for, by name.
+/// One tool to sweep: the section of the edge it was built for, by name.
 struct Plan<S: Scalar> {
     edge: String,
     section: Section<S>,
 }
 
-/// The cross-section of the edge named `name`, and the other edges the same
-/// tool blends with it — every arc of its circle.
-fn plan_edge<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<(Plan<S>, Vec<EdgeId>)> {
+/// How an edge is blended, and with it every other edge the same tool
+/// blends: swept along a straight edge or around a circle — every arc of
+/// it — or rolled along a tangent chain (see [`crate::rolling`]).
+enum Planned<S: Scalar> {
+    Swept(Plan<S>, Vec<EdgeId>),
+    Rolled(Rolled<S>),
+}
+
+/// Whether both faces of `edge` are planes.
+fn between_planes<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<bool> {
+    for face in faces(model, edge)? {
+        if model.get_face(face)?.surface.as_plane()?.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The revolved blend of the circular edge `edge`, an arc of `circle`, and
+/// every arc of the circle with it — none where the arcs do not close the
+/// circle, or do not all meet faces a revolved blend handles alike.
+fn round_plan<S: Scalar>(
+    model: &Model<S>,
+    name: &str,
+    edge: EdgeId,
+    circle: &Circle<S>,
+) -> GeopResult<Option<Planned<S>>> {
+    let Some(section) = round_section(model, edge, circle)? else {
+        return Ok(None);
+    };
+    let Ok(arcs) = circle_edges(model, edge, circle) else {
+        return Ok(None);
+    };
+    for &other in &arcs[1..] {
+        let ctx = with_context!("arc {other} of the same circle");
+        match round_section(model, other, circle).with_context(ctx)? {
+            Some(theirs) if same_corner(&section, &theirs) => {}
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(Planned::Swept(
+        Plan {
+            edge: name.to_string(),
+            section,
+        },
+        arcs,
+    )))
+}
+
+/// How the edge named `name` is blended into `shape`. A straight edge
+/// between two planes, on its own, and a whole circle between planes across
+/// its axis and cylinders and cones around it, are swept exactly — when the
+/// radius is the same all along; a chamfer is only swept. Every other
+/// fillet is rolled along the edge's tangent chain.
+fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopResult<Planned<S>> {
     let model = part.topology();
     let edge = part.edge_id(name)?;
     let curve = &model.get_edge(edge)?.curve;
-    if let Some(line) = curve.as_line()? {
-        let section = straight_section(model, edge, &line)?;
-        return Ok((
-            Plan {
-                edge: name.to_string(),
-                section,
-            },
-            vec![edge],
-        ));
-    }
-    if let Some(circle) = circle_of(curve)? {
-        let section = round_section(model, edge, &circle)?;
-        let chain = circle_edges(model, edge, &circle)?;
-        for &other in &chain[1..] {
-            let ctx = with_context!("arc {other} of the same circle");
-            let theirs = round_section(model, other, &circle).with_context(ctx)?;
-            if !same_corner(&section, &theirs) {
-                return Err(GeopError::new(
-                    "the arcs of the circle do not all meet their faces alike, so no one tool blends them",
-                ))
-                .with_context(ctx);
-            }
+    let chain = tangent_chain(model, edge)?;
+    let swept = match shape {
+        BlendShape::Fillet { .. } => shape.constant_radius().is_some(),
+        BlendShape::Chamfer { .. } => true,
+    };
+    if swept {
+        if let Some(line) = curve.as_line()?
+            && chain.links.len() == 1
+            && between_planes(model, edge)?
+        {
+            let section = straight_section(model, edge, &line)?;
+            return Ok(Planned::Swept(
+                Plan {
+                    edge: name.to_string(),
+                    section,
+                },
+                vec![edge],
+            ));
         }
-        return Ok((
-            Plan {
-                edge: name.to_string(),
-                section,
-            },
-            chain,
-        ));
+        if let Some(circle) = circle_of(curve)?
+            && let Some(planned) = round_plan(model, name, edge, &circle)?
+        {
+            return Ok(planned);
+        }
     }
-    Err(GeopError::new(
-        "only straight and circular edges are blended",
-    ))
+    match shape {
+        BlendShape::Chamfer { .. } => Err(GeopError::new(
+            "only a straight edge between two planes, and a whole circle between planes across its axis and cylinders and cones around it, are chamfered",
+        )),
+        BlendShape::Fillet { radii } => {
+            Ok(Planned::Rolled(rolling::plan_rolled(part, chain, radii)?))
+        }
+    }
 }
 
 /// Gives the one face of `solid` left of each of the tool's faces named
@@ -1036,14 +1109,22 @@ pub fn blend<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
     edges: &[String],
-    shape: BlendShape,
+    shape: &BlendShape,
 ) -> GeopResult<()> {
     if edges.is_empty() {
         return Err(GeopError::new("pick the edges to blend"));
     }
+    if let BlendShape::Fillet { radii } = shape {
+        radii.check()?;
+        for (vertex, _) in &radii.at_vertices {
+            let ctx = with_context!("the radius at vertex {vertex:?}");
+            part.vertex_id(vertex).with_context(ctx)?;
+        }
+    }
     let mut solid: Option<SolidId> = None;
     let mut covered: Vec<EdgeId> = Vec::new();
     let mut plans: Vec<(Plan<S>, ToolProfile<S>)> = Vec::new();
+    let mut rolled: Vec<(String, Rolled<S>)> = Vec::new();
     for name in edges {
         let ctx = with_context!("edge {name:?}");
         let edge = part.edge_id(name).with_context(ctx)?;
@@ -1064,14 +1145,30 @@ pub fn blend<S: Scalar>(
         if covered.contains(&edge) {
             continue;
         }
-        let (plan, blended) = plan_edge(part, name).with_context(ctx)?;
-        let profile = tool_profile(&plan.section, shape).with_context(ctx)?;
-        check_touches(part.topology(), &plan.section, &profile).with_context(ctx)?;
-        covered.extend(blended);
-        plans.push((plan, profile));
+        match plan_edge(part, name, shape).with_context(ctx)? {
+            Planned::Swept(plan, blended) => {
+                let profile = tool_profile(&plan.section, shape).with_context(ctx)?;
+                check_touches(part.topology(), &plan.section, &profile).with_context(ctx)?;
+                covered.extend(blended);
+                plans.push((plan, profile));
+            }
+            Planned::Rolled(r) => {
+                rolling::check_touches(part.topology(), &r).with_context(ctx)?;
+                covered.extend(r.chain.edges());
+                rolled.push((name.clone(), r));
+            }
+        }
     }
     let groups = mitre(part.topology(), &mut plans)?;
+    refuse_rolled_corners(&plans, &rolled)?;
     let mut target = solid.expect("at least one edge");
+    for (edge, r) in &rolled {
+        let ctx = with_context!("blending edge {edge:?}");
+        let scope = namer.scoped(edge);
+        let tool = rolling::build_tool(part, &scope, &r.tool)
+            .with_context(with_context!("the tool of edge {edge:?}"))?;
+        target = apply_tool(part, &scope, target, tool, r.bend).with_context(ctx)?;
+    }
     for group in groups {
         let (first, _) = &plans[group[0]];
         let ctx = with_context!("blending edge {:?}", first.edge);
@@ -1101,24 +1198,69 @@ pub fn blend<S: Scalar>(
             });
         }
         let tool = tool.expect("a group has members");
-        let tool_faces = part
-            .topology()
-            .solid_faces(tool)?
-            .into_iter()
-            .filter_map(|f| part.name_of(f).map(str::to_string))
-            .collect::<Vec<_>>();
-        target = boolean(
-            part,
-            &scope,
-            target,
-            tool,
-            first.section.bend.op(),
-            RemeshParams::default(),
-        )
-        .with_context(ctx)?
-        .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))
-        .with_context(ctx)?;
-        name_blend_faces(part, &scope, target, &tool_faces).with_context(ctx)?;
+        target = apply_tool(part, &scope, target, tool, first.section.bend).with_context(ctx)?;
     }
     part.rename(target, namer.root())
+}
+
+/// Cuts `tool` away from `target`, or fills it in, as `bend` says — named
+/// by `scope` — and gives the blend faces left their names back (see
+/// [`name_blend_faces`]): the solid that is left.
+fn apply_tool<S: Scalar>(
+    part: &mut Part<S>,
+    scope: &Namer,
+    target: SolidId,
+    tool: SolidId,
+    bend: Bend,
+) -> GeopResult<SolidId> {
+    let tool_faces = part
+        .topology()
+        .solid_faces(tool)?
+        .into_iter()
+        .filter_map(|f| part.name_of(f).map(str::to_string))
+        .collect::<Vec<_>>();
+    let target = boolean(
+        part,
+        scope,
+        target,
+        tool,
+        bend.op(),
+        RemeshParams::default(),
+    )?
+    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))?;
+    name_blend_faces(part, scope, target, &tool_faces)?;
+    Ok(target)
+}
+
+/// Refuses a rolling-ball blend running into a wall at a vertex where
+/// another blended edge does too: an inward corner, which only straight
+/// edges of constant radius are mitred at (see [`mitre`]).
+fn refuse_rolled_corners<S: Scalar>(
+    plans: &[(Plan<S>, ToolProfile<S>)],
+    rolled: &[(String, Rolled<S>)],
+) -> GeopResult<()> {
+    let mut walls: Vec<(&str, VertexId)> = Vec::new();
+    for (plan, _) in plans {
+        if let Sweep::Straight { ends, vertices, .. } = &plan.section.sweep {
+            for k in 0..2 {
+                if matches!(ends[k], End::Wall | End::Mitre { .. }) {
+                    walls.push((&plan.edge, vertices[k]));
+                }
+            }
+        }
+    }
+    for (edge, r) in rolled {
+        for (vertex, end) in r.ends.iter().flatten() {
+            if !matches!(end, End::Wall) {
+                continue;
+            }
+            if let Some((other, _)) = walls.iter().find(|(_, v)| v == vertex) {
+                return Err(GeopError::new(format!(
+                    "edges {edge:?} and {other:?} meet at an inward corner at vertex {vertex}: blends meeting there are only mitred between straight edges of constant radius"
+                )));
+            }
+            walls.push((edge, *vertex));
+        }
+    }
+    Ok(())
 }

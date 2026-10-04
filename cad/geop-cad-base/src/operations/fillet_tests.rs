@@ -6,8 +6,9 @@ use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_ops::operation::Role;
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
-use geop_ops_fillet::{ChamferArgs, FilletArgs};
+use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs};
+use geop_ops_fillet::{ChamferArgs, FilletArgs, VertexRadius};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
 use super::regression_tests::check_valid;
@@ -84,13 +85,7 @@ fn fillet_drill_hole_rim() {
     let before = program.build::<S>(&NoFiles).unwrap();
     let rim = arcs_at(&before, [1.0, 1.0, 1.0], 0.4);
     assert_eq!(rim.len(), 4, "{rim:?}");
-    program.push(
-        "round",
-        FilletArgs {
-            edges: vec![rim[0].clone()],
-            radius: 0.1,
-        },
-    );
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
@@ -140,8 +135,12 @@ fn fillet_and_chamfer_round_trip_through_json() {
     program.push(
         "round",
         FilletArgs {
-            edges: vec!["a".into(), "b".into()],
-            radius: 0.25,
+            end_radius: Some(0.3),
+            vertex_radii: vec![VertexRadius {
+                vertex: "v".into(),
+                radius: 0.2,
+            }],
+            ..FilletArgs::constant(vec!["a".into(), "b".into()], 0.25)
         },
     );
     program.push(
@@ -213,20 +212,8 @@ fn fillet_l_block_inner_edge() {
     let inner = upright_edges_at(&before, 1.0, 1.0);
     let outer = upright_edges_at(&before, 2.0, 0.0);
     assert_eq!((inner.len(), outer.len()), (1, 1));
-    program.push(
-        "round",
-        FilletArgs {
-            edges: outer,
-            radius: 0.2,
-        },
-    );
-    program.push(
-        "inner",
-        FilletArgs {
-            edges: inner,
-            radius: 0.2,
-        },
-    );
+    program.push("round", FilletArgs::constant(outer, 0.2));
+    program.push("inner", FilletArgs::constant(inner, 0.2));
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(inner)"]);
@@ -332,10 +319,7 @@ fn fillet_boss_on_block() {
     assert!(!foot.is_empty() && !rim.is_empty(), "{foot:?} {rim:?}");
     program.push(
         "round",
-        FilletArgs {
-            edges: vec![foot[0].clone(), rim[0].clone()],
-            radius: 0.1,
-        },
+        FilletArgs::constant(vec![foot[0].clone(), rim[0].clone()], 0.1),
     );
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
@@ -453,7 +437,7 @@ fn fillet_edges_ending_at_a_wall() {
         let edges = edges_from_to(&before, a, b);
         assert_eq!(edges.len(), 1, "{a:?} to {b:?}: {edges:?}");
         let mut program = stepped_block();
-        program.push("round", FilletArgs { edges, radius: 0.1 });
+        program.push("round", FilletArgs::constant(edges, 0.1));
         let checked = std::panic::catch_unwind(|| {
             let part = program.build::<S>(&NoFiles).unwrap();
             assert_valid(&part);
@@ -547,7 +531,7 @@ fn fillet_pocket_rim_corner() {
     .concat();
     assert_eq!(edges.len(), 2, "{edges:?}");
     let mut program = pocketed_block();
-    program.push("round", FilletArgs { edges, radius: 0.1 });
+    program.push("round", FilletArgs::constant(edges, 0.1));
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
     let has_vertex = |p: [f64; 3]| {
@@ -612,7 +596,7 @@ fn fillet_pocket_edges_together() {
     for (case, edges) in cases {
         assert!(edges.len() >= 2, "{case}: {edges:?}");
         let mut program = pocketed_block();
-        program.push("round", FilletArgs { edges, radius: 0.1 });
+        program.push("round", FilletArgs::constant(edges, 0.1));
         match program.build::<S>(&NoFiles) {
             Err(e) => failures.push(format!("{case}: {}", e.root_message())),
             Ok(part) => {
@@ -628,13 +612,7 @@ fn fillet_pocket_edges_together() {
     // meet where their tangent lines do, on the top 0.1 out from the
     // pocket's corners and on the walls 0.1 down its corner edges.
     let mut program = pocketed_block();
-    program.push(
-        "round",
-        FilletArgs {
-            edges: all(&rim),
-            radius: 0.1,
-        },
-    );
+    program.push("round", FilletArgs::constant(all(&rim), 0.1));
     let part = program.build::<S>(&NoFiles).unwrap();
     let has_vertex = |p: [f64; 3]| {
         part.topology()
@@ -653,5 +631,268 @@ fn fillet_pocket_edges_together() {
             !has_vertex([x, y, 1.0]),
             "the rim's corner at {x}, {y} is still sharp"
         );
+    }
+}
+
+/// The circle of radius `r` around `(x, y)`, as a sketch.
+fn circle_sketch(x: f64, y: f64, r: f64) -> Sketch {
+    let mut circle = Sketch::new();
+    let c = circle.add_point(n(x), n(y));
+    circle.add_circle(c, n(r));
+    circle
+}
+
+/// A square of side 2 around the origin lofted up into a circle of radius
+/// 0.6 at `z = 2`: its walls are ruled, neither planes nor surfaces of
+/// revolution, so its edges are free-form.
+fn square_to_circle() -> Program {
+    let mut square = Sketch::new();
+    let p: Vec<_> = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
+        .iter()
+        .map(|c| square.add_point(n(c[0]), n(c[1])))
+        .collect();
+    for i in 0..4 {
+        square.add_line(p[i], p[(i + 1) % 4]);
+    }
+    lofted(square, circle_sketch(0.0, 0.0, 0.6))
+}
+
+/// `bottom`, drawn on the `xy` plane, lofted up into `top`, drawn 2 above
+/// it.
+fn lofted(bottom: Sketch, top: Sketch) -> Program {
+    let mut program = Program::new();
+    let xy = EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
+    program.push(
+        "bottom",
+        AddSketchArgs {
+            plane: Some(xy.clone()),
+            sketch: bottom,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "top_plane",
+        AddDatumArgs {
+            selection: vec![xy],
+            construction: Construction::Offset { distance: 2.0 },
+        },
+    );
+    program.push(
+        "top",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum("top_plane")),
+            sketch: top,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "transition",
+        LoftArgs {
+            profiles: vec!["bottom".into(), "top".into()],
+            matches: Vec::new(),
+            guides: Vec::new(),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
+/// A circle of radius 1 lofted up into one of radius 0.6 off to the side,
+/// around `(0.3, 0)`: an oblique cone, ruled, no surface of revolution. Its
+/// top rim rounded: picking one of its arcs rounds the whole circle, the
+/// ball rolled round between the flat top and the slanting wall. The rim
+/// is gone, and the round meets the top inside it.
+#[test]
+fn fillet_lofted_rim() {
+    let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let rim = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
+        p[2].could_be_equal(S::from_f64(2.0))
+    });
+    assert_eq!(rim.len(), 4, "{rim:?}");
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["fillet(round)"]);
+    assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
+    // Every vertex left on the top lies inside the rim.
+    for v in part.topology().vertices.values() {
+        if v.point[2].could_be_equal(S::from_f64(2.0)) {
+            let (x, y) = (v.point[0].to_f64() - 0.3, v.point[1].to_f64());
+            assert!(x.hypot(y) < 0.6 - 0.05, "a vertex on the top at {x}, {y}");
+        }
+    }
+}
+
+/// The lofted body's bottom edges end at corners where the third face, a
+/// ruled wall, is no plane: refused, naming the vertex.
+#[test]
+fn fillet_lofted_bottom_edge_is_refused() {
+    let mut program = square_to_circle();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let bottom = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
+        p[2].could_be_equal(S::ZERO)
+    });
+    program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("rounding a bottom edge of the loft is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("the third face is not planar"), "{error}");
+}
+
+/// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined
+/// by straight sides — a rim of lines and arcs running on into each other
+/// tangentially, between the flat top and walls flat and round by turns.
+fn slot() -> Program {
+    let mut s = Sketch::new();
+    let p = [
+        s.add_point(n(-1.0), n(-0.5)),
+        s.add_point(n(1.0), n(-0.5)),
+        s.add_point(n(1.0), n(0.5)),
+        s.add_point(n(-1.0), n(0.5)),
+    ];
+    s.add_line(p[0], p[1]);
+    s.add_arc(p[1], p[2], n(std::f64::consts::PI));
+    s.add_line(p[2], p[3]);
+    s.add_arc(p[3], p[0], n(std::f64::consts::PI));
+    let mut program = Program::new();
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: s,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "slot",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(1.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
+/// The slot's top rim rounded: picking one straight side rounds the whole
+/// rim, its tangent chain, the ball rolling from the flat walls onto the
+/// round ones and back. The round meets the top 0.1 inside the rim and the
+/// walls 0.1 below it.
+#[test]
+fn fillet_slot_rim_as_one_chain() {
+    let mut program = slot();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
+    assert_eq!(side.len(), 1, "{side:?}");
+    program.push("round", FilletArgs::constant(side, 0.1));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["fillet(round)"]);
+    let near = |p: [f64; 3]| {
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-6))
+    };
+    // Where the rim's sides meet its half circles, now 0.1 in and down.
+    for p in [
+        [1.0, -0.4, 1.0],
+        [1.0, -0.5, 0.9],
+        [-1.0, 0.4, 1.0],
+        [-1.0, 0.5, 0.9],
+    ] {
+        assert!(near(p), "no vertex at {p:?}");
+    }
+    assert!(!near([1.0, -0.5, 1.0]));
+}
+
+/// The top rim of a square lofted into a circle: the ruled walls meet at
+/// creases, tangent only at the rim itself, so the ball rolling round would
+/// have to roll over them — refused, naming the faces and the edge.
+#[test]
+fn fillet_rim_over_creases_is_refused() {
+    let mut program = square_to_circle();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let rim = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
+        p[2].could_be_equal(S::from_f64(2.0))
+    });
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+    let Err(error) = program.build::<S>(&NoFiles) else {
+        panic!("rounding the rim over the creases is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("meet at a crease"), "{error}");
+}
+
+/// The slot's rim rounded with radii set at two of its vertices, where its
+/// sides meet its half circles — 0.15 at `(1, -0.5)`, 0.05 at `(-1, 0.5)`
+/// — changing linearly along the rim between them and the radius 0.1
+/// where the picked side starts. At each of those vertices the round meets
+/// the top and the wall as far from the rim as its radius there.
+#[test]
+fn fillet_slot_rim_with_radii_at_vertices() {
+    let mut program = slot();
+    let before = program.build::<S>(&NoFiles).unwrap();
+    let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
+    let vertex_at = |p: [f64; 3]| {
+        let (&id, _) = before
+            .topology()
+            .vertices
+            .iter()
+            .find(|(_, v)| (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-9))
+            .unwrap();
+        before.name_of(id).unwrap().to_string()
+    };
+    let radii = [([1.0, -0.5, 1.0], 0.15), ([-1.0, 0.5, 1.0], 0.05)];
+    program.push(
+        "round",
+        FilletArgs {
+            vertex_radii: radii
+                .iter()
+                .map(|&(p, radius)| VertexRadius {
+                    vertex: vertex_at(p),
+                    radius,
+                })
+                .collect(),
+            ..FilletArgs::constant(side, 0.1)
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let near = |p: [f64; 3]| {
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| (0..3).all(|k| (v.point[k].to_f64() - p[k]).abs() < 1e-6))
+    };
+    for p in [
+        [1.0, -0.35, 1.0],
+        [1.0, -0.5, 0.85],
+        [-1.0, 0.45, 1.0],
+        [-1.0, 0.5, 0.95],
+    ] {
+        assert!(near(p), "no vertex at {p:?}");
     }
 }

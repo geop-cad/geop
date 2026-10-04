@@ -178,10 +178,7 @@ fn wall_next_to_a_fillet_is_refused() {
     let mut program = boxed();
     program.push(
         "f",
-        FilletArgs {
-            edges: vec!["extrude(box,outline,p1)".into()],
-            radius: 0.2,
-        },
+        FilletArgs::constant(vec!["extrude(box,outline,p1)".into()], 0.2),
     );
     program.push("d", draft(&[wall("c4")], 3.0));
     let Err(error) = program.build::<S>(&NoFiles) else {
