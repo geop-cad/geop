@@ -324,3 +324,48 @@ fn an_unsupported_entity_is_refused_by_name() {
     assert!(error.contains("#110 OFFSET_SURFACE is not supported"), "{error}");
 }
 
+
+/// An assembly placing the cylinder twice, the second turned to lie along
+/// `y`, as products, occurrences and placements: flattened into two
+/// solids where they are placed.
+#[test]
+fn an_assembly_is_flattened_with_its_placements() {
+    let assembly = format!(
+        "{CYLINDER}
+#20=SHAPE_REPRESENTATION('assembly',(#8,#21,#25),#4);
+#22=CARTESIAN_POINT('',(10.,0.,0.));
+#21=AXIS2_PLACEMENT_3D('',#22,#6,#7);
+#26=CARTESIAN_POINT('',(0.,10.,0.));
+#27=DIRECTION('',(0.,1.,0.));
+#25=AXIS2_PLACEMENT_3D('',#26,#27,#7);
+#30=APPLICATION_CONTEXT('');
+#31=PRODUCT_CONTEXT('',#30,'mechanical');
+#32=PRODUCT_DEFINITION_CONTEXT('part definition',#30,'design');
+#40=PRODUCT('cylinder','cylinder','',(#31));
+#41=PRODUCT_DEFINITION_FORMATION('','',#40);
+#42=PRODUCT_DEFINITION('design','',#41,#32);
+#43=PRODUCT_DEFINITION_SHAPE('','',#42);
+#44=SHAPE_DEFINITION_REPRESENTATION(#43,#9);
+#50=PRODUCT('assembly','assembly','',(#31));
+#51=PRODUCT_DEFINITION_FORMATION('','',#50);
+#52=PRODUCT_DEFINITION('design','',#51,#32);
+#53=PRODUCT_DEFINITION_SHAPE('','',#52);
+#54=SHAPE_DEFINITION_REPRESENTATION(#53,#20);
+#60=NEXT_ASSEMBLY_USAGE_OCCURRENCE('1','','',#52,#42,$);
+#61=NEXT_ASSEMBLY_USAGE_OCCURRENCE('2','','',#52,#42,$);
+#62=PRODUCT_DEFINITION_SHAPE('','',#60);
+#63=PRODUCT_DEFINITION_SHAPE('','',#61);
+#64=ITEM_DEFINED_TRANSFORMATION('','',#8,#21);
+#65=ITEM_DEFINED_TRANSFORMATION('','',#8,#25);
+#66=(REPRESENTATION_RELATIONSHIP('','',#9,#20)REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#64)SHAPE_REPRESENTATION_RELATIONSHIP());
+#67=(REPRESENTATION_RELATIONSHIP('','',#9,#20)REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#65)SHAPE_REPRESENTATION_RELATIONSHIP());
+#68=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#66,#62);
+#69=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#67,#63);"
+    );
+    let part = import(&file(".MILLI.,.METRE.", &assembly));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 2);
+    assert_eq!(part.solid_names(), vec!["import(i,s0)".to_string(), "import(i,s1)".to_string()]);
+    // One round z at x = 10, one along y — `z` turned onto `y` — at y = 10.
+    assert_bounds(model, [-1.0, -1.0, -1.0], [11.0, 12.0, 2.0]);
+}

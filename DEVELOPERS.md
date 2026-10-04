@@ -79,7 +79,18 @@ ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
                                countersink, tapped) and threads, cosmetic or
                                modelled along a helix; the hole and thread
                                operations
+ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
+                               B-rep solids and sheets of a file into exact
+                               NURBS bodies, writing a part's bodies as one;
+                               the import operation
 ```
+
+STEP files are tested against a downloaded corpus of public files (NIST
+MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d
+samples): `ops/geop-ops-step/scripts/fetch_corpus.sh` fetches it into
+`target/step-corpus/` (never committed), and
+`cargo test -p geop-ops-step corpus -- --ignored --nocapture` imports every
+file and prints what passed and the causes of what failed.
 
 Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball
 bearings, T-slot extrusions, a NEMA 17 motor) live in
