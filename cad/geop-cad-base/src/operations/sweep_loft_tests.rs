@@ -10,9 +10,7 @@ use geop_core_topology::validation::{ValidationParameters, validate, validate_ma
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{
-    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, SweepArgs,
-};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, SweepArgs};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
 use crate::Program;
@@ -798,8 +796,14 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
 fn sweep_along_a_rail_tapers() {
     let mut program = Program::new();
     program.push("profile", sketch(base(FrameAxis::X), circle(0.0, 0.0, 0.5)));
-    program.push("path", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])));
-    program.push("rail", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])));
+    program.push(
+        "path",
+        sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])),
+    );
+    program.push(
+        "rail",
+        sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])),
+    );
     program.push(
         "cone",
         SweepArgs {
@@ -877,8 +881,14 @@ fn loft_along_a_guide() {
 fn rails_and_guides_round_trip() {
     let mut program = Program::new();
     program.push("profile", sketch(base(FrameAxis::X), circle(0.0, 0.0, 0.5)));
-    program.push("path", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])));
-    program.push("rail", sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])));
+    program.push(
+        "path",
+        sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])),
+    );
+    program.push(
+        "rail",
+        sketch(base(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])),
+    );
     program.push(
         "cone",
         SweepArgs {

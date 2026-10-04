@@ -1370,7 +1370,10 @@ pub fn horn() -> Program {
         },
     );
     let mut axis = Sketch::new();
-    let (a, b) = (axis.add_point(n(0.0), n(0.0)), axis.add_point(n(4.0), n(0.0)));
+    let (a, b) = (
+        axis.add_point(n(0.0), n(0.0)),
+        axis.add_point(n(4.0), n(0.0)),
+    );
     axis.add_line(a, b);
     program.push(
         "axis",
@@ -1381,8 +1384,8 @@ pub fn horn() -> Program {
         },
     );
     let mut flare = Sketch::new();
-    let points = [[0.0, 0.5], [1.5, 0.4], [3.0, 0.9], [4.0, 1.6]]
-        .map(|[x, y]| flare.add_point(n(x), n(y)));
+    let points =
+        [[0.0, 0.5], [1.5, 0.4], [3.0, 0.9], [4.0, 1.6]].map(|[x, y]| flare.add_point(n(x), n(y)));
     flare.add_spline(points.to_vec());
     program.push(
         "flare",

@@ -448,7 +448,10 @@ mod tests {
         for i in 0..=8 {
             let t = S::from_ratio(i, 8).unwrap();
             let half = |k: f64| t.add(f(k)).div(S::TWO).unwrap();
-            let (a, b) = (joined.evaluate(half(0.0)).unwrap(), arc.evaluate(t).unwrap());
+            let (a, b) = (
+                joined.evaluate(half(0.0)).unwrap(),
+                arc.evaluate(t).unwrap(),
+            );
             assert!(a.could_be_equal(&b), "{a:?} vs {b:?}");
             let (a, b) = (joined.evaluate(half(1.0)).unwrap(), on.evaluate(t).unwrap());
             assert!(a.could_be_equal(&b), "{a:?} vs {b:?}");

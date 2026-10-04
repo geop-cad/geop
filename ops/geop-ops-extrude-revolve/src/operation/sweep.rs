@@ -103,7 +103,11 @@ fn is_one(x: &f64) -> bool {
 /// The orientations a sweep offers, by value and label.
 const ORIENTATIONS: [(Orientation, &str, &str); 2] = [
     (Orientation::FollowPath, "follow_path", "follow path"),
-    (Orientation::FixedNormal, "fixed_normal", "keep normal fixed"),
+    (
+        Orientation::FixedNormal,
+        "fixed_normal",
+        "keep normal fixed",
+    ),
 ];
 
 impl Operation for Sweep {
@@ -266,12 +270,21 @@ impl Operation for Sweep {
         };
 
         if args.face {
-            sweep_along(&mut part, &namer, None, &chain, plane, &loops, &control).with_context(ctx)?;
+            sweep_along(&mut part, &namer, None, &chain, plane, &loops, &control)
+                .with_context(ctx)?;
             return Ok(part);
         }
         let name = args.combine.built_name(&namer);
-        let built = sweep_along(&mut part, &namer, Some(&name), &chain, plane, &loops, &control)
-            .with_context(ctx)?;
+        let built = sweep_along(
+            &mut part,
+            &namer,
+            Some(&name),
+            &chain,
+            plane,
+            &loops,
+            &control,
+        )
+        .with_context(ctx)?;
         let tool = Tool {
             solid: built.solid.expect("swept as a solid"),
             up_to_next: None,

@@ -642,7 +642,10 @@ fn sweep_with_rails_twist_and_orientation() {
     assert_eq!(update.step.unwrap().presentation.pickable, [Role::Sketch]);
     let update = editor.handle(dialog("rails", sketch("flare")));
     let dialog_shown = update.step.unwrap().presentation.dialog;
-    assert!(dialog_shown.get("twist").is_none(), "the rail decides the twist");
+    assert!(
+        dialog_shown.get("twist").is_none(),
+        "the rail decides the twist"
+    );
 
     editor.handle(dialog("rails", Value::Entities(Vec::new())));
     editor.handle(dialog("orientation", Value::Choice("fixed_normal".into())));
@@ -663,7 +666,17 @@ fn sweep_with_rails_twist_and_orientation() {
         panic!("a sweep");
     };
     assert_eq!(
-        (args.twist, args.end_scale, args.orientation, args.rails.len()),
-        (90.0, 0.5, geop_ops_extrude_revolve::Orientation::FixedNormal, 0)
+        (
+            args.twist,
+            args.end_scale,
+            args.orientation,
+            args.rails.len()
+        ),
+        (
+            90.0,
+            0.5,
+            geop_ops_extrude_revolve::Orientation::FixedNormal,
+            0
+        )
     );
 }

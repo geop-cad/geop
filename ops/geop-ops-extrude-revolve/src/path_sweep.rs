@@ -678,7 +678,12 @@ fn hermite<S: Scalar>(samples: &[Sample]) -> GeopResult<Span<S>> {
         if k > 0 {
             middle.push(samples[k].frame.frame());
         }
-        middle.push(samples[k].frame.step(&samples[k].derivative, h / 3.0).frame());
+        middle.push(
+            samples[k]
+                .frame
+                .step(&samples[k].derivative, h / 3.0)
+                .frame(),
+        );
         middle.push(
             samples[k + 1]
                 .frame
@@ -769,10 +774,7 @@ fn compose_derivative(frame: &Plain, d_frame: &Plain, m: &Mat, d_m: &Mat, c: [f6
         -(d_m[1][0] * c[0] + d_m[1][1] * c[1]),
     );
     Plain {
-        origin: add(
-            moved.origin,
-            add(scale(frame.e1, da), scale(frame.e2, db)),
-        ),
+        origin: add(moved.origin, add(scale(frame.e1, da), scale(frame.e2, db))),
         e1: add(
             moved.e1,
             add(scale(frame.e1, d_m[0][0]), scale(frame.e2, d_m[1][0])),
@@ -895,7 +897,7 @@ impl<'a, S: Scalar> Tracked<'a, S> {
                 )));
             }
             let step = value / slope;
-            if !(step.abs() < last_step) {
+            if step.abs() >= last_step || step.is_nan() {
                 self.tau = tau;
                 return Ok(in_plane(frame, x));
             }
@@ -961,7 +963,9 @@ fn rail_map(c: [f64; 2], start: &[[f64; 2]], now: &[[f64; 2]]) -> Mat {
             let det = q0[0] * q1[1] - q1[0] * q0[1];
             let inv = [[q1[1] / det, -q1[0] / det], [-q0[1] / det, q0[0] / det]];
             let r = [[r0[0], r1[0]], [r0[1], r1[1]]];
-            std::array::from_fn(|i| std::array::from_fn(|j| r[i][0] * inv[0][j] + r[i][1] * inv[1][j]))
+            std::array::from_fn(|i| {
+                std::array::from_fn(|j| r[i][0] * inv[0][j] + r[i][1] * inv[1][j])
+            })
         }
     }
 }
@@ -996,7 +1000,10 @@ fn rough_length<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<f64> {
     let points = (0..=n)
         .map(|i| Ok(plain(&curve.evaluate(S::from_f64(i as f64 / n as f64))?)))
         .collect::<GeopResult<Vec<V>>>()?;
-    Ok(points.windows(2).map(|w| dot(sub(w[1], w[0]), sub(w[1], w[0])).sqrt()).sum())
+    Ok(points
+        .windows(2)
+        .map(|w| dot(sub(w[1], w[0]), sub(w[1], w[0])).sqrt())
+        .sum())
 }
 
 /// The frame `start` carried along curve `k` of the path at `fine + 1`
@@ -1165,17 +1172,29 @@ fn controlled<S: Scalar>(
     // say how the profile scales.
     let offsets: Vec<Vector3<S>> = rails
         .iter()
-        .map(|r| Ok(plane.to_uvw(&start_of(&r.chain.curves[0])?).sub(&plane.to_uvw(&start_of(&chain.curves[0])?))))
+        .map(|r| {
+            Ok(plane
+                .to_uvw(&start_of(&r.chain.curves[0])?)
+                .sub(&plane.to_uvw(&start_of(&chain.curves[0])?)))
+        })
         .collect::<GeopResult<_>>()?;
     let degenerate = match offsets.as_slice() {
         [] => false,
         [q] => q[0].could_be_equal(S::ZERO) && q[1].could_be_equal(S::ZERO),
-        [q0, q1, ..] => q0[0].mul(q1[1]).sub(q1[0].mul(q0[1])).could_be_equal(S::ZERO),
+        [q0, q1, ..] => q0[0]
+            .mul(q1[1])
+            .sub(q1[0].mul(q0[1]))
+            .could_be_equal(S::ZERO),
     };
     if degenerate {
         return Err(GeopError::new(format!(
             "path sweep: the rails {} could start in line with the path, so they cannot say how the profile scales: start them off it",
-            control.rails.iter().map(|r| r.name.as_str()).collect::<Vec<_>>().join(" and ")
+            control
+                .rails
+                .iter()
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" and ")
         )));
     }
     let rail_starts: Vec<[f64; 2]> = offsets
@@ -1259,7 +1278,7 @@ fn controlled<S: Scalar>(
                 [[size * cos, -size * sin], [size * sin, size * cos]]
             };
             let det = map[0][0] * map[1][1] - map[0][1] * map[1][0];
-            if !(det > 0.0) {
+            if det <= 0.0 || det.is_nan() {
                 return Err(GeopError::new(format!(
                     "path sweep: the rails squeeze the profile flat or turn it over along {}",
                     chain.curve_names[k]
@@ -1274,7 +1293,11 @@ fn controlled<S: Scalar>(
     // The stations: the rigid ones, mapped.
     let stations: Vec<Frame<S>> = (0..=n)
         .map(|k| {
-            let map = if k < n { &maps[k][0] } else { maps[n - 1].last().expect("samples") };
+            let map = if k < n {
+                &maps[k][0]
+            } else {
+                maps[n - 1].last().expect("samples")
+            };
             compose_frame(&rigid.stations[k], map, c)
         })
         .collect();
@@ -2117,7 +2140,10 @@ mod tests {
         )
         .unwrap();
         let rails: Vec<(&str, Vec<NurbCurve3D<S>>)> = vec![
-            ("line", vec![line3(v3(0., 0.5, 0.), v3(3., 0.8, 0.)).unwrap()]),
+            (
+                "line",
+                vec![line3(v3(0., 0.5, 0.), v3(3., 0.8, 0.)).unwrap()],
+            ),
             (
                 "arc",
                 vec![arc3(v3(0., 0.5, 0.), v3(1.5, 1.25, 0.), v3(3., 0.5, 0.), f(0.8)).unwrap()],
@@ -2131,7 +2157,12 @@ mod tests {
                 ],
             ),
         ];
-        let partner = || rail("z", vec![line3(v3::<S>(0., 0., 0.5), v3(3., 0., 0.3)).unwrap()]);
+        let partner = || {
+            rail(
+                "z",
+                vec![line3(v3::<S>(0., 0., 0.5), v3(3., 0., 0.3)).unwrap()],
+            )
+        };
         for (name, curves) in rails {
             for outer in [circle::<S>(0.5), square(0.5)] {
                 for two in [false, true] {

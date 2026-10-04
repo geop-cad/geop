@@ -339,10 +339,7 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
             ));
         }
         let count = points[first].len();
-        if let Some(&s) = matched
-            .iter()
-            .find(|&&s| points[s].len() != count)
-        {
+        if let Some(&s) = matched.iter().find(|&&s| points[s].len() != count) {
             return Err(GeopError::new(format!(
                 "loft: {} has {} matching points, {} has {}: every profile matched has as many",
                 sections[s].name,
@@ -360,8 +357,7 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
                 .position(|j| *j == points[s][0])
                 .ok_or_else(|| GeopError::new("loft: the first matching point is no joint"))?;
             placed[s].profile = starting_at(&placed[s].profile, start);
-            let indices =
-                matched_indices(&placed[s].profile, &points[s], &sections[s].name)?;
+            let indices = matched_indices(&placed[s].profile, &points[s], &sections[s].name)?;
             for (t, run) in targets.iter_mut().zip(runs(&placed[s].profile, &indices)) {
                 *t = (*t).max(run);
             }
@@ -493,9 +489,8 @@ fn crossings<S: Scalar>(sections: &[Section<S>], guide: &Guide<S>) -> GeopResult
         )));
     }
     let (first, last) = (&sections[0], &sections[sections.len() - 1]);
-    let on = |section: &Section<S>, p: &Vector3<S>| {
-        section.plane.to_uvw(p)[2].could_be_equal(S::ZERO)
-    };
+    let on =
+        |section: &Section<S>, p: &Vector3<S>| section.plane.to_uvw(p)[2].could_be_equal(S::ZERO);
     let ends = |chain: &PathChain<S>| -> GeopResult<(Vector3<S>, Vector3<S>)> {
         let joints = chain.joints()?;
         Ok((joints[0], joints[joints.len() - 1]))
@@ -516,7 +511,10 @@ fn crossings<S: Scalar>(sections: &[Section<S>], guide: &Guide<S>) -> GeopResult
     let n = chain.curves.len();
     let mut at = vec![(0, S::ZERO)];
     for section in &sections[1..sections.len() - 1] {
-        let ctx = with_context!("where the guide {name} crosses the profile {}", section.name);
+        let ctx = with_context!(
+            "where the guide {name} crosses the profile {}",
+            section.name
+        );
         let patch = plane_patch(&section.plane, &chain)?;
         let mut hits = Vec::new();
         for (i, curve) in chain.curves.iter().enumerate() {
@@ -577,19 +575,30 @@ fn plane_patch<S: Scalar>(
         }
     }
     let margin = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1.0);
-    let corner = |u: f64, v: f64| plane.uv_to_xyz(&Vector2::from_array([S::from_f64(u), S::from_f64(v)]));
-    let (u0, u1, v0, v1) = (lo[0] - margin, hi[0] + margin, lo[1] - margin, hi[1] + margin);
-    bilinear(corner(u0, v0), corner(u1, v0), corner(u1, v1), corner(u0, v1))
+    let corner =
+        |u: f64, v: f64| plane.uv_to_xyz(&Vector2::from_array([S::from_f64(u), S::from_f64(v)]));
+    let (u0, u1, v0, v1) = (
+        lo[0] - margin,
+        hi[0] + margin,
+        lo[1] - margin,
+        hi[1] + margin,
+    );
+    bilinear(
+        corner(u0, v0),
+        corner(u1, v0),
+        corner(u1, v1),
+        corner(u0, v1),
+    )
 }
+
+/// Sections with the guides' joints, and the guides as crossed (see [`guided`]).
+type Guided<S> = (Vec<Section<S>>, Vec<Crossed<S>>);
 
 /// `sections` with a joint wherever a guide crosses them, matched across
 /// them in the order of the guides — the joint named `K,G` for the section
 /// `K` and the guide `G`, unless one is there already — and the guides as
 /// crossed. Guides take the place of matching points: the two do not mix.
-fn guided<S: Scalar>(
-    sections: &[Section<S>],
-    guides: &[Guide<S>],
-) -> GeopResult<(Vec<Section<S>>, Vec<Crossed<S>>)> {
+fn guided<S: Scalar>(sections: &[Section<S>], guides: &[Guide<S>]) -> GeopResult<Guided<S>> {
     if guides.len() > MAX_GUIDES {
         return Err(GeopError::new(format!(
             "loft: {} guides given, but a loft follows at most {MAX_GUIDES}",
@@ -642,12 +651,20 @@ fn guided<S: Scalar>(
                 end_point(&profile.curves[i - 1])
             }
         };
-        let q = out[0].matched.iter().map(joint).collect::<GeopResult<Vec<_>>>()?;
+        let q = out[0]
+            .matched
+            .iter()
+            .map(joint)
+            .collect::<GeopResult<Vec<_>>>()?;
         let (a, b) = (q[1].sub(&q[0]), q[2].sub(&q[0]));
         if a[0].mul(b[1]).sub(a[1].mul(b[0])).could_be_equal(S::ZERO) {
             return Err(GeopError::new(format!(
                 "loft: the guides {} could meet the profile {} in a line: they cannot shape it across that line",
-                guides.iter().map(|g| g.name.as_str()).collect::<Vec<_>>().join(", "),
+                guides
+                    .iter()
+                    .map(|g| g.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 out[0].name
             )));
         }
@@ -708,7 +725,8 @@ fn guided_span<S: Scalar>(
     let (degree, knots) = (first.degree, first.knot_vector.clone());
     let rows = first.control_points.len();
     for (k, piece) in pieces.iter().enumerate().skip(1) {
-        if !(0..rows).all(|r| piece.control_points[r][3].could_be_equal(first.control_points[r][3])) {
+        if !(0..rows).all(|r| piece.control_points[r][3].could_be_equal(first.control_points[r][3]))
+        {
             return Err(GeopError::new(format!(
                 "loft: the guides through {} and {} are rational curves of different weights: draw them alike, or as splines",
                 joints[0].0, joints[k].0
@@ -737,7 +755,11 @@ fn guided_span<S: Scalar>(
     let place = |f: &Plain, p: [f64; 2]| add(f.origin, add(scale(f.e1, p[0]), scale(f.e2, p[1])));
     let mut middle = Vec::with_capacity(rows.saturating_sub(2));
     for r in 1..rows - 1 {
-        let xi = knots[r + 1..=r + degree].iter().map(|k| k.to_f64()).sum::<f64>() / degree as f64;
+        let xi = knots[r + 1..=r + degree]
+            .iter()
+            .map(|k| k.to_f64())
+            .sum::<f64>()
+            / degree as f64;
         let weight = first.control_points[r][3];
         // Each guide: where its joint lies blended across the section, and
         // how far the ruled surface there is from the guide's control point.
@@ -745,7 +767,10 @@ fn guided_span<S: Scalar>(
             .iter()
             .zip(&pieces)
             .map(|(&(ja, jb), piece)| {
-                let q = [(1.0 - xi) * ja[0] + xi * jb[0], (1.0 - xi) * ja[1] + xi * jb[1]];
+                let q = [
+                    (1.0 - xi) * ja[0] + xi * jb[0],
+                    (1.0 - xi) * ja[1] + xi * jb[1],
+                ];
                 let ruled = add(scale(place(&fa, ja), 1.0 - xi), scale(place(&fb, jb), xi));
                 let cp = piece.control_points[r];
                 let w = cp[3].to_f64();
@@ -844,7 +869,12 @@ pub fn loft<S: Scalar>(
                 return Ok(Span::Line);
             }
             let joints: Vec<(String, String)> = (0..guides.len())
-                .map(|k| (sections[j].matched[k].clone(), sections[j + 1].matched[k].clone()))
+                .map(|k| {
+                    (
+                        sections[j].matched[k].clone(),
+                        sections[j + 1].matched[k].clone(),
+                    )
+                })
                 .collect();
             let pieces = crossed
                 .iter()
@@ -1115,7 +1145,9 @@ mod tests {
             2,
             points
                 .iter()
-                .map(|p| geop_core_math::vector::Vector4::from_array([f(p[0]), f(p[1]), f(p[2]), f(1.0)]))
+                .map(|p| {
+                    geop_core_math::vector::Vector4::from_array([f(p[0]), f(p[1]), f(p[2]), f(1.0)])
+                })
                 .collect(),
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
@@ -1148,11 +1180,17 @@ mod tests {
         let curve = &part.topology().edges[&edge].curve;
         for i in 0..=8 {
             let t = S::from_f64(i as f64 / 8.0);
-            let (a, b) = (curve.evaluate(t).unwrap(), guide.chain.curves[0].evaluate(t).unwrap());
+            let (a, b) = (
+                curve.evaluate(t).unwrap(),
+                guide.chain.curves[0].evaluate(t).unwrap(),
+            );
             // The edge's inner control points are the guide's, but for the
             // rounding of the shape between, a free choice in plain numbers.
             for k in 0..3 {
-                assert!((a[k].to_f64() - b[k].to_f64()).abs() < 1e-12, "at {t:?}: {a:?} vs {b:?}");
+                assert!(
+                    (a[k].to_f64() - b[k].to_f64()).abs() < 1e-12,
+                    "at {t:?}: {a:?} vs {b:?}"
+                );
             }
         }
     }
@@ -1174,7 +1212,10 @@ mod tests {
         // The other corners move along with it: half way up, the whole
         // section shifted by half the guide's bulge.
         let edge = part.edge_id("loft(l,a,p0)").unwrap();
-        let middle = part.topology().edges[&edge].curve.evaluate(S::from_f64(0.5)).unwrap();
+        let middle = part.topology().edges[&edge]
+            .curve
+            .evaluate(S::from_f64(0.5))
+            .unwrap();
         for (k, want) in [-0.5, -0.5, 1.0].into_iter().enumerate() {
             assert!((middle[k].to_f64() - want).abs() < 1e-12, "{middle:?}");
         }
@@ -1281,7 +1322,10 @@ mod tests {
         let four: Vec<Guide<S>> = (0..4)
             .map(|k| {
                 let (x, y) = [(1., 1.), (-1., 1.), (-1., -1.), (1., -1.)][k];
-                guide(&format!("g{k}"), [[x, y, 0.], [2. * x, 2. * y, 1.], [x, y, 2.]])
+                guide(
+                    &format!("g{k}"),
+                    [[x, y, 0.], [2. * x, 2. * y, 1.], [x, y, 2.]],
+                )
             })
             .collect();
         refused(&sections, &four, "at most 3");

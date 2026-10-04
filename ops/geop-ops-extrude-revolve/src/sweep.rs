@@ -137,9 +137,7 @@ impl<S: Scalar> Row<'_, S> {
             Row::Last(frame) => place(b, frame),
             Row::Both([(fa, wa), (fb, wb)]) => {
                 let (pa, pb) = (place(a, fa), place(b, fb));
-                Vector4::from_array(std::array::from_fn(|k| {
-                    pa[k].mul(*wa).add(pb[k].mul(*wb))
-                }))
+                Vector4::from_array(std::array::from_fn(|k| pa[k].mul(*wa).add(pb[k].mul(*wb))))
             }
         }
     }
