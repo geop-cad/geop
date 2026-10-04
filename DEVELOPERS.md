@@ -58,4 +58,7 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
+ops/geop-ops-drawing          2-D drawings: projected views with hidden
+                               lines and silhouettes, sections, dimensions,
+                               title block, SVG and DXF; the drawing step
 ```

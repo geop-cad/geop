@@ -218,6 +218,7 @@ dependencies = [
  "geop-cad-base",
  "geop-core-math",
  "geop-ops",
+ "geop-ops-drawing",
  "geop-ops-rasterize",
  "serde_json",
 ]

@@ -380,6 +380,14 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M10 16 A7 7 0 0 0 7.8 10.8" />
     </>
   ),
+  // A sheet with a view on it and a title block.
+  drawing: (
+    <>
+      <rect x="2.5" y="3.5" width="15" height="13" />
+      <rect x="5" y="6" width="5" height="5" />
+      <path d="M11 16.5 L11 13.5 L17.5 13.5" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

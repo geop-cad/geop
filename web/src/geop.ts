@@ -377,7 +377,9 @@ export type Command =
   /** The program's parameters are now these. */
   | { command: "parameters"; parameters: Parameters }
   /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
-  | { command: "drag_tool"; on: boolean };
+  | { command: "drag_tool"; on: boolean }
+  /** Write a drawing of the part — the drawing step `id`, else the one edited or the last — as SVG or DXF. */
+  | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string };
 
 /** A step of the program, as a list of steps shows it. */
 export interface StepInfo {
@@ -460,6 +462,8 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
+  /** The file `export_drawing` wrote, to save. */
+  export: { name: string; text: string } | null;
 }
 
 /** Apply `command` in the kernel, and get back what to show now. */

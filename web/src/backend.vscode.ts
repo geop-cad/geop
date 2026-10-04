@@ -57,6 +57,9 @@ export const host: Host = {
   programChanged(program) {
     vscode.postMessage({ type: "program", program });
   },
+  saveFile(name, text) {
+    vscode.postMessage({ type: "save", name, text });
+  },
 };
 
 /** The process is started by the extension host, before the page is shown. */

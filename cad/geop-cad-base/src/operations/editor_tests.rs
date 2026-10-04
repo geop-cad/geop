@@ -611,3 +611,69 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A drawing step, the way the front end makes one: started, its views
+/// chosen, a distance dimensioned by clicking two corners of the box, the
+/// title block's name typed, committed — then exported as SVG and DXF.
+#[test]
+fn a_drawing_is_made_and_exported() {
+    let (mut editor, _) = editor();
+    let started = editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    assert!(started.error.is_none(), "{:?}", started.error);
+    editor.handle(dialog("view:iso", Value::Bool(false)));
+    editor.handle(dialog("title:name", Value::Text("Drilled box".into())));
+    // The box's two top right corners, from above.
+    editor.handle(dialog("distance", Value::Press));
+    let above = |x: f64, y: f64| pointer([x, y, 10.0], [0.0, 0.0, -1.0]);
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let first = editor.handle(click(above(2.0, 2.0))).step.unwrap();
+    let Some(Control::Reference(picked)) = first.presentation.dialog.get("distance") else {
+        panic!("the distance field");
+    };
+    assert_eq!(picked.value.len(), 1, "{picked:?}");
+    let update = editor.handle(click(above(2.0, 0.0)));
+    let step = update.step.unwrap();
+    let Some(Control::List { items, .. }) = step.presentation.dialog.get("dimensions") else {
+        panic!("the dimensions are listed");
+    };
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert!(items[0].label.starts_with("Distance"), "{}", items[0].label);
+    let committed = editor.handle(Command::Commit);
+    assert!(committed.error.is_none(), "{:?}", committed.error);
+    let PartOperation::Drawing(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a drawing step");
+    };
+    assert_eq!(args.views.len(), 3);
+    assert_eq!(args.name, "Drilled box");
+
+    let exported = editor.handle(Command::ExportDrawing {
+        id: None,
+        format: geop_ops_drawing::Format::Svg,
+        date: "2026-10-04".into(),
+    });
+    assert!(exported.error.is_none(), "{:?}", exported.error);
+    let svg = exported.export.unwrap();
+    assert_eq!(svg.name, "drawing.svg");
+    assert!(svg.text.starts_with("<svg"));
+    assert!(svg.text.contains("Drilled box") && svg.text.contains(">2<"));
+    // The blind hole, seen from the front, is hidden.
+    assert!(svg.text.contains(r#"<g class="HIDDEN""#));
+    let hidden = &svg.text[svg.text.find(r#"<g class="HIDDEN""#).unwrap()..];
+    assert!(hidden[..hidden.find("</g>").unwrap()].contains("<line"));
+
+    let dxf = editor.handle(Command::ExportDrawing {
+        id: Some("drawing1".into()),
+        format: geop_ops_drawing::Format::Dxf,
+        date: String::new(),
+    });
+    assert!(dxf.export.unwrap().text.ends_with("EOF\n"));
+}
