@@ -94,7 +94,7 @@ fn boss_on_sphere_fillet_is_a_torus() {
     let mut blend_faces = 0;
     for (&id, face) in &model.faces {
         let name = part.name_of(id).unwrap();
-        if !name.contains(",fillet") {
+        if !name.starts_with(&format!("fillet(F,{},fillet", rim[0])) {
             continue;
         }
         blend_faces += 1;

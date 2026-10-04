@@ -209,8 +209,22 @@ fn seed_on<S: Scalar>(surface: &NurbSurface3D<S>, point: &Vector3<S>) -> GeopRes
     let (u, v) = match found {
         Some(uv) => uv,
         None => {
+            // Off the surface: from whichever of a grid over its domain
+            // lies nearest, so that Newton finds the foot point near the
+            // point — on a cylinder, not the one across its axis.
             let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-            (S::interpolate(u0, u1, S::from_f64(0.5)), S::interpolate(v0, v1, S::from_f64(0.5)))
+            let mut best = (f64::INFINITY, (u0, v0));
+            for i in 0..=4 {
+                for j in 0..=4 {
+                    let u = S::interpolate(u0, u1, S::from_f64(i as f64 / 4.0)).sharpen();
+                    let v = S::interpolate(v0, v1, S::from_f64(j as f64 / 4.0)).sharpen();
+                    let d = distance(&surface.evaluate(u, v)?, point);
+                    if d < best.0 {
+                        best = (d, (u, v));
+                    }
+                }
+            }
+            best.1
         }
     };
     let (u, v) = foot(surface, point, (u.sharpen(), v.sharpen()))?;
@@ -579,7 +593,18 @@ fn place<S: Scalar>(
     previous: Option<&Station<S>>,
 ) -> GeopResult<Station<S>> {
     let own = &chain.links[link];
-    let (p, tangent) = own.at(model, fraction)?;
+    let (p, along) = own.at(model, fraction)?;
+    // The edge runs along both faces' tangent planes: their normals there
+    // state its direction exactly, where the edge's curve — traced as an
+    // intersection, say — only encloses its points. At a vertex where the
+    // faces change, that is what puts the ball's section through it.
+    let across = normal_at(model, own.faces[0], &p)?.prod_cross(&normal_at(model, own.faces[1], &p)?);
+    let tangent = if across.prod_dot(&along).definitely_less(S::ZERO) {
+        across.neg()
+    } else {
+        across
+    }
+    .normalize()?;
     let sides = sides(chain);
     // The pairs of faces to try: the link's own first.
     let mut pairs = vec![own.faces];
@@ -630,23 +655,28 @@ fn place<S: Scalar>(
                 continue;
             }
         };
-        // A true foot point on both, but for rounding, is as good as any
-        // other pair could do: no need to try them. Otherwise the pair
-        // coming closest is the one to take — a free choice between faces
-        // tangent to each other, made where it is best conditioned.
-        if off <= scale * ROUNDING {
+        // A true foot point on both of the edge's own faces, but for
+        // rounding, is the ball: no need to try other faces.
+        if pair == own.faces && off <= scale * ROUNDING {
             return Ok(station);
         }
         tried.push((pair, format!("{off:e} off")));
-        if best.as_ref().is_none_or(|(b, _)| off < *b) {
-            best = Some((off, station));
+        // Off its true foot point by no more than the blend may stray from
+        // the ball anywhere, a contact is as good as the blend is. Of the
+        // balls that good, the one in the corner at the edge's point is the
+        // nearest to it: the plane square to the edge may well hold others,
+        // touching the faces across from it — on a cylinder, across its
+        // axis.
+        if off <= DEVIATION * scale {
+            let near = distance(&station.center, &p);
+            if best.as_ref().is_none_or(|(b, _)| near < *b) {
+                best = Some((near, station));
+            }
         }
     }
-    // Off its true foot point by no more than the blend may stray from the
-    // ball anywhere, the contact is as good as the blend is.
     match best {
-        Some((off, station)) if off <= DEVIATION * scale => Ok(station),
-        _ => Err(GeopError::new(format!(
+        Some((_, station)) => Ok(station),
+        None => Err(GeopError::new(format!(
             "the ball of radius {:?} touches no pair of the faces along the chain truly at {p:?}: it would touch a face beyond them, or none — each pair tried, and how far off its foot points it leaves the ball: {tried:?}",
             sr.abs(),
         ))),
@@ -714,48 +744,118 @@ fn section_points<S: Scalar>(station: &Station<S>) -> [Vector4<S>; 4] {
     ]
 }
 
-/// The stations along one link, `n` intervals of it, and between each two
-/// the ball where `true_point_fractions` says, to measure the blend
-/// against: `(stations, between)`.
-#[allow(clippy::type_complexity)]
-fn link_stations<S: Scalar>(
+/// The balls rolled along a chain: at the stations, at their parameters
+/// along the tool's span and their positions along the chain — link index
+/// plus fraction of its edge — and between each two where
+/// `true_point_fractions` says, at their parameters, to measure the blend
+/// against.
+struct Rolling<S: Scalar> {
+    stations: Vec<Station<S>>,
+    params: Vec<S>,
+    positions: Vec<f64>,
+    between: Vec<Vec<(S, Station<S>)>>,
+}
+
+/// Where along `chain` its stations are, `n` to an edge: positions — link
+/// index plus fraction of its edge — half a step off every vertex between
+/// two links, where the faces either side may change and the ball would
+/// touch the edge between them exactly at a station; an open chain also at
+/// both its ends, a closed one round to its first again.
+fn station_positions(chain: &Chain, n: usize) -> Vec<f64> {
+    let count = n * chain.links.len();
+    let inner = (0..count).map(|k| (k as f64 + 0.5) / n as f64);
+    if chain.closed {
+        let mut positions: Vec<f64> = inner.collect();
+        positions.push(positions[0] + chain.links.len() as f64);
+        positions
+    } else {
+        std::iter::once(0.0)
+            .chain(inner)
+            .chain(std::iter::once(chain.links.len() as f64))
+            .collect()
+    }
+}
+
+/// The ball rolled along `chain` with `n` stations to an edge (see
+/// [`station_positions`]), its radius as `law` says, on the side `side` of
+/// the faces.
+fn roll_chain<S: Scalar>(
     part: &Part<S>,
     chain: &Chain,
     law: &RadiusLaw,
     side: S,
-    link: usize,
     n: usize,
-    previous: Option<&Station<S>>,
-) -> GeopResult<(Vec<Station<S>>, Vec<Vec<(S, Station<S>)>>)> {
+) -> GeopResult<Rolling<S>> {
     let model = part.topology();
-    let mut stations: Vec<Station<S>> = Vec::with_capacity(n + 1);
-    let mut between = Vec::with_capacity(n);
-    let mut last = previous.cloned();
-    let at = |num: i64, den: i64| -> GeopResult<(S, f64)> {
-        Ok((S::from_ratio(num, den)?, num as f64 / den as f64))
+    let links = chain.links.len();
+    let positions = station_positions(chain, n);
+    let (first, last) = (positions[0], *positions.last().expect("positions"));
+    // The position `c` as a link and a fraction of its edge.
+    let locate = |c: f64| {
+        let c = if c >= links as f64 && chain.closed {
+            c - links as f64
+        } else {
+            c
+        };
+        let link = (c.floor() as usize).min(links - 1);
+        (link, c - link as f64)
     };
-    for i in 0..=n {
-        let (f, x) = at(i as i64, n as i64)?;
-        let ctx = with_context!("placing the ball {x} of the way along edge {}", chain.links[link].edge);
-        let station = place(model, chain, link, f, side.mul(law.radius(link, x)), last.as_ref())
-            .with_context(ctx)?;
-        last = Some(station.clone());
+    let mut previous: Option<Station<S>> = None;
+    let mut place_at = |c: f64| -> GeopResult<Station<S>> {
+        let (link, x) = locate(c);
+        let ctx = with_context!(
+            "placing the ball {x} of the way along edge {}",
+            chain.links[link].edge
+        );
+        let station = place(
+            model,
+            chain,
+            link,
+            S::from_f64(x),
+            side.mul(law.radius(link, x)),
+            previous.as_ref(),
+        )
+        .with_context(ctx)?;
+        previous = Some(station.clone());
+        Ok(station)
+    };
+    let param_of = |c: f64| {
+        if c == first {
+            S::ZERO
+        } else if c == last {
+            S::ONE
+        } else {
+            S::from_f64((c - first) / (last - first))
+        }
+    };
+    let mut stations: Vec<Station<S>> = Vec::with_capacity(positions.len());
+    let mut between = Vec::with_capacity(positions.len() - 1);
+    let intervals = positions.len() - 1;
+    for (i, &c) in positions.iter().enumerate() {
+        // Round a closed chain, the last station is the first again.
+        let station = if chain.closed && i == intervals {
+            stations[0].clone()
+        } else {
+            place_at(c)?
+        };
         stations.push(station);
-        if i == n {
+        if i == intervals {
             break;
         }
+        let next = positions[i + 1];
         let mut inside = Vec::new();
-        for &(a, b) in true_point_fractions(i, n) {
-            let (f, x) = at(i as i64 * b + a, n as i64 * b)?;
-            let ctx = with_context!("placing the ball {x} of the way along edge {}", chain.links[link].edge);
-            let station = place(model, chain, link, f, side.mul(law.radius(link, x)), last.as_ref())
-                .with_context(ctx)?;
-            last = Some(station.clone());
-            inside.push((f, station));
+        for &(a, b) in true_point_fractions(i, intervals) {
+            let at = c + (next - c) * a as f64 / b as f64;
+            inside.push((param_of(at), place_at(at)?));
         }
         between.push(inside);
     }
-    Ok((stations, between))
+    Ok(Rolling {
+        stations,
+        params: positions.iter().map(|&c| param_of(c)).collect(),
+        positions,
+        between,
+    })
 }
 
 /// One span of a tool: its control rows along it — each the four section
@@ -834,19 +934,15 @@ fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
     a.sub(b).norm().midpoint().to_f64()
 }
 
-/// The control rows of one link's span through `stations`, interpolated
-/// at evenly spaced parameters (see the module docs); the contact rows not
-/// yet widened.
-fn span_curves<S: Scalar>(stations: &[Station<S>]) -> GeopResult<[NurbCurve3D<S>; 4]> {
-    let n = stations.len() - 1;
-    let params = (0..=n)
-        .map(|i| S::from_ratio(i as i64, n as i64))
-        .collect::<GeopResult<Vec<_>>>()?;
-    let points: Vec<[Vector4<S>; 4]> = stations.iter().map(section_points).collect();
+/// The control rows of the tool's span through the stations of
+/// `rolling`, interpolated at their parameters (see the module docs); the
+/// contact rows not yet widened.
+fn span_curves<S: Scalar>(rolling: &Rolling<S>) -> GeopResult<[NurbCurve3D<S>; 4]> {
+    let points: Vec<[Vector4<S>; 4]> = rolling.stations.iter().map(section_points).collect();
     let mut curves = Vec::new();
     for k in 0..4 {
         let values: Vec<Vector4<S>> = points.iter().map(|p| p[k]).collect();
-        curves.push(NurbCurve::interpolate_homogeneous(&values, &params, 3)?);
+        curves.push(NurbCurve::interpolate_homogeneous(&values, &rolling.params, 3)?);
     }
     Ok([
         curves[0].clone(),
@@ -861,17 +957,40 @@ fn span_curves<S: Scalar>(stations: &[Station<S>]) -> GeopResult<[NurbCurve3D<S>
 fn span_deviation<S: Scalar>(
     curves: &[NurbCurve3D<S>; 4],
     between: &[Vec<(S, Station<S>)>],
-) -> GeopResult<f64> {
+) -> GeopResult<(f64, String)> {
     let blend = wall_surface(&span_of(curves, None), 0)?;
     let half = S::ONE.div(S::TWO)?;
-    let mut worst = 0.0f64;
+    let mut worst = (0.0f64, String::new());
+    let mut note = |d: f64, what: &str, s: &S, got: &Vector3<S>, truth: &Vector3<S>| {
+        if d > worst.0 {
+            worst = (
+                d,
+                format!("{what} at {:?} of the span: {got:?} where the ball has {truth:?}", s.midpoint().to_f64()),
+            );
+        }
+    };
+    // Measured from where each lies nearest: a ball placed a little further
+    // along — where the edge it was placed by is only known that well — is
+    // no deviation.
+    let (lo, hi) = curves[0].domain();
     for (s, station) in between.iter().flatten() {
         for k in [0, 2] {
-            worst = worst.max(distance(&curves[k].evaluate(*s)?, &station.contact[k / 2]));
+            let truth = station.contact[k / 2];
+            let mut t = *s;
+            for _ in 0..PROJECT_ITERATIONS {
+                let d = curves[k].evaluate(t)?.sub(&truth);
+                let tangent = curves[k].tangent(t)?;
+                let step = d.prod_dot(&tangent).div(tangent.prod_dot(&tangent))?;
+                t = clamp(t.sub(step).sharpen(), lo, hi);
+            }
+            let got = curves[k].evaluate(t)?;
+            note(distance(&got, &truth), "a contact", s, &got, &truth);
         }
         let truth = section_points(station);
         let middle = point(&truth[0].add(&truth[1].prod_scalar(S::TWO)).add(&truth[2]))?;
-        worst = worst.max(distance(&blend.evaluate(*s, half)?, &middle));
+        let (u, v) = foot(&blend, &middle, (*s, half))?;
+        let got = blend.evaluate(u, v)?;
+        note(distance(&got, &middle), "the section's middle", s, &got, &middle);
     }
     Ok(worst)
 }
@@ -911,22 +1030,15 @@ fn wall_surface<S: Scalar>(span: &ToolSpan<S>, c: usize) -> GeopResult<NurbSurfa
     )
 }
 
-/// The contact checks of one span: every station's contact point at its
+/// The contact checks of the span: every station's contact point at its
 /// parameter, and every ball between, for the contact row `k` (0 or 2).
-fn contact_checks<S: Scalar>(
-    stations: &[Station<S>],
-    between: &[Vec<(S, Station<S>)>],
-    k: usize,
-) -> GeopResult<Vec<(S, Vector3<S>)>> {
-    let n = stations.len() - 1;
-    let mut checks = Vec::new();
-    for (i, station) in stations.iter().enumerate() {
-        checks.push((S::from_ratio(i as i64, n as i64)?, station.contact[k / 2]));
-    }
-    for (s, station) in between.iter().flatten() {
-        checks.push((*s, station.contact[k / 2]));
-    }
-    Ok(checks)
+fn contact_checks<S: Scalar>(rolling: &Rolling<S>, k: usize) -> Vec<(S, Vector3<S>)> {
+    let stations = rolling.params.iter().zip(&rolling.stations);
+    let between = rolling.between.iter().flatten().map(|(s, b)| (s, b));
+    stations
+        .chain(between)
+        .map(|(s, station)| (*s, station.contact[k / 2]))
+        .collect()
 }
 
 /// Plans the rolling-ball blend of `chain` with `radii` (see the module
@@ -966,28 +1078,24 @@ pub(crate) fn plan_rolled<S: Scalar>(
         .fold(f64::INFINITY, f64::min);
 
     let mut n = FIRST_STATIONS;
+    let mut before = f64::INFINITY;
     loop {
-        let mut all: Vec<(Vec<Station<S>>, Vec<Vec<(S, Station<S>)>>)> = Vec::new();
-        for link in 0..chain.links.len() {
-            let previous = all.last().map(|(s, _)| s.last().expect("stations"));
-            all.push(link_stations(part, &chain, &law, side, link, n, previous)?);
-        }
-        let mut curves = Vec::new();
-        let mut deviation = 0.0f64;
-        for (stations, between) in &all {
-            let c = span_curves(stations)?;
-            deviation = deviation.max(span_deviation(&c, between)?);
-            curves.push(c);
-        }
+        let rolling = roll_chain(part, &chain, &law, side, n)?;
+        let curves = span_curves(&rolling)?;
+        let (deviation, worst) = span_deviation(&curves, &rolling.between)?;
         if deviation <= DEVIATION * smallest {
-            return assemble(model, chain, bend, all, curves, deviation);
+            return assemble(model, chain, bend, rolling, curves, deviation);
         }
-        if n >= MOST_STATIONS {
+        // Doubling the stations of a cubic shrinks its deviation sixteen
+        // times over; one that does not even halve is not converging, and
+        // more stations will not help.
+        if n >= MOST_STATIONS || deviation > before / 2.0 {
             return Err(GeopError::new(format!(
-                "the blend strays {deviation:e} from the rolling ball with {n} stations per edge, more than the {:e} it may (a {DEVIATION:e} of its radius)",
+                "the blend strays {deviation:e} from the rolling ball with {n} stations per edge ({before:e} with half as many), more than the {:e} it may (a {DEVIATION:e} of its radius): {worst}",
                 DEVIATION * smallest
             )));
         }
+        before = deviation;
         n *= 2;
     }
 }
@@ -1057,32 +1165,21 @@ fn assemble<S: Scalar>(
     model: &Model<S>,
     chain: Chain,
     bend: Bend,
-    all: Vec<(Vec<Station<S>>, Vec<Vec<(S, Station<S>)>>)>,
-    mut curves: Vec<[NurbCurve3D<S>; 4]>,
+    rolling: Rolling<S>,
+    mut curves: [NurbCurve3D<S>; 4],
     deviation: f64,
 ) -> GeopResult<Rolled<S>> {
-    // One pad for every contact row, so that spans meeting at a station
-    // meet in the same control points there.
-    let mut pad = [S::ZERO; 3];
-    for ((stations, between), c) in all.iter().zip(&curves) {
-        for k in [0, 2] {
-            let p = c[k].enclosing_pad(&contact_checks(stations, between, k)?)?;
-            for i in 0..3 {
-                pad[i] = pad[i].max(p[i]).upper();
-            }
-        }
-    }
-    for c in &mut curves {
-        c[0].widen(&pad);
-        c[2].widen(&pad);
+    for k in [0, 2] {
+        let pad = curves[k].enclosing_pad(&contact_checks(&rolling, k))?;
+        curves[k].widen(&pad);
     }
 
     // Which way round the section runs: the blend's normal — along the
     // chain, crossed with the way from the first contact to the second —
     // has to face the ball, out of the tool.
-    let first = &all[0].0[0];
-    let (_, t) = chain.links[0].at(model, S::ZERO)?;
-    let facing = t
+    let first = &rolling.stations[0];
+    let along = rolling.stations[1].center.sub(&first.center);
+    let facing = along
         .prod_cross(&first.contact[1].sub(&first.contact[0]))
         .prod_dot(&first.center.sub(&first.corner));
     let swap = if facing.definitely_greater(S::ZERO) {
@@ -1103,30 +1200,24 @@ fn assemble<S: Scalar>(
         }
     };
 
-    // The stations and spans along the chain: a station where each link
-    // starts — and, open, where the last ends — and a span along each.
-    let links = chain.links.len();
-    let mut stations: Vec<ToolStation<S>> = Vec::new();
-    let mut spans: Vec<ToolSpan<S>> = Vec::new();
-    for (j, ((link_stations, _), c)) in all.iter().zip(&curves).enumerate() {
-        let mut span = span_of(c, (links > 1).then(|| format!("s{j}")));
-        span.rows = span.rows.into_iter().map(order).collect();
-        stations.push(ToolStation {
-            points: span.rows[0],
-            vertices: vertices_of(&link_stations[0]),
-            name: format!("st{j}"),
-            cap: None,
-        });
-        spans.push(span);
-    }
-    let last_station = all.last().expect("links").0.last().expect("stations");
+    // One span along the whole chain, from a station at its start — and,
+    // open, to one at its end.
+    let mut span = span_of(&curves, None);
+    span.rows = span.rows.into_iter().map(order).collect();
+    let last_row = *span.rows.last().expect("rows");
+    let mut stations = vec![ToolStation {
+        points: span.rows[0],
+        vertices: vertices_of(first),
+        name: "st0".to_string(),
+        cap: None,
+    }];
+    let mut spans = vec![span];
+    let last_station = rolling.stations.last().expect("stations");
     if !chain.closed {
-        let c = curves.last().expect("links");
-        let n = c[0].control_points.len() - 1;
         stations.push(ToolStation {
-            points: order([0, 1, 2, 3].map(|k| c[k].control_points[n])),
+            points: last_row,
             vertices: vertices_of(last_station),
-            name: format!("st{links}"),
+            name: "st1".to_string(),
             cap: None,
         });
     }
@@ -1221,9 +1312,18 @@ fn assemble<S: Scalar>(
         spans[j].rows[last] = stations[next].points;
     }
 
-    let middles = all
-        .iter()
-        .map(|(stations, _)| stations[stations.len() / 2].clone())
+    // The ball nearest the middle of each link.
+    let middles = (0..chain.links.len())
+        .map(|link| {
+            let middle = link as f64 + 0.5;
+            let nearest = (0..rolling.positions.len())
+                .min_by(|&a, &b| {
+                    let d = |i: usize| (rolling.positions[i] - middle).abs();
+                    d(a).total_cmp(&d(b))
+                })
+                .expect("positions");
+            rolling.stations[nearest].clone()
+        })
         .collect();
     let closed = chain.closed;
     Ok(Rolled {
