@@ -55,9 +55,9 @@ function typing(e: KeyboardEvent): boolean {
 /** The commands that change the program, for statistics. */
 const EDITS: Command["command"][] = ["commit", "remove", "move", "load", "load_example", "undo", "redo"];
 
-/** Download `text` as the file `name`, of the media type `type`. */
-function download(name: string, text: string, type = "application/json") {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+/** Download `data` as the file `name`, of the media type `type`. */
+function download(name: string, data: string | Uint8Array<ArrayBuffer>, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
@@ -359,8 +359,17 @@ function App() {
     const update = await dispatch({ command: "export_drawing", format, date });
     const file = update?.export;
     if (!file) return;
-    if (host) host.saveFile(file.name, file.text);
-    else download(file.name, file.text, format === "svg" ? "image/svg+xml" : "application/dxf");
+    if (host) host.saveFile(file);
+    else download(file.name, file.text ?? "", format === "svg" ? "image/svg+xml" : "application/dxf");
+  }
+
+  /** Export the assembly as a URDF robot, a ZIP archive, and save it. */
+  async function exportUrdf() {
+    const update = await dispatch({ command: "export_urdf" });
+    const file = update?.export;
+    if (!file?.bytes) return;
+    if (host) host.saveFile(file);
+    else download(file.name, Uint8Array.from(atob(file.bytes), (c) => c.charCodeAt(0)), "application/zip");
   }
 
   async function loadExample(name: string) {
@@ -560,6 +569,7 @@ function App() {
         hasSteps={stepCount > 0}
         onSave={() => downloadFile(workspace.active)}
         onExportDrawing={(format) => void exportDrawing(format)}
+        onExportUrdf={() => void exportUrdf()}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}

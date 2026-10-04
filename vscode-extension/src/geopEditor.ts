@@ -8,7 +8,7 @@ type FromPage =
   | { type: "ready" }
   | { type: "command"; id: number; command: string }
   | { type: "program"; program: unknown }
-  | { type: "save"; name: string; text: string };
+  | { type: "save"; file: { name: string; text?: string; bytes?: string } };
 
 /**
  * A `.geop` file as the web editor: the page is the one `web/` builds, the
@@ -177,12 +177,15 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
             if (!writing) await write();
             break;
           case "save": {
-            // An exported drawing: saved where the user says, next to the
-            // document unless told otherwise.
+            // An exported file — a drawing, a robot — saved where the user
+            // says, next to the document unless told otherwise: text, or
+            // bytes sent as base64.
+            const { name, text, bytes } = message.file;
             const target = await vscode.window.showSaveDialog({
-              defaultUri: vscode.Uri.joinPath(document.uri, "..", message.name),
+              defaultUri: vscode.Uri.joinPath(document.uri, "..", name),
             });
-            if (target) await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(message.text));
+            const content = bytes != null ? Buffer.from(bytes, "base64") : new TextEncoder().encode(text ?? "");
+            if (target) await vscode.workspace.fs.writeFile(target, content);
             break;
           }
         }

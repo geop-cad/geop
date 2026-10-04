@@ -567,6 +567,16 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M11 16.5 L11 13.5 L17.5 13.5" />
     </>
   ),
+  // A robot arm: a base, two links and a gripper.
+  robot: (
+    <>
+      <path d="M3 17.5 L9 17.5" />
+      <path d="M6 17.5 L6 12 L11 7 L15.5 9" />
+      <circle cx="6" cy="12" r="1" />
+      <circle cx="11" cy="7" r="1" />
+      <path d="M15.5 9 L17.5 7.5 M15.5 9 L17 11" />
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

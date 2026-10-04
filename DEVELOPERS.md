@@ -92,6 +92,10 @@ ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
                                countersink, tapped) and threads, cosmetic or
                                modelled along a helix; the hole and thread
                                operations
+ops/geop-ops-urdf             URDF export of an assembly: the tree of links
+                               and joints, mimics, inertia, STL meshes, a
+                               stored ZIP writer; `geop urdf`, the editor's
+                               export_urdf
 ```
 
 Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball

@@ -410,7 +410,16 @@ export type Command =
   /** Ask a question of the part as drawn, answered in [[Update]] `inspection`; changes nothing. */
   | { command: "inspect"; query: "mass_properties" | "interference" }
   /** Write a drawing of the part — the drawing step `id`, else the one edited or the last — as SVG or DXF. */
-  | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string };
+  | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string }
+  /** Write the assembly as a URDF robot: a ZIP archive of `robot.urdf` and its meshes. */
+  | { command: "export_urdf" };
+
+/** A file the kernel wrote, to save: text, or bytes in base64. */
+export interface ExportedFile {
+  name: string;
+  text?: string;
+  bytes?: string;
+}
 
 /** A joint's coordinate — see `geop_ops::assembly::JointValue`. */
 export interface JointValue {
@@ -561,8 +570,8 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
-  /** The file `export_drawing` wrote, to save. */
-  export: { name: string; text: string } | null;
+  /** The file `export_drawing` or `export_urdf` wrote, to save. */
+  export: ExportedFile | null;
   /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
 }

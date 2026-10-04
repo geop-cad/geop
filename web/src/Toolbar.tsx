@@ -13,6 +13,8 @@ interface Props {
   onSave: () => void;
   /** Export a drawing of the part (see the drawing step) as SVG or DXF. */
   onExportDrawing: (format: "svg" | "dxf") => void;
+  /** Export the assembly as a URDF robot, for simulators. */
+  onExportUrdf: () => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
@@ -57,6 +59,7 @@ export function Toolbar({
   hasSteps,
   onSave,
   onExportDrawing,
+  onExportUrdf,
   onLoadFile,
   exampleNames,
   onLoadExample,
@@ -103,6 +106,16 @@ export function Toolbar({
       icon: "drawing",
       disabled: !hasSteps,
       onSelect: () => onExportDrawing("dxf"),
+    },
+    { kind: "separator" },
+    { kind: "heading", label: "Robot" },
+    {
+      kind: "item",
+      label: "Export URDF",
+      icon: "robot",
+      hint: "joints, inertia, meshes",
+      disabled: !hasSteps,
+      onSelect: onExportUrdf,
     },
     { kind: "separator" },
     { kind: "heading", label: "Example parts" },
