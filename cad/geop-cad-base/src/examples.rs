@@ -22,6 +22,7 @@ use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, LoftArgs, RevolveArgs};
+use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
@@ -1344,6 +1345,105 @@ pub fn airfoil_wing() -> Program {
     program
 }
 
+/// A 60 x 40 x 10 mm mounting plate: four counterbored M5 holes through
+/// its corners, at the points of one sketch on its top (`bolts`), and a
+/// tapped M6 hole 8 deep in its middle (`tapped`), which carries the
+/// cosmetic thread M6x1 — the result is `hole(tapped)`.
+pub fn hole_plate() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    rectangle(&mut outline, [0.0, 0.0], 60.0, 40.0);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(10.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    let points = |at: &[P2]| {
+        let mut sketch = Sketch::new();
+        let ids: Vec<PointId> = at
+            .iter()
+            .map(|p| sketch.add_point(n(p[0]), n(p[1])))
+            .collect();
+        for (id, p) in ids.into_iter().zip(at) {
+            sketch.constrain(Constraint::Fix {
+                point: id,
+                x: n(p[0]),
+                y: n(p[1]),
+            });
+        }
+        solved(sketch)
+    };
+    let top = || EntityRef::Face {
+        name: "extrude(plate,end)".into(),
+    };
+    program.push(
+        "corners",
+        AddSketchArgs {
+            plane: Some(top()),
+            sketch: points(&[[8.0, 8.0], [52.0, 8.0], [52.0, 32.0], [8.0, 32.0]]),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "bolts",
+        HoleArgs {
+            face: "extrude(plate,end)".into(),
+            points: vec![EntityRef::Sketch {
+                name: "corners".into(),
+            }],
+            kind: HoleKind::Counterbore,
+            standard: Standard::Iso {
+                size: "M5".into(),
+                fit: Fit::Normal,
+            },
+            end: Extent::ThroughAll,
+            drill_point: false,
+            thread_length: None,
+        },
+    );
+    program.push(
+        "middle",
+        AddSketchArgs {
+            plane: Some(top()),
+            sketch: points(&[[30.0, 20.0]]),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "tapped",
+        HoleArgs {
+            face: "extrude(plate,end)".into(),
+            points: vec![EntityRef::Sketch {
+                name: "middle".into(),
+            }],
+            kind: HoleKind::Tapped,
+            standard: Standard::Iso {
+                size: "M6".into(),
+                fit: Fit::Normal,
+            },
+            end: Extent::Blind(8.0),
+            drill_point: true,
+            thread_length: None,
+        },
+    );
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1358,6 +1458,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("link", link()),
         ("parametric_plate", parametric_plate()),
         ("airfoil_wing", airfoil_wing()),
+        ("hole_plate", hole_plate()),
     ]
 }
 

@@ -611,3 +611,83 @@ fn new_offset_plane_dragged_by_its_handle() {
     };
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
+
+/// A new hole, the way the front end makes one: the plate's top clicked
+/// as the face, the sketch's point clicked as the centre, a counterbored
+/// M5 through all chosen in the dialog — which says what that comes to —
+/// committed, and the plate drilled; made tapped, its thread drawn.
+#[test]
+fn new_hole_from_the_dialog() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program: super::hole_tests::plate(&[[20.0, 20.0]]),
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::New {
+        kind: "hole".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let above = |x: f64, y: f64| pointer([x, y, 50.0], [0.0, 0.0, -1.0]);
+    let update = editor.handle(click(above(40.0, 30.0)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("points", Value::Press));
+    let update = editor.handle(click(above(20.0, 20.0)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("kind", Value::Choice("counterbore".into())));
+    editor.handle(dialog("size", Value::Choice("M5".into())));
+    let update = editor.handle(dialog("end", Value::Choice("through_all".into())));
+    let step = update.step.expect("the hole is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    let shown = &step.presentation.dialog;
+    match shown.get("dimensions") {
+        Some(Control::Text { text, .. }) => {
+            assert_eq!(text, "Ø5.5, counterbore Ø10 × 5 deep")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(shown.get("depth").is_none(), "through all has no depth");
+    // The hole and its counterbore, drawn on the face.
+    let circles = step
+        .presentation
+        .visuals
+        .iter()
+        .filter(|v| v.key.starts_with("hole0"))
+        .count();
+    assert_eq!(circles, 2);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::Hole(args) => {
+            assert_eq!(args.face, "extrude(plate,end)");
+            assert_eq!(
+                args.points,
+                [EntityRef::SketchPoint {
+                    sketch: "centres".into(),
+                    point: geop_core_sketch::PointId(0),
+                }]
+            );
+            assert_eq!(args.kind, geop_ops_hole::HoleKind::Counterbore);
+            assert_eq!(args.end, geop_ops_extrude_revolve::Extent::ThroughAll);
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = update.scene.expect("the scene changed");
+    assert_eq!(scene.part.solids, ["hole(hole1)"]);
+
+    // Tapped instead: the scene draws its cosmetic thread.
+    editor.handle(Command::Open { id: "hole1".into() });
+    editor.handle(dialog("kind", Value::Choice("tapped".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let scene = update.scene.expect("the scene changed");
+    assert_eq!(scene.part.threads.len(), 1);
+    assert_eq!(scene.part.threads[0].designation, "M5x0.8");
+}

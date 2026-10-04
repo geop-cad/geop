@@ -109,7 +109,7 @@ fn z_plane() -> EntityRef {
 
 /// The plate `extrude(plate)`, and the sketch `centres` on its top with
 /// points at `points` (in world `x`, `y`).
-fn plate(points: &[[f64; 2]]) -> Program {
+pub(super) fn plate(points: &[[f64; 2]]) -> Program {
     let mut program = Program::new();
     let [w, d, t] = PLATE;
     sketch_on(

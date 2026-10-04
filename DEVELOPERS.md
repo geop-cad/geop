@@ -58,4 +58,8 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
                                example programs
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool
+ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
+                               countersink, tapped) and threads, cosmetic or
+                               modelled along a helix; the hole and thread
+                               operations
 ```
