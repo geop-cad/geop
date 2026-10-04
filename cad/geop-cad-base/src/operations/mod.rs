@@ -51,6 +51,8 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod inspect_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

@@ -5,7 +5,6 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    vector::Vector3,
 };
 use geop_core_topology::{
     SolidId,
@@ -20,7 +19,7 @@ use serde::Serialize;
 
 use crate::{
     Bounded,
-    bodies::{PlacedSolid, placed_solids},
+    bodies::{PlacedSolid, apart, hull, placed_solids},
 };
 
 /// How two solids meet.
@@ -73,7 +72,7 @@ pub fn interference_report<S: Scalar>(part: &Part<S>) -> GeopResult<Interference
     let solids = placed_solids(part)?;
     let boxes = solids
         .iter()
-        .map(|s| bounding_box(s))
+        .map(|s| s.bounding_box())
         .collect::<GeopResult<Vec<_>>>()?;
     let mut found = Vec::new();
     let mut unchecked = Vec::new();
@@ -150,7 +149,7 @@ fn touch<S: Scalar>(a: &PlacedSolid<S>, b: &PlacedSolid<S>) -> GeopResult<bool> 
                 let points = surface
                     .control_points
                     .iter()
-                    .map(|cp| dehomogenized(cp, s))
+                    .map(|cp| s.place_control_point(cp))
                     .collect::<GeopResult<Vec<_>>>()?;
                 Ok((face, hull(&points)))
             })
@@ -229,46 +228,3 @@ fn copy_solid<S: Scalar>(
         .ok_or_else(|| GeopError::new(format!("the copy of {} is no solid", solid.name)))
 }
 
-/// An axis-aligned box: the hull of each coordinate.
-type Box3<S> = Vector3<S>;
-
-/// The box of `points`: each coordinate the union of theirs.
-fn hull<S: Scalar>(points: &[Vector3<S>]) -> Box3<S> {
-    points
-        .iter()
-        .copied()
-        .reduce(|a, b| a.union(&b))
-        .unwrap_or_else(Vector3::everything)
-}
-
-/// Whether two boxes are definitely apart along some axis.
-fn apart<S: Scalar>(a: &Box3<S>, b: &Box3<S>) -> bool {
-    (0..3).any(|k| a[k].upper().definitely_less(b[k].lower()) || b[k].upper().definitely_less(a[k].lower()))
-}
-
-/// The control point `cp` of a surface of `solid`, as a point, where the
-/// solid is placed.
-fn dehomogenized<S: Scalar>(
-    cp: &geop_core_math::vector::Vector<S, 4>,
-    solid: &PlacedSolid<S>,
-) -> GeopResult<Vector3<S>> {
-    let w = cp[3];
-    let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
-    Ok(match &solid.pose {
-        Some(pose) => pose.apply(&p),
-        None => p,
-    })
-}
-
-/// The box around `solid`: around its surfaces' control points — each
-/// surface lies in their hull, and so the solid in the box of them all.
-fn bounding_box<S: Scalar>(solid: &PlacedSolid<S>) -> GeopResult<Box3<S>> {
-    let model = solid.part.topology();
-    let mut points = Vec::new();
-    for face in model.solid_faces(solid.solid)? {
-        for cp in &model.get_face(face)?.surface.control_points {
-            points.push(dehomogenized(cp, solid)?);
-        }
-    }
-    Ok(hull(&points))
-}

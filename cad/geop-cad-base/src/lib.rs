@@ -1,10 +1,11 @@
 //! The CAD engine: which operations the editor offers, and the programs
 //! written in them ([`operations`]); editing such a program, as one state
-//! machine an editor drives ([`editor`]); and example programs
-//! ([`examples`]).
+//! machine an editor drives ([`editor`]), with its inspect tools
+//! ([`inspect`]); and example programs ([`examples`]).
 
 pub mod editor;
 pub mod examples;
+pub mod inspect;
 pub mod operations;
 
 pub use editor::{Command, Editor, Update};
