@@ -793,4 +793,4 @@ fn quads<S: Scalar>(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
