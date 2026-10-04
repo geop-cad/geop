@@ -43,13 +43,7 @@ pub fn write_step<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<String> {
     let context = writer.context();
     let mut solids = Vec::new();
     let mut sheets = Vec::new();
-    writer.part(
-        part,
-        &Pose::identity(),
-        "",
-        &mut solids,
-        &mut sheets,
-    )?;
+    writer.part(part, &Pose::identity(), "", &mut solids, &mut sheets)?;
 
     let origin = writer.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let product = writer.product(name, context.application);
@@ -245,7 +239,10 @@ impl Writer {
         ]);
         let solid_angle_unit = self.add_complex(vec![
             record("NAMED_UNIT", vec![Value::Derived]),
-            record("SI_UNIT", vec![Value::Null, Value::Enum("STERADIAN".into())]),
+            record(
+                "SI_UNIT",
+                vec![Value::Null, Value::Enum("STERADIAN".into())],
+            ),
             record("SOLID_ANGLE_UNIT", vec![]),
         ]);
         let uncertainty = self.add(
@@ -267,10 +264,7 @@ impl Writer {
                 "GLOBAL_UNIT_ASSIGNED_CONTEXT",
                 vec![refs([length_unit, angle_unit, solid_angle_unit])],
             ),
-            record(
-                "REPRESENTATION_CONTEXT",
-                vec![string("geop"), string("3D")],
-            ),
+            record("REPRESENTATION_CONTEXT", vec![string("geop"), string("3D")]),
         ]);
         Context {
             application,
@@ -389,10 +383,10 @@ impl Writer {
         sheet_ids.sort_by_key(|id| id.0);
         for sheet in sheet_ids {
             let shell = body.shell(sheet, "OPEN_SHELL", false)?;
-            sheets.push(body.writer.add(
-                "SHELL_BASED_SURFACE_MODEL",
-                vec![string(""), refs([shell])],
-            ));
+            sheets.push(
+                body.writer
+                    .add("SHELL_BASED_SURFACE_MODEL", vec![string(""), refs([shell])]),
+            );
         }
         for (id, instance) in part.instances() {
             let prefix = format!(
@@ -635,11 +629,14 @@ impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
                     .add("EDGE_LOOP", vec![string(""), refs(oriented)])
             }
         };
-        let kind = if outer { "FACE_OUTER_BOUND" } else { "FACE_BOUND" };
-        Ok(self.writer.add(
-            kind,
-            vec![string(""), Value::Ref(lp), logical(!reversed)],
-        ))
+        let kind = if outer {
+            "FACE_OUTER_BOUND"
+        } else {
+            "FACE_BOUND"
+        };
+        Ok(self
+            .writer
+            .add(kind, vec![string(""), Value::Ref(lp), logical(!reversed)]))
     }
 
     fn face(&mut self, id: FaceId, reversed: bool) -> GeopResult<u64> {

@@ -87,9 +87,9 @@ pub struct Exchange {
 impl Exchange {
     /// The instance `#id`.
     pub fn get(&self, id: u64) -> GeopResult<&Instance> {
-        self.instances
-            .get(&id)
-            .ok_or_else(|| GeopError::new(format!("the file refers to #{id}, which it does not have")))
+        self.instances.get(&id).ok_or_else(|| {
+            GeopError::new(format!("the file refers to #{id}, which it does not have"))
+        })
     }
 
     /// The ids of every instance of the type `name`, in id order.
@@ -339,7 +339,9 @@ impl Lexer<'_> {
                 }
                 let name = String::from_utf8_lossy(&self.bytes[start..self.pos]).to_uppercase();
                 if self.bytes.get(self.pos) != Some(&b'.') {
-                    return Err(self.error(format!("the enumeration value .{name} has no closing `.`")));
+                    return Err(
+                        self.error(format!("the enumeration value .{name} has no closing `.`"))
+                    );
                 }
                 self.pos += 1;
                 Ok(Token::Enum(name))
@@ -571,9 +573,9 @@ impl Parser<'_> {
                             Instance::Complex(records)
                         }
                         other => {
-                            return Err(self.lexer.error(format!(
-                                "#{id}: expected an entity, found {other:?}"
-                            )));
+                            return Err(self
+                                .lexer
+                                .error(format!("#{id}: expected an entity, found {other:?}")));
                         }
                     };
                     self.expect(Token::Semicolon)?;
@@ -676,10 +678,7 @@ END-ISO-10303-21;
     fn a_file_reads_with_complex_instances_and_typed_values() {
         let exchange = Exchange::parse(SAMPLE).unwrap();
         assert_eq!(exchange.header.len(), 3);
-        assert_eq!(
-            exchange.header[1].args[0],
-            Value::String("it's.stp".into())
-        );
+        assert_eq!(exchange.header[1].args[0], Value::String("it's.stp".into()));
         let point = exchange.get(1).unwrap().record("CARTESIAN_POINT").unwrap();
         assert_eq!(
             point.args[1],
@@ -692,7 +691,12 @@ END-ISO-10303-21;
             vec![Value::Enum("MILLI".into()), Value::Enum("METRE".into())]
         );
         assert_eq!(
-            exchange.get(4).unwrap().record("UNCERTAINTY_MEASURE_WITH_UNIT").unwrap().args[0],
+            exchange
+                .get(4)
+                .unwrap()
+                .record("UNCERTAINTY_MEASURE_WITH_UNIT")
+                .unwrap()
+                .args[0],
             Value::Typed("LENGTH_MEASURE".into(), Box::new(Value::Real(1e-5)))
         );
         assert_eq!(
@@ -716,16 +720,13 @@ END-ISO-10303-21;
         assert_eq!(real(1.5e-7), "1.5E-7");
         assert_eq!(real(1e20), "1.E20");
         for r in [0.1, 1.0 / 3.0, -123456.789e-30, 2.5e300] {
-            let Value::Real(back) = Exchange::parse(&format!(
-                "DATA;#1=A({});ENDSEC;",
-                real(r)
-            ))
-            .unwrap()
-            .get(1)
-            .unwrap()
-            .record("A")
-            .unwrap()
-            .args[0]
+            let Value::Real(back) = Exchange::parse(&format!("DATA;#1=A({});ENDSEC;", real(r)))
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .record("A")
+                .unwrap()
+                .args[0]
             else {
                 panic!()
             };

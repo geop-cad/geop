@@ -75,7 +75,11 @@ impl Frame {
             .ok_or_else(|| GeopError::new(format!("a placement's axis {axis:?} has no length")))?;
         let x = normalize(sub(reference, scale(z, dot(reference, z))))
             .or_else(|| {
-                let other = if z[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+                let other = if z[0].abs() < 0.9 {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [0.0, 1.0, 0.0]
+                };
                 normalize(sub(other, scale(z, dot(other, z))))
             })
             .expect("a vector not along a unit axis has a perpendicular part");
@@ -91,7 +95,10 @@ impl Frame {
     pub fn point(&self, p: P3) -> P3 {
         add(
             self.origin,
-            add(scale(self.x, p[0]), add(scale(self.y, p[1]), scale(self.z, p[2]))),
+            add(
+                scale(self.x, p[0]),
+                add(scale(self.y, p[1]), scale(self.z, p[2])),
+            ),
         )
     }
 
@@ -230,7 +237,10 @@ pub enum SurfaceKind {
     Revolved(Revolved),
     Nurbs(NurbsSurface),
     /// `curve` swept along `vector`: `S(u, v) = curve(u) + v vector`.
-    Extrusion { curve: NurbsCurve, vector: P3 },
+    Extrusion {
+        curve: NurbsCurve,
+        vector: P3,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -264,7 +274,12 @@ pub struct Revolved {
 pub enum Profile {
     /// A straight line, `(rho + v drho, h + v dh)`: a cylinder's, a
     /// cone's — its apex where the radius is none — or any line's.
-    Line { rho: f64, h: f64, drho: f64, dh: f64 },
+    Line {
+        rho: f64,
+        h: f64,
+        drho: f64,
+        dh: f64,
+    },
     /// `(r cos v, r sin v)`, `v` from `-pi/2` to `pi/2`.
     Sphere { radius: f64 },
     /// A circle off the axis, `(rho + r cos v, h + r sin v)`: a torus'
@@ -283,9 +298,12 @@ impl Revolved {
         let rho = x.hypot(y);
         let angle = (rho > self.on_axis).then(|| y.atan2(x));
         let v = match &self.profile {
-            Profile::Line { rho: r0, h: h0, drho, dh } => {
-                ((rho - r0) * drho + (h - h0) * dh) / (drho * drho + dh * dh)
-            }
+            Profile::Line {
+                rho: r0,
+                h: h0,
+                drho,
+                dh,
+            } => ((rho - r0) * drho + (h - h0) * dh) / (drho * drho + dh * dh),
             Profile::Curve(_) => h,
             Profile::Sphere { .. } => h.atan2(rho),
             Profile::Circle { rho: rc, h: hc, .. } => (h - hc).atan2(rho - rc),
@@ -328,9 +346,7 @@ impl Revolved {
     pub fn profile_curve<S: Scalar>(&self, v0: f64, v1: f64) -> GeopResult<NurbCurve3D<S>> {
         let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
         match &self.profile {
-            Profile::Line { .. } => {
-                line(&s3(self.profile_point(v0)), &s3(self.profile_point(v1)))
-            }
+            Profile::Line { .. } => line(&s3(self.profile_point(v0)), &s3(self.profile_point(v1))),
             Profile::Sphere { radius } | Profile::Circle { radius, .. } => {
                 let center = match &self.profile {
                     Profile::Circle { rho, h, .. } => self.frame.point([*rho, 0.0, *h]),
@@ -361,7 +377,13 @@ impl Revolved {
 
     /// The surface between the angles `from` and `to` and, where the
     /// profile is analytic, the profile parameters `v0` and `v1`.
-    pub fn patch<S: Scalar>(&self, from: f64, to: f64, v0: f64, v1: f64) -> GeopResult<NurbSurface3D<S>> {
+    pub fn patch<S: Scalar>(
+        &self,
+        from: f64,
+        to: f64,
+        v0: f64,
+        v1: f64,
+    ) -> GeopResult<NurbSurface3D<S>> {
         NurbSurface::revolve(&self.profile_curve(v0, v1)?, &self.axis()?, from, to)
     }
 
@@ -425,7 +447,12 @@ fn homogeneous<S: Scalar>(p: P3, weight: Option<f64>) -> Vector4<S> {
     match weight {
         // A weight of one is taken as it is: multiplying by it would only
         // widen the point by rounding.
-        None => Vector4::from_array([S::from_f64(p[0]), S::from_f64(p[1]), S::from_f64(p[2]), S::ONE]),
+        None => Vector4::from_array([
+            S::from_f64(p[0]),
+            S::from_f64(p[1]),
+            S::from_f64(p[2]),
+            S::ONE,
+        ]),
         Some(w) => {
             let w = S::from_f64(w);
             Vector4::from_array([
@@ -455,7 +482,8 @@ impl NurbsSurface {
         )?;
         let clamped_in = |knots: &[f64], p: usize| {
             let n = knots.len();
-            (0..=p).all(|i| knots[i] == knots[p]) && (0..=p).all(|i| knots[n - 1 - i] == knots[n - 1 - p])
+            (0..=p).all(|i| knots[i] == knots[p])
+                && (0..=p).all(|i| knots[n - 1 - i] == knots[n - 1 - p])
         };
         if clamped_in(&self.knots_u, self.degree_u) && clamped_in(&self.knots_v, self.degree_v) {
             Ok(surface)
@@ -524,13 +552,20 @@ impl CurveDef {
                     end,
                 }
                 .to_curve()?;
-                let (o, x, y) = (s3(frame.origin), s3(scale(frame.x, *a)), s3(scale(frame.y, *b)));
+                let (o, x, y) = (
+                    s3(frame.origin),
+                    s3(scale(frame.x, *a)),
+                    s3(scale(frame.y, *b)),
+                );
                 let control_points = arc
                     .control_points
                     .iter()
                     .map(|cp| {
                         let w = cp[3];
-                        let p = o.prod_scalar(w).add(&x.prod_scalar(cp[0])).add(&y.prod_scalar(cp[1]));
+                        let p = o
+                            .prod_scalar(w)
+                            .add(&x.prod_scalar(cp[0]))
+                            .add(&y.prod_scalar(cp[1]));
                         Vector4::from_array([p[0], p[1], p[2], w])
                     })
                     .collect();
@@ -539,7 +574,9 @@ impl CurveDef {
             CurveDef::Nurbs(nurbs) => trim(nurbs.to_nurbs()?, from, to, closed, uncertainty),
             CurveDef::Conic { frame, kind } => {
                 if closed {
-                    return Err(GeopError::new("a hyperbola or parabola cannot close on itself"));
+                    return Err(GeopError::new(
+                        "a hyperbola or parabola cannot close on itself",
+                    ));
                 }
                 // One rational quadratic piece from `from` to `to`: its
                 // middle control point where the tangents at the ends meet.
@@ -585,7 +622,13 @@ impl CurveDef {
                 }
                 knots.push(S::ONE);
                 let control_points = points.iter().map(|p| homogeneous(*p, None)).collect();
-                trim(NurbCurve::try_new(1, control_points, knots)?, from, to, closed, uncertainty)
+                trim(
+                    NurbCurve::try_new(1, control_points, knots)?,
+                    from,
+                    to,
+                    closed,
+                    uncertainty,
+                )
             }
         }
     }
@@ -698,7 +741,11 @@ impl<'a> Reader<'a> {
     pub fn frame(&self, scope: &Scope, id: u64) -> GeopResult<Frame> {
         let instance = self.instance(id)?;
         if instance.is("AXIS2_PLACEMENT_2D") {
-            return Err(unsupported(id, instance, "a 2-D placement where a 3-D one is needed"));
+            return Err(unsupported(
+                id,
+                instance,
+                "a 2-D placement where a 3-D one is needed",
+            ));
         }
         let args = self.args(id, "AXIS2_PLACEMENT_3D")?;
         let origin = self.point(scope, args.reference(1)?)?;
@@ -712,7 +759,8 @@ impl<'a> Reader<'a> {
         } else {
             self.direction(scope, args.reference(3)?)?
         };
-        Frame::new(origin, axis, reference).map_err(|e| e.with_context(format!("#{id} AXIS2_PLACEMENT_3D")))
+        Frame::new(origin, axis, reference)
+            .map_err(|e| e.with_context(format!("#{id} AXIS2_PLACEMENT_3D")))
     }
 
     /// The curve `#id`, and whether the curve as used runs against the one
@@ -728,22 +776,23 @@ impl<'a> Reader<'a> {
         {
             return Ok((CurveDef::Nurbs(self.nurbs_curve(scope, id)?), false));
         }
-        let (kind, args) = self.args_of_any(
-            id,
-            &[
-                "LINE",
-                "CIRCLE",
-                "ELLIPSE",
-                "TRIMMED_CURVE",
-                "SURFACE_CURVE",
-                "SEAM_CURVE",
-                "INTERSECTION_CURVE",
-                "POLYLINE",
-                "HYPERBOLA",
-                "PARABOLA",
-            ],
-        )
-        .map_err(|_| unsupported(id, instance, "this kind of curve cannot be read"))?;
+        let (kind, args) = self
+            .args_of_any(
+                id,
+                &[
+                    "LINE",
+                    "CIRCLE",
+                    "ELLIPSE",
+                    "TRIMMED_CURVE",
+                    "SURFACE_CURVE",
+                    "SEAM_CURVE",
+                    "INTERSECTION_CURVE",
+                    "POLYLINE",
+                    "HYPERBOLA",
+                    "PARABOLA",
+                ],
+            )
+            .map_err(|_| unsupported(id, instance, "this kind of curve cannot be read"))?;
         Ok(match kind {
             "LINE" => (
                 CurveDef::Line {
@@ -837,15 +886,25 @@ impl<'a> Reader<'a> {
         // instance, at the start of its own record in a complex one.
         let sub_offset = if own.is_some() { 6 } else { 0 };
         let knots = if let Some(args) = subtype("B_SPLINE_CURVE_WITH_KNOTS") {
-            expand_knots(id, &args.integers(sub_offset)?, &args.reals(sub_offset + 1)?)?
+            expand_knots(
+                id,
+                &args.integers(sub_offset)?,
+                &args.reals(sub_offset + 1)?,
+            )?
         } else if subtype("BEZIER_CURVE").is_some() {
             bezier_knots(id, n, degree)?
         } else if subtype("QUASI_UNIFORM_CURVE").is_some() {
             quasi_uniform_knots(n, degree)
         } else if subtype("UNIFORM_CURVE").is_some() {
-            (0..n + degree + 1).map(|i| i as f64 - degree as f64).collect()
+            (0..n + degree + 1)
+                .map(|i| i as f64 - degree as f64)
+                .collect()
         } else {
-            return Err(unsupported(id, instance, "a B-spline curve without a knot vector"));
+            return Err(unsupported(
+                id,
+                instance,
+                "a B-spline curve without a knot vector",
+            ));
         };
         if knots.len() != n + degree + 1 {
             return Err(GeopError::new(format!(
@@ -916,7 +975,11 @@ impl<'a> Reader<'a> {
             if value > 0.0 {
                 Ok(value)
             } else {
-                Err(unsupported(id, instance, &format!("its {what} {value} is not positive")))
+                Err(unsupported(
+                    id,
+                    instance,
+                    &format!("its {what} {value} is not positive"),
+                ))
             }
         };
         match kind {
@@ -936,7 +999,9 @@ impl<'a> Reader<'a> {
                     return Err(unsupported(
                         id,
                         instance,
-                        &format!("its half angle {angle} rad is not between none and a right angle"),
+                        &format!(
+                            "its half angle {angle} rad is not between none and a right angle"
+                        ),
                     ));
                 }
                 revolved(Profile::Line {
@@ -1012,7 +1077,10 @@ impl<'a> Reader<'a> {
                         }
                         (frame, Profile::Curve(curve), true)
                     }
-                    CurveDef::Line { origin: p0, direction } => {
+                    CurveDef::Line {
+                        origin: p0,
+                        direction,
+                    } => {
                         let d = normalize(direction).ok_or_else(off_plane)?;
                         let off_axis = if norm(radial(p0)) > scope.uncertainty {
                             radial(p0)
@@ -1032,20 +1100,35 @@ impl<'a> Reader<'a> {
                         };
                         (frame, profile, true)
                     }
-                    CurveDef::Circle { frame: circle, radius } => {
+                    CurveDef::Circle {
+                        frame: circle,
+                        radius,
+                    } => {
                         let center = radial(circle.origin);
                         let on_axis = norm(center) <= scope.uncertainty;
-                        let reference = if on_axis { radial(add(circle.origin, circle.x)) } else { center };
+                        let reference = if on_axis {
+                            radial(add(circle.origin, circle.x))
+                        } else {
+                            center
+                        };
                         let frame = Frame::new(origin, z, reference)?;
                         let c = frame.local(circle.origin);
-                        let n = [dot(circle.z, frame.x), dot(circle.z, frame.y), dot(circle.z, frame.z)];
-                        if c[1].abs() > scope.uncertainty || n[0].abs() > 1e-9 || n[2].abs() > 1e-9 {
+                        let n = [
+                            dot(circle.z, frame.x),
+                            dot(circle.z, frame.y),
+                            dot(circle.z, frame.z),
+                        ];
+                        if c[1].abs() > scope.uncertainty || n[0].abs() > 1e-9 || n[2].abs() > 1e-9
+                        {
                             return Err(off_plane());
                         }
                         // Turning from `x` towards `z` is about `-y`.
                         let along = n[1] < 0.0;
                         if on_axis {
-                            let frame = Frame { origin: frame.point([0.0, 0.0, c[2]]), ..frame };
+                            let frame = Frame {
+                                origin: frame.point([0.0, 0.0, c[2]]),
+                                ..frame
+                            };
                             (frame, Profile::Sphere { radius }, along)
                         } else if c[0] < radius {
                             return Err(unsupported(
@@ -1054,7 +1137,15 @@ impl<'a> Reader<'a> {
                                 "a surface of revolution of a circle reaching across its axis",
                             ));
                         } else {
-                            (frame, Profile::Circle { rho: c[0], h: c[2], radius }, along)
+                            (
+                                frame,
+                                Profile::Circle {
+                                    rho: c[0],
+                                    h: c[2],
+                                    radius,
+                                },
+                                along,
+                            )
                         }
                     }
                     CurveDef::Ellipse { .. } | CurveDef::Polyline(_) | CurveDef::Conic { .. } => {
@@ -1158,17 +1249,38 @@ impl<'a> Reader<'a> {
         let sub_offset = if simple { 8 } else { 0 };
         let (knots_u, knots_v) = if let Some(args) = subtype("B_SPLINE_SURFACE_WITH_KNOTS") {
             (
-                expand_knots(id, &args.integers(sub_offset)?, &args.reals(sub_offset + 2)?)?,
-                expand_knots(id, &args.integers(sub_offset + 1)?, &args.reals(sub_offset + 3)?)?,
+                expand_knots(
+                    id,
+                    &args.integers(sub_offset)?,
+                    &args.reals(sub_offset + 2)?,
+                )?,
+                expand_knots(
+                    id,
+                    &args.integers(sub_offset + 1)?,
+                    &args.reals(sub_offset + 3)?,
+                )?,
             )
         } else if subtype("BEZIER_SURFACE").is_some() {
-            (bezier_knots(id, num_u, degree_u)?, bezier_knots(id, num_v, degree_v)?)
+            (
+                bezier_knots(id, num_u, degree_u)?,
+                bezier_knots(id, num_v, degree_v)?,
+            )
         } else if subtype("QUASI_UNIFORM_SURFACE").is_some() {
-            (quasi_uniform_knots(num_u, degree_u), quasi_uniform_knots(num_v, degree_v))
+            (
+                quasi_uniform_knots(num_u, degree_u),
+                quasi_uniform_knots(num_v, degree_v),
+            )
         } else {
-            return Err(unsupported(id, instance, "a B-spline surface without a knot vector"));
+            return Err(unsupported(
+                id,
+                instance,
+                "a B-spline surface without a knot vector",
+            ));
         };
-        for (knots, n, p, dir) in [(&knots_u, num_u, degree_u, "u"), (&knots_v, num_v, degree_v, "v")] {
+        for (knots, n, p, dir) in [
+            (&knots_u, num_u, degree_u, "u"),
+            (&knots_v, num_v, degree_v, "v"),
+        ] {
             if knots.len() != n + p + 1 {
                 return Err(GeopError::new(format!(
                     "#{id} {}: {} knots in {dir} for {n} control points of degree {p}, where {} were expected",
@@ -1185,7 +1297,9 @@ impl<'a> Reader<'a> {
                 let mut w = Vec::new();
                 for row in args.list(k)? {
                     let crate::part21::Value::List(row) = row else {
-                        return Err(GeopError::new(format!("#{id}: weights are not a list of rows")));
+                        return Err(GeopError::new(format!(
+                            "#{id}: weights are not a list of rows"
+                        )));
                     };
                     for x in row {
                         w.push(super::reader::real(x).ok_or_else(|| {

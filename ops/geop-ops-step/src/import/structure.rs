@@ -50,9 +50,10 @@ const BODY_TYPES: [&str; 3] = [
 ];
 
 /// A body type the importer does not read, and why.
-const REFUSED_BODY_TYPES: [(&str, &str); 1] = [
-    ("FACETED_BREP", "a solid of flat facets bounded by polygons rather than edges"),
-];
+const REFUSED_BODY_TYPES: [(&str, &str); 1] = [(
+    "FACETED_BREP",
+    "a solid of flat facets bounded by polygons rather than edges",
+)];
 
 /// The representation record of `instance`: one of the types whose
 /// parameters are a name, a list of items and a context.
@@ -81,7 +82,10 @@ impl Reader<'_> {
             place: Placement::IDENTITY,
         };
         if let Some(record) = instance.record("GLOBAL_UNIT_ASSIGNED_CONTEXT") {
-            let args = Args { id: context, record };
+            let args = Args {
+                id: context,
+                record,
+            };
             for unit in args.references(0)? {
                 let u = self.instance(unit)?;
                 if u.is("LENGTH_UNIT") {
@@ -92,7 +96,10 @@ impl Reader<'_> {
             }
         }
         if let Some(record) = instance.record("GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT") {
-            let args = Args { id: context, record };
+            let args = Args {
+                id: context,
+                record,
+            };
             for uncertainty in args.references(0)? {
                 let u = self.args(uncertainty, "UNCERTAINTY_MEASURE_WITH_UNIT")?;
                 let value = u.real(0)?;
@@ -122,7 +129,13 @@ impl Reader<'_> {
         let record = records
             .into_iter()
             .find(|r| r.name.ends_with("MEASURE_WITH_UNIT") && r.args.len() == 2)
-            .ok_or_else(|| unsupported(id, instance, "a conversion factor that is not a measure with a unit"))?;
+            .ok_or_else(|| {
+                unsupported(
+                    id,
+                    instance,
+                    "a conversion factor that is not a measure with a unit",
+                )
+            })?;
         let args = Args { id, record };
         Ok((args.real(0)?, args.reference(1)?))
     }
@@ -133,7 +146,11 @@ impl Reader<'_> {
         if let Some(record) = instance.record("SI_UNIT") {
             let args = Args { id, record };
             if args.enumeration(1)? != "METRE" {
-                return Err(unsupported(id, instance, "a length unit that is not a metre"));
+                return Err(unsupported(
+                    id,
+                    instance,
+                    "a length unit that is not a metre",
+                ));
             }
             return Ok(1000.0 * prefix(id, instance, &args)?);
         }
@@ -141,7 +158,11 @@ impl Reader<'_> {
             let (value, unit) = self.measure(Args { id, record }.reference(1)?)?;
             return Ok(value * self.length_unit(unit)?);
         }
-        Err(unsupported(id, instance, "a length unit neither SI nor converted from one"))
+        Err(unsupported(
+            id,
+            instance,
+            "a length unit neither SI nor converted from one",
+        ))
     }
 
     /// Radians per unit of the angle unit `#id`.
@@ -150,7 +171,11 @@ impl Reader<'_> {
         if let Some(record) = instance.record("SI_UNIT") {
             let args = Args { id, record };
             if args.enumeration(1)? != "RADIAN" {
-                return Err(unsupported(id, instance, "an angle unit that is not a radian"));
+                return Err(unsupported(
+                    id,
+                    instance,
+                    "an angle unit that is not a radian",
+                ));
             }
             return prefix(id, instance, &args);
         }
@@ -158,7 +183,11 @@ impl Reader<'_> {
             let (value, unit) = self.measure(Args { id, record }.reference(1)?)?;
             return Ok(value * self.angle_unit(unit)?);
         }
-        Err(unsupported(id, instance, "an angle unit neither SI nor converted from one"))
+        Err(unsupported(
+            id,
+            instance,
+            "an angle unit neither SI nor converted from one",
+        ))
     }
 
     /// The placement `#id` as a frame of the representation read in
@@ -182,7 +211,8 @@ impl Reader<'_> {
             reps.insert(id, (items, scope, args.string(0).unwrap_or("").to_string()));
         }
         let rep_ids: Vec<u64> = reps.keys().copied().collect();
-        let index: HashMap<u64, usize> = rep_ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+        let index: HashMap<u64, usize> =
+            rep_ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
 
         // Representations related without a transformation share their
         // coordinates: one group.
@@ -192,7 +222,9 @@ impl Reader<'_> {
         let mut placed: Vec<(u64, u64, u64, u64)> = Vec::new();
         for (&id, instance) in &exchange.instances {
             let Some(record) = instance.record("REPRESENTATION_RELATIONSHIP").or_else(|| {
-                instance.record("SHAPE_REPRESENTATION_RELATIONSHIP").filter(|r| r.args.len() >= 4)
+                instance
+                    .record("SHAPE_REPRESENTATION_RELATIONSHIP")
+                    .filter(|r| r.args.len() >= 4)
             }) else {
                 continue;
             };
@@ -215,7 +247,10 @@ impl Reader<'_> {
                             "a placement of a part not given by two placements",
                         ));
                     };
-                    let t_args = Args { id: transformation, record };
+                    let t_args = Args {
+                        id: transformation,
+                        record,
+                    };
                     // The component is the first representation, the
                     // assembly the second, each placement in its own
                     // (the recommended practice); the products related
@@ -272,7 +307,10 @@ impl Reader<'_> {
             let Some(record) = rel.record("REPRESENTATION_RELATIONSHIP") else {
                 continue;
             };
-            let rel_args = Args { id: relation, record };
+            let rel_args = Args {
+                id: relation,
+                record,
+            };
             let rep_1 = rel_args.reference(2)?;
             let child_groups: BTreeSet<usize> = shape_of_definition
                 .get(&child)
@@ -280,7 +318,9 @@ impl Reader<'_> {
                 .flatten()
                 .filter_map(|&rep| group_of(&mut groups, rep))
                 .collect();
-            if child_groups.is_empty() || group_of(&mut groups, rep_1).is_some_and(|g| child_groups.contains(&g)) {
+            if child_groups.is_empty()
+                || group_of(&mut groups, rep_1).is_some_and(|g| child_groups.contains(&g))
+            {
                 continue;
             }
             // The first representation is the assembly's: swap.
@@ -300,11 +340,16 @@ impl Reader<'_> {
         let mut child_groups: BTreeSet<usize> = BTreeSet::new();
         let mut edges: BTreeMap<usize, Vec<(u64, u64, u64, u64)>> = BTreeMap::new();
         for &(parent, child, parent_item, child_item) in &placed {
-            let (Some(pg), Some(cg)) = (group_of(&mut groups, parent), group_of(&mut groups, child)) else {
+            let (Some(pg), Some(cg)) =
+                (group_of(&mut groups, parent), group_of(&mut groups, child))
+            else {
                 continue;
             };
             child_groups.insert(cg);
-            edges.entry(pg).or_default().push((parent, child, parent_item, child_item));
+            edges
+                .entry(pg)
+                .or_default()
+                .push((parent, child, parent_item, child_item));
         }
 
         // The roots: the shapes of products nothing places, or, in a file
@@ -320,7 +365,13 @@ impl Reader<'_> {
                     && !child_groups.contains(&g)
                     && seen.insert(g)
                 {
-                    roots.push((g, definition_name.get(&definition).cloned().unwrap_or_default()));
+                    roots.push((
+                        g,
+                        definition_name
+                            .get(&definition)
+                            .cloned()
+                            .unwrap_or_default(),
+                    ));
                 }
             }
         }
@@ -352,15 +403,28 @@ impl Reader<'_> {
     /// The name of the product the product definition `#definition` is
     /// of.
     fn product_name(&self, definition: u64) -> Option<String> {
-        let formation = self.args(definition, "PRODUCT_DEFINITION").ok()?.reference(2).ok()?;
+        let formation = self
+            .args(definition, "PRODUCT_DEFINITION")
+            .ok()?
+            .reference(2)
+            .ok()?;
         let instance = self.instance(formation).ok()?;
         let record = match instance {
             Instance::Simple(r) => r,
             Instance::Complex(rs) => rs.first()?,
         };
-        let product = Args { id: formation, record }.reference(2).ok()?;
+        let product = Args {
+            id: formation,
+            record,
+        }
+        .reference(2)
+        .ok()?;
         let product = self.args(product, "PRODUCT").ok()?;
-        let name = product.string(1).ok().filter(|s| !s.is_empty()).or_else(|| product.string(0).ok())?;
+        let name = product
+            .string(1)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| product.string(0).ok())?;
         Some(name.to_string())
     }
 
@@ -387,17 +451,31 @@ impl Reader<'_> {
         }
         for &rep in members.get(&group).into_iter().flatten() {
             let (items, scope, rep_name) = &reps[&rep];
-            let label = if label.is_empty() { rep_name.as_str() } else { label };
+            let label = if label.is_empty() {
+                rep_name.as_str()
+            } else {
+                label
+            };
             for &item in items {
                 let instance = self.instance(item)?;
                 if let Some(name) = BODY_TYPES.iter().find(|t| instance.is(t)) {
-                    let own = self.args(item, name).ok().and_then(|a| a.string(0).ok()).unwrap_or("");
+                    let own = self
+                        .args(item, name)
+                        .ok()
+                        .and_then(|a| a.string(0).ok())
+                        .unwrap_or("");
                     out.push(Item {
                         id: item,
                         scope: Scope { place, ..*scope },
-                        label: if own.is_empty() { label.to_string() } else { own.to_string() },
+                        label: if own.is_empty() {
+                            label.to_string()
+                        } else {
+                            own.to_string()
+                        },
                     });
-                } else if let Some((name, why)) = REFUSED_BODY_TYPES.iter().find(|(t, _)| instance.is(t)) {
+                } else if let Some((name, why)) =
+                    REFUSED_BODY_TYPES.iter().find(|(t, _)| instance.is(t))
+                {
                     let _ = name;
                     return Err(unsupported(item, instance, why));
                 } else if instance.is("MAPPED_ITEM") {
@@ -413,9 +491,22 @@ impl Reader<'_> {
                         .inverse()
                         .then(&Placement::of(&target))
                         .then(&place);
-                    let Some(&i) = index.get(&mapped) else { continue };
+                    let Some(&i) = index.get(&mapped) else {
+                        continue;
+                    };
                     let g = groups.find(i);
-                    self.collect(reps, members, edges, groups, index, g, motion, label, depth + 1, out)?;
+                    self.collect(
+                        reps,
+                        members,
+                        edges,
+                        groups,
+                        index,
+                        g,
+                        motion,
+                        label,
+                        depth + 1,
+                        out,
+                    )?;
                 }
             }
         }
@@ -430,7 +521,18 @@ impl Reader<'_> {
                 .then(&place);
             let g = groups.find(index[&child]);
             let child_label = reps[&child].2.clone();
-            self.collect(reps, members, edges, groups, index, g, motion, &child_label, depth + 1, out)?;
+            self.collect(
+                reps,
+                members,
+                edges,
+                groups,
+                index,
+                g,
+                motion,
+                &child_label,
+                depth + 1,
+                out,
+            )?;
         }
         Ok(())
     }
@@ -458,6 +560,12 @@ fn prefix(id: u64, instance: &Instance, args: &Args) -> GeopResult<f64> {
         "PICO" => 1e-12,
         "FEMTO" => 1e-15,
         "ATTO" => 1e-18,
-        other => return Err(unsupported(id, instance, &format!("the unit prefix {other}"))),
+        other => {
+            return Err(unsupported(
+                id,
+                instance,
+                &format!("the unit prefix {other}"),
+            ));
+        }
     })
 }

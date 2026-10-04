@@ -121,11 +121,20 @@ impl Operation for ImportStep {
             );
         }
         let options = std::iter::once(Choice::new("", "Choose a file…"))
-            .chain(files.iter().map(|file| Choice::new(file.clone(), file.clone())))
+            .chain(
+                files
+                    .iter()
+                    .map(|file| Choice::new(file.clone(), file.clone())),
+            )
             .collect();
-        f.select("file", "file", args.file.clone(), options, true, |args, file| {
-            args.file = file.to_string()
-        });
+        f.select(
+            "file",
+            "file",
+            args.file.clone(),
+            options,
+            true,
+            |args, file| args.file = file.to_string(),
+        );
         f
     }
 
@@ -144,8 +153,11 @@ impl Operation for ImportStep {
         let (_, text) = library.read(&args.file).with_context(ctx)?;
         let bodies = read_step::<S>(&text).with_context(ctx)?;
         if bodies.is_empty() {
-            return Err(GeopError::new(format!("{} has no solids or sheets", args.file)))
-                .with_context(ctx);
+            return Err(GeopError::new(format!(
+                "{} has no solids or sheets",
+                args.file
+            )))
+            .with_context(ctx);
         }
         add_bodies(&mut part, &namer, bodies).with_context(ctx)?;
         Ok(part)

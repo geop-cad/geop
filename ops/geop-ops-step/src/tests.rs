@@ -68,7 +68,10 @@ fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
     for c in 0..3 {
         // Sampled: an arc's extreme may fall between samples.
         let tol = 1e-4 * (hi[c] - lo[c]).abs().max(1.0);
-        assert!((a[c] - lo[c]).abs() < tol && (b[c] - hi[c]).abs() < tol, "bounds {a:?} {b:?}, expected {lo:?} {hi:?}");
+        assert!(
+            (a[c] - lo[c]).abs() < tol && (b[c] - hi[c]).abs() < tol,
+            "bounds {a:?} {b:?}, expected {lo:?} {hi:?}"
+        );
     }
 }
 
@@ -76,7 +79,11 @@ fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
 fn round_trip(part: &Part<S>) -> Part<S> {
     let text = write_step(part, "part").unwrap();
     let back = import(&text);
-    assert_eq!(counts(back.topology()), counts(part.topology()), "counts changed");
+    assert_eq!(
+        counts(back.topology()),
+        counts(part.topology()),
+        "counts changed"
+    );
     let (lo, hi) = bounds(part.topology());
     assert_bounds(back.topology(), lo, hi);
     back
@@ -93,7 +100,14 @@ fn a_cube_round_trips() {
 #[test]
 fn a_cylinder_round_trips() {
     let mut part = Part::new();
-    revolved_cylinder(&mut part, "c", v(1.0, 2.0, 0.0), S::from_f64(0.5), S::from_f64(2.0)).unwrap();
+    revolved_cylinder(
+        &mut part,
+        "c",
+        v(1.0, 2.0, 0.0),
+        S::from_f64(0.5),
+        S::from_f64(2.0),
+    )
+    .unwrap();
     round_trip(&part);
 }
 
@@ -201,7 +215,10 @@ fn polyhedron(points: &[[f64; 3]], faces: &[&[usize]]) -> String {
     for p in points {
         let c = next();
         let vp = next();
-        out += &format!("#{c}=CARTESIAN_POINT('',({:?},{:?},{:?}));\n#{vp}=VERTEX_POINT('',#{c});\n", p[0], p[1], p[2]);
+        out += &format!(
+            "#{c}=CARTESIAN_POINT('',({:?},{:?},{:?}));\n#{vp}=VERTEX_POINT('',#{c});\n",
+            p[0], p[1], p[2]
+        );
         vertex.push((c, vp));
     }
     let mut edges: Vec<((usize, usize), usize)> = Vec::new();
@@ -210,7 +227,11 @@ fn polyhedron(points: &[[f64; 3]], faces: &[&[usize]]) -> String {
         let mut oriented = Vec::new();
         for k in 0..face.len() {
             let (a, b) = (face[k], face[(k + 1) % face.len()]);
-            let (key, forward) = if a < b { ((a, b), true) } else { ((b, a), false) };
+            let (key, forward) = if a < b {
+                ((a, b), true)
+            } else {
+                ((b, a), false)
+            };
             let edge = match edges.iter().find(|(k, _)| *k == key) {
                 Some(&(_, e)) => e,
                 None => {
@@ -226,23 +247,41 @@ fn polyhedron(points: &[[f64; 3]], faces: &[&[usize]]) -> String {
                 }
             };
             let o = next();
-            out += &format!("#{o}=ORIENTED_EDGE('',*,*,#{edge},.{}.);\n", if forward { "T" } else { "F" });
+            out += &format!(
+                "#{o}=ORIENTED_EDGE('',*,*,#{edge},.{}.);\n",
+                if forward { "T" } else { "F" }
+            );
             oriented.push(format!("#{o}"));
         }
         // The plane through the first corner, its normal out of the solid.
         let (p0, p1, p2) = (points[face[0]], points[face[1]], points[face[2]]);
         let a = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
         let b = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-        let n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-        let (nd, xd, ax, plane, lp, bound, f) = (next(), next(), next(), next(), next(), next(), next());
+        let n = [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ];
+        let (nd, xd, ax, plane, lp, bound, f) =
+            (next(), next(), next(), next(), next(), next(), next());
         out += &format!(
             "#{nd}=DIRECTION('',({:?},{:?},{:?}));\n#{xd}=DIRECTION('',({:?},{:?},{:?}));\n#{ax}=AXIS2_PLACEMENT_3D('',#{},#{nd},#{xd});\n#{plane}=PLANE('',#{ax});\n#{lp}=EDGE_LOOP('',({}));\n#{bound}=FACE_OUTER_BOUND('',#{lp},.T.);\n#{f}=ADVANCED_FACE('',(#{bound}),#{plane},.T.);\n",
-            n[0], n[1], n[2], a[0], a[1], a[2], vertex[face[0]].0, oriented.join(",")
+            n[0],
+            n[1],
+            n[2],
+            a[0],
+            a[1],
+            a[2],
+            vertex[face[0]].0,
+            oriented.join(",")
         );
         face_ids.push(format!("#{f}"));
     }
     let shell = next();
-    out += &format!("#{shell}=CLOSED_SHELL('',({}));\n#999=MANIFOLD_SOLID_BREP('box',#{shell});\n", face_ids.join(","));
+    out += &format!(
+        "#{shell}=CLOSED_SHELL('',({}));\n#999=MANIFOLD_SOLID_BREP('box',#{shell});\n",
+        face_ids.join(",")
+    );
     out
 }
 
@@ -313,17 +352,28 @@ fn a_rational_b_spline_sheet_imports() {
     assert_bounds(model, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     // On the cylinder of radius 1.
     let face = model.faces.values().next().unwrap();
-    let p = face.surface.evaluate(S::from_f64(0.3), S::from_f64(0.6)).unwrap();
+    let p = face
+        .surface
+        .evaluate(S::from_f64(0.3), S::from_f64(0.6))
+        .unwrap();
     assert!(p[0].mul(p[0]).add(p[1].mul(p[1])).could_be_equal(S::ONE));
 }
 
 #[test]
 fn an_unsupported_entity_is_refused_by_name() {
-    let text = file(".MILLI.,.METRE.", &CYLINDER.replace("#110=CYLINDRICAL_SURFACE('',#8,1.);", "#110=OFFSET_SURFACE('',#111,1.,.F.);"));
+    let text = file(
+        ".MILLI.,.METRE.",
+        &CYLINDER.replace(
+            "#110=CYLINDRICAL_SURFACE('',#8,1.);",
+            "#110=OFFSET_SURFACE('',#111,1.,.F.);",
+        ),
+    );
     let error = read_step::<S>(&text).err().expect("refused").to_string();
-    assert!(error.contains("#110 OFFSET_SURFACE is not supported"), "{error}");
+    assert!(
+        error.contains("#110 OFFSET_SURFACE is not supported"),
+        "{error}"
+    );
 }
-
 
 /// An assembly placing the cylinder twice, the second turned to lie along
 /// `y`, as products, occurrences and placements: flattened into two
@@ -365,7 +415,10 @@ fn an_assembly_is_flattened_with_its_placements() {
     let part = import(&file(".MILLI.,.METRE.", &assembly));
     let model = part.topology();
     assert_eq!(model.solids.len(), 2);
-    assert_eq!(part.solid_names(), vec!["import(i,s0)".to_string(), "import(i,s1)".to_string()]);
+    assert_eq!(
+        part.solid_names(),
+        vec!["import(i,s0)".to_string(), "import(i,s1)".to_string()]
+    );
     // One round z at x = 10, one along y — `z` turned onto `y` — at y = 10.
     assert_bounds(model, [-1.0, -1.0, -1.0], [11.0, 12.0, 2.0]);
 }

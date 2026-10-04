@@ -23,7 +23,9 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn step_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -38,11 +40,21 @@ fn step_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// and entity ids taken out, so alike failures count together.
 fn cause(message: &str) -> String {
     // Of a model found invalid, the first problem found.
-    let mut roots = message.lines().filter_map(|l| l.strip_prefix("RootError: "));
+    let mut roots = message
+        .lines()
+        .filter_map(|l| l.strip_prefix("RootError: "));
     let first = roots.next().unwrap_or(message);
     let invalid = first.starts_with("the file's bodies are not valid");
-    let root = if invalid { roots.next().unwrap_or(first) } else { first };
-    let root = &if invalid { format!("invalid: {root}") } else { root.to_string() };
+    let root = if invalid {
+        roots.next().unwrap_or(first)
+    } else {
+        first
+    };
+    let root = &if invalid {
+        format!("invalid: {root}")
+    } else {
+        root.to_string()
+    };
     let mut out = String::new();
     let mut last_digit = false;
     for c in root.chars().take(140) {
@@ -70,9 +82,13 @@ fn import_file(path: &Path, full: bool) -> Result<(usize, usize), String> {
     }
     let n = bodies.len();
     let mut part = Part::new();
-    add_bodies(&mut part, &Namer::new("import", "i").unwrap(), bodies).map_err(|e| format!("{e:?}"))?;
+    add_bodies(&mut part, &Namer::new("import", "i").unwrap(), bodies)
+        .map_err(|e| format!("{e:?}"))?;
     if full && let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
-        return Err(format!("RootError: full validation: {}", cause(&format!("{:?}", errors[0]))));
+        return Err(format!(
+            "RootError: full validation: {}",
+            cause(&format!("{:?}", errors[0]))
+        ));
     }
     Ok((n, part.topology().faces.len()))
 }
@@ -84,42 +100,79 @@ fn corpus() {
     let mut files = Vec::new();
     step_files(&dir, &mut files);
     files.sort();
-    assert!(!files.is_empty(), "no STEP files in {}: run scripts/fetch_corpus.sh", dir.display());
+    assert!(
+        !files.is_empty(),
+        "no STEP files in {}: run scripts/fetch_corpus.sh",
+        dir.display()
+    );
     // The full validation's pairwise searches are slow on big parts: only
     // with STEP_CORPUS_FULL set.
     let full = std::env::var_os("STEP_CORPUS_FULL").is_some();
     let only = std::env::var("STEP_CORPUS_ONLY").ok();
     let mut passed = 0;
-    let mut total = 0;
     let mut causes: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for path in &files {
-        let name = path.strip_prefix(&dir).unwrap_or(path).to_string_lossy().to_string();
-        if only.as_ref().is_some_and(|o| !name.contains(o.as_str())) {
-            continue;
-        }
-        total += 1;
-        let start = Instant::now();
-        let result = std::panic::catch_unwind(|| import_file(path, full))
-            .unwrap_or_else(|_| Err("RootError: panicked".into()));
-        let seconds = start.elapsed().as_secs_f64();
-        match result {
-            Ok((bodies, faces)) => {
-                passed += 1;
-                println!("PASS {seconds:7.2}s {bodies:3} bodies {faces:5} faces  {name}");
-            }
-            Err(e) => {
-                let c = cause(&e);
-                println!("FAIL {seconds:7.2}s  {name}: {c}");
-                if only.is_some() {
-                    println!("{e}");
+    let chosen: Vec<(String, &PathBuf)> = files
+        .iter()
+        .map(|path| {
+            (
+                path.strip_prefix(&dir)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string(),
+                path,
+            )
+        })
+        .filter(|(name, _)| only.as_ref().is_none_or(|o| name.contains(o.as_str())))
+        .collect();
+    // Files are imported side by side, each on its own: STEP_CORPUS_THREADS
+    // of them at once.
+    let threads: usize = std::env::var("STEP_CORPUS_THREADS")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(6);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(vec![None; chosen.len()]);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((name, path)) = chosen.get(k) else {
+                        break;
+                    };
+                    let start = Instant::now();
+                    let result = std::panic::catch_unwind(|| import_file(path, full))
+                        .unwrap_or_else(|_| Err("RootError: panicked".into()));
+                    let seconds = start.elapsed().as_secs_f64();
+                    match &result {
+                        Ok((bodies, faces)) => println!(
+                            "PASS {seconds:7.2}s {bodies:3} bodies {faces:5} faces  {name}"
+                        ),
+                        Err(e) => {
+                            println!("FAIL {seconds:7.2}s  {name}: {}", cause(e));
+                            if only.is_some() {
+                                println!("{e}");
+                            }
+                        }
+                    }
+                    results.lock().unwrap()[k] = Some(result);
                 }
-                causes.entry(c).or_default().push(name);
-            }
+            });
+        }
+    });
+    let total = chosen.len();
+    for ((name, _), result) in chosen.iter().zip(results.into_inner().unwrap()) {
+        match result.expect("every file was imported") {
+            Ok(_) => passed += 1,
+            Err(e) => causes.entry(cause(&e)).or_default().push(name.clone()),
         }
     }
     let mut ranked: Vec<_> = causes.into_iter().collect();
     ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-    println!("\n{passed} of {total} files imported valid ({:.0}%)", 100.0 * passed as f64 / total as f64);
+    println!(
+        "\n{passed} of {total} files imported valid ({:.0}%)",
+        100.0 * passed as f64 / total as f64
+    );
     println!("failure causes:");
     for (cause, files) in &ranked {
         println!("{:4}  {cause}   (e.g. {})", files.len(), files[0]);

@@ -34,8 +34,9 @@ pub fn read_exchange<S: Scalar>(exchange: &Exchange) -> GeopResult<Vec<ImportedB
     items
         .iter()
         .map(|item| {
-            body::read_body(reader, item)
-                .map_err(|e| e.with_context(format!("reading the body #{} ({})", item.id, item.label)))
+            body::read_body(reader, item).map_err(|e| {
+                e.with_context(format!("reading the body #{} ({})", item.id, item.label))
+            })
         })
         .collect()
 }
