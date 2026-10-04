@@ -162,7 +162,14 @@ fn tslot(cells: i32, file: &'static str, title: &'static str) -> GeopResult<Stan
         let centre = outline.point("0", mm(*y))?;
         outline.circle(centre, "4.2")?;
     }
-    cut_to(&mut program, "extrusion", "outline", outline, "revolve(length)", Through::Up)?;
+    cut_to(
+        &mut program,
+        "extrusion",
+        "outline",
+        outline,
+        "revolve(length)",
+        Through::Up,
+    )?;
     axis_datum(&mut program);
     base_datum(&mut program, "end");
     Ok(StandardPart {
@@ -233,11 +240,23 @@ pub fn nema17() -> GeopResult<StandardPart> {
         [neg(cut), neg(side)],
         [cut.into(), neg(side)],
     ])?;
-    cut_to(&mut program, "body", "square", outline, "revolve(envelope)", Through::Both)?;
+    cut_to(
+        &mut program,
+        "body",
+        "square",
+        outline,
+        "revolve(envelope)",
+        Through::Both,
+    )?;
     let mut target = "extrude(body)".to_string();
-    for (i, [x, y]) in [["15.5", "15.5"], ["-15.5", "15.5"], ["-15.5", "-15.5"], ["15.5", "-15.5"]]
-        .into_iter()
-        .enumerate()
+    for (i, [x, y]) in [
+        ["15.5", "15.5"],
+        ["-15.5", "15.5"],
+        ["-15.5", "-15.5"],
+        ["15.5", "-15.5"],
+    ]
+    .into_iter()
+    .enumerate()
     {
         let mut hole = Drawing::new(&program.parameters)?;
         let centre = hole.point(x, y)?;

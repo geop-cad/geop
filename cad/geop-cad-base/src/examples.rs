@@ -1198,6 +1198,156 @@ pub fn plates_assembly() -> Program {
     program
 }
 
+/// A plate 40 x 40 x 5 with a 4.5 hole through it at `(20, 20)` — in
+/// millimetres, as the standard parts are: clearance for an M4 screw.
+pub fn metric_plate() -> Program {
+    use crate::stdlib::{drawing::Drawing, steps::outline_plane};
+
+    let none = Parameters::default();
+    let corner = |x: &str, y: &str| [x.to_string(), y.to_string()];
+    let mut outline = Drawing::new(&none).expect("no parameters to resolve");
+    let mut hole = Drawing::new(&none).expect("no parameters to resolve");
+    outline
+        .polygon(&[
+            corner("0", "0"),
+            corner("40", "0"),
+            corner("40", "40"),
+            corner("0", "40"),
+        ])
+        .expect("the corners are numbers");
+    let centre = hole.point("20", "20").expect("the centre is numbers");
+    hole.circle(centre, "4.5")
+        .expect("the diameter is a number");
+    let mut program = Program::new();
+    program.push("outline", outline.on(outline_plane()).expect("it solves"));
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(5.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push("hole_sketch", hole.on(outline_plane()).expect("it solves"));
+    program.push(
+        "hole",
+        ExtrudeArgs {
+            sketch: "hole_sketch".into(),
+            extent: Extents {
+                side1: Extent::ThroughAll,
+                ..Extents::blind(0.0)
+            },
+            face: false,
+            combine: Combine::Difference {
+                target: "extrude(plate)".into(),
+            },
+        },
+    );
+    program
+}
+
+/// The name of the face of [`metric_plate`]'s hole.
+pub fn metric_plate_hole() -> String {
+    let part = metric_plate()
+        .build::<Design>(&geop_ops::NoFiles)
+        .expect("the plate builds");
+    geop_ops::PartDescription::of(&part)
+        .expect("the plate describes itself")
+        .faces
+        .into_keys()
+        .find(|name| name.starts_with("extrude(hole,hole_sketch,"))
+        .expect("the hole has a face")
+}
+
+/// [`metric_plate`] (`plate.geop`) bolted together from standard parts: an
+/// ISO 4762 M4 x 12 cap screw down its hole, and an ISO 4032 M4 nut under
+/// it — each mated by its datums `axis` and `seat` or `base`.
+pub fn bolted_plate() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        AddPartArgs {
+            file: "plate.geop".into(),
+            fixed: true,
+            ..Default::default()
+        },
+    );
+    let mate = |kind, a: EntityRef, b: EntityRef| Mate {
+        kind,
+        entities: vec![a, b],
+    };
+    let face = |name: String| EntityRef::Face { name };
+    let size = |row: &str| State::from([("size".to_string(), ParamValue::Text(row.into()))]);
+    program.push(
+        "screw",
+        AddPartArgs {
+            file: "std:iso4762_socket_head_cap_screw.geop".into(),
+            parameters: size("M4x12"),
+            mates: BTreeMap::from([
+                (
+                    "m1".into(),
+                    mate(
+                        MateKind::Concentric,
+                        EntityRef::datum("screw/axis"),
+                        face(format!("plate/{}", metric_plate_hole())),
+                    ),
+                ),
+                (
+                    "m2".into(),
+                    mate(
+                        MateKind::Coincident,
+                        EntityRef::datum("screw/seat"),
+                        face("plate/extrude(plate,end)".into()),
+                    ),
+                ),
+            ]),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "nut",
+        AddPartArgs {
+            file: "std:iso4032_hex_nut.geop".into(),
+            parameters: size("M4"),
+            mates: BTreeMap::from([
+                (
+                    "m1".into(),
+                    mate(
+                        MateKind::Concentric,
+                        EntityRef::datum("nut/axis"),
+                        EntityRef::datum("screw/axis"),
+                    ),
+                ),
+                (
+                    "m2".into(),
+                    mate(
+                        MateKind::Coincident,
+                        EntityRef::datum("nut/base"),
+                        face("plate/extrude(plate,start)".into()),
+                    ),
+                ),
+            ]),
+            ..Default::default()
+        },
+    );
+    program.state = State::from([
+        (
+            pose_parameter("plate"),
+            ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+        ),
+        (
+            pose_parameter("screw"),
+            ParamValue::Pose(pose([20.0, 20.0, 5.0], [0.0; 3])),
+        ),
+        (
+            pose_parameter("nut"),
+            ParamValue::Pose(pose([20.0, 20.0, 0.0], [180.0, 0.0, 0.0])),
+        ),
+    ]);
+    program
+}
+
 /// Every example made of several files, by name: each file's path and
 /// program, the one to open first first.
 pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
@@ -1229,6 +1379,13 @@ pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
                 ("crank.geop", bar(1.5)),
                 ("rocker.geop", bar(3.0)),
                 ("coupler.geop", bar(4.0)),
+            ],
+        ),
+        (
+            "bolted_plate",
+            vec![
+                ("bolted_plate.geop", bolted_plate()),
+                ("plate.geop", metric_plate()),
             ],
         ),
     ]

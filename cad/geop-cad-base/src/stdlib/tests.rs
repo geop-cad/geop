@@ -55,8 +55,7 @@ fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>,
         .map_err(|e| format!("does not build: {e}"))?;
     if fully {
         check_valid(&built).map_err(|e| format!("is not valid: {e}"))?;
-    } else if let Err(errors) = validate_fast(&ValidationParameters::default(), built.topology())
-    {
+    } else if let Err(errors) = validate_fast(&ValidationParameters::default(), built.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
         return Err(format!("is not valid: {}", messages.join("\n")));
     }
@@ -88,7 +87,10 @@ fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>,
         .collect();
     let radius = points.iter().map(|p| p[0].hypot(p[1])).fold(0.0, f64::max);
     let low = points.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
-    let high = points.iter().map(|p| p[2]).fold(f64::NEG_INFINITY, f64::max);
+    let high = points
+        .iter()
+        .map(|p| p[2])
+        .fold(f64::NEG_INFINITY, f64::max);
     let got = [radius, low, high];
     if (0..3).any(|k| (got[k] - want[k]).abs() > 1e-6) {
         return Err(format!(
@@ -187,4 +189,40 @@ fn every_size_of_every_family_builds_to_its_table() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The `bolted_plate` example holds together: the screw down the hole, the
+/// nut under the plate, upside down — its base on the plate's bottom.
+#[test]
+fn the_bolted_plate_holds_together() {
+    use std::collections::BTreeMap;
+
+    use geop_core_math::vector::Vector3;
+    use geop_ops::Design;
+
+    use super::WithStandardParts;
+    use crate::{Workspace, examples};
+
+    let files = BTreeMap::from([(
+        "plate.geop".to_string(),
+        examples::metric_plate().to_json().unwrap(),
+    )]);
+    let workspace = Workspace::<S>::new(WithStandardParts(files));
+    let part = examples::bolted_plate()
+        .build(&workspace.scope("bolted_plate.geop"))
+        .unwrap();
+    assert!(part.check_mates().unwrap().converged);
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
+    for (instance, local, want) in [
+        ("screw", [0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
+        ("nut", [0.0, 0.0, 3.2], [20.0, 20.0, -3.2]),
+    ] {
+        let id = part.instance_id(instance).unwrap();
+        let got = part.instance(id).unwrap().pose.apply(&v(local));
+        let got = [0, 1, 2].map(|k| got[k].to_f64());
+        assert!(
+            (0..3).all(|k| (got[k] - want[k]).abs() < 1e-6),
+            "{instance} {local:?} is at {got:?}, not {want:?}"
+        );
+    }
 }

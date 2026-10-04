@@ -294,9 +294,9 @@ impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
 /// names the same file from anywhere: it is never relative. (A single
 /// letter before the `:` is a drive, `C:/parts/bolt.geop`.)
 pub fn is_shared(reference: &str) -> bool {
-    reference
-        .split_once(':')
-        .is_some_and(|(scheme, _)| scheme.len() >= 2 && scheme.chars().all(|c| c.is_ascii_alphabetic()))
+    reference.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.len() >= 2 && scheme.chars().all(|c| c.is_ascii_alphabetic())
+    })
 }
 
 /// The path of the file `reference` names, from the file `from`: relative

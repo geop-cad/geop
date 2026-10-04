@@ -612,64 +612,6 @@ fn new_offset_plane_dragged_by_its_handle() {
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
 
-/// A plate 40 x 40 x 5 with a 4.5 hole through it at `(20, 20)` — in
-/// millimetres, as the standard parts are — and the name of the hole's
-/// face.
-fn plate_with_a_hole() -> (Program, String) {
-    use crate::stdlib::{drawing::Drawing, steps::outline_plane};
-    use geop_ops::parameters::Parameters;
-    use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
-
-    let none = Parameters::default();
-    let mut program = Program::new();
-    let mut outline = Drawing::new(&none).unwrap();
-    let corner = |x: &str, y: &str| [x.to_string(), y.to_string()];
-    outline
-        .polygon(&[
-            corner("0", "0"),
-            corner("40", "0"),
-            corner("40", "40"),
-            corner("0", "40"),
-        ])
-        .unwrap();
-    program.push("outline", outline.on(outline_plane()).unwrap());
-    program.push(
-        "plate",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(5.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
-    );
-    let mut hole = Drawing::new(&none).unwrap();
-    let centre = hole.point("20", "20").unwrap();
-    hole.circle(centre, "4.5").unwrap();
-    program.push("hole_sketch", hole.on(outline_plane()).unwrap());
-    program.push(
-        "hole",
-        ExtrudeArgs {
-            sketch: "hole_sketch".into(),
-            extent: Extents {
-                side1: Extent::ThroughAll,
-                ..Extents::blind(0.0)
-            },
-            face: false,
-            combine: Combine::Difference {
-                target: "extrude(plate)".into(),
-            },
-        },
-    );
-    let part = program.build::<S>(&geop_ops::NoFiles).unwrap();
-    let face = geop_ops::PartDescription::of(&part)
-        .unwrap()
-        .faces
-        .into_keys()
-        .find(|name| name.starts_with("extrude(hole,hole_sketch,"))
-        .expect("the hole has a face");
-    (program, face)
-}
-
 /// A standard screw is placed as any part: offered among the files, its
 /// size picked from its table, and mated by its datums — its axis on the
 /// hole's, the underside of its head on the plate.
@@ -678,7 +620,7 @@ fn a_standard_screw_is_placed_in_a_plate() {
     use geop_ops::part::{ParamValue, pose_parameter};
 
     let screw = "std:iso4762_socket_head_cap_screw.geop";
-    let (plate, hole) = plate_with_a_hole();
+    let (plate, hole) = (examples::metric_plate(), examples::metric_plate_hole());
     let mut editor = Editor::<S>::new();
     let files = [("plate.geop".to_string(), Some(plate.to_json().unwrap()))].into();
     assert!(editor.handle(Command::Files { files }).error.is_none());
@@ -711,7 +653,10 @@ fn a_standard_screw_is_placed_in_a_plate() {
         (
             "m1",
             "concentric",
-            vec![EntityRef::datum("part2/axis"), face(&format!("part1/{hole}"))],
+            vec![
+                EntityRef::datum("part2/axis"),
+                face(&format!("part1/{hole}")),
+            ],
         ),
         (
             "m2",

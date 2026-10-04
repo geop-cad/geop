@@ -183,8 +183,9 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         move |e: std::io::Error| GeopError::new(format!("{what} {path}: {e}"))
     };
     let path = args.program.to_string_lossy();
-    let mut program = Program::from_json(&Disk.read(&path)?)?;
+    // A standard part — `std:iso4032_hex_nut.geop` — compiles too.
     let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
+    let mut program = Program::from_json(&workspace.files().read(&path)?)?;
     let library = workspace.scope(&path);
     let mut part = program.build(&library)?;
     // State stale — a file it places changed since it was saved — are

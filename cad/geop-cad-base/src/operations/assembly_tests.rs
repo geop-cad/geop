@@ -19,7 +19,9 @@ use geop_ops::part::{ParamValue, pose_parameter};
 use geop_ops_datums::{AddDatumArgs, Construction};
 
 use crate::examples::{n, pose};
-use crate::{Command, Editor, PartOperation, Program, Step, Workspace, examples, stdlib::WithStandardParts};
+use crate::{
+    Command, Editor, PartOperation, Program, Step, Workspace, examples, stdlib::WithStandardParts,
+};
 
 /// The files of the `pin_in_plate` example but its assembly, by path.
 fn parts() -> BTreeMap<String, String> {
@@ -460,7 +462,13 @@ fn an_example_of_several_files_adds_its_files() {
     assert!(!program.can_undo);
     assert_eq!(
         program.workspace_examples,
-        ["pin_in_plate", "chain", "parametric_plates", "four_bar"]
+        [
+            "pin_in_plate",
+            "chain",
+            "parametric_plates",
+            "four_bar",
+            "bolted_plate"
+        ]
     );
     let part = update.scene.unwrap().part;
     let instances: Vec<&str> = part.instances.iter().map(|i| i.name.as_str()).collect();

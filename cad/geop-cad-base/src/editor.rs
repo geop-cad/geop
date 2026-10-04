@@ -30,7 +30,9 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{PartOperation, Program, ProgramRunner, Workspace, examples, stdlib::WithStandardParts};
+use crate::{
+    PartOperation, Program, ProgramRunner, Workspace, examples, stdlib::WithStandardParts,
+};
 
 /// Something the user did.
 #[derive(Clone, Debug, Deserialize)]

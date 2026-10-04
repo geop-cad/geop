@@ -16,7 +16,8 @@ use super::{
     StandardPart,
     drawing::Drawing,
     steps::{
-        Around, Through, axis_datum, base_datum, col, cut_to, hexagon, revolve, size, subtract, swept,
+        Around, Through, axis_datum, base_datum, col, cut_to, hexagon, revolve, size, subtract,
+        swept,
     },
     tables::{self, Table},
 };
@@ -120,7 +121,14 @@ fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
     if let Head::Hex = head {
         let mut outline = Drawing::new(&program.parameters)?;
         hexagon(&mut outline, &col("s"))?;
-        cut_to(&mut program, "head", "hex", outline, "revolve(body)", Through::Both)?;
+        cut_to(
+            &mut program,
+            "head",
+            "hex",
+            outline,
+            "revolve(body)",
+            Through::Both,
+        )?;
     } else {
         // A countersunk head's socket reaches below its top, at `z = 0`.
         let through = match head {
@@ -278,7 +286,14 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
     )?;
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &s)?;
-    cut_to(&mut program, "nut", "hex", outline, "revolve(body)", Through::Up)?;
+    cut_to(
+        &mut program,
+        "nut",
+        "hex",
+        outline,
+        "revolve(body)",
+        Through::Up,
+    )?;
     axis_datum(&mut program);
     base_datum(&mut program, "base");
     Ok((program, swept("body", "profile", bore_line)))
@@ -416,7 +431,14 @@ pub fn hex_standoff() -> GeopResult<StandardPart> {
     )?;
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &col("s"))?;
-    cut_to(&mut program, "standoff", "hex", outline, "revolve(body)", Through::Up)?;
+    cut_to(
+        &mut program,
+        "standoff",
+        "hex",
+        outline,
+        "revolve(body)",
+        Through::Up,
+    )?;
     axis_datum(&mut program);
     base_datum(&mut program, "base");
     Ok(StandardPart {
