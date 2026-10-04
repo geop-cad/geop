@@ -1745,4 +1745,405 @@ mod tests {
     fn profile_along_the_path_is_refused() {
         for_all_scalars!(check_profile_along_the_path_is_refused);
     }
+
+    // ── twist, scale, fixed normal and rails ────────────────────────────────
+
+    /// Sweeps the closed `outer` loop in `plane` along `path`, changing as
+    /// `control` says, into a solid in a fresh part, and checks it is valid.
+    fn swept_with<S: Scalar>(
+        outer: Vec<NurbCurve2D<S>>,
+        plane: &CoordinateSystem<S>,
+        path: &PathChain<S>,
+        control: &Control<S>,
+    ) -> Part<S> {
+        let mut part = Part::<S>::new();
+        let namer = Namer::new("sweep", "s").unwrap();
+        sweep_along(
+            &mut part,
+            &namer,
+            Some(&namer.root()),
+            path,
+            plane,
+            &[SweepLoop::plain(Profile::closed(outer))],
+            control,
+        )
+        .unwrap();
+        part.check_names().unwrap();
+        assert_valid(part.topology());
+        part
+    }
+
+    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Rail<S> {
+        Rail {
+            name: name.into(),
+            chain: chain(curves, false),
+        }
+    }
+
+    fn with_rails<S: Scalar>(rails: Vec<Rail<S>>) -> Control<S> {
+        Control {
+            rails,
+            ..Control::default()
+        }
+    }
+
+    /// The straight path along `x` from the origin to `(length, 0, 0)`.
+    fn along_x<S: Scalar>(length: f64) -> PathChain<S> {
+        chain(
+            vec![line3(v3::<S>(0., 0., 0.), v3(length, 0., 0.)).unwrap()],
+            false,
+        )
+    }
+
+    /// Whether the wall `name` of `part` runs straight along the path.
+    fn straight<S: Scalar>(part: &Part<S>, name: &str) -> bool {
+        let face = part.face_id(name).unwrap();
+        part.topology().faces[&face].surface.degree_u == 1
+    }
+
+    /// Points of the wall `name` of `part` on a grid of its parameters.
+    fn wall_points<S: Scalar>(part: &Part<S>, name: &str) -> Vec<Vector3<S>> {
+        let face = part.face_id(name).unwrap();
+        let surface = &part.topology().faces[&face].surface;
+        let mut points = Vec::new();
+        for i in 0..=8 {
+            for j in 0..=8 {
+                let (u, v) = (S::from_f64(i as f64 / 8.0), S::from_f64(j as f64 / 8.0));
+                points.push(surface.evaluate(u, v).unwrap());
+            }
+        }
+        points
+    }
+
+    /// The distance of `p` from the `x` axis.
+    fn radius<S: Scalar>(p: &Vector3<S>) -> S {
+        p[1].mul(p[1]).add(p[2].mul(p[2])).sqrt().unwrap()
+    }
+
+    /// The vertex `name` of `part`.
+    fn vertex<S: Scalar>(part: &Part<S>, name: &str) -> Vector3<S> {
+        let v = part.vertex_id(name).unwrap();
+        part.topology().get_vertex(v).unwrap().point
+    }
+
+    /// Whether `value` could be `target`, but for the rounding of a
+    /// sweep's sections — a free choice made in plain numbers, which puts
+    /// them where they are worked out to go only that near.
+    fn near<S: Scalar>(value: S, target: f64) -> bool {
+        const ROUNDING: f64 = 1e-12;
+        value.lower().to_f64() - ROUNDING <= target && target <= value.upper().to_f64() + ROUNDING
+    }
+
+    fn near_point<S: Scalar>(p: &Vector3<S>, target: [f64; 3]) -> bool {
+        (0..3).all(|k| near(p[k], target[k]))
+    }
+
+    /// A circle along a line, its point on a straight rail drifting out:
+    /// a cone, every wall still straight along the path — the radius at
+    /// every point of every wall what the rail says at its `x`.
+    fn check_one_rail_sweeps_a_cone<S: Scalar>() {
+        let rails = vec![rail(
+            "r",
+            vec![line3(v3::<S>(0., 0.5, 0.), v3(2., 1., 0.)).unwrap()],
+        )];
+        let part = swept_with(
+            circle(0.5),
+            &yz(Vector3::zero()),
+            &along_x(2.0),
+            &with_rails(rails),
+        );
+        assert_eq!(part.topology().faces.len(), 4 + 2);
+        for i in 0..4 {
+            assert!(straight(&part, &format!("sweep(s,c{i},k0)")));
+            for p in wall_points(&part, &format!("sweep(s,c{i},k0)")) {
+                // The radius the rail says at this `x`, `0.5 + x / 4`.
+                let wanted = p[0].mul(S::from_f64(0.25)).add(S::from_f64(0.5));
+                assert!(near(radius(&p).sub(wanted), 0.0), "{p:?}");
+            }
+        }
+        // The rail's end is where the profile's point on it went.
+        let end = vertex(&part, "sweep(s,p0,j1)");
+        assert!(near_point(&end, [2.0, 1.0, 0.0]), "{end:?}");
+    }
+    #[test]
+    fn one_rail_sweeps_a_cone() {
+        for_all_scalars!(check_one_rail_sweeps_a_cone);
+    }
+
+    /// A circle along a line between two rails, one drifting out along `y`
+    /// and the other in along `z`: an ellipse growing, its half axes what
+    /// the rails say at every section.
+    fn check_two_rails_scale_an_ellipse<S: Scalar>() {
+        let rails = vec![
+            rail(
+                "wide",
+                vec![line3(v3::<S>(0., 1., 0.), v3(2., 2., 0.)).unwrap()],
+            ),
+            rail(
+                "flat",
+                vec![line3(v3::<S>(0., 0., 1.), v3(2., 0., 0.5)).unwrap()],
+            ),
+        ];
+        let part = swept_with(
+            circle(1.0),
+            &yz(Vector3::zero()),
+            &along_x(2.0),
+            &with_rails(rails),
+        );
+        for i in 0..4 {
+            assert!(straight(&part, &format!("sweep(s,c{i},k0)")));
+            for p in wall_points(&part, &format!("sweep(s,c{i},k0)")) {
+                let f = S::from_f64;
+                let a = f(1.0).add(p[0].mul(f(0.5)));
+                let b = f(1.0).sub(p[0].mul(f(0.25)));
+                let (y, z) = (p[1].div(a).unwrap(), p[2].div(b).unwrap());
+                assert!(near(y.mul(y).add(z.mul(z)), 1.0), "{p:?}");
+            }
+        }
+        let top = vertex(&part, "sweep(s,p1,j1)");
+        assert!(near_point(&top, [2.0, 0.0, 0.5]), "{top:?}");
+    }
+    #[test]
+    fn two_rails_scale_an_ellipse() {
+        for_all_scalars!(check_two_rails_scale_an_ellipse);
+    }
+
+    /// A rail bowing out along a line: the walls are sections skinned
+    /// together, each section — at every knot of a wall — the circle the
+    /// rail says.
+    fn check_curved_rail_shapes_the_sections<S: Scalar>() {
+        let f = S::from_f64;
+        let p = |x: f64, y: f64| Vector4::from_array([f(x), f(y), f(0.), f(1.)]);
+        let bow = NurbCurve::try_new(
+            2,
+            vec![p(0., 0.5), p(1., 1.5), p(2., 0.5)],
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let part = swept_with(
+            circle(0.5),
+            &yz(Vector3::zero()),
+            &along_x(2.0),
+            &with_rails(vec![rail("bow", vec![bow.clone()])]),
+        );
+        let face = part.face_id("sweep(s,c0,k0)").unwrap();
+        let surface = &part.topology().faces[&face].surface;
+        let (degree, knots) = (surface.degree_u, &surface.knot_vector_u);
+        let sections = (degree + 1..knots.len() - degree - 1).step_by(degree);
+        for k in sections {
+            let u = knots[k];
+            let q = surface.evaluate(u, S::ZERO).unwrap();
+            // Where the rail is at this `x`: it runs as `x = 2 t`, with
+            // `y = 0.5 + 2 t (1 - t)`.
+            let t = q[0].mul(S::from_f64(0.5));
+            let wanted = S::from_f64(0.5).add(S::TWO.mul(t).mul(S::ONE.sub(t)));
+            assert!(near(radius(&q).sub(wanted), 0.0), "{q:?}");
+        }
+    }
+    #[test]
+    fn curved_rail_shapes_the_sections() {
+        for_all_scalars!(check_curved_rail_shapes_the_sections);
+    }
+
+    /// A square bar along a line, twisted a quarter turn: its far end
+    /// turned so, and half way along — a section of every wall — half so.
+    fn check_twisted_square_bar<S: Scalar>() {
+        let control = Control {
+            twist: std::f64::consts::FRAC_PI_2,
+            ..Control::default()
+        };
+        let part = swept_with(square(0.5), &yz(Vector3::zero()), &along_x(4.0), &control);
+        assert_eq!(part.topology().faces.len(), 4 + 2);
+        // The corner (0.5, 0.5) at the end, turned to (-0.5, 0.5).
+        let end = vertex(&part, "sweep(s,p2,j1)");
+        assert!(near_point(&end, [4.0, -0.5, 0.5]), "{end:?}");
+        // Half way, turned an eighth: straight up, `sqrt(1/2)` out.
+        let edge = part.edge_id("sweep(s,p2,k0)").unwrap();
+        let curve = &part.topology().edges[&edge].curve;
+        let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
+        assert!(near_point(&middle, [2.0, 0.0, 0.5f64.sqrt()]), "{middle:?}");
+    }
+    #[test]
+    fn twisted_square_bar() {
+        for_all_scalars!(check_twisted_square_bar);
+    }
+
+    /// Scaled to twice its size along a line: a frustum, straight walls.
+    fn check_scaled_sweep_is_a_frustum<S: Scalar>() {
+        let control = Control::<S> {
+            end_scale: 2.0,
+            ..Control::default()
+        };
+        let part = swept_with(circle(0.5), &yz(Vector3::zero()), &along_x(2.0), &control);
+        for i in 0..4 {
+            assert!(straight(&part, &format!("sweep(s,c{i},k0)")));
+            for p in wall_points(&part, &format!("sweep(s,c{i},k0)")) {
+                // The radius the rail says at this `x`, `0.5 + x / 4`.
+                let wanted = p[0].mul(S::from_f64(0.25)).add(S::from_f64(0.5));
+                assert!(near(radius(&p).sub(wanted), 0.0), "{p:?}");
+            }
+        }
+    }
+    #[test]
+    fn scaled_sweep_is_a_frustum() {
+        for_all_scalars!(check_scaled_sweep_is_a_frustum);
+    }
+
+    /// Twisted and scaled through a bend: a valid solid, scaled at its end.
+    fn check_twisted_and_scaled_through_a_bend<S: Scalar>() {
+        let path = chain(
+            vec![
+                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                arc3(
+                    v3(2., 0., 0.),
+                    v3(3., 0., 0.),
+                    v3(3., 1., 0.),
+                    sqrt2_over_2(),
+                )
+                .unwrap(),
+            ],
+            false,
+        );
+        let control = Control {
+            twist: std::f64::consts::PI,
+            end_scale: 0.5,
+            ..Control::default()
+        };
+        let part = swept_with(square(0.3), &yz(Vector3::zero()), &path, &control);
+        // The end lies square to the arc's end, at `y = 1`, half the size.
+        let model = part.topology();
+        let end = part.face_id("sweep(s,end)").unwrap();
+        for c in model.iterate_face_coedges(end) {
+            let p = model.coedge_start_vertex(c).unwrap().point;
+            assert!(near(p[1], 1.0), "{p:?}");
+            let dx = p[0].sub(S::from_f64(3.0));
+            let off = dx.mul(dx).add(p[2].mul(p[2])).sqrt().unwrap();
+            assert!(near(off, 0.15 * 2f64.sqrt()), "{p:?}");
+        }
+    }
+    #[test]
+    fn twisted_and_scaled_through_a_bend() {
+        for_all_scalars!(check_twisted_and_scaled_through_a_bend);
+    }
+
+    /// Keeping its normal along a slanted line and an arc: the profile only
+    /// moves — exact, every vertex the profile's corner moved by the path.
+    fn check_fixed_normal_moves_the_profile<S: Scalar>() {
+        let path = chain(
+            vec![
+                line3(v3::<S>(0., 0., 0.), v3(1., 1., 0.)).unwrap(),
+                arc3(
+                    v3(1., 1., 0.),
+                    v3(2., 2., 0.),
+                    v3(3., 2., 0.),
+                    S::from_f64((std::f64::consts::PI / 8.0).cos()),
+                )
+                .unwrap(),
+            ],
+            false,
+        );
+        let control = Control {
+            orientation: Orientation::FixedNormal,
+            ..Control::default()
+        };
+        let part = swept_with(square(0.25), &yz(Vector3::zero()), &path, &control);
+        let model = part.topology();
+        let v = part.vertex_id("sweep(s,p2,j2)").unwrap();
+        assert!(
+            model
+                .get_vertex(v)
+                .unwrap()
+                .point
+                .could_be_equal(&v3(3., 2.25, 0.25))
+        );
+    }
+    #[test]
+    fn fixed_normal_moves_the_profile() {
+        for_all_scalars!(check_fixed_normal_moves_the_profile);
+    }
+
+    /// What a controlled sweep refuses, by name.
+    fn check_controlled_sweeps_refuse_what_they_cannot_build<S: Scalar>() {
+        let refused = |path: &PathChain<S>, control: Control<S>, says: &str| {
+            let error = along_chain(path, &yz(Vector3::zero()), &control).unwrap_err();
+            assert!(error.root_message().contains(says), "{error:?}");
+        };
+        let straight = |name: &str, from: Vector3<S>, to: Vector3<S>| {
+            rail(name, vec![line3(from, to).unwrap()])
+        };
+        // A rail off the profile's plane at both ends.
+        refused(
+            &along_x(2.0),
+            with_rails(vec![straight("off", v3(0.5, 0.5, 0.), v3(2., 1., 0.))]),
+            "off starts on the profile's plane at neither end",
+        );
+        // A rail with a twist.
+        refused(
+            &along_x(2.0),
+            Control {
+                twist: 1.0,
+                ..with_rails(vec![straight("r", v3(0., 0.5, 0.), v3(2., 1., 0.))])
+            },
+            "no twist or scale with them",
+        );
+        // A rail shorter than the path.
+        refused(
+            &along_x(2.0),
+            with_rails(vec![straight("short", v3(0., 0.5, 0.), v3(1., 1., 0.))]),
+            "short ends before the path does",
+        );
+        // Two rails in line with the path.
+        refused(
+            &along_x(2.0),
+            with_rails(vec![
+                straight("a", v3(0., 0.5, 0.), v3(2., 1., 0.)),
+                straight("b", v3(0., -0.5, 0.), v3(2., -1., 0.)),
+            ]),
+            "in line with the path",
+        );
+        // A twisted ring.
+        let corners = [(0., 0.), (4., 0.), (4., 4.), (0., 4.)];
+        let ring = chain(
+            (0..4)
+                .map(|i| {
+                    let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                    line3(v3::<S>(a.0, a.1, 0.), v3(b.0, b.1, 0.)).unwrap()
+                })
+                .collect(),
+            true,
+        );
+        refused(
+            &ring,
+            Control {
+                twist: 1.0,
+                ..Control::default()
+            },
+            "sweep along an open path",
+        );
+        // A path that turns parallel to the plane, with a fixed normal.
+        let back = chain(
+            vec![
+                arc3(
+                    v3::<S>(0., 0., 0.),
+                    v3(1., 0., 0.),
+                    v3(1., 1., 0.),
+                    sqrt2_over_2(),
+                )
+                .unwrap(),
+            ],
+            false,
+        );
+        refused(
+            &back,
+            Control {
+                orientation: Orientation::FixedNormal,
+                ..Control::default()
+            },
+            "keep running through the profile's plane",
+        );
+    }
+    #[test]
+    fn controlled_sweeps_refuse_what_they_cannot_build() {
+        for_all_scalars!(check_controlled_sweeps_refuse_what_they_cannot_build);
+    }
 }
