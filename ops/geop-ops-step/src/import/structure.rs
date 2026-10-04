@@ -35,6 +35,9 @@ pub struct Item {
     pub label: String,
 }
 
+/// The uncertainty of a file that states none, in millimetres.
+const DEFAULT_UNCERTAINTY: f64 = 1e-6;
+
 /// How deeply placements may nest: deeper than any real assembly, and a
 /// bound on a file whose placements form a cycle.
 const MAX_DEPTH: usize = 64;
@@ -47,9 +50,8 @@ const BODY_TYPES: [&str; 3] = [
 ];
 
 /// A body type the importer does not read, and why.
-const REFUSED_BODY_TYPES: [(&str, &str); 2] = [
+const REFUSED_BODY_TYPES: [(&str, &str); 1] = [
     ("FACETED_BREP", "a solid of flat facets bounded by polygons rather than edges"),
-    ("GEOMETRIC_CURVE_SET", "a set of curves, which bounds no body"),
 ];
 
 /// The representation record of `instance`: one of the types whose
@@ -102,6 +104,9 @@ impl Reader<'_> {
                     }
                 }
             }
+        }
+        if !(scope.uncertainty > 0.0) {
+            scope.uncertainty = DEFAULT_UNCERTAINTY;
         }
         Ok(scope)
     }

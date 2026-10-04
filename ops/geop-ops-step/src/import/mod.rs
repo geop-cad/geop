@@ -21,9 +21,6 @@ pub use body::ImportedBody;
 
 use crate::part21::Exchange;
 
-/// The uncertainty of a file that states none, in millimetres.
-const DEFAULT_UNCERTAINTY: f64 = 1e-6;
-
 /// Every body of the STEP file `text`, in the order the file has them.
 pub fn read_step<S: Scalar>(text: &str) -> GeopResult<Vec<ImportedBody<S>>> {
     let exchange = Exchange::parse(text)?;
@@ -33,12 +30,7 @@ pub fn read_step<S: Scalar>(text: &str) -> GeopResult<Vec<ImportedBody<S>>> {
 /// Every body of the exchange file `exchange`.
 pub fn read_exchange<S: Scalar>(exchange: &Exchange) -> GeopResult<Vec<ImportedBody<S>>> {
     let reader = reader::Reader { exchange };
-    let mut items = reader.bodies()?;
-    for item in &mut items {
-        if !(item.scope.uncertainty > 0.0) {
-            item.scope.uncertainty = DEFAULT_UNCERTAINTY;
-        }
-    }
+    let items = reader.bodies()?;
     items
         .iter()
         .map(|item| {

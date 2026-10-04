@@ -239,6 +239,9 @@ pub struct NurbsSurface {
 pub struct Revolved {
     pub frame: Frame,
     pub profile: Profile,
+    /// How close to the axis a point is on it, and has no angle: the
+    /// file's uncertainty.
+    pub on_axis: f64,
 }
 
 /// What a [`Revolved`] surface's profile is, as a function of its
@@ -265,7 +268,7 @@ impl Revolved {
     pub fn chart(&self, p: P3) -> (Option<f64>, f64) {
         let [x, y, h] = self.frame.local(p);
         let rho = x.hypot(y);
-        let angle = (rho > 0.0).then(|| y.atan2(x));
+        let angle = (rho > self.on_axis).then(|| y.atan2(x));
         let v = match &self.profile {
             Profile::Cylinder { .. } | Profile::Cone { .. } | Profile::Curve(_) => h,
             Profile::Sphere { .. } => h.atan2(rho),
@@ -583,7 +586,7 @@ pub fn parameter_of<S: Scalar>(curve: &NurbCurve3D<S>, p: P3) -> GeopResult<S> {
     let mut best = (f64::INFINITY, lo_f);
     for i in 0..=samples {
         let t = lo_f + (hi_f - lo_f) * i as f64 / samples as f64;
-        let d = distance(to_p3(&curve.evaluate(S::from_f64(t))?), p);
+        let d = distance(point_at(curve, t)?, p);
         if d < best.0 {
             best = (d, t);
         }
@@ -828,6 +831,7 @@ impl<'a> Reader<'a> {
                 kind: SurfaceKind::Revolved(Revolved {
                     frame: self.frame(scope, args.reference(1)?)?,
                     profile,
+                    on_axis: scope.uncertainty,
                 }),
                 flipped: false,
             })
@@ -922,6 +926,7 @@ impl<'a> Reader<'a> {
                     kind: SurfaceKind::Revolved(Revolved {
                         frame,
                         profile: Profile::Curve(curve),
+                        on_axis: scope.uncertainty,
                     }),
                     // The file's normal is the curve's tangent across the
                     // turn; the NURBS' the turn across the curve.
@@ -1124,4 +1129,18 @@ fn quasi_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
     }
     knots.extend(std::iter::repeat_n((inner + 1) as f64, degree + 1));
     knots
+}
+
+/// The point of `curve` at the parameter `t`, chosen in `f64`: at a domain
+/// end, the end itself, which `t` may miss by rounding.
+pub fn point_at<S: Scalar>(curve: &NurbCurve3D<S>, t: f64) -> GeopResult<P3> {
+    let (lo, hi) = curve.domain();
+    let t = if t <= lo.to_f64() {
+        lo
+    } else if t >= hi.to_f64() {
+        hi
+    } else {
+        S::from_f64(t)
+    };
+    Ok(to_p3(&curve.evaluate(t)?))
 }

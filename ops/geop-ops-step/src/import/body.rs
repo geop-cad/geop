@@ -338,7 +338,7 @@ impl<S: Scalar> Builder<'_, S> {
             let f = i as f64 / n as f64;
             let f = if forward { f } else { 1.0 - f };
             let t = lo + (hi - lo) * f;
-            out.push((t, to_p3(&curve.evaluate(S::from_f64(t))?)));
+            out.push((t, super::geometry::point_at(curve, t)?));
         }
         Ok(out)
     }
@@ -420,22 +420,20 @@ impl<S: Scalar> Builder<'_, S> {
         while f < self.faces.len() {
             let face = &self.faces[f];
             let id = face.id;
-            let seams = self.seams(f);
-            let wraps = match face.surface.revolved() {
+            let revolved = face.surface.revolved().cloned();
+            let had_seam = self
+                .drop_doubled_edges(f)
+                .map_err(|e| e.with_context(format!("taking the seams out of the face #{id}")))?;
+            let wraps = match revolved {
                 Some(revolved) => {
-                    let revolved = revolved.clone();
-                    !seams.is_empty() || self.windings(f, &revolved)?.iter().any(|&w| w != 0)
-                }
-                None if !seams.is_empty() => {
-                    return Err(GeopError::new(format!(
-                        "#{id}: a face running along a seam is only supported on a cylinder, cone, sphere, torus or surface of revolution, not on its {}",
-                        self.reader.instance(id).map(|_| "surface").unwrap_or("surface")
-                    )));
+                    had_seam
+                        || self.faces[f].loops.is_empty()
+                        || self.windings(f, &revolved)?.iter().any(|&w| w != 0)
                 }
                 None => false,
             };
             if wraps {
-                self.cut_wrapping_face(f, &seams)
+                self.cut_wrapping_face(f)
                     .map_err(|e| e.with_context(format!("cutting the face #{id}, which wraps around its axis, into sectors")))?;
                 // Its sectors were pushed at the end; it is gone.
                 continue;
@@ -454,17 +452,69 @@ impl<S: Scalar> Builder<'_, S> {
         Ok(())
     }
 
-    /// The edges face `f` runs along twice: its seams.
-    fn seams(&self, f: usize) -> Vec<usize> {
+    /// Takes out of face `f` every edge it runs along twice, once each
+    /// way, which no other face uses: a seam, where a periodic surface's
+    /// parametrization wraps, or a bridge joining a hole to the loop around
+    /// it. Either runs within the face, so it bounds nothing; taking it out
+    /// splits its loop in two — the part between its two uses and the
+    /// rest. Says whether there was any.
+    fn drop_doubled_edges(&mut self, f: usize) -> GeopResult<bool> {
         let mut count: HashMap<usize, usize> = HashMap::new();
         for lp in &self.faces[f].loops {
             for &(e, _) in lp {
                 *count.entry(e).or_default() += 1;
             }
         }
-        let mut seams: Vec<usize> = count.into_iter().filter(|&(_, n)| n == 2).map(|(e, _)| e).collect();
-        seams.sort();
-        seams
+        let mut doubled: Vec<usize> = count.into_iter().filter(|&(_, n)| n == 2).map(|(e, _)| e).collect();
+        doubled.sort();
+        for &e in &doubled {
+            if self
+                .faces
+                .iter()
+                .enumerate()
+                .any(|(g, face)| g != f && face.loops.iter().flatten().any(|&(x, _)| x == e))
+            {
+                return Err(GeopError::new(format!(
+                    "the edge {} it runs along twice is used by another face too",
+                    self.edges[e].name.join(",")
+                )));
+            }
+            let loops = std::mem::take(&mut self.faces[f].loops);
+            let mut out = Vec::new();
+            for lp in loops {
+                let uses: Vec<usize> = (0..lp.len()).filter(|&k| lp[k].0 == e).collect();
+                match uses.as_slice() {
+                    [] => out.push(lp),
+                    &[i, j] => {
+                        if lp[i].1 == lp[j].1 {
+                            return Err(GeopError::new(format!(
+                                "it runs along the edge {} twice the same way",
+                                self.edges[e].name.join(",")
+                            )));
+                        }
+                        let inner: Vec<Use> = lp[i + 1..j].to_vec();
+                        let outer: Vec<Use> = lp[j + 1..].iter().chain(&lp[..i]).copied().collect();
+                        out.extend([inner, outer].into_iter().filter(|l| !l.is_empty()));
+                    }
+                    _ => {
+                        return Err(GeopError::new(format!(
+                            "the edge {} is used twice, by different loops of it",
+                            self.edges[e].name.join(",")
+                        )));
+                    }
+                }
+            }
+            self.faces[f].loops = out;
+            self.edges[e].alive = false;
+        }
+        for lp in &self.faces[f].loops {
+            let (start, _) = self.ends(lp[0]);
+            let (_, end) = self.ends(*lp.last().expect("not empty"));
+            if start != end {
+                return Err(GeopError::new("taking them out leaves a loop that does not close"));
+            }
+        }
+        Ok(!doubled.is_empty())
     }
 
     /// How often each loop of face `f` goes round the axis of `revolved`,
@@ -473,77 +523,39 @@ impl<S: Scalar> Builder<'_, S> {
         self.faces[f]
             .loops
             .iter()
-            .map(|lp| Ok(winding(&unwrap(revolved, &self.loop_points(lp)?, true))))
+            .map(|lp| {
+                let ccw = self.faces[f].outward_is_natural();
+                Ok(winding(&unwrap(revolved, &self.loop_points(lp)?, true, ccw)))
+            })
             .collect()
     }
 
     /// Cuts the face `f`, which wraps around its axis, into sectors along
-    /// meridians, each on a patch that does not wrap; drops its seams.
+    /// meridians, each on a patch that does not wrap.
     ///
     /// Without its seams, the face is a band around the axis between a
     /// bottom and a top, each a loop going once round — a *ring* — or a
     /// pole, with any holes in between. Where the cuts go is a free
     /// choice, made where nothing is: clear of every vertex and hole, as
     /// far from them as can be.
-    fn cut_wrapping_face(&mut self, f: usize, seams: &[usize]) -> GeopResult<()> {
+    fn cut_wrapping_face(&mut self, f: usize) -> GeopResult<()> {
         let revolved = self.faces[f]
             .surface
             .revolved()
             .expect("only a surface of revolution wraps")
             .clone();
-        // Seams go: each runs within the face, along where its patch would
-        // have had to wrap.
-        for &seam in seams {
-            let users = self
-                .faces
-                .iter()
-                .enumerate()
-                .filter(|(g, face)| *g != f && face.loops.iter().flatten().any(|&(e, _)| e == seam))
-                .count();
-            if users > 0 {
-                return Err(GeopError::new(
-                    "an edge this face runs along twice is used by another face too",
-                ));
-            }
-            self.edges[seam].alive = false;
-        }
-        let mut loops = Vec::new();
-        for lp in std::mem::take(&mut self.faces[f].loops) {
-            let cuts: Vec<usize> = (0..lp.len()).filter(|&k| seams.contains(&lp[k].0)).collect();
-            if cuts.is_empty() {
-                loops.push(lp);
-                continue;
-            }
-            for (i, &k) in cuts.iter().enumerate() {
-                let next = cuts[(i + 1) % cuts.len()];
-                let piece: Vec<Use> = (1..)
-                    .map(|j| (k + j) % lp.len())
-                    .take_while(|&j| j != next)
-                    .map(|j| lp[j])
-                    .collect();
-                if piece.is_empty() {
-                    continue;
-                }
-                let (start, _) = self.ends(piece[0]);
-                let (_, end) = self.ends(*piece.last().expect("not empty"));
-                if start != end {
-                    return Err(GeopError::new(
-                        "taking its seams out leaves a loop that does not close",
-                    ));
-                }
-                loops.push(piece);
-            }
-        }
-        self.faces[f].loops = loops;
-
         let outward_natural = self.faces[f].outward_is_natural();
         let mut rings: Vec<usize> = Vec::new();
         let mut bottom = None;
         let mut top = None;
         let mut holes = Vec::new();
+        // Each loop's winding and mean profile parameter, for messages.
+        let mut summary = Vec::new();
         for (k, lp) in self.faces[f].loops.iter().enumerate() {
             let points = self.loop_points(lp)?;
-            let angles = unwrap(&revolved, &points, true);
+            let angles = unwrap(&revolved, &points, true, outward_natural);
+            let mean_v = points.iter().map(|&p| revolved.chart(p).1).sum::<f64>() / points.len() as f64;
+            summary.push((winding(&angles), mean_v, lp.len()));
             match winding(&angles) {
                 0 => holes.push(k),
                 w @ (1 | -1) => {
@@ -567,7 +579,30 @@ impl<S: Scalar> Builder<'_, S> {
                 }
             }
         }
-        let v_of = |p: P3| revolved.chart(p).1;
+        if rings.is_empty() && revolved.v_is_angle() {
+            return Err(GeopError::new(
+                "it goes all the way round its torus' tube, as a pipe bend does: only faces going round a torus' axis are supported",
+            ));
+        }
+        // A torus' profile parameter is an angle too: read it from where
+        // the face is not, so it runs on across the face.
+        let v_start = if revolved.v_is_angle() {
+            let mut all = Vec::new();
+            for lp in &self.faces[f].loops {
+                all.extend(self.loop_points(lp)?.into_iter().map(|p| revolved.chart(p).1));
+            }
+            start_of_largest_gap(&mut all)
+        } else {
+            f64::NEG_INFINITY
+        };
+        let v_of = |p: P3| {
+            let v = revolved.chart(p).1;
+            if v_start.is_finite() {
+                v_start + (v - v_start).rem_euclid(std::f64::consts::TAU)
+            } else {
+                v
+            }
+        };
         let ring_v = |builder: &Self, k: usize| -> GeopResult<f64> {
             let points = builder.loop_points(&builder.faces[f].loops[k])?;
             Ok(points.iter().map(|&p| v_of(p)).sum::<f64>() / points.len() as f64)
@@ -584,7 +619,7 @@ impl<S: Scalar> Builder<'_, S> {
                     .copied()
                     .filter(|&p| top_v.is_none_or(|t| p < t))
                     .reduce(f64::min)
-                    .ok_or_else(|| GeopError::new("it has nothing closing it off below: no loop round its axis and no pole"))?,
+                    .ok_or_else(|| GeopError::new(format!("it has nothing closing it off below: no loop round its axis and no pole (its loops' windings, mean profile parameters and lengths: {summary:?}, the face's outward normal natural: {outward_natural})")))?,
             ),
         };
         let top_pole = match top {
@@ -595,13 +630,13 @@ impl<S: Scalar> Builder<'_, S> {
                     .copied()
                     .filter(|&p| bottom_v.is_none_or(|b| p > b))
                     .reduce(f64::max)
-                    .ok_or_else(|| GeopError::new("it has nothing closing it off above: no loop round its axis and no pole"))?,
+                    .ok_or_else(|| GeopError::new(format!("it has nothing closing it off above: no loop round its axis and no pole (its loops' windings, mean profile parameters and lengths: {summary:?}, the face's outward normal natural: {outward_natural})")))?,
             ),
         };
         if let (Some(b), Some(t)) = (bottom_v.or(bottom_pole), top_v.or(top_pole))
             && b >= t
         {
-            return Err(GeopError::new("its bottom is not below its top"));
+            return Err(GeopError::new(format!("its bottom {b} is not below its top {t} (its loops' windings, mean profile parameters and lengths: {summary:?})")));
         }
 
         // Where not to cut: at any vertex, or through a hole.
@@ -609,7 +644,7 @@ impl<S: Scalar> Builder<'_, S> {
         for (k, lp) in self.faces[f].loops.iter().enumerate() {
             let points = self.loop_points(lp)?;
             if holes.contains(&k) {
-                let angles = unwrap(&revolved, &points, false);
+                let angles = unwrap(&revolved, &points, false, outward_natural);
                 let lo = angles.iter().copied().fold(f64::INFINITY, f64::min);
                 let hi = angles.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                 blocked.push((lo, hi));
@@ -710,7 +745,7 @@ impl<S: Scalar> Builder<'_, S> {
             // (`up`) or clockwise.
             let lp = &face_loops[ring];
             let winding_ccw = {
-                let angles = unwrap(&revolved, &builder.loop_points(lp)?, true);
+                let angles = unwrap(&revolved, &builder.loop_points(lp)?, true, outward_natural);
                 winding(&angles) > 0
             };
             let along = winding_ccw == up;
@@ -741,7 +776,7 @@ impl<S: Scalar> Builder<'_, S> {
         let mut hole_sector = Vec::new();
         for &h in &holes {
             let points = self.loop_points(&face_loops[h])?;
-            let a = unwrap(&revolved, &points, false);
+            let a = unwrap(&revolved, &points, false, outward_natural);
             let mid = a.iter().sum::<f64>() / a.len() as f64;
             let sector = (0..n)
                 .find(|&s| {
@@ -817,6 +852,7 @@ impl<S: Scalar> Builder<'_, S> {
         use std::f64::consts::{PI, TAU};
         let near = |a: f64, reference: f64| reference + (a - reference + PI).rem_euclid(TAU) - PI;
         let mut prev: Option<f64> = None;
+        let mut covered = (f64::INFINITY, f64::NEG_INFINITY);
         for &u in lp {
             let samples = self.samples(u, LOOP_SAMPLES)?;
             let mut last: Option<(f64, f64)> = None; // (parameter, unwrapped angle)
@@ -831,7 +867,7 @@ impl<S: Scalar> Builder<'_, S> {
                     let x = cut + TAU * ((lo - cut) / TAU).ceil();
                     if x <= hi && lo < hi {
                         let theta = |t: f64| -> GeopResult<f64> {
-                            let p = to_p3(&self.edges[u.0].curve.evaluate(S::from_f64(t))?);
+                            let p = super::geometry::point_at(&self.edges[u.0].curve, t)?;
                             let angle = revolved
                                 .chart(p)
                                 .0
@@ -858,10 +894,11 @@ impl<S: Scalar> Builder<'_, S> {
                 }
                 last = Some((t, a));
                 prev = Some(a);
+                covered = (covered.0.min(a), covered.1.max(a));
             }
         }
         Err(GeopError::new(format!(
-            "a loop round its axis never reaches the angle {cut}"
+            "a loop round its axis never reaches the angle {cut}: it covers the angles {covered:?}"
         )))
     }
 
@@ -1085,22 +1122,64 @@ fn poles_of<S: Scalar>(surface: &NurbSurface3D<S>, uncertainty: f64) -> GeopResu
 }
 
 /// The unwrapped angles about `revolved`'s axis of `points`, a loop's in
-/// order: each within half a turn of the one before. Points on the axis,
-/// which have no angle, are left out. With `closing`, the first point is
-/// repeated at the end, so the last angle less the first is how far the
-/// loop turns.
-fn unwrap(revolved: &Revolved, points: &[P3], closing: bool) -> Vec<f64> {
-    let mut out: Vec<f64> = Vec::with_capacity(points.len() + 1);
-    let iter = points.iter().chain(closing.then(|| &points[0]));
-    for &p in iter {
-        let Some(a) = revolved.chart(p).0 else { continue };
-        let a = match out.last() {
-            Some(&prev) => prev + (a - prev + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI,
-            None => a,
+/// order: each within half a turn of the one before. With `closing`, the
+/// loop is followed back to where it started, so the last angle less the
+/// first is how far it turns.
+///
+/// A point on the axis has no angle. Where a loop runs through a pole, it
+/// turns there by whatever angle lies between where it arrives and where
+/// it leaves — the long way round as readily as the short — and which way
+/// is the face's: a loop running counter-clockwise about the surface's
+/// natural normal (`ccw`) runs along a pole at the top of the profile
+/// backwards in angle, along one at the bottom forwards, as it runs along
+/// the top and bottom of its region.
+fn unwrap(revolved: &Revolved, points: &[P3], closing: bool, ccw: bool) -> Vec<f64> {
+    use std::f64::consts::{PI, TAU};
+    // Start at a point with an angle, so that a pole is always passed
+    // between two.
+    let start = points.iter().position(|&p| revolved.chart(p).0.is_some()).unwrap_or(0);
+    let n = points.len();
+    let mean_v = points.iter().map(|&p| revolved.chart(p).1).sum::<f64>() / n.max(1) as f64;
+    let mut out: Vec<f64> = Vec::with_capacity(n + 1);
+    let mut pole: Option<f64> = None;
+    for k in 0..n + usize::from(closing) {
+        let p = points[(start + k) % n];
+        let (angle, v) = revolved.chart(p);
+        let Some(a) = angle else {
+            pole = Some(v);
+            continue;
+        };
+        let a = match (out.last(), pole.take()) {
+            (None, _) => a,
+            (Some(&prev), None) => prev + (a - prev + PI).rem_euclid(TAU) - PI,
+            (Some(&prev), Some(v)) => {
+                let turn = (a - prev).rem_euclid(TAU);
+                let forwards = ccw != (v > mean_v);
+                prev + if forwards || turn == 0.0 { turn } else { turn - TAU }
+            }
         };
         out.push(a);
     }
     out
+}
+
+/// Where the largest gap between the angles `angles` ends, going round:
+/// the angle a range covering them all starts at.
+fn start_of_largest_gap(angles: &mut [f64]) -> f64 {
+    use std::f64::consts::TAU;
+    angles.sort_by(f64::total_cmp);
+    let n = angles.len();
+    if n == 0 {
+        return 0.0;
+    }
+    let mut gap = (angles[0] + TAU - angles[n - 1], 0usize);
+    for i in 1..n {
+        let g = angles[i] - angles[i - 1];
+        if g > gap.0 {
+            gap = (g, i);
+        }
+    }
+    angles[gap.1]
 }
 
 /// How often unwrapped closing angles go round.
@@ -1187,7 +1266,7 @@ fn patch_of<S: Scalar>(
             for i in 0..LOOP_SAMPLES {
                 let f = i as f64 / LOOP_SAMPLES as f64;
                 let f = if forward { f } else { 1.0 - f };
-                this.push(to_p3(&curve.evaluate(S::from_f64(lo + (hi - lo) * f))?));
+                this.push(super::geometry::point_at(curve, lo + (hi - lo) * f)?);
             }
         }
         points.extend(this.iter().copied());
@@ -1259,7 +1338,7 @@ fn revolved_extent(revolved: &Revolved, face: &Face, loops: &[Vec<P3>], scope: &
     // The outer loop spans the face's angles; each hole lies within them.
     let mut best: Option<(f64, f64, f64)> = None;
     for points in loops {
-        let a = unwrap(revolved, points, false);
+        let a = unwrap(revolved, points, false, face.outward_is_natural());
         if a.is_empty() {
             continue;
         }

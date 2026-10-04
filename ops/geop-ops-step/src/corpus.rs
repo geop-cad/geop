@@ -108,6 +108,9 @@ fn corpus() {
             Err(e) => {
                 let c = cause(&e);
                 println!("FAIL {seconds:7.2}s  {name}: {c}");
+                if only.is_some() {
+                    println!("{e}");
+                }
                 causes.entry(c).or_default().push(name);
             }
         }
