@@ -786,6 +786,18 @@ fn find_tracing_start_points<S: Scalar>(
 /// module uses, so a vertex that genuinely lies on both faces still
 /// terminates the trace exactly as before — this only rejects the ones that
 /// never belonged.
+///
+/// Lying on both surfaces is still not lying on the stretch of curve a
+/// stride runs along. Once the march has committed to a `stride` — a
+/// direction, and the distance along it to the plane the corrector lands
+/// on — the vertex it reaches is one between `point` and that plane. One
+/// definitely behind `point` is not it: the march left it behind, or it
+/// lies on the curve's other side of the start. On `narrow_groove` a trace
+/// leaving the cut's inner corner along the wall found, one stride later,
+/// the vertex 0.05 *behind* its start, where the cut's outer floor edge
+/// crosses the wall's plane outside the wall, nearer than anything ahead —
+/// and spliced a spur out of the wall to it. One definitely past the plane
+/// is the next stride's to reach.
 #[allow(clippy::too_many_arguments)]
 fn candidate_within<S: Scalar>(
     model: &Model<S>,
@@ -793,6 +805,7 @@ fn candidate_within<S: Scalar>(
     origin: VertexId,
     point: &Vector3<S>,
     radius: S,
+    stride: Option<(&Vector3<S>, S)>,
     surf_a: &NurbSurface3D<S>,
     surf_b: &NurbSurface3D<S>,
     max_nodes: usize,
@@ -805,9 +818,16 @@ fn candidate_within<S: Scalar>(
             continue;
         }
         let candidate_point = model.get_vertex(candidate)?.point;
-        let d = candidate_point.sub(point).norm_sq();
+        let offset = candidate_point.sub(point);
+        let d = offset.norm_sq();
         if !d.could_be_less(radius_sq) {
             continue;
+        }
+        if let Some((heading, length)) = stride {
+            let along = offset.prod_dot(heading);
+            if along.definitely_less(S::ZERO) || along.definitely_greater(length) {
+                continue;
+            }
         }
         if best.is_some() && !d.could_be_less(best.expect("checked").1) {
             continue;
@@ -1317,6 +1337,7 @@ fn trace_one_side<S: Scalar>(
         v,
         &point,
         first_step,
+        None,
         &surf_a,
         &surf_b,
         max_nodes,
@@ -1419,10 +1440,10 @@ fn trace_one_side<S: Scalar>(
     // `Inside`, so if a splice below reports a degenerate split, this says
     // whether the direction choice was wrong or something later moved the
     // curve onto the boundary.
-    let (first_ua, first_va, first_ub, first_vb) = (u_a, v_a, u_b, v_b);
+    let (first_ua, first_va, first_ub, first_vb, first_dir) = (u_a, v_a, u_b, v_b, dir);
     let ctx = |e: GeopError| {
         ctx(e).with_context(format!(
-            "direction chosen with face_a={first_a:?} at uv=({first_ua:?}, {first_va:?}), face_b={first_b:?} at uv=({first_ub:?}, {first_vb:?}), rejected direction saw {last_rejection:?}"
+            "from {point:?} along {first_dir:?}, direction chosen with face_a={first_a:?} at uv=({first_ua:?}, {first_va:?}), face_b={first_b:?} at uv=({first_ub:?}, {first_vb:?}), rejected direction saw {last_rejection:?}"
         ))
     };
 
@@ -1432,33 +1453,52 @@ fn trace_one_side<S: Scalar>(
     // (for `interpolate_enclosing` below).
     let mut params = vec![(u_a0, v_a0, u_b0, v_b0), (u_a, v_a, u_b, v_b)];
 
-    // March until we reach another vertex. "Reached" means within one
-    // `step_size` — the walk moves in `step_size` strides, so a vertex
-    // closer than that is one the very next stride would pass.
+    // March until we reach another vertex: one on the stretch of curve the
+    // next stride runs along, from `cur_point` up to the plane at `step`
+    // along `dir` that the corrector lands it on (see `candidate_within`).
     let mut hit_vertex = None;
     for _ in 0..max_trace_steps {
-        let reach = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, step_size)
+        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, step_size)
             .with_context(&ctx)?;
-        if let Some(hit) = candidate_within(
-            model,
-            candidates,
-            v,
-            &cur_point,
-            reach,
-            &surf_a,
-            &surf_b,
-            max_nodes,
-            min_subdivision_size,
-        )? {
+        let reached = |radius: S| {
+            candidate_within(
+                model,
+                candidates,
+                v,
+                &cur_point,
+                radius,
+                Some((&dir, step)),
+                &surf_a,
+                &surf_b,
+                max_nodes,
+                min_subdivision_size,
+            )
+        };
+        // Every point of the plane the stride lands on is at least `step`
+        // from `cur_point`, so a vertex ahead within `step` is reached
+        // whatever the stride does — and is found without taking it, which
+        // matters where the curve ends at the edge of a patch the stride
+        // would have to leave.
+        if let Some(hit) = reached(step).with_context(&ctx)? {
             hit_vertex = Some(hit);
             break;
         }
-
-        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, step_size)
-            .with_context(&ctx)?;
         let (next_point, na, va, nb, vb) =
             predictor_corrector_step(&surf_a, &surf_b, cur_point, dir, u_a, v_a, u_b, v_b, step)
                 .with_context(&ctx)?;
+        // The rest of the stride: where the curve bends away from `dir` it
+        // meets the plane farther than `step` away, and a vertex in between
+        // lies ahead of the plane but outside a ball of radius `step`. Within
+        // the chord, though, since along an arc turning less than half a
+        // revolution the distance from its start only grows. Checking the
+        // ball alone, the stride stepped over such a vertex: on
+        // `chained_differences_block_with_two_slots_and_a_sphere` the
+        // sphere's circle across the first slot's floor ran past the corner
+        // of the second slot it ends at.
+        if let Some(hit) = reached(next_point.sub(&cur_point).norm()).with_context(&ctx)? {
+            hit_vertex = Some(hit);
+            break;
+        }
         cur_point = next_point;
         (u_a, v_a, u_b, v_b) = (na, va, nb, vb);
         points.push(cur_point);
