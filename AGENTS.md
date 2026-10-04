@@ -156,6 +156,31 @@ widened every control point. Skipping that multiplication fixed all six.
   entity (build both from a `git worktree` of HEAD outside the repo),
   comparing interval bounds, not just midpoints.
 
+## Evaluate relative to the patch, not the origin
+
+A rational spline evaluated at an interval parameter computes `A / W` from
+two enclosures interval arithmetic cannot correlate. The quotient's width
+then grows with `|A|`, that is with the patch's distance from the origin,
+not with its size. In fixed point, a cylinder's cap 50 along its axis came
+out spanning `[38, 94]` in height, and validation found the cylinder's two
+caps overlapping. A quarter arc at `(1000, -500)` gave a tangent 30 wide.
+
+Surfaces, curves and pcurves now evaluate and differentiate relative to a
+sharp control point of the span (`spline::centered`) and add it back with
+one rounding. Which point is a free choice. Wherever an interval formula
+subtracts or divides two large correlated quantities, move it to a local
+origin first. Test geometry far from the origin with both scalar types: in
+`f64` the effect hides behind the format's relative precision, in fixed
+point it does not.
+
+That one rounding is not free near the origin. A STEP edge lay `2e-31`
+above its plane face. Evaluated relative to a point `1.8e-15` up, its
+enclosure took in the plane, the importer measured no gap and did not widen
+the edge, and validation's clipping, which reads the control points, found
+the face's points off it. A curve now evaluates both ways and intersects
+the two. Both are enclosures of one point, and each is the tighter one
+somewhere.
+
 ## Combine two enclosures of the same value with `union`, never an average
 
 When two independent computations each produce an enclosure of the *same*
@@ -527,6 +552,16 @@ coordinates as if they were the geometry:
   on a plane (affine coordinates) and along an iso-line. It fails for a
   sphere's meridian cut by a plane: the inner copy is a small circle.
 
+The same holds for the coordinates a solver moves in. A body's turn was
+the quaternion `(1, w / 2)` normalized, which reaches a half turn only as
+`|w|` goes to infinity. A link of a dragged arm that had to turn nearly
+half way round ran its variables off to hundreds, each step turning it
+less, until the solver ran out of steps. Nothing was wrong with the mates.
+The turn is now given by modified Rodrigues parameters
+(`geop-core-solve/src/placed.rs`): rational, a half turn at `|w| = 4`,
+singular only at a full turn. When a solve stalls, check that its
+variables can reach the answer at a finite, well-conditioned value.
+
 ## A free choice still has to be a good one
 
 "Any value that cannot be zero" makes a pivot *valid*, not *good*. The
@@ -633,3 +668,13 @@ makes a cubic follow it to that accuracy. Put a station exactly there and
 break the spline: the ball's contact on the edge between the two faces
 (found on that edge, not near it), a station at the vertex where the radius
 law kinks.
+
+The kernel's own curves are such data. Its arcs and helices are rational
+quadratics, only C1 where their spans meet. `fit_pcurve` fitted one C2
+cubic through 48 samples of the whole curve. Across those joints its drift
+shrank only as `h^2`, and a helix of pitch 1 came within 15% of the 1e-4
+an entity may carry. The joints are known: they are the knots of the
+source curve. So it now fits each smooth piece separately and joins them,
+and only then adapts, sampling a piece more densely while the pcurve is
+wider than the target. Use the structure you know before you sample
+blindly, and let the sample count follow the width it produces.
