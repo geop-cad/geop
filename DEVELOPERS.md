@@ -58,6 +58,8 @@ ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
 ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                and clips as lines and arcs, bend radius
+ops/geop-ops-plastic          housings: ribs grown up to the walls, lips and
+                               grooves along a rim, drafts on planar faces
                                checked, the bundle swept, cut lengths; the
                                route operation
 ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs

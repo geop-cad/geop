@@ -19,6 +19,7 @@ geop-ops-shell.workspace = true
 geop-ops-rasterize.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-ops-pattern.workspace = true
+geop-ops-plastic.workspace = true
 geop-ops-harness.workspace = true
 geop-ops-surface.workspace = true
 serde.workspace = true

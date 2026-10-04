@@ -1197,7 +1197,7 @@ fn shaped_like<S: Scalar>(
 /// cylinder's rim or seam does. Fitted otherwise: a sphere's meridian cut
 /// by a plane is straight, but its inner copy, where the offset plane cuts
 /// the offset sphere, is a small circle no straight pcurve follows.
-fn pcurve<S: Scalar>(
+pub fn pcurve<S: Scalar>(
     surface: &NurbSurface3D<S>,
     original: &Curve2<S>,
     curve: Option<&NurbCurve3D<S>>,
@@ -1234,7 +1234,7 @@ fn pcurve<S: Scalar>(
 /// past where the patch ends — so its surface needs room around the face.
 /// How much is a free choice; the face's own size is room enough unless
 /// the walls are as thick as the face is wide.
-fn extended<S: Scalar>(mut surface: NurbSurface3D<S>) -> GeopResult<NurbSurface3D<S>> {
+pub fn extended<S: Scalar>(mut surface: NurbSurface3D<S>) -> GeopResult<NurbSurface3D<S>> {
     for along_u in [true, false] {
         let (degree, num, other) = if along_u {
             (surface.degree_u, surface.num_u, surface.num_v)
@@ -1334,7 +1334,11 @@ fn dehomogenized<S: Scalar>(p: &Vector<S, 4>) -> Vector3<S> {
 /// it (keep two copies, see `AGENTS.md`). Without that, a vertex on the
 /// edge of a patch — where a revolved face's quarters meet — slides a
 /// rounding error off it with nothing to say it might not have.
-fn offset_vertex<S: Scalar>(
+///
+/// Public, with [`extended`] and [`pcurve`], for the other operations that
+/// rebuild a solid face by face: a draft (`geop_ops_plastic`) moves its
+/// vertices onto tilted planes with it.
+pub fn offset_vertex<S: Scalar>(
     point: Vector3<S>,
     surfaces: &[(&NurbSurface3D<S>, Vector2<S>, bool)],
 ) -> GeopResult<Vector3<S>> {

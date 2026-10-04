@@ -44,7 +44,11 @@ fn every_operation_is_offered() {
             "trim_surface",
             "extend_surface",
             "add_sketch3d",
-            "part_pattern"
+            "part_pattern",
+            "draft",
+            "lip",
+            "groove",
+            "rib"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

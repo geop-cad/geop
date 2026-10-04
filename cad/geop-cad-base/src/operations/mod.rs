@@ -9,7 +9,8 @@
 //! patterns, mirrors and moves of bodies in `geop_ops_pattern`,
 //! wire harness routes in `geop_ops_harness`,
 //! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
-//! 3-D sketches in `geop_ops_sketch3d`.
+//! 3-D sketches in `geop_ops_sketch3d`, ribs, lips, grooves and drafts in
+//! `geop_ops_plastic`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -29,6 +30,7 @@ use geop_ops_pattern::{
     CircularPattern, CircularPatternArgs, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs,
     MoveBody, MoveBodyArgs,
 };
+use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
@@ -54,6 +56,8 @@ mod harness_tests;
 mod hole_tests;
 #[cfg(test)]
 mod pattern_tests;
+#[cfg(test)]
+mod plastic_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
@@ -122,6 +126,16 @@ pub enum PartOperation {
     /// Hollow a solid out to walls of one thickness, open where faces are
     /// picked.
     Shell(ShellArgs),
+    /// Tilt planar faces about a neutral plane, so the part comes out of
+    /// its mould.
+    Draft(DraftArgs),
+    /// Raise a lip along the rim of one half of an enclosure.
+    Lip(LipArgs),
+    /// Cut the groove that takes a lip into the rim of the other half.
+    Groove(GrooveArgs),
+    /// Grow a thin wall from an open sketch profile up to a solid's faces,
+    /// and join it.
+    Rib(RibArgs),
     /// Add reference geometry — a point, an axis, a plane or a coordinate
     /// system — built from selected points, edges and planes.
     #[operation(label = "Reference")]

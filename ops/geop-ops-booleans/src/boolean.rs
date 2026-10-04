@@ -459,16 +459,26 @@ fn reach_up_to_next<S: Scalar>(
     }
 
     let origin_is = |face: &FaceId, name: &str| origins.get(face).is_some_and(|o| o == name);
-    let mut reached: HashSet<usize> = HashSet::new();
-    for (i, face) in tool_faces.iter().enumerate() {
-        if !origin_is(face, start) {
-            continue;
-        }
-        let piece = pieces.find(i);
-        if kind[&piece] == wanted_inside {
-            reached.insert(piece);
-        } else {
-            let next = neighbours.get(&piece).into_iter().flatten();
+    // The start may lie partly on either side of the target — a rib's
+    // profile running on into the walls it stands between. Its pieces of
+    // the kind wanted are the first ones it reaches; only where it has none
+    // are the pieces next to it the first. Taking the pieces next to its
+    // other fragments too would take a second piece, reached through the
+    // target: the rest of the tool on the walls' far side.
+    let start_pieces: HashSet<usize> = tool_faces
+        .iter()
+        .enumerate()
+        .filter(|(_, face)| origin_is(face, start))
+        .map(|(i, _)| pieces.find(i))
+        .collect();
+    let mut reached: HashSet<usize> = start_pieces
+        .iter()
+        .copied()
+        .filter(|p| kind[p] == wanted_inside)
+        .collect();
+    if reached.is_empty() {
+        for piece in &start_pieces {
+            let next = neighbours.get(piece).into_iter().flatten();
             reached.extend(next.filter(|p| kind[p] == wanted_inside));
         }
     }
@@ -2262,5 +2272,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A box cut into the top of a cube, its corners known only to within
+    /// 1e-12 — as a tool computed from a solid's own (interval) vertices
+    /// is: a lip's groove offset from a shelled enclosure's rim. The same
+    /// box with sharp corners was always cut cleanly.
+    ///
+    /// The march fed each corrector step the previous step's honest
+    /// `(u, v)` as its first seed, unsharpened, so the width compounded
+    /// step after step: from the corners' 1e-12 to a whole patch within a
+    /// dozen steps, until the corrector no longer converged (see
+    /// `predictor_corrector_step`).
+    #[test]
+    fn cube_minus_box_with_wide_corners() {
+        let wide = |x: f64| ScalInF64::new(x - 1e-12, x + 1e-12);
+        let corner = |p: [f64; 3]| Vector3::from_array(p.map(wide));
+        let mut part = M::new();
+        let block = cube(&mut part, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+        let tool = geop_ops_extrude_revolve::shapes::cube_solid(
+            &mut part,
+            &fresh_id(),
+            corner([1.72, 0.1, 0.88]),
+            corner([1.9, 1.9, 1.08]),
+        )
+        .unwrap();
+        op(&mut part, block, tool, BooleanOp::Difference);
     }
 }

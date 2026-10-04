@@ -934,8 +934,17 @@ fn predictor_corrector_step<S: Scalar>(
     // returned width is that of a *single* step from a sharp seed — bounded
     // per step rather than merely not discarded — so it states how well this
     // iterate is pinned down without compounding.
-    let (mut u_a1, mut v_a1) = (u_a, v_a);
-    let (mut u_b1, mut v_b1) = (u_b, v_b);
+    //
+    // That holds for the first seed too. The `(u, v)` handed in are the
+    // previous step's honest answer, as wide as that step left them; used
+    // as the seed unsharpened, each step starts from the last one's width,
+    // carries it through the residual into its own, and the march compounds
+    // it step after step. On a tool whose corners are only known to 1e-12 —
+    // computed from a solid's own vertices — that reached a whole patch's
+    // width within a dozen steps (`cube_minus_box_with_wide_corners`).
+    let seed = |x: S, (lo, hi): (S, S)| clamp(x.sharpen(), lo, hi);
+    let (mut u_a1, mut v_a1) = (seed(u_a, (u_a_lo, u_a_hi)), seed(v_a, (v_a_lo, v_a_hi)));
+    let (mut u_b1, mut v_b1) = (seed(u_b, (u_b_lo, u_b_hi)), seed(v_b, (v_b_lo, v_b_hi)));
     let (mut u_a_honest, mut v_a_honest) = (u_a, v_a);
     let (mut u_b_honest, mut v_b_honest) = (u_b, v_b);
     for _ in 0..CORRECTOR_ITERATIONS {
