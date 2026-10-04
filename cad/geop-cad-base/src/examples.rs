@@ -2068,6 +2068,61 @@ pub fn rounded_box() -> Program {
     program
 }
 
+/// A motor flange 30 across and 2.5 thick, drawn the way the sketch tools
+/// draw it: its bore an offset of its rim, 10 in, so the wall follows the
+/// rim; and its bolt circle one hole patterned six times round its middle,
+/// so the copies follow the first hole.
+pub fn motor_flange() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    let middle = outline.add_point(n(0.0), n(0.0));
+    outline.constrain(Constraint::Fix {
+        point: middle,
+        x: n(0.0),
+        y: n(0.0),
+    });
+    let rim = outline.add_circle(middle, n(16.0));
+    outline.constrain(Constraint::Radius {
+        curve: rim,
+        value: n(15.0),
+    });
+    outline
+        .offset(&[rim], n(10.0), geop_core_sketch::offset::Corners::Round)
+        .expect("a circle offsets inwards by less than its radius");
+    let bolt = circle(&mut outline, [11.0, 0.0], 1.2);
+    outline
+        .pattern(
+            &[bolt],
+            &geop_core_sketch::copies::Step::Round {
+                center: middle,
+                angle: n(std::f64::consts::PI / 3.0),
+            },
+            6,
+        )
+        .expect("a hole off the middle turns round it");
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "flange",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(2.5),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
 /// Every example, by name, each with what makes its program: listing them
 /// builds nothing — an editor lists them when it starts, and making one
 /// may solve sketches, or build a part to name its faces.
@@ -2092,6 +2147,7 @@ pub fn all() -> Vec<Example<Program>> {
         ("horn", horn),
         ("hole_plate", hole_plate),
         ("rounded_box", rounded_box),
+        ("motor_flange", motor_flange),
     ]
 }
 
@@ -2481,6 +2537,30 @@ mod tests {
             .filter(|name| name.ends_with(",corner)"))
             .count();
         assert_eq!(corners, 8);
+    }
+
+    /// The motor flange is a ring with six bolt holes through it: solid in
+    /// its wall, open in its bore and in every hole, the copies round the
+    /// bolt circle as much as the first.
+    #[test]
+    fn motor_flange_round_trips() {
+        let part = build_and_round_trip("motor_flange", &motor_flange());
+        let solid = "extrude(flange)";
+        let at = |angle: f64, r: f64| {
+            let a = angle.to_radians();
+            [r * a.cos(), r * a.sin(), 1.25]
+        };
+        for (p, expected) in [
+            (at(30.0, 11.0), PointClassification::Inside),
+            (at(0.0, 7.0), PointClassification::Inside),
+            (at(0.0, 0.0), PointClassification::Outside),
+            (at(0.0, 11.0), PointClassification::Outside),
+            (at(120.0, 11.0), PointClassification::Outside),
+            (at(300.0, 11.0), PointClassification::Outside),
+            (at(0.0, 16.0), PointClassification::Outside),
+        ] {
+            assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
+        }
     }
 
     /// Reproduces the real bug report described on `revolved_cone_on_box`.

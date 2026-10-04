@@ -3,22 +3,32 @@
 //! sides square, a slot's ends tangent, a polygon's sides equal — so that
 //! dragging or dimensioning it later keeps its shape.
 //!
+//! A line or arc drawn on from the end of another, running on smoothly
+//! from it as drawn, is made tangent to it.
+//!
 //! The same construction serves the preview and the click: previewed, it
 //! runs on a copy of the sketch with the pointer as the last point.
 
 use std::f64::consts::{PI, TAU};
 
 use super::*;
-use crate::geometry::{cross, dot, scale, sweep_through};
+use crate::geometry::{angle_between, cross, dot, perp, rotate, scale, sweep_through, unit, wrap};
 
 /// Lines drawn within this slope of horizontal or vertical get that
 /// constraint.
 const AUTO_HV_SLOPE: f64 = 0.034_920_769_491_747_23; // tan(2°)
 
+/// A line or arc drawn on from another's end within this angle of running
+/// on smoothly from it is made tangent to it.
+const AUTO_TANGENT_ANGLE: f64 = 0.087_266_462_599_716_48; // 5°
+
 /// What a construction needs beyond the points placed.
 pub(super) struct Hints {
     /// A polygon's sides.
     pub sides: usize,
+    /// Whether a polygon's sides touch its circle, rather than its corners
+    /// lying on it.
+    pub circumscribed: bool,
     /// A chain of lines: the curve it last added — which a tangent arc
     /// continues, and a line continues tangentially if it is an arc.
     pub tangent_to: Option<CurveId>,
@@ -65,33 +75,6 @@ impl Placed {
 
 fn new_point(sketch: &mut Sketch, at: P2) -> PointId {
     sketch.add_point(Design::from_f64(at[0]), Design::from_f64(at[1]))
-}
-
-fn unit(v: P2) -> Option<P2> {
-    let n = v[0].hypot(v[1]);
-    (n > 0.0).then(|| scale(v, 1.0 / n))
-}
-
-/// `v` turned a quarter counter-clockwise.
-fn perp(v: P2) -> P2 {
-    [-v[1], v[0]]
-}
-
-/// `v` turned counter-clockwise by `angle`.
-fn rotate(v: P2, angle: f64) -> P2 {
-    let (s, c) = angle.sin_cos();
-    [v[0] * c - v[1] * s, v[0] * s + v[1] * c]
-}
-
-/// `angle` brought into `(-π, π]`.
-pub(super) fn wrap(angle: f64) -> f64 {
-    let a = (angle + PI).rem_euclid(TAU) - PI;
-    if a == -PI { PI } else { a }
-}
-
-/// The counter-clockwise angle from `a` to `b`, in `(-π, π]`.
-pub(super) fn angle_between(a: P2, b: P2) -> f64 {
-    cross(a, b).atan2(dot(a, b))
 }
 
 /// A line from `a` to `b`, horizontal or vertical by constraint if it is
@@ -176,6 +159,43 @@ fn tangent_arc(sketch: &mut Sketch, curve: CurveId, start: PointId, to: &Placed)
     })
 }
 
+/// Makes `curve`, just drawn, tangent to every curve it runs on smoothly
+/// from at an end the two share — drawn within [`AUTO_TANGENT_ANGLE`] of
+/// that. Two lines are never tangent: one runs on along the other.
+fn auto_tangent(sketch: &mut Sketch, curve: CurveId) {
+    let Some((start, end)) = sketch.curves.get(&curve).and_then(|c| c.endpoints()) else {
+        return;
+    };
+    let is_line =
+        |sketch: &Sketch, c: CurveId| matches!(sketch.curves[&c].kind, CurveKind::Line { .. });
+    for p in [start, end] {
+        let Some(on) = leaving_tangent(sketch, curve, p) else {
+            continue;
+        };
+        let others: Vec<CurveId> = sketch
+            .curves
+            .iter()
+            .filter(|&(&id, c)| id != curve && c.construction == sketch.curves[&curve].construction)
+            .map(|(&id, _)| id)
+            .collect();
+        for other in others {
+            let tangent = sketch.constraints.values().any(|k| {
+                matches!(*k, Constraint::Tangent { a, b } if (a, b) == (other, curve) || (a, b) == (curve, other))
+            });
+            if tangent || is_line(sketch, other) && is_line(sketch, curve) {
+                continue;
+            }
+            // Smooth: `other` goes on beyond `p` the way `curve` comes
+            // into it.
+            if let Some(beyond) = leaving_tangent(sketch, other, p)
+                && angle_between(beyond, scale(on, -1.0)).abs() <= AUTO_TANGENT_ANGLE
+            {
+                sketch.constrain(Constraint::Tangent { a: other, b: curve });
+            }
+        }
+    }
+}
+
 /// The center of the circle through `a`, `b` and `c`; none for points on
 /// one line.
 fn circumcenter(a: P2, b: P2, c: P2) -> Option<P2> {
@@ -212,6 +232,26 @@ fn axis_aligned(sketch: &mut Sketch, lines: &[CurveId]) {
 /// needs — or `None` where they make nothing: two clicks on one spot, three
 /// on one line. `arc`: a chain of lines draws a tangent arc.
 pub(super) fn construct(
+    tool: DrawTool,
+    arc: bool,
+    sketch: &mut Sketch,
+    placed: &[Placed],
+    hints: &Hints,
+) -> Option<Built> {
+    let built = build(tool, arc, sketch, placed, hints)?;
+    if matches!(
+        tool,
+        DrawTool::Line | DrawTool::Arc | DrawTool::CenterArc | DrawTool::TangentArc
+    ) && let Some(last) = built.last
+    {
+        auto_tangent(sketch, last);
+    }
+    Some(built)
+}
+
+/// What [`construct`] builds, before it is made tangent where it runs on
+/// smoothly.
+fn build(
     tool: DrawTool,
     arc: bool,
     sketch: &mut Sketch,
@@ -405,16 +445,28 @@ pub(super) fn construct(
         }
         (Polygon, [m, v]) => {
             let n = hints.sides.max(3);
-            let first = sub(v.at, m.at);
-            let radius = first[0].hypot(first[1]);
-            if radius <= hints.min_size {
+            let to = sub(v.at, m.at);
+            let size = to[0].hypot(to[1]);
+            if size <= hints.min_size {
                 return None;
             }
+            // Clicked: a corner, or — circumscribed — the middle of a side,
+            // half a side's turn from its corners and further out.
+            let half_turn = PI / n as f64;
+            let first = if hints.circumscribed {
+                scale(rotate(to, half_turn), 1.0 / half_turn.cos())
+            } else {
+                to
+            };
             // Corners on a circle, sides of one length: regular.
             let center = m.materialize(sketch);
-            let circle = sketch.add_circle(center, Design::from_f64(radius));
+            let circle = sketch.add_circle(center, Design::from_f64(dist(first, [0.0, 0.0])));
             sketch.set_construction(circle, true);
-            let mut corners = vec![v.materialize(sketch)];
+            let mut corners = vec![if hints.circumscribed {
+                new_point(sketch, add(m.at, first))
+            } else {
+                v.materialize(sketch)
+            }];
             for k in 1..n {
                 let at = add(m.at, rotate(first, TAU * k as f64 / n as f64));
                 corners.push(new_point(sketch, at));
@@ -428,6 +480,16 @@ pub(super) fn construct(
             let sides = closed(sketch, &corners);
             for &b in &sides[1..] {
                 sketch.constrain(Constraint::Equal { a: sides[0], b });
+            }
+            // Circumscribed, the circle the sides touch: its diameter is
+            // the width across flats, to give.
+            if hints.circumscribed {
+                let inner = sketch.add_circle(center, Design::from_f64(size));
+                sketch.set_construction(inner, true);
+                sketch.constrain(Constraint::Tangent {
+                    a: sides[n - 1],
+                    b: inner,
+                });
             }
             Some(Built::default())
         }
@@ -476,6 +538,93 @@ pub(super) fn construct(
             });
             Some(Built::default())
         }
+        (ArcSlot, [m, s, e, w]) => {
+            let (from, to) = (sub(s.at, m.at), sub(e.at, m.at));
+            let radius = from[0].hypot(from[1]);
+            if radius <= hints.min_size || to == [0.0, 0.0] {
+                return None;
+            }
+            let raw = angle_between(from, to);
+            let sweep = if hints.sweep == 0.0 {
+                raw
+            } else {
+                hints.sweep + wrap(raw - hints.sweep)
+            };
+            let width = (dist(w.at, m.at) - radius).abs();
+            if sweep.abs() >= TAU
+                || sweep.abs() * radius <= hints.min_size
+                || width <= hints.min_size
+                || width >= radius
+            {
+                return None;
+            }
+            let center = m.materialize(sketch);
+            let a = s.materialize(sketch);
+            let b_at = add(m.at, rotate(from, sweep));
+            let b = match e.existing() {
+                Some(p) => p,
+                None => new_point(sketch, b_at),
+            };
+            if a == b {
+                return None;
+            }
+            // Its centerline, about the center.
+            let centerline = sketch.add_arc(a, b, Design::from_f64(sweep));
+            sketch.set_construction(centerline, true);
+            sketch.constrain(Constraint::Center {
+                point: center,
+                curve: centerline,
+            });
+            // Round: out along the outer side, round `b`, back along the
+            // inner side, round `a` — each end a half circle about its
+            // center of the centerline.
+            let (ua, ub) = (unit(from)?, unit(sub(b_at, m.at))?);
+            let p = [
+                add(s.at, scale(ua, width)),
+                add(b_at, scale(ub, width)),
+                sub(b_at, scale(ub, width)),
+                sub(s.at, scale(ua, width)),
+            ]
+            .map(|q| new_point(sketch, q));
+            let turn = sweep.signum() * PI;
+            let outer = sketch.add_arc(p[0], p[1], Design::from_f64(sweep));
+            let round_b = sketch.add_arc(p[1], p[2], Design::from_f64(turn));
+            // The inner side turns the way the centerline does, from `a`'s
+            // end to `b`'s.
+            let inner = sketch.add_arc(p[3], p[2], Design::from_f64(sweep));
+            let round_a = sketch.add_arc(p[3], p[0], Design::from_f64(turn));
+            for (x, y) in [
+                (outer, round_b),
+                (round_b, inner),
+                (inner, round_a),
+                (round_a, outer),
+            ] {
+                sketch.constrain(Constraint::Tangent { a: x, b: y });
+            }
+            // The outer side about the center; the inner side, touching
+            // both ends, is then one of a family of arcs, and turning as
+            // far as the centerline picks the one about the center too.
+            // (Concentric as well would say one thing twice — consistent
+            // on the solution, but only there, which leaves its proof
+            // singular.)
+            sketch.constrain(Constraint::Concentric {
+                a: centerline,
+                b: outer,
+            });
+            sketch.constrain(Constraint::EqualSweep {
+                a: centerline,
+                b: inner,
+            });
+            sketch.constrain(Constraint::Center {
+                point: b,
+                curve: round_b,
+            });
+            sketch.constrain(Constraint::Center {
+                point: a,
+                curve: round_a,
+            });
+            Some(Built::default())
+        }
         (Spline, placed) if placed.len() >= 2 => {
             let points: Vec<PointId> = placed.iter().map(|p| p.materialize(sketch)).collect();
             let spline = sketch.add_spline(points);
@@ -485,14 +634,16 @@ pub(super) fn construct(
             })
         }
         (Fillet, [corner]) => fillet(sketch, corner.existing()?),
+        (Chamfer, [corner]) => chamfer(sketch, corner.existing()?),
         _ => None,
     }
 }
 
-/// Rounds the corner where two lines meet at `p`: both lines cut back, an
-/// arc tangent to both between them, and its radius a dimension to give.
-/// `None` where `p` is no corner of exactly two lines.
-fn fillet(sketch: &mut Sketch, p: PointId) -> Option<Built> {
+/// The two lines meeting at the corner `p`, each with its end there and its
+/// other end — `None` where `p` is no corner of exactly two lines.
+type Corner = [(CurveId, PointId, PointId); 2];
+
+fn corner_lines(sketch: &Sketch, p: PointId) -> Option<Corner> {
     let class = sketch.point_classes();
     let at_p = |q: PointId| class[&q] == class[&p];
     let lines: Vec<(CurveId, PointId, PointId)> = sketch
@@ -505,11 +656,77 @@ fn fillet(sketch: &mut Sketch, p: PointId) -> Option<Built> {
             _ => None,
         })
         .collect();
-    let [(l1, c1, q1), (l2, c2, q2)] = lines[..] else {
+    lines.try_into().ok()
+}
+
+/// Cuts both lines of `corner` back to `to`: each line's end at the corner
+/// moved to its point of `to`.
+fn cut_back(sketch: &mut Sketch, corner: &Corner, to: [PointId; 2]) -> Option<()> {
+    for (&(line, old, _), new) in corner.iter().zip(to) {
+        if let CurveKind::Line { start, end } = &mut sketch.curves.get_mut(&line)?.kind {
+            if *start == old {
+                *start = new;
+            } else {
+                *end = new;
+            }
+        }
+    }
+    Some(())
+}
+
+/// Bevels the corner where two lines meet at `p`: both lines cut back by
+/// the same distance, a line between them, and that distance a dimension
+/// to give. The corner stays, as the point both cut-back pieces — kept as
+/// construction lines — run from, on both lines by constraint. `None`
+/// where `p` is no corner of exactly two lines.
+fn chamfer(sketch: &mut Sketch, p: PointId) -> Option<Built> {
+    let corner = corner_lines(sketch, p)?;
+    let [(l1, _, q1), (l2, _, q2)] = corner;
+    let at = pt(sketch, p);
+    let (d1, d2) = (sub(pt(sketch, q1), at), sub(pt(sketch, q2), at));
+    let (u1, u2) = (unit(d1)?, unit(d2)?);
+    let theta = angle_between(u1, u2).abs();
+    if theta <= 0.0 || theta >= PI {
         return None;
-    };
-    let corner = pt(sketch, p);
-    let (d1, d2) = (sub(pt(sketch, q1), corner), sub(pt(sketch, q2), corner));
+    }
+    let setback = d1[0].hypot(d1[1]).min(d2[0].hypot(d2[1])) / 3.0;
+    let t1 = new_point(sketch, add(at, scale(u1, setback)));
+    let t2 = new_point(sketch, add(at, scale(u2, setback)));
+    cut_back(sketch, &corner, [t1, t2])?;
+    sketch.add_line(t1, t2);
+    let pieces = [t1, t2].map(|t| {
+        let piece = sketch.add_line(p, t);
+        sketch.set_construction(piece, true);
+        piece
+    });
+    for line in [l1, l2] {
+        sketch.constrain(Constraint::PointOnCurve {
+            point: p,
+            curve: line,
+        });
+    }
+    sketch.constrain(Constraint::Equal {
+        a: pieces[0],
+        b: pieces[1],
+    });
+    let prompt = sketch.constrain(Constraint::Length {
+        curve: pieces[0],
+        value: Design::from_f64(setback),
+    });
+    Some(Built {
+        prompt: Some(prompt),
+        ..Built::default()
+    })
+}
+
+/// Rounds the corner where two lines meet at `p`: both lines cut back, an
+/// arc tangent to both between them, and its radius a dimension to give.
+/// `None` where `p` is no corner of exactly two lines.
+fn fillet(sketch: &mut Sketch, p: PointId) -> Option<Built> {
+    let corner = corner_lines(sketch, p)?;
+    let [(l1, _, q1), (l2, _, q2)] = corner;
+    let at = pt(sketch, p);
+    let (d1, d2) = (sub(pt(sketch, q1), at), sub(pt(sketch, q2), at));
     let (u1, u2) = (unit(d1)?, unit(d2)?);
     let theta = angle_between(u1, u2).abs();
     if theta <= 0.0 || theta >= PI {
@@ -519,17 +736,9 @@ fn fillet(sketch: &mut Sketch, p: PointId) -> Option<Built> {
     // that makes the arc tangent there.
     let setback = d1[0].hypot(d1[1]).min(d2[0].hypot(d2[1])) / 3.0;
     let radius = setback * (theta / 2.0).tan();
-    let t1 = new_point(sketch, add(corner, scale(u1, setback)));
-    let t2 = new_point(sketch, add(corner, scale(u2, setback)));
-    for (line, old, new) in [(l1, c1, t1), (l2, c2, t2)] {
-        if let CurveKind::Line { start, end } = &mut sketch.curves.get_mut(&line)?.kind {
-            if *start == old {
-                *start = new;
-            } else {
-                *end = new;
-            }
-        }
-    }
+    let t1 = new_point(sketch, add(at, scale(u1, setback)));
+    let t2 = new_point(sketch, add(at, scale(u2, setback)));
+    cut_back(sketch, &corner, [t1, t2])?;
     // Turning from coming in along the first line to leaving along the
     // second.
     let turn = cross(scale(u1, -1.0), u2).signum() * (PI - theta);

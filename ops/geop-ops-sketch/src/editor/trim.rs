@@ -437,6 +437,11 @@ impl<'a> Plan<'a> {
             let kept = match *c {
                 Constraint::Length { curve, .. } if trimmed(curve) => None,
                 Constraint::Equal { a, b } if (trimmed(a) || trimmed(b)) && is_line(a) => None,
+                // Cut, an arc turns less, and a curve copies are moved by
+                // moves them differently. (An offset holds for any piece:
+                // it is about the line or circle.)
+                Constraint::EqualSweep { a, b } if trimmed(a) || trimmed(b) => None,
+                Constraint::Moved { by, .. } if trimmed(by) => None,
                 Constraint::PointOnCurve { point, curve }
                 | Constraint::Midpoint { point, curve }
                     if trimmed(curve) =>
