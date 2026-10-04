@@ -642,7 +642,7 @@ fn main() -> ExitCode {
 mod tests {
     use geop_cad_base::examples;
 
-    use geop_core_math::scalars::Scalar;
+    use geop_core_math::{primitives::Pose, scalars::Scalar};
 
     use super::*;
 
