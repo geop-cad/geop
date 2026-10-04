@@ -21,15 +21,15 @@
 pub mod boundary;
 //pub mod extend;
 pub mod knit;
-//pub mod offset;
-//pub mod thicken;
+pub mod offset;
+pub mod thicken;
 //pub mod trim;
 
 pub use boundary::{BoundarySurface, BoundarySurfaceArgs};
 //pub use extend::{ExtendSurface, ExtendSurfaceArgs};
 pub use knit::{Knit, KnitArgs};
-//pub use offset::{OffsetSurface, OffsetSurfaceArgs};
-//pub use thicken::{Thicken, ThickenArgs, ThickenSide};
+pub use offset::{OffsetSurface, OffsetSurfaceArgs};
+pub use thicken::{Thicken, ThickenArgs, ThickenSide};
 //pub use trim::{TrimSurface, TrimSurfaceArgs};
 
 use geop_core_math::{

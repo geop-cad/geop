@@ -29,6 +29,13 @@
 //! the rims, as one solid. Without an opening, the inner side is a void of
 //! its own: a second shell.
 //!
+//! **A sheet** — faces standing on their own — is shelled the same way
+//! ([`thicken`]): its faces are the outer side, their inner copies the
+//! inner one, and along every free edge, used by one face only, a wall
+//! joins the edge to its inner copy — the ruled surface between them, with
+//! a straight edge from each of its vertices to that vertex's inner copy.
+//! The inner side alone is the sheet offset ([`offset_faces`]).
+//!
 //! What it does not do (yet): offset faces that are neither planes nor
 //! surfaces of revolution with a straight or circular meridian, edges that
 //! are neither straight nor circular, take away part of a smooth surface —
@@ -45,7 +52,6 @@ use geop_core_geometry::{
     contains::surface::surface_could_contain,
     nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
-    shape::{Arc, Circle},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -56,8 +62,8 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Curve2, Curve3, FaceId, Sense, SolidId,
-    build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    Body, Curve2, Curve3, FaceId, Sense, ShellId, SolidId,
+    build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec, SpecSources},
 };
 use geop_ops::{BodyNames, Namer, Part};
 use geop_ops_extrude_revolve::common::{line2, line3};
@@ -127,29 +133,7 @@ pub fn shell<S: Scalar>(
         .with_context(ctx);
     }
     let (spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
-    let name = |id: geop_ops::RefId| -> GeopResult<String> {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new(format!("{id:?} has no name")))
-    };
-    let names = BodyNames {
-        vertices: sources
-            .vertices
-            .iter()
-            .map(|&v| name(v.into()))
-            .collect::<GeopResult<_>>()?,
-        edges: sources
-            .edges
-            .iter()
-            .map(|&e| name(e.into()))
-            .collect::<GeopResult<_>>()?,
-        faces: sources
-            .faces
-            .iter()
-            .map(|&f| name(f.into()))
-            .collect::<GeopResult<_>>()?,
-        solid: None,
-    };
+    let names = source_names(part, &sources).with_context(ctx)?;
     let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
     if let Some((f, g, e)) = inward_corner(&spec, &removed).with_context(ctx)? {
         return Err(GeopError::new(format!(
@@ -167,6 +151,111 @@ pub fn shell<S: Scalar>(
     built
         .solid
         .ok_or_else(|| GeopError::new("shell: building the result made no solid"))
+}
+
+/// Thickens the sheet `sheet` of `part` into a solid of walls `thickness`
+/// thick — against its faces' normals, or along them if `along_normal` —
+/// and returns it: the sheet shelled (see the module docs), which replaces
+/// it and is named `namer`'s root.
+///
+/// The sheet's faces, edges and vertices keep their names, their inner
+/// copies are named as [`shell`] names them, and along a free edge `E` of
+/// the sheet the wall is `N(E,side)`, with `N` the operation, the straight
+/// edge from a vertex `V` of it to its inner copy `N(V,side)`.
+pub fn thicken<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    sheet: ShellId,
+    thickness: S,
+    along_normal: bool,
+) -> GeopResult<SolidId> {
+    let ctx = with_context!(
+        "thicken({}, sheet {sheet}, {thickness:?}, along_normal={along_normal})",
+        namer.root()
+    );
+    if !thickness.definitely_greater(S::ZERO) {
+        return Err(GeopError::new(format!(
+            "a thickness greater than zero is needed, not {thickness:?}"
+        )))
+        .with_context(ctx);
+    }
+    let model = part.topology();
+    let faces = model.body_faces(Body::Sheet(sheet)).with_context(ctx)?;
+    let (mut spec, sources) = model.body_spec(&faces, false).with_context(ctx)?;
+    if along_normal {
+        // Turned around, the walls go inward from the other side.
+        for face in &mut spec.faces {
+            *face = face.reversed();
+        }
+    }
+    let names = source_names(part, &sources).with_context(ctx)?;
+    let removed = vec![false; spec.faces.len()];
+    let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
+    let (result, result_names) = hollow.result(namer).with_context(ctx)?;
+    part.assemble_sheet(&[Body::Sheet(sheet)], &[])
+        .with_context(ctx)?;
+    let built = part.build_body(result, result_names).with_context(ctx)?;
+    built
+        .solid
+        .ok_or_else(|| GeopError::new("thicken: building the result made no solid"))
+}
+
+/// Copies the faces `faces` of `part` — of a solid or of a sheet — into a
+/// sheet `distance` along their normals (against them for a negative
+/// distance), and returns it: the inner side of the faces shelled (see the
+/// module docs), sharing nothing with them, which stay as they are.
+///
+/// The copy of each face, edge and vertex `X` is named `N(X)`, with `N`
+/// the operation.
+pub fn offset_faces<S: Scalar>(
+    part: &mut Part<S>,
+    namer: &Namer,
+    faces: &[FaceId],
+    distance: S,
+) -> GeopResult<BuiltBody> {
+    let ctx = with_context!(
+        "offset_faces({}, {faces:?}, {distance:?})",
+        namer.root()
+    );
+    if distance.could_be_equal(S::ZERO) {
+        return Err(GeopError::new(format!(
+            "an offset needs a distance other than zero, not {distance:?}"
+        )))
+        .with_context(ctx);
+    }
+    let (spec, sources) = part.topology().body_spec(faces, false).with_context(ctx)?;
+    let names = source_names(part, &sources).with_context(ctx)?;
+    let removed = vec![false; spec.faces.len()];
+    let hollow = Hollow::new(&spec, &names, removed, distance.neg()).with_context(ctx)?;
+    let (result, result_names) = hollow.inner_side(namer).with_context(ctx)?;
+    part.build_body(result, result_names).with_context(ctx)
+}
+
+/// The names of what `sources` says a [`BodySpec`]'s entities came from.
+fn source_names<S: Scalar>(part: &Part<S>, sources: &SpecSources) -> GeopResult<BodyNames> {
+    let name = |id: geop_ops::RefId| -> GeopResult<String> {
+        part.name_of(id)
+            .map(str::to_string)
+            .ok_or_else(|| GeopError::new(format!("{id:?} has no name")))
+    };
+    Ok(BodyNames {
+        vertices: sources
+            .vertices
+            .iter()
+            .map(|&v| name(v.into()))
+            .collect::<GeopResult<_>>()?,
+        edges: sources
+            .edges
+            .iter()
+            .map(|&e| name(e.into()))
+            .collect::<GeopResult<_>>()?,
+        faces: sources
+            .faces
+            .iter()
+            .map(|&f| name(f.into()))
+            .collect::<GeopResult<_>>()?,
+        solid: None,
+    })
 }
 
 /// A face taken away, `f`, that meets a face kept, `g`, at an inward
@@ -285,6 +374,9 @@ struct Hollow<'a, S: Scalar> {
     walled: Vec<bool>,
     /// Per edge: whether both its faces are taken away.
     open_edge: Vec<bool>,
+    /// Per edge: whether it is free, used by one face only — an edge of a
+    /// sheet's border, which gets a wall.
+    free_edge: Vec<bool>,
     /// Per face: the surface its inner copy lies on — for a face taken
     /// away, its own — with room around the face (see [`extended`]).
     inner_surfaces: Vec<NurbSurface3D<S>>,
@@ -324,6 +416,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
     ) -> GeopResult<Self> {
         let mut walled = vec![false; spec.vertices.len()];
         let mut open_edge = vec![true; spec.edges.len()];
+        let mut uses = vec![0usize; spec.edges.len()];
         // Per vertex, each face around it once, with where the vertex is on
         // the face's surface.
         let mut around: Vec<Vec<(usize, Vector2<S>)>> = vec![Vec::new(); spec.vertices.len()];
@@ -334,6 +427,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                     walled[end] |= !removed[f];
                     if let CoedgeOn::Edge(e, _) = c.on {
                         open_edge[e] &= removed[f];
+                        uses[e] += 1;
                     }
                     if !around[end].iter().any(|&(g, _)| g == f) {
                         around[end].push((f, pcurve_ends(&c.pcurve)?.1));
@@ -398,6 +492,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             removed,
             walled,
             open_edge,
+            free_edge: uses.iter().map(|&n| n == 1).collect(),
             inner_surfaces,
             inner_points,
             inner_curves: Vec::new(),
@@ -695,11 +790,133 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             out.faces.push(inner.reversed());
             names.faces.push(inner_name(name));
         }
-        out.shells = if self.removed.iter().any(|&r| r) {
-            vec![outer_faces.into_iter().chain(inner_faces).collect()]
+        // Along every free edge, a wall from the edge to its inner copy,
+        // with a straight edge from each of its vertices to that vertex's
+        // inner copy, `side[v]`.
+        let mut side: Vec<Option<usize>> = vec![None; spec.vertices.len()];
+        let mut walls = Vec::new();
+        for (_, c) in self.coedges() {
+            let CoedgeOn::Edge(e, sense) = c.on else {
+                continue;
+            };
+            if !self.free_edge[e] {
+                continue;
+            }
+            let (x, y) = ends(spec, c.on);
+            for v in [x, y] {
+                if side[v].is_none() {
+                    side[v] = Some(out.edges.len());
+                    out.edges.push(EdgeSpec {
+                        curve: line3(spec.vertices[v], self.inner_point(v))?,
+                        start: at.vertex[v].unwrap(),
+                        end: at.inner_vertex[v].unwrap(),
+                    });
+                    names.edges.push(namer.name(&[&self.names.vertices[v], "side"]));
+                }
+            }
+            let outer = oriented(&spec.edges[e].curve, sense);
+            let inner = oriented(self.inner_curves[e].as_ref().expect("not open"), sense);
+            let square = |k: usize| -> GeopResult<Curve2<S>> {
+                let corner = |k: usize| {
+                    let (u, v) = [(0, 0), (1, 0), (1, 1), (0, 1)][k % 4];
+                    Vector2::from_array([S::from_i64(u), S::from_i64(v)])
+                };
+                line2(corner(k), corner(k + 1))
+            };
+            // From the inner copy, at `v = 0`, out to the edge, at `v = 1`:
+            // running round it counter-clockwise, the wall runs the edge
+            // the other way than its face does, and faces away from it.
+            let lp = [
+                CoedgeOn::Edge(at.inner_edge[e].unwrap(), sense),
+                CoedgeOn::Edge(side[y].unwrap(), Sense::Reversed),
+                CoedgeOn::Edge(at.edge[e].unwrap(), sense.opposite()),
+                CoedgeOn::Edge(side[x].unwrap(), Sense::Forward),
+            ];
+            walls.push(out.faces.len());
+            out.faces.push(FaceSpec {
+                surface: NurbSurface3D::ruled(&inner, &outer).map_err(|err| {
+                    err.with_context(format!("the wall along edge {}", self.names.edges[e]))
+                })?,
+                outer: lp
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, on)| {
+                        Ok(CoedgeSpec {
+                            on,
+                            pcurve: square(k)?,
+                        })
+                    })
+                    .collect::<GeopResult<_>>()?,
+                holes: Vec::new(),
+            });
+            names.faces.push(namer.name(&[&self.names.edges[e], "side"]));
+        }
+        out.shells = if self.removed.iter().any(|&r| r) || !walls.is_empty() {
+            vec![
+                outer_faces
+                    .into_iter()
+                    .chain(inner_faces)
+                    .chain(walls)
+                    .collect(),
+            ]
         } else {
             vec![outer_faces, inner_faces]
         };
+        Ok((out, names))
+    }
+
+    /// The inner side alone, as a sheet of its own: the inner copy of every
+    /// face, facing the way the face does, and of every edge and vertex,
+    /// each copy of `X` named `N(X)` for `namer`'s `N`.
+    fn inner_side(&self, namer: &Namer) -> GeopResult<(BodySpec<S>, BodyNames)> {
+        let spec = self.spec;
+        let mut out = BodySpec {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+            shells: Vec::new(),
+            solid: false,
+        };
+        let mut names = BodyNames::default();
+        let mut vertex = vec![None; spec.vertices.len()];
+        for (v, name) in self.names.vertices.iter().enumerate() {
+            vertex[v] = Some(out.vertices.len());
+            out.vertices.push(self.inner_point(v));
+            names.vertices.push(namer.name(&[name]));
+        }
+        let mut edge = vec![None; spec.edges.len()];
+        for (e, original) in spec.edges.iter().enumerate() {
+            edge[e] = Some(out.edges.len());
+            out.edges.push(EdgeSpec {
+                curve: self.inner_curves[e].clone().expect("not open"),
+                start: vertex[original.start].unwrap(),
+                end: vertex[original.end].unwrap(),
+            });
+            names.edges.push(namer.name(&[&self.names.edges[e]]));
+        }
+        for (f, face) in spec.faces.iter().enumerate() {
+            let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec<S>>> {
+                (0..loops_of(face)[l].len())
+                    .map(|k| {
+                        let mut c = self.inner_coedge(At { f, l, k })?;
+                        c.on = match c.on {
+                            CoedgeOn::Edge(e, sense) => CoedgeOn::Edge(edge[e].unwrap(), sense),
+                            CoedgeOn::Vertex(v) => CoedgeOn::Vertex(vertex[v].unwrap()),
+                        };
+                        Ok(c)
+                    })
+                    .collect()
+            };
+            out.faces.push(FaceSpec {
+                surface: self.inner_surfaces[f].clone(),
+                outer: inner_loop(0)?,
+                holes: (1..=face.holes.len())
+                    .map(inner_loop)
+                    .collect::<GeopResult<_>>()?,
+            });
+            names.faces.push(namer.name(&[&self.names.faces[f]]));
+        }
+        out.shells = vec![(0..out.faces.len()).collect()];
         Ok((out, names))
     }
 
@@ -928,16 +1145,36 @@ fn shaped_like<S: Scalar>(
             "{end:?} is not on the circle around {axis:?} through {start:?}"
         )));
     }
-    Arc {
-        circle: Circle {
-            center,
-            normal: arc.circle.normal,
-            radius,
-        },
-        start,
-        end: if closed { start } else { end },
+    // The arc's own control points moved along the axis and scaled about
+    // it, weights and knots kept: the same arc of the other circle, with
+    // the same parametrization — so the ruled surface between the two, a
+    // sheet's wall, is the cylinder, cone or ring between them, not a
+    // twisted one.
+    let scale = radius.div(arc.circle.radius)?;
+    let control_points = curve
+        .control_points
+        .iter()
+        .map(|cp| {
+            let w = cp[3];
+            let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
+            let moved = center.add(&p.sub(&arc.circle.center).prod_scalar(scale));
+            Ok(Vector::from_array([
+                moved[0].mul(w),
+                moved[1].mul(w),
+                moved[2].mul(w),
+                w,
+            ]))
+        })
+        .collect::<GeopResult<Vec<_>>>()?;
+    let moved = NurbCurve3D::try_new(curve.degree, control_points, curve.knot_vector.clone())?;
+    let (t0, t1) = moved.domain();
+    let (from, to) = (moved.evaluate(t0)?, moved.evaluate(t1)?);
+    if !(from.could_be_equal(&start) && to.could_be_equal(if closed { &start } else { &end })) {
+        return Err(GeopError::new(format!(
+            "the arc moved onto the circle through {start:?} runs from {from:?} to {to:?}, not to {end:?}"
+        )));
     }
-    .to_curve()
+    Ok(moved)
 }
 
 /// The pcurve on `surface` of a coedge that runs along `curve` — or sits at
