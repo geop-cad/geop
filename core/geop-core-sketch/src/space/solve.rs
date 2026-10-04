@@ -534,7 +534,7 @@ fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopR
             plain(curve.second_derivative(at)?),
         );
         let slope = dot(d1, d1) + dot(off, d2);
-        if !(slope > 0.0) {
+        if slope.is_nan() || slope <= 0.0 {
             break;
         }
         t = (t - dot(off, d1) / slope).clamp(t0, t1);
