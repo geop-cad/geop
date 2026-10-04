@@ -686,3 +686,55 @@ fn stress_sphere_with_boss() {
 fn stress_pipe_tee() {
     stress(pipe_tee(), 0.1);
 }
+
+/// Applies `operation` with `args` to the one solid `program` builds, and
+/// checks it builds valid, saying why not.
+fn assert_builds<O: Operation>(program: Program, operation: O, args: O::Args) {
+    let (part, _) = build(&program);
+    if let Outcome::Wrong(why) = outcome(&part, operation, &args) {
+        panic!("{why}");
+    }
+}
+
+/// The hemisphere's rim — an arc of the circle where the flat meets the
+/// sphere — bevelled: the chamfer rolls round the whole circle, its point
+/// on the sphere moving across the seams of the sphere's quarters.
+#[test]
+fn chamfer_hemisphere_rim() {
+    let mut program = sphere();
+    extrude(
+        &mut program,
+        "half",
+        plane(FrameAxis::Z),
+        rectangle(-2.0, -2.0, 2.0, 2.0),
+        Extents::blind(-2.0),
+        cut_from("revolve(body)"),
+    );
+    let args = ChamferArgs {
+        edges: vec!["revolve(body,body_sketch,c2,a0)".into()],
+        distance: 0.1.into(),
+        distance2: None,
+    };
+    assert_builds(program, Chamfer, args);
+}
+
+/// The cylinder's flat's upright side bevelled: a straight edge between the
+/// flat and the cylinder, rolled.
+#[test]
+fn chamfer_cylinder_flat_side() {
+    let mut program = cylinder();
+    extrude(
+        &mut program,
+        "flat",
+        plane(FrameAxis::Z),
+        rectangle(0.6, -2.0, 2.0, 2.0),
+        Extents::blind(1.5),
+        cut_from("extrude(body)"),
+    );
+    let args = ChamferArgs {
+        edges: vec!["combine(flat,extrude(body,body_sketch,c1),extrude(flat,flat_sketch,c7),combine(flat,extrude(body,body_sketch,c1,end),extrude(flat,flat_sketch,c7,end),0,1),combine(flat,extrude(body,body_sketch,c1,start),extrude(flat,flat_sketch,c7,start),0,1))".into()],
+        distance: 0.1.into(),
+        distance2: None,
+    };
+    assert_builds(program, Chamfer, args);
+}

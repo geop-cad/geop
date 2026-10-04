@@ -455,3 +455,119 @@ fn tee_chamfer_around_the_saddle() {
         .any(|n| n.starts_with(&format!("fillet(F,{},chamfer", saddle[0])));
     assert!(chamfered);
 }
+
+/// A block of 2 x 2 x 1 with a D-shaped pocket 0.4 deep in its top: a
+/// circle of radius 0.5 around `(1, 1)` cut off at `x = 1.3`.
+fn d_pocket() -> Part<S> {
+    let mut part = Part::new();
+    let block = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
+    let round =
+        revolved_cylinder(&mut part, "c", v(1.0, 1.0, 0.6), S::from_f64(0.5), S::ONE).unwrap();
+    let off = cube_solid(&mut part, "o", v(1.3, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
+    let difference = |part: &mut Part<S>, name: &str, a, b| {
+        let namer = Namer::new("cut", name).unwrap();
+        boolean(
+            part,
+            &namer,
+            a,
+            b,
+            BooleanOp::Difference,
+            RemeshParams::default(),
+        )
+        .unwrap()
+        .unwrap()
+    };
+    let pocket = difference(&mut part, "d", round, off);
+    difference(&mut part, "p", block, pocket);
+    part
+}
+
+/// The D-shaped pocket's rim rounded: the arc rolled, the flat side swept,
+/// meeting at two inward corners — refused, where only straight edges of
+/// constant radius are mitred. Mitring a rolled blend was tried, run on
+/// straight from its last station to the plane halving the corner, and
+/// fails in the boolean: where the walls stand square to the shared face,
+/// that station's section lies in the other wall's plane, its curves on
+/// that wall's face, and its contact on the wall already on the plane, so
+/// the run-on has a side of no length.
+#[test]
+fn d_pocket_rim_fillet_is_refused() {
+    let part = d_pocket();
+    let rim = edges_where(&part, |p| {
+        (p[2] - 1.0).abs() < 1e-6 && (p[0] - 1.0).hypot(p[1] - 1.0) < 0.51
+    });
+    let namer = Namer::new("fillet", "F").unwrap();
+    let why = match blend(&mut part.clone(), &namer, &rim, &BlendShape::round(0.1)) {
+        Ok(()) => panic!("the D-shaped pocket's rim is not refused"),
+        Err(e) => format!("{e:?}"),
+    };
+    assert!(why.contains("only mitred between straight edges"), "{why}");
+}
+
+/// A sphere of radius 1 around the origin, its half below `z = 0` cut off.
+fn hemisphere() -> Part<S> {
+    let mut part = Part::new();
+    let ball = sphere_solid(&mut part, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let below = cube_solid(&mut part, "c", v(-2.0, -2.0, -2.0), v(2.0, 2.0, 0.0)).unwrap();
+    let namer = Namer::new("half", "h").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        ball,
+        below,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part
+}
+
+/// The hemisphere's rim bevelled: a closed chain of quarter circles
+/// between the flat and the sphere's quarters, the chamfer's point on the
+/// sphere moving from quarter to quarter across their seams.
+#[test]
+fn hemisphere_rim_chamfer() {
+    let mut part = hemisphere();
+    let rim = edges_where(&part, |p| p[2].abs() < 1e-6);
+    assert!(!rim.is_empty());
+    blended(
+        &mut part,
+        &rim[..1],
+        &BlendShape::Chamfer {
+            distances: [0.1, 0.1],
+        },
+    );
+}
+
+/// A cylinder of radius 1 and height 1.5 with a flat at `x = 0.6`, its
+/// flat's side bevelled.
+#[test]
+fn wide_d_shaft_chamfer_flat_side() {
+    let mut part = Part::new();
+    let shaft =
+        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::ONE, S::from_f64(1.5)).unwrap();
+    let flat = cube_solid(&mut part, "f", v(0.6, -2.0, -1.0), v(2.0, 2.0, 2.0)).unwrap();
+    let namer = Namer::new("flat", "f").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        shaft,
+        flat,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    let side = edges_where(&part, |p| {
+        (p[0] - 0.6).abs() < 1e-6 && (p[1] - 0.8).abs() < 1e-6
+    });
+    assert_eq!(side.len(), 1, "{side:?}");
+    blended(
+        &mut part,
+        &side,
+        &BlendShape::Chamfer {
+            distances: [0.1, 0.1],
+        },
+    );
+}

@@ -838,7 +838,7 @@ fn chamfer_frame<S: Scalar>(
     let own = &chain.links[link];
     let (p, along) = own.at(model, fraction)?;
     let p = p.sharpen();
-    let mut normals = [Vector3::zero(); 2];
+    let mut normals = Vec::new();
     let mut feet = [(S::ZERO, S::ZERO); 2];
     for k in 0..2 {
         let surface = &model.get_face(own.faces[k])?.surface;
@@ -847,10 +847,16 @@ fn chamfer_frame<S: Scalar>(
             _ => seed_on(surface, &p)?,
         };
         let (u, v) = foot(surface, &p, seed)?;
-        normals[k] = surface.normal(u, v)?.normalize()?;
+        normals.extend(surface.normal(u, v));
         feet[k] = sharp_in(surface, (u, v));
     }
-    let across = normals[0].prod_cross(&normals[1]);
+    // Where a face's coordinates cannot state its normal at the edge — a
+    // hair off a pole, where the face's own `(u, v)` collapse — the edge's
+    // curve states its direction.
+    let [n0, n1] = normals[..] else {
+        return Ok((p, along.normalize()?, feet));
+    };
+    let across = n0.prod_cross(&n1);
     let tangent = if across.prod_dot(&along).definitely_less(S::ZERO) {
         across.neg()
     } else {
@@ -1049,7 +1055,10 @@ fn chamfer_crossing<S: Scalar>(
     let d2 = S::from_f64(distances[k] * distances[k]);
     let at = |c: f64, seed: S| -> GeopResult<(f64, S, Vector3<S>, Vector3<S>, [(S, S); 2])> {
         let (link, x) = locate(chain, c);
-        let (p, tangent, feet) = chamfer_frame(model, chain, link, S::from_f64(x), Some(before))?;
+        let (p, tangent, feet) = chamfer_frame(model, chain, link, S::from_f64(x), Some(before))
+            .with_context(with_context!(
+                "the chamfer's section {x} of the way along link {link}"
+            ))?;
         let mut t = seed;
         for _ in 0..PROJECT_ITERATIONS {
             let off = curve.evaluate(t)?.sub(&p);
@@ -1098,14 +1107,24 @@ fn chamfer_crossing<S: Scalar>(
     // On the edge, so on both faces: its foot on the face it leaves.
     contact[k] = curve.evaluate(t)?;
     let surface = &model.get_face(face)?.surface;
-    uv[k] = sharp_in(surface, foot(surface, &contact[k], before.uv[k])?);
-    normals[k] = surface.normal(uv[k].0, uv[k].1)?.normalize()?;
+    let ctx = with_context!("where the chamfer meets edge {edge} at {:?}", contact[k]);
+    uv[k] = sharp_in(
+        surface,
+        foot(surface, &contact[k], before.uv[k]).with_context(ctx)?,
+    );
+    normals[k] = surface
+        .normal(uv[k].0, uv[k].1)
+        .and_then(|n| n.normalize())
+        .with_context(ctx)?;
     let o = 1 - k;
     let other = &model.get_face(faces[o])?.surface;
     let seed = if before.faces[o] == faces[o] {
         before.uv[o]
     } else {
-        seed_into(other, &p, &tangent, feet[o], o, distances[o])?
+        seed_into(other, &p, &tangent, feet[o], o, distances[o]).with_context(with_context!(
+            "seeding the chamfer's point on face {}",
+            faces[o]
+        ))?
     };
     let ctx = with_context!("on face {}", faces[o]);
     uv[o] = chamfer_point(other, &p, &tangent, distances[o], seed).with_context(ctx)?;
@@ -1690,9 +1709,6 @@ pub(crate) struct Rolled<S: Scalar> {
     pub chain: Chain,
     pub bend: Bend,
     pub tool: Tool<S>,
-    /// Ends of an open chain: at its start and its end vertex, how the tool
-    /// ends there.
-    pub ends: Option<[(VertexId, End<S>); 2]>,
     /// Per link, the ball at its middle: where it must touch its faces
     /// inside them.
     middles: Vec<Station<S>>,
@@ -1883,15 +1899,14 @@ fn contact_checks<S: Scalar>(
 type ChainEnd<S> = (VertexId, End<S>, Option<FaceId>, Vector3<S>);
 
 /// How the tool of `chain`, bending `bend`, ends at the start and the end
-/// of it, if it is open (see [`tool_end`]) — joined to a corner's ball
-/// where `corners` gives its position along the chain: decided before
-/// anything is rolled, so that an end that is not supported is refused by
-/// name.
+/// of it, if it is open (see [`tool_end`]) — as `meeting` says where it is
+/// joined to a corner's ball or mitred: decided before anything is rolled,
+/// so that an end that is not supported is refused by name.
 fn chain_ends<S: Scalar>(
     model: &Model<S>,
     chain: &Chain,
     bend: Bend,
-    corners: [Option<f64>; 2],
+    meeting: [Option<End<S>>; 2],
 ) -> GeopResult<Option<[ChainEnd<S>; 2]>> {
     if chain.closed {
         return Ok(None);
@@ -1909,15 +1924,14 @@ fn chain_ends<S: Scalar>(
     .into_iter()
     .enumerate()
     {
-        if let Some(position) = corners[k] {
-            let setback = S::from_f64(position);
-            ends.push((vertex, End::Corner { setback }, None, out));
+        if let Some(end) = &meeting[k] {
+            ends.push((vertex, end.clone(), None, out));
             continue;
         }
         let ctx = with_context!("the blend's end at vertex {vertex}");
         let (kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
-        if matches!(kind, End::Mitre { .. }) {
-            return Err(GeopError::new("a rolling-ball blend is not mitred")).with_context(ctx);
+        if let End::Wall { unless: Some(why) } = &kind {
+            return Err(GeopError::new(why.clone())).with_context(ctx);
         }
         ends.push((vertex, kind, Some(face), out));
     }
@@ -1934,6 +1948,40 @@ fn chain_ends<S: Scalar>(
 pub(crate) struct ChainCorner<S: Scalar> {
     pub center: Vector3<S>,
     pub contacts: [Vector3<S>; 2],
+}
+
+/// Where the open `chain`'s blend runs into a wall at its start and its end
+/// (see [`End::Wall`]): the vertex, the unit direction from it back along
+/// the chain, and the faces either side there — for the mitres where two
+/// do at one vertex (see [`crate::blend`]).
+#[allow(clippy::type_complexity)]
+pub(crate) fn chain_walls<S: Scalar>(
+    model: &Model<S>,
+    chain: &Chain,
+) -> GeopResult<[Option<(VertexId, Vector3<S>, [FaceId; 2])>; 2]> {
+    let mut walls = [None, None];
+    if chain.closed {
+        return Ok(walls);
+    }
+    let bend = chain_bend(model, chain)?;
+    let vertices = chain.vertices(model)?;
+    let ends = [
+        (&chain.links[0], vertices[0], S::ZERO),
+        (
+            chain.links.last().expect("links"),
+            *vertices.last().expect("vertices"),
+            S::ONE,
+        ),
+    ];
+    for (k, (link, vertex, fraction)) in ends.into_iter().enumerate() {
+        let (_, t) = link.at(model, fraction)?;
+        let out = if k == 0 { t.neg() } else { t };
+        // An end that is not supported is refused when the chain is rolled.
+        if let Ok((End::Wall { .. }, _)) = tool_end(model, vertex, link.faces, &out, bend) {
+            walls[k] = Some((vertex, out.neg(), link.faces));
+        }
+    }
+    Ok(walls)
 }
 
 /// Which way the faces either side of `chain` bend: the same all along, or
@@ -2020,6 +2068,9 @@ fn corner_position<S: Scalar>(
 /// docs): the ball rolled along it — up to the balls `corners` where it
 /// ends at one, at its start and its end — the tool skinned through its
 /// stations, refined until it follows the ball, and its ends decided.
+///
+/// Where it meets a corner's ball, its last station is that ball's great
+/// arc exactly, untilted, as the corner's piece of it is.
 pub(crate) fn plan_rolled<S: Scalar>(
     part: &Part<S>,
     chain: Chain,
@@ -2029,16 +2080,19 @@ pub(crate) fn plan_rolled<S: Scalar>(
     let model = part.topology();
     let law = RadiusLaw::new(part, &chain, radii)?;
     let bend = chain_bend(model, &chain)?;
-    // The stations where the chain meets a corner's ball, exactly.
+    let side = bend.side::<S>();
+    // The stations where the chain meets a corner's ball, exactly, and how
+    // its tool ends there.
     let mut at_corners: [Option<(f64, Station<S>)>; 2] = [None, None];
+    let mut meeting_ends: [Option<End<S>>; 2] = [None, None];
     for (k, corner) in corners.iter().enumerate() {
-        let Some(corner) = corner else {
-            continue;
-        };
         let link = if k == 0 {
             &chain.links[0]
         } else {
             chain.links.last().expect("links")
+        };
+        let Some(corner) = corner else {
+            continue;
         };
         let ctx = with_context!("the blend's end at the corner ball at {:?}", corner.center);
         let mut uv = [(S::ZERO, S::ZERO); 2];
@@ -2059,10 +2113,11 @@ pub(crate) fn plan_rolled<S: Scalar>(
         .with_context(ctx)?;
         let position = corner_position(model, &chain, k, &corner.center).with_context(ctx)?;
         at_corners[k] = Some((position, station));
+        meeting_ends[k] = Some(End::Corner {
+            setback: S::from_f64(position),
+        });
     }
-    let positions = [0, 1].map(|k| at_corners[k].as_ref().map(|(c, _)| *c));
-    let decided_ends = chain_ends(model, &chain, bend, positions)?;
-    let side = bend.side::<S>();
+    let decided_ends = chain_ends(model, &chain, bend, meeting_ends)?;
     let (rolling, curves) = {
         let placing = fillet_placing(part, &chain, &law, side);
         refined(law.smallest(), |n| {
@@ -2267,9 +2322,7 @@ fn assemble<S: Scalar>(
         });
     }
 
-    let mut ends = None;
     if let Some(decided_ends) = decided_ends {
-        let mut decided = Vec::new();
         for (at_end, (vertex, kind, face, out)) in decided_ends
             .into_iter()
             .enumerate()
@@ -2277,11 +2330,23 @@ fn assemble<S: Scalar>(
         {
             let station = if at_end { last_station } else { first };
             let ctx = with_context!("the blend's end at vertex {vertex}");
+            match &kind {
+                End::Corner { .. } => {
+                    // Joined to a corner's ball: open, its contacts the
+                    // corner's.
+                    continue;
+                }
+                End::Mitre { .. } => {
+                    return Err(GeopError::new(
+                        "a rolling-ball blend is only mitred between straight edges of constant radius",
+                    ))
+                    .with_context(ctx);
+                }
+                _ => {}
+            }
             let Some(face) = face else {
-                // Joined to a corner's ball: open, its contacts the
-                // corner's.
-                decided.push((vertex, kind));
-                continue;
+                return Err(GeopError::new("the blend's end has no face to end at"))
+                    .with_context(ctx);
             };
             let plane = end_plane(model, station, face, &out).with_context(ctx)?;
             let index = if at_end { stations.len() - 1 } else { 0 };
@@ -2290,7 +2355,7 @@ fn assemble<S: Scalar>(
             let flat = stations[index].points.map(|p| flatten(&p, &plane));
             let flat_vertices = stations[index].vertices.map(|v| flatten_point(&v, &plane));
             match &kind {
-                End::Flush | End::Wall => {
+                End::Flush | End::Wall { .. } => {
                     let station = &mut stations[index];
                     station.points = flat.map(|p| embed(&p, &plane));
                     station.vertices = flat_vertices.map(|p| embed(&p, &plane).head::<3>());
@@ -2321,7 +2386,18 @@ fn assemble<S: Scalar>(
                         rows: vec![a, b],
                         name: Some(name.to_string()),
                     };
-                    if at_end {
+                    if chord {
+                        // A chamfer runs straight on out in its last span,
+                        // with no station in the face it runs out through:
+                        // its section's curves would lie in that face.
+                        let span = if at_end {
+                            spans.last_mut().expect("spans")
+                        } else {
+                            &mut spans[0]
+                        };
+                        run_on(span, far.points, at_end)?;
+                        stations[index] = far;
+                    } else if at_end {
                         spans.push(line(stations[index].points, far.points));
                         stations.push(far);
                     } else {
@@ -2330,18 +2406,10 @@ fn assemble<S: Scalar>(
                     }
                 }
                 End::Mitre { .. } | End::Corner { .. } => {
-                    return Err(GeopError::new(
-                        "a rolling-ball blend is neither mitred nor joined to a corner",
-                    ))
-                    .with_context(ctx);
+                    unreachable!("met above")
                 }
             }
-            decided.push((vertex, kind));
         }
-        let [a, b]: [(VertexId, End<S>); 2] = decided
-            .try_into()
-            .map_err(|_| GeopError::new("an open chain has two ends"))?;
-        ends = Some([a, b]);
     }
 
     // Spans meeting at a station share its control points exactly.
@@ -2377,9 +2445,52 @@ fn assemble<S: Scalar>(
             sides: if swap { ["b", "a"] } else { ["a", "b"] },
             blend: if chord { "chamfer" } else { "fillet" },
         },
-        ends,
         middles,
     })
+}
+
+/// Runs `span` on straight to the row `to`, past its end — `at_end` — or
+/// its start: the line to it, raised to the span's degree, joined on with
+/// the span's knot there repeated as often as its degree, so that the span
+/// passes through its old end row and bends there. The old span keeps the
+/// first three quarters of its parameters, the run-on the last.
+fn run_on<S: Scalar>(span: &mut ToolSpan<S>, to: [Vector4<S>; 4], at_end: bool) -> GeopResult<()> {
+    let p = span.degree;
+    let share = S::from_ratio(3, 4)?;
+    let line = |from: &[Vector4<S>; 4], i: usize| -> GeopResult<[Vector4<S>; 4]> {
+        let f = S::from_ratio(i as i64, p as i64)?;
+        let mut row = *from;
+        for k in 0..4 {
+            row[k] = Vector4::interpolate(&from[k], &to[k], f);
+        }
+        Ok(row)
+    };
+    if at_end {
+        let from = *span.rows.last().expect("rows");
+        let mut knots: Vec<S> = span.knots[..span.knots.len() - 1]
+            .iter()
+            .map(|k| k.mul(share))
+            .collect();
+        knots.extend(vec![S::ONE; p + 1]);
+        for i in 1..p {
+            span.rows.push(line(&from, i)?);
+        }
+        span.rows.push(to);
+        span.knots = knots;
+    } else {
+        let from = span.rows[0];
+        let start = S::ONE.sub(share);
+        let mut knots = vec![S::ZERO; p + 1];
+        knots.extend(span.knots[1..].iter().map(|k| start.add(k.mul(share))));
+        let mut rows = vec![to];
+        for i in (1..p).rev() {
+            rows.push(line(&from, i)?);
+        }
+        rows.extend(span.rows.iter().copied());
+        span.rows = rows;
+        span.knots = knots;
+    }
+    Ok(())
 }
 
 /// Checks the blend meets each face where the face is: the ball halfway

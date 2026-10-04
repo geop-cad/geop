@@ -226,9 +226,20 @@ pub(crate) struct CornerEnd {
     pub(crate) contacts: [usize; 2],
 }
 
+/// Two tools ending where their edges meet at an inward corner, mitred:
+/// both run on to the plane halving the corner, where their sections are
+/// one, mirrored — the first's, by which the second's is joined to it
+/// without a cap. Their contacts by index: 0 on the face both touch,
+/// `shared`, 1 on the other.
+#[derive(Clone, Debug)]
+pub(crate) struct Joint {
+    pub(crate) shared: FaceId,
+    pub(crate) ends: [CornerEnd; 2],
+}
+
 impl CornerEnd {
     /// The index of the station of `tool` that ends here.
-    fn station<S: Scalar>(&self, tool: &Tool<S>) -> usize {
+    pub(crate) fn station<S: Scalar>(&self, tool: &Tool<S>) -> usize {
         if self.at_end {
             tool.stations.len() - 1
         } else {
@@ -303,10 +314,14 @@ fn face_loop<S: Scalar>(
 /// bilinear patch from it along both tools' lines to their apexes, and on
 /// along the lines `N(q0)`, ... to the corner's apex `N(apex)`: `N(side0)`,
 /// ....
+///
+/// Where two tools are joined at a mitre (see [`Joint`]), the second's
+/// section there is the first's: its vertices and curves.
 pub(crate) fn build_tools<S: Scalar>(
     part: &mut Part<S>,
     tools: &[(&Namer, &Tool<S>)],
     corners: &[Corner<S>],
+    joints: &[Joint],
     solid: String,
 ) -> GeopResult<SolidId> {
     let mut spec = BodySpec {
@@ -321,26 +336,124 @@ pub(crate) fn build_tools<S: Scalar>(
         ..BodyNames::default()
     };
 
-    // The corners' contacts, and the tools' stations that end on them.
-    let mut contact_vertex: Vec<Vec<usize>> = Vec::new();
-    let mut glued: HashMap<(usize, usize), [usize; 2]> = HashMap::new();
+    // Every vertex a corner's contact or a tool's station has, as a slot —
+    // the corners' first — and the slots that are one vertex joined: a
+    // tool's contacts at a corner, a mitre's second tool's section and its
+    // first's.
+    let mut first_slot = Vec::new();
+    let mut slots = 0;
     for corner in corners {
-        let mut ids = Vec::new();
-        for (k, p) in corner.contacts.iter().enumerate() {
-            spec.vertices.push(*p);
-            names.vertices.push(corner.namer.name(&[&format!("t{k}")]));
-            ids.push(spec.vertices.len() - 1);
+        first_slot.push(slots);
+        slots += corner.contacts.len();
+    }
+    let tool_slot: Vec<usize> = tools
+        .iter()
+        .map(|(_, tool)| {
+            let first = slots;
+            slots += 3 * tool.stations.len();
+            first
+        })
+        .collect();
+    let slot = |t: usize, s: usize, k: usize| tool_slot[t] + 3 * s + k;
+    let mut parent: Vec<usize> = (0..slots).collect();
+    fn root(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
         }
+        x
+    }
+    let mut join = |a: usize, b: usize| {
+        let (a, b) = (root(&mut parent, a), root(&mut parent, b));
+        parent[a.max(b)] = a.min(b);
+    };
+    let mut glued: Vec<(usize, usize)> = Vec::new();
+    for (c, corner) in corners.iter().enumerate() {
         for end in &corner.ends {
             let station = end.station(tools[end.tool].1);
-            glued.insert((end.tool, station), end.contacts.map(|k| ids[k]));
+            glued.push((end.tool, station));
+            for k in 0..2 {
+                join(slot(end.tool, station, k), first_slot[c] + end.contacts[k]);
+            }
         }
-        contact_vertex.push(ids);
+    }
+    // The second tool's station at each joint, and the first's, with which
+    // of the first's contacts each of the second's is.
+    let mut follows: HashMap<(usize, usize), (usize, usize, [usize; 2])> = HashMap::new();
+    for joint in joints {
+        let [lead, follow] = &joint.ends;
+        let (lead_station, follow_station) = (
+            lead.station(tools[lead.tool].1),
+            follow.station(tools[follow.tool].1),
+        );
+        if lead.tool >= follow.tool {
+            return Err(GeopError::new(
+                "a mitre's first tool has to be built before its second",
+            ));
+        }
+        let mut which = [0; 2];
+        for k in 0..2 {
+            which[k] = lead
+                .contacts
+                .iter()
+                .position(|&c| c == follow.contacts[k])
+                .ok_or_else(|| GeopError::new("a mitre's tools meet in different contacts"))?;
+        }
+        follows.insert(
+            (follow.tool, follow_station),
+            (lead.tool, lead_station, which),
+        );
+        for k in 0..2 {
+            join(
+                slot(follow.tool, follow_station, k),
+                slot(lead.tool, lead_station, which[k]),
+            );
+        }
+        join(
+            slot(follow.tool, follow_station, 2),
+            slot(lead.tool, lead_station, 2),
+        );
+    }
+    // A vertex per set of joined slots, where its first slot is and named
+    // after it.
+    let mut made: HashMap<usize, usize> = HashMap::new();
+    let mut slot_vertex = vec![0; slots];
+    for (c, corner) in corners.iter().enumerate() {
+        for (k, p) in corner.contacts.iter().enumerate() {
+            let at = first_slot[c] + k;
+            let r = root(&mut parent, at);
+            slot_vertex[at] = *made.entry(r).or_insert_with(|| {
+                spec.vertices.push(*p);
+                names.vertices.push(corner.namer.name(&[&format!("t{k}")]));
+                spec.vertices.len() - 1
+            });
+        }
+    }
+    for (t, (namer, tool)) in tools.iter().enumerate() {
+        let joint_names = [
+            format!("t{}", tool.sides[0]),
+            format!("t{}", tool.sides[1]),
+            "q".to_string(),
+        ];
+        for (s, station) in tool.stations.iter().enumerate() {
+            for k in 0..3 {
+                let at = slot(t, s, k);
+                let r = root(&mut parent, at);
+                slot_vertex[at] = *made.entry(r).or_insert_with(|| {
+                    spec.vertices.push(station.vertices[k]);
+                    names
+                        .vertices
+                        .push(namer.name(&[&joint_names[k], &station.name]));
+                    spec.vertices.len() - 1
+                });
+            }
+        }
     }
 
-    // Per tool, per station: its joints' vertices and its curves' edges.
+    // Per tool, per station: its joints' vertices and its curves' edges,
+    // each with whether it runs against the curve.
     let mut vertex: Vec<Vec<[usize; 3]>> = Vec::new();
-    let mut station_edge: Vec<Vec<[usize; 3]>> = Vec::new();
+    let mut station_edge: Vec<Vec<[(usize, bool); 3]>> = Vec::new();
     for (t, (namer, tool)) in tools.iter().enumerate() {
         let joint_names = [
             format!("t{}", tool.sides[0]),
@@ -355,26 +468,39 @@ pub(crate) fn build_tools<S: Scalar>(
             None => namer.name(&[name]),
         };
 
-        let mut tool_vertex = Vec::new();
-        for (s, station) in tool.stations.iter().enumerate() {
-            let shared = glued.get(&(t, s));
-            let mut ids = [0; 3];
-            for k in 0..3 {
-                if let (Some(shared), true) = (shared, k < 2) {
-                    ids[k] = shared[k];
-                    continue;
-                }
-                spec.vertices.push(station.vertices[k]);
-                names
-                    .vertices
-                    .push(namer.name(&[&joint_names[k], &station.name]));
-                ids[k] = spec.vertices.len() - 1;
-            }
-            tool_vertex.push(ids);
-        }
+        let tool_vertex: Vec<[usize; 3]> = (0..count)
+            .map(|s| [0, 1, 2].map(|k| slot_vertex[slot(t, s, k)]))
+            .collect();
         let mut tool_station_edge = Vec::new();
         for (s, station) in tool.stations.iter().enumerate() {
-            let mut ids = [0; 3];
+            let mut ids = [(0, false); 3];
+            if let Some(&(lead, at, _)) = follows.get(&(t, s)) {
+                // The first tool's curves, between the same vertices.
+                for c in 0..3 {
+                    let (a, b) = CURVE_JOINTS[c];
+                    let (from, to) = (tool_vertex[s][a], tool_vertex[s][b]);
+                    ids[c] = station_edge[lead][at]
+                        .iter()
+                        .map(|&(e, _)| e)
+                        .find_map(|e| {
+                            let edge = &spec.edges[e];
+                            if (edge.start, edge.end) == (from, to) {
+                                Some((e, false))
+                            } else if (edge.start, edge.end) == (to, from) {
+                                Some((e, true))
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            GeopError::new(
+                                "a mitre's tools have no curve of their section in common",
+                            )
+                        })?;
+                }
+                tool_station_edge.push(ids);
+                continue;
+            }
             for c in 0..3 {
                 let (a, b) = CURVE_JOINTS[c];
                 spec.edges.push(EdgeSpec {
@@ -385,14 +511,20 @@ pub(crate) fn build_tools<S: Scalar>(
                 names
                     .edges
                     .push(namer.name(&[curve_names[c], &station.name]));
-                ids[c] = spec.edges.len() - 1;
+                ids[c] = (spec.edges.len() - 1, false);
             }
             tool_station_edge.push(ids);
         }
+        // Each joint's path through every span — none where it has no
+        // length, its two ends one vertex.
         let mut lateral = Vec::new();
         for (j, span) in tool.spans.iter().enumerate() {
-            let mut ids = [0; 3];
+            let mut ids = [Err(0); 3];
             for k in 0..3 {
+                if tool_vertex[j][k] == tool_vertex[next(j)][k] {
+                    ids[k] = Err(tool_vertex[j][k]);
+                    continue;
+                }
                 spec.edges.push(EdgeSpec {
                     curve: NurbCurve::try_new(
                         span.degree,
@@ -403,7 +535,7 @@ pub(crate) fn build_tools<S: Scalar>(
                     end: tool_vertex[next(j)][k],
                 });
                 names.edges.push(qualified(&joint_names[k], &span.name));
-                ids[k] = spec.edges.len() - 1;
+                ids[k] = Ok(spec.edges.len() - 1);
             }
             lateral.push(ids);
         }
@@ -417,13 +549,33 @@ pub(crate) fn build_tools<S: Scalar>(
                     on: CoedgeOn::Edge(edge, sense),
                     pcurve: pcurve.clone(),
                 };
+                // Along a joint's path, or at its vertex where it has none.
+                let path = |path: Result<usize, usize>, sense: Sense, pcurve: &NurbCurve2D<S>| {
+                    match path {
+                        Ok(edge) => on(edge, sense, pcurve),
+                        Err(vertex) => CoedgeSpec {
+                            on: CoedgeOn::Vertex(vertex),
+                            pcurve: pcurve.clone(),
+                        },
+                    }
+                };
+                // Along a station's curve, the other way where its edge
+                // runs against it.
+                let along = |(edge, against): (usize, bool), sense: Sense, pcurve| {
+                    let flipped = match (sense, against) {
+                        (Sense::Forward, true) => Sense::Reversed,
+                        (Sense::Reversed, true) => Sense::Forward,
+                        (sense, false) => sense,
+                    };
+                    on(edge, flipped, pcurve)
+                };
                 spec.faces.push(FaceSpec {
                     surface,
                     outer: vec![
-                        on(tool_station_edge[j][c], Sense::Reversed, &first_back),
-                        on(lateral[j][a], Sense::Forward, &start_side),
-                        on(tool_station_edge[next(j)][c], Sense::Forward, &last_forward),
-                        on(lateral[j][b], Sense::Reversed, &end_side),
+                        along(tool_station_edge[j][c], Sense::Reversed, &first_back),
+                        path(lateral[j][a], Sense::Forward, &start_side),
+                        along(tool_station_edge[next(j)][c], Sense::Forward, &last_forward),
+                        path(lateral[j][b], Sense::Reversed, &end_side),
                     ],
                     holes: Vec::new(),
                 });
@@ -434,7 +586,10 @@ pub(crate) fn build_tools<S: Scalar>(
         if !tool.closed {
             for (s, forward, name) in [(0, true, "start"), (count - 1, false, "end")] {
                 let Some(cap) = &tool.stations[s].cap else {
-                    if glued.contains_key(&(t, s)) {
+                    if glued.contains(&(t, s))
+                        || follows.contains_key(&(t, s))
+                        || follows.values().any(|&(l, at, _)| (l, at) == (t, s))
+                    {
                         continue;
                     }
                     return Err(GeopError::new(format!("the tool's {name} has no cap")));
@@ -444,12 +599,12 @@ pub(crate) fn build_tools<S: Scalar>(
                     .map(|c| {
                         if forward {
                             CoedgeSpec {
-                                on: CoedgeOn::Edge(tool_station_edge[s][c], Sense::Forward),
+                                on: CoedgeOn::Edge(tool_station_edge[s][c].0, Sense::Forward),
                                 pcurve: pcurves[c].clone(),
                             }
                         } else {
                             CoedgeSpec {
-                                on: CoedgeOn::Edge(tool_station_edge[s][c], Sense::Reversed),
+                                on: CoedgeOn::Edge(tool_station_edge[s][c].0, Sense::Reversed),
                                 pcurve: pcurves[c].reverse(),
                             }
                         }
@@ -470,6 +625,15 @@ pub(crate) fn build_tools<S: Scalar>(
         station_edge.push(tool_station_edge);
     }
 
+    let contact_vertex: Vec<Vec<usize>> = corners
+        .iter()
+        .enumerate()
+        .map(|(c, corner)| {
+            (0..corner.contacts.len())
+                .map(|k| slot_vertex[first_slot[c] + k])
+                .collect()
+        })
+        .collect();
     for (corner, contacts) in corners.iter().zip(&contact_vertex) {
         let built = Built {
             tools,
@@ -492,13 +656,13 @@ struct Built<'a, S: Scalar> {
     tools: &'a [(&'a Namer, &'a Tool<S>)],
     contacts: &'a [usize],
     vertex: &'a [Vec<[usize; 3]>],
-    station_edge: &'a [Vec<[usize; 3]>],
+    station_edge: &'a [Vec<[(usize, bool); 3]>],
 }
 
 impl<S: Scalar> Built<'_, S> {
     /// The edge of curve `c` of the station `end` ends at.
     fn curve(&self, end: &CornerEnd, c: usize) -> usize {
-        self.station_edge[end.tool][end.station(self.tools[end.tool].1)][c]
+        self.station_edge[end.tool][end.station(self.tools[end.tool].1)][c].0
     }
 
     /// The vertex of the apex of the station `end` ends at, and its point.
