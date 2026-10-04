@@ -5,7 +5,7 @@
 // rather than cutting to somewhere else.
 
 import * as THREE from "three";
-import type { Frame, Vec3 } from "./geop";
+import type { Extent, Frame, Vec3 } from "./geop";
 
 /** Where the camera is, what it looks at, and which way is up for it. */
 export interface CameraPose {
@@ -76,5 +76,25 @@ export function headOnPose(frame: Frame, pose: CameraPose): CameraPose {
     position: planeToWorld(frame, center, side * distance),
     target: planeToWorld(frame, center),
     up,
+  };
+}
+
+/**
+ * The view that frames `extent` — the ball around its box — in a viewport
+ * of `aspect` (width over height): looking at its centre from the
+ * direction, and with the up, `pose` has, from just far enough that the
+ * ball fits both ways.
+ */
+export function fitPose(extent: Extent, pose: CameraPose, aspect: number): CameraPose {
+  const eye = [0, 1, 2].map((k) => pose.position[k] - pose.target[k]);
+  const length = Math.hypot(eye[0], eye[1], eye[2]);
+  const direction = length > 0 ? eye.map((x) => x / length) : [0, 0, 1];
+  const half = (CAMERA_FOV * Math.PI) / 360;
+  const narrowest = Math.min(half, Math.atan(Math.tan(half) * aspect));
+  const distance = extent.size / 2 / Math.sin(narrowest);
+  return {
+    position: [0, 1, 2].map((k) => extent.center[k] + direction[k] * distance) as Vec3,
+    target: extent.center,
+    up: pose.up,
   };
 }

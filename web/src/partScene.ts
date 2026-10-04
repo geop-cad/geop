@@ -135,9 +135,11 @@ export const CAP_COLOR = 0xc86464;
  * stencil buffer, how often the eye's ray through each pixel enters and
  * leaves the solid — back faces up, front faces down — so that where a
  * section has cut the solid open, the count is not zero and the cap is drawn
- * (see the cap in [[SceneViewer]]). Hidden until a section is on.
+ * (see the cap in [[SceneViewer]]). Hidden until a section is on. With
+ * `matrices`, one copy of the solid at each, as an `InstancedMesh` (see
+ * `placed3d.ts`).
  */
-function stencilCounters(geometry: THREE.BufferGeometry): THREE.Mesh[] {
+export function stencilCounters(geometry: THREE.BufferGeometry, matrices?: THREE.Matrix4[]): THREE.Mesh[] {
   return (
     [
       [THREE.BackSide, THREE.IncrementWrapStencilOp],
@@ -155,7 +157,16 @@ function stencilCounters(geometry: THREE.BufferGeometry): THREE.Mesh[] {
       stencilZFail: op,
       stencilZPass: op,
     });
-    const mesh = new THREE.Mesh(geometry, material);
+    let mesh: THREE.Mesh;
+    if (matrices) {
+      const instanced = new THREE.InstancedMesh(geometry, material, matrices.length);
+      matrices.forEach((m, i) => instanced.setMatrixAt(i, m));
+      instanced.instanceMatrix.needsUpdate = true;
+      instanced.computeBoundingSphere();
+      mesh = instanced;
+    } else {
+      mesh = new THREE.Mesh(geometry, material);
+    }
     mesh.renderOrder = 1;
     mesh.visible = false;
     mesh.userData.stencil = true;

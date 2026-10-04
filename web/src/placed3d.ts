@@ -10,7 +10,15 @@
 
 import * as THREE from "three";
 import type { EntityRef, PartView, ViewInstance } from "./geop";
-import { applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, type Scene } from "./partScene";
+import {
+  applyHighlight,
+  buildSceneGroup,
+  disposeGroup,
+  flatten,
+  frameMatrix,
+  stencilCounters,
+  type Scene,
+} from "./partScene";
 
 /** How a placed part is to be drawn: what of it is lit, and hidden. */
 export interface PlacedLook {
@@ -118,6 +126,8 @@ function batchOf(shared: Shared, matrices: THREE.Matrix4[]): THREE.Group {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     group.add(mesh);
+    // A section caps the placed parts as it does the part's own solids.
+    group.add(...stencilCounters(shared.faces, matrices));
   }
   const merged = (coords: Float32Array, colors: Float32Array) => {
     const geometry = new THREE.BufferGeometry();
@@ -130,11 +140,13 @@ function batchOf(shared: Shared, matrices: THREE.Matrix4[]): THREE.Group {
   return group;
 }
 
-/** Free what a batch owns: its merged buffers and its instanced mesh — not the component's geometry, nor the materials. */
+/** Free what a batch owns: its merged buffers, its instanced meshes and its section counters' materials — not the component's geometry, nor the shared materials. */
 function disposeBatch(batch: THREE.Group) {
   for (const child of batch.children) {
-    if (child instanceof THREE.InstancedMesh) child.dispose();
-    else (child as THREE.LineSegments | THREE.Points).geometry.dispose();
+    if (child instanceof THREE.InstancedMesh) {
+      child.dispose();
+      if (child.userData.stencil) (child.material as THREE.Material).dispose();
+    } else (child as THREE.LineSegments | THREE.Points).geometry.dispose();
   }
   batch.clear();
 }
