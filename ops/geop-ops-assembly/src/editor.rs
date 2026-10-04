@@ -512,7 +512,12 @@ pub(crate) fn form<'a, S: Scalar>(
         .built
         .and_then(|part| Some((part, part.instance_id(context.id).ok()?)));
 
-    let mut files = context.library.files();
+    let mut files: Vec<String> = context
+        .library
+        .files()
+        .into_iter()
+        .filter(|f| geop_ops::is_program(f))
+        .collect();
     files.sort();
     if !args.file.is_empty() && !files.contains(&args.file) {
         files.push(args.file.clone());

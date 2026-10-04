@@ -412,7 +412,9 @@ export type Command =
   /** Write a drawing of the part — the drawing step `id`, else the one edited or the last — as SVG or DXF. */
   | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string }
   /** Write the assembly as a URDF robot: a ZIP archive of `robot.urdf` and its meshes. */
-  | { command: "export_urdf" };
+  | { command: "export_urdf" }
+  /** Write the part shown as a STEP file: the update's `export`. */
+  | { command: "export_step" };
 
 /** A file the kernel wrote, to save: text, or bytes in base64. */
 export interface ExportedFile {
@@ -570,7 +572,7 @@ export interface Update {
   files: { path: string; program: Program }[] | null;
   /** What the drag or measure tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
-  /** The file `export_drawing` or `export_urdf` wrote, to save. */
+  /** The file `export_drawing`, `export_urdf` or `export_step` wrote, to save. */
   export: ExportedFile | null;
   /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;

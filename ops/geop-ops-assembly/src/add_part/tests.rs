@@ -37,6 +37,10 @@ impl Library<S> for Shelf {
     fn files(&self) -> Vec<String> {
         self.0.keys().cloned().collect()
     }
+
+    fn read(&self, file: &str) -> GeopResult<(String, String)> {
+        Err(GeopError::new(format!("no file {file:?} to read")))
+    }
 }
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {

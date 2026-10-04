@@ -10,6 +10,12 @@ type FromPage =
   | { type: "program"; program: unknown }
   | { type: "save"; file: { name: string; text?: string; bytes?: string } };
 
+/** The files a program reads: other programs, and STEP files it imports. */
+const FILES = "**/*.{geop,step,stp,STEP,STP}";
+
+/** Whether `p` is a file a program reads. */
+const isWorkspaceFile = (p: string) => /\.(geop|step|stp)$/i.test(p);
+
 /**
  * A `.geop` file as the web editor: the page is the one `web/` builds, the
  * kernel a native `geop serve` process, and the file the program, as JSON.
@@ -90,7 +96,7 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
     /** `uri`'s path as the kernel names files: relative to the folder, `/`-separated. */
     const pathOf = (uri: vscode.Uri) => path.posix.relative(folder.path, uri.path);
     const isOther = (uri: vscode.Uri) =>
-      uri.path.endsWith(".geop") && uri.toString() !== document.uri.toString() && !pathOf(uri).startsWith("..");
+      isWorkspaceFile(uri.path) && uri.toString() !== document.uri.toString() && !pathOf(uri).startsWith("..");
     /** The text of the program file `uri`: as edited, if it is open. */
     const textOf = async (uri: vscode.Uri): Promise<string> => {
       const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
@@ -101,7 +107,7 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
       if (Object.keys(files).length > 0) void panel.webview.postMessage({ type: "files", files });
     };
     const sendAllFiles = async () => {
-      const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*.geop"), "**/node_modules/**");
+      const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, FILES), "**/node_modules/**");
       const files: Record<string, string | null> = {};
       for (const uri of uris.filter(isOther)) {
         try {
@@ -116,7 +122,7 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
       known = canonical(document.getText());
       void panel.webview.postMessage({ type: "document", text: document.getText(), path: pathOf(document.uri) });
     };
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, "**/*.geop"));
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, FILES));
     /** A file changed on disk: sent, unless it is open — then its edits are what counts, and were sent as made. */
     const onDisk = async (uri: vscode.Uri) => {
       if (!isOther(uri) || vscode.workspace.textDocuments.some((d) => d.uri.toString() === uri.toString() && d.isDirty)) return;
@@ -177,7 +183,7 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
             if (!writing) await write();
             break;
           case "save": {
-            // An exported file — a drawing, a robot — saved where the user
+            // An exported file — a drawing, a robot, a STEP file — saved where the user
             // says, next to the document unless told otherwise: text, or
             // bytes sent as base64.
             const { name, text, bytes } = message.file;

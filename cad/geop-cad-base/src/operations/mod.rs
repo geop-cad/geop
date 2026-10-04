@@ -11,7 +11,8 @@
 //! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
 //! 3-D sketches in `geop_ops_sketch3d`, ribs, lips, grooves and drafts in
 //! `geop_ops_plastic`, sheet metal in `geop_ops_sheetmetal`,
-//! subdivision surfaces in `geop_ops_subd`.
+//! subdivision surfaces in `geop_ops_subd`, drawings in `geop_ops_drawing`,
+//! STEP import in `geop_ops_step`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -39,6 +40,7 @@ use geop_ops_sheetmetal::{
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
+use geop_ops_step::{ImportStep, ImportStepArgs};
 use geop_ops_subd::{Subd, SubdArgs};
 use geop_ops_surface::{
     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
@@ -84,6 +86,8 @@ mod shell_tests;
 mod sketch3d_tests;
 #[cfg(test)]
 mod sketch_tests;
+#[cfg(test)]
+mod step_tests;
 #[cfg(test)]
 mod stress_tests;
 #[cfg(test)]
@@ -200,7 +204,6 @@ pub enum PartOperation {
     /// Bend a flange up from a straight edge of a sheet-metal body.
     #[operation(label = "Edge flange")]
     EdgeFlange(EdgeFlangeArgs),
-    /// Unfold a sheet-metal body into its flat pattern.
     #[operation(label = "Flat pattern")]
     FlatPattern(FlatPatternArgs),
     /// Cut the groove that takes a lip into the rim of the other half.
@@ -222,6 +225,10 @@ pub enum PartOperation {
     /// Describe a 2-D drawing of the part — views with hidden lines, a
     /// section, dimensions and a title block — to export as SVG or DXF.
     Drawing(DrawingArgs),
+    /// Unfold a sheet-metal body into its flat pattern.
+    /// Add the solids and sheets of a STEP file next to the program.
+    #[operation(label = "Import STEP")]
+    ImportStep(ImportStepArgs),
 }
 
 /// A program of the editor's operations.

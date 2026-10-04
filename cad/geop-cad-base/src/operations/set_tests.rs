@@ -53,7 +53,8 @@ fn every_operation_is_offered() {
             "add_part",
             "part_pattern",
             "route",
-            "drawing"
+            "drawing",
+            "import_step"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

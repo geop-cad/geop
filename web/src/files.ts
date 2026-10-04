@@ -2,6 +2,7 @@
 // extension. Each `.geop` file is a program, by path — `/`-separated, so a
 // file in a folder is `parts/bolt.geop` — and a program places the parts of
 // others by their paths relative to its own (see `geop_ops::program::library`).
+// A STEP file (`.step`, `.stp`) is data a program imports, kept as its text.
 //
 // The files live here, in the page, and are kept in the browser's storage
 // so they survive a reload; the kernel is sent them (`files` command) and
@@ -42,7 +43,9 @@ export function loadWorkspace(): Workspace {
     if (stored) {
       const workspace = JSON.parse(stored) as Workspace;
       if (Object.keys(workspace.files).length > 0) {
-        if (!(workspace.active in workspace.files)) workspace.active = Object.keys(workspace.files).sort()[0];
+        if (!(workspace.active in workspace.files) || isStepFile(workspace.active))
+          workspace.active = Object.keys(workspace.files).filter((p) => !isStepFile(p)).sort()[0] ?? "part.geop";
+        if (!(workspace.active in workspace.files)) workspace.files[workspace.active] = programText(EMPTY);
         return workspace;
       }
     }
@@ -61,10 +64,16 @@ export function saveWorkspace(workspace: Workspace) {
   }
 }
 
-/** Whether `path` can name a file: not empty, no empty or dot-only segments, ending in `.geop`. */
+/** Whether `path` names a STEP file, which a program imports rather than being one. */
+export function isStepFile(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".step") || lower.endsWith(".stp");
+}
+
+/** Whether `path` can name a file: not empty, no empty or dot-only segments, ending in `.geop` (or naming a STEP file). */
 export function validPath(path: string): boolean {
   const segments = path.split("/");
-  return path.endsWith(".geop") && segments.every((s) => s !== "" && s !== "." && s !== "..");
+  return (path.endsWith(".geop") || isStepFile(path)) && segments.every((s) => s !== "" && s !== "." && s !== "..");
 }
 
 /** `name`, as a file path: trimmed, `.geop` added if missing. */
@@ -76,9 +85,10 @@ export function asPath(name: string): string {
 /** A path not yet taken, like `path`: `part.geop`, then `part 2.geop`, ... */
 export function freePath(files: Record<string, string>, path: string): string {
   if (!(path in files)) return path;
-  const stem = path.slice(0, -".geop".length);
+  const dot = path.lastIndexOf(".");
+  const [stem, extension] = dot > 0 ? [path.slice(0, dot), path.slice(dot)] : [path, ""];
   for (let n = 2; ; n++) {
-    const candidate = `${stem} ${n}.geop`;
+    const candidate = `${stem} ${n}${extension}`;
     if (!(candidate in files)) return candidate;
   }
 }

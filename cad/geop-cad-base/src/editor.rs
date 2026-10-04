@@ -167,6 +167,9 @@ pub enum Command<S: Scalar> {
     /// `robot.urdf` and its meshes, named after the program's file, as
     /// [`Update::export`].
     ExportUrdf,
+    /// Write the part shown — up to where the program runs, the parts it
+    /// places included — as a STEP file: the update's [`Update::export`].
+    ExportStep,
 }
 
 /// How finely an exported robot's curved faces are meshed: as finely as
@@ -1046,6 +1049,22 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Visibility { name, visible } => {
                 self.visibility.insert(name, visible);
+                Changed::Nothing
+            }
+            Command::ExportStep => {
+                let stem = self
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.rsplit('/').next())
+                    .map(|n| n.strip_suffix(".geop").unwrap_or(n))
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or("part")
+                    .to_string();
+                let text = geop_ops_step::write_step(self.runner.part(), &stem)?;
+                self.exported = Some(Export {
+                    name: format!("{stem}.step"),
+                    content: Content::Text(text),
+                });
                 Changed::Nothing
             }
             Command::DragTool { on } => {

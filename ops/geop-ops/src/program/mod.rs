@@ -9,7 +9,7 @@
 
 pub mod library;
 
-pub use library::{Files, FilesMut, Library, NoFiles, Workspace};
+pub use library::{Files, FilesMut, Library, NoFiles, Workspace, is_program};
 
 use std::{
     cell::RefCell,
@@ -253,6 +253,12 @@ impl<S: Scalar> Library<S> for Recording<'_, S> {
 
     fn files(&self) -> Vec<String> {
         self.library.files()
+    }
+
+    fn read(&self, file: &str) -> GeopResult<(String, String)> {
+        let (path, text) = self.library.read(file)?;
+        self.read.borrow_mut().insert(path.clone());
+        Ok((path, text))
     }
 }
 

@@ -103,7 +103,18 @@ cad/geop-cad-base             the operations the editor offers, the editor engin
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
                                each placed component once
+ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
+                               B-rep solids and sheets of a file into exact
+                               NURBS bodies, writing a part's bodies as one;
+                               the import operation
 ```
+
+STEP files are tested against a downloaded corpus of public files (NIST
+MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d
+samples): `ops/geop-ops-step/scripts/fetch_corpus.sh` fetches it into
+`target/step-corpus/` (never committed), and
+`cargo test -p geop-ops-step corpus -- --ignored --nocapture` imports every
+file and prints what passed and the causes of what failed.
 
 The web app draws placed parts batched per component — one
 `InstancedMesh` each (`web/src/placed3d.ts`) — and takes the scene's
