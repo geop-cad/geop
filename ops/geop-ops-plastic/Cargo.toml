@@ -1,26 +1,21 @@
 [package]
-name = "geop-cad-base"
+name = "geop-ops-plastic"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 geop-core-math.workspace = true
+geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops.workspace = true
-geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-booleans.workspace = true
-geop-ops-edit.workspace = true
-geop-ops-fillet.workspace = true
-geop-ops-assembly.workspace = true
+# For rebuilding a solid face by face: moving vertices onto new surfaces,
+# room around a surface, pcurves on it.
 geop-ops-shell.workspace = true
-geop-ops-rasterize.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-geop-ops-plastic.workspace = true
 
 [dev-dependencies]
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }
-geop-core-geometry.workspace = true
+geop-ops-rasterize.workspace = true

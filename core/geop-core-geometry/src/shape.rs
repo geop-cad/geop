@@ -458,6 +458,45 @@ impl<S: Scalar> NurbSurface3D<S> {
         Ok(None)
     }
 
+    /// The axis of the cylinder the surface lies on, if it is one: a surface
+    /// of revolution (see [`NurbSurface3D::axis_of_revolution`]) straight
+    /// across its arcs — degree 1 that way, every control point and its
+    /// neighbour across offset along the axis. `None` for any other surface,
+    /// a cone, a disc or a sphere among them.
+    pub fn as_cylinder(&self) -> GeopResult<Option<Axis<S>>> {
+        for along_u in [true, false] {
+            let Some(axis) = self.revolution_along(along_u)? else {
+                continue;
+            };
+            // Across the arcs: rows of the other parameter.
+            let (degree, rows, len) = if along_u {
+                (self.degree_v, self.num_v, self.num_u)
+            } else {
+                (self.degree_u, self.num_u, self.num_v)
+            };
+            if degree != 1 {
+                continue;
+            }
+            let point = |i: usize, j: usize| {
+                let index = if along_u {
+                    i * self.num_v + j
+                } else {
+                    j * self.num_v + i
+                };
+                dehomogenize::<S, 4, 3>(&[self.control_points[index]])[0]
+            };
+            let straight = (0..len).all(|i| {
+                (1..rows).all(|j| {
+                    could_be_parallel(&point(i, j).sub(&point(i, 0)), &axis.direction)
+                })
+            });
+            if straight {
+                return Ok(Some(axis));
+            }
+        }
+        Ok(None)
+    }
+
     /// [`NurbSurface3D::axis_of_revolution`], for rows along `u` or along `v`.
     pub(crate) fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis<S>>> {
         let (rows, len, degree, knots) = if along_u {
