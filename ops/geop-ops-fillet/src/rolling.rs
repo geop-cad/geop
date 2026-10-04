@@ -94,6 +94,15 @@ const MOST_STATIONS: usize = 256;
 /// as a fraction of the radius: the deviation every blend is checked to
 /// stay within.
 pub const DEVIATION: f64 = 1e-6;
+/// The angle, in radians, at which the blend leaves each face towards the
+/// ball rather than touching it. Between stations the blend is tangent to
+/// the faces only as closely as it follows the ball; it would dip through
+/// a face as often as not, and a boolean has to cut the face along every
+/// such dip. Leaving at this angle keeps it on the ball's side — checked
+/// between stations — so that it meets the face in its contact curve
+/// alone: a crease of a millionth of a radian nobody sees, where exact
+/// tangency was never to be had.
+const TILT: f64 = DEVIATION;
 /// Newton iterations placing the ball at a station.
 const NEWTON_ITERATIONS: usize = 30;
 /// Newton iterations of each foot-point projection.
@@ -701,9 +710,24 @@ fn section<S: Scalar>(
     faces: [FaceId; 2],
     uv: [(S, S); 2],
 ) -> GeopResult<Station<S>> {
-    let [na, nb] = normals;
     let [ta, tb] = contact;
-    let m = na.prod_cross(&nb);
+    let m = normals[0].prod_cross(&normals[1]);
+    // The arc's tangent at each contact: along the face, in the section's
+    // plane, turned by `TILT` towards the ball — and the plane through the
+    // contact holding it and the section's normal.
+    let mut tilted = [Vector3::zero(); 2];
+    for k in 0..2 {
+        let (at, other) = (contact[k], contact[1 - k]);
+        let mut along = m.prod_cross(&normals[k]).normalize()?;
+        if along.prod_dot(&other.sub(&at)).definitely_less(S::ZERO) {
+            along = along.neg();
+        }
+        let toward = center.sub(&at).normalize()?;
+        tilted[k] = along
+            .add(&toward.prod_scalar(S::from_f64(TILT)))
+            .prod_cross(&m);
+    }
+    let [na, nb] = tilted;
     let planes = Matrix::from_rows([na.to_array(), nb.to_array(), m.to_array()]);
     let corner = solve_linear_system(
         &planes,
@@ -992,6 +1016,24 @@ fn span_deviation<S: Scalar>(
             }
             let got = curves[k].evaluate(t)?;
             note(distance(&got, &truth), "a contact", s, &got, &truth);
+            // The blend has to leave the face towards the ball, never dip
+            // through it: where it is tangent only approximately, that is
+            // what keeps its one meeting with the face its contact curve.
+            let (_, across) = blend.derivatives(t, if k == 0 { S::ZERO } else { S::ONE })?;
+            let leaving = if k == 0 { across } else { across.neg() };
+            if !leaving
+                .prod_dot(&station.center.sub(&truth))
+                .definitely_greater(S::ZERO)
+            {
+                return Ok((
+                    f64::INFINITY,
+                    format!(
+                        "at {:?} of the span the blend could dip through face {} at {truth:?}",
+                        s.midpoint().to_f64(),
+                        station.faces[k / 2]
+                    ),
+                ));
+            }
         }
         let truth = section_points(station);
         let middle = point(&truth[0].add(&truth[1].prod_scalar(S::TWO)).add(&truth[2]))?;
@@ -1207,18 +1249,55 @@ fn assemble<S: Scalar>(
         }
     };
 
-    // One span along the whole chain, from a station at its start — and,
-    // open, to one at its end.
-    let mut span = span_of(&curves, None);
-    span.rows = span.rows.into_iter().map(order).collect();
-    let last_row = *span.rows.last().expect("rows");
-    let mut stations = vec![ToolStation {
-        points: span.rows[0],
-        vertices: vertices_of(first),
-        name: "st0".to_string(),
-        cap: None,
-    }];
-    let mut spans = vec![span];
+    // An open chain: one span along it, from a station at its start to one
+    // at its end. A closed one: four spans round it, split at stations —
+    // each face of the tool bounded by four edges, none closing onto itself
+    // along a seam, as a revolve's quarters are.
+    let mut stations = Vec::new();
+    let mut spans = Vec::new();
+    if chain.closed {
+        let count = rolling.stations.len() - 1;
+        let at: Vec<usize> = (0..4).map(|j| j * count / 4).collect();
+        let mut rest = curves.clone();
+        for j in 0..4 {
+            let piece = if j < 3 {
+                let split = rolling.params[at[j + 1]];
+                let mut left = rest.clone();
+                for k in 0..4 {
+                    let (l, r) = rest[k].split(split)?;
+                    left[k] = l.with_unit_domain()?;
+                    rest[k] = r;
+                }
+                left
+            } else {
+                let mut last = rest.clone();
+                for k in 0..4 {
+                    last[k] = rest[k].with_unit_domain()?;
+                }
+                last
+            };
+            let mut span = span_of(&piece, Some(format!("q{j}")));
+            span.rows = span.rows.into_iter().map(order).collect();
+            stations.push(ToolStation {
+                points: span.rows[0],
+                vertices: vertices_of(&rolling.stations[at[j]]),
+                name: format!("st{j}"),
+                cap: None,
+            });
+            spans.push(span);
+        }
+    } else {
+        let mut span = span_of(&curves, None);
+        span.rows = span.rows.into_iter().map(order).collect();
+        stations.push(ToolStation {
+            points: span.rows[0],
+            vertices: vertices_of(first),
+            name: "st0".to_string(),
+            cap: None,
+        });
+        spans.push(span);
+    }
+    let last_row = *spans.last().expect("spans").rows.last().expect("rows");
     let last_station = rolling.stations.last().expect("stations");
     if !chain.closed {
         stations.push(ToolStation {
