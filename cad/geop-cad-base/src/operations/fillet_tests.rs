@@ -473,3 +473,185 @@ fn fillet_edges_ending_at_a_wall() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// A block of 2 x 2 x 1 with a pocket 0.4 deep, `[0.5, 1.5]` square, cut
+/// into its top.
+fn pocketed_block() -> Program {
+    let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
+        let mut s = Sketch::new();
+        let p: Vec<_> = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            .iter()
+            .map(|c| s.add_point(n(c[0]), n(c[1])))
+            .collect();
+        for i in 0..4 {
+            s.add_line(p[i], p[(i + 1) % 4]);
+        }
+        s
+    };
+    let mut program = Program::new();
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: rectangle(0.0, 0.0, 2.0, 2.0),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "block",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(1.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "pocket_outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::Face {
+                name: "extrude(block,end)".into(),
+            }),
+            sketch: rectangle(0.5, 0.5, 1.5, 1.5),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "pocket",
+        ExtrudeArgs {
+            sketch: "pocket_outline".into(),
+            extent: Extents::blind(-0.4),
+            face: false,
+            combine: Combine::Difference {
+                target: "extrude(block)".into(),
+            },
+        },
+    );
+    program
+}
+
+/// Two rim edges of the pocket rounded together, meeting at its corner
+/// `(1.5, 0.5)`, where each runs into the other's wall: mitred, the round
+/// faces meet where their tangent lines do — on the top 0.1 out from the
+/// corner, on the walls 0.1 down the corner edge.
+#[test]
+fn fillet_pocket_rim_corner() {
+    let before = pocketed_block().build::<S>(&NoFiles).unwrap();
+    let edges = [
+        edges_from_to(&before, [0.5, 0.5, 1.0], [1.5, 0.5, 1.0]),
+        edges_from_to(&before, [1.5, 0.5, 1.0], [1.5, 1.5, 1.0]),
+    ]
+    .concat();
+    assert_eq!(edges.len(), 2, "{edges:?}");
+    let mut program = pocketed_block();
+    program.push("round", FilletArgs { edges, radius: 0.1 });
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let has_vertex = |p: [f64; 3]| {
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| (0..3).all(|k| v.point[k].could_be_equal(S::from_f64(p[k]))))
+    };
+    assert!(has_vertex([1.6, 0.4, 1.0]), "no mitre on the top");
+    assert!(has_vertex([1.5, 0.5, 0.9]), "no mitre on the walls");
+    assert!(
+        !has_vertex([1.5, 0.5, 1.0]),
+        "the rim's corner is still sharp"
+    );
+}
+
+/// Edges of the pocket rounded together, meeting at its corners: the rim
+/// all round — mitred at every corner — the floor all round, two rim edges
+/// at a corner, a rim edge with the floor edge below it, rim and floor all
+/// round, and the corner edges.
+#[test]
+#[ignore = "slow: the full set of pocket blends — run with `cargo test -- --ignored`"]
+fn fillet_pocket_edges_together() {
+    let before = pocketed_block().build::<S>(&NoFiles).unwrap();
+    let rim =
+        |a: [f64; 2], b: [f64; 2]| edges_from_to(&before, [a[0], a[1], 1.0], [b[0], b[1], 1.0]);
+    let floor =
+        |a: [f64; 2], b: [f64; 2]| edges_from_to(&before, [a[0], a[1], 0.6], [b[0], b[1], 0.6]);
+    let sides = [
+        ([0.5, 0.5], [1.5, 0.5]),
+        ([1.5, 0.5], [1.5, 1.5]),
+        ([1.5, 1.5], [0.5, 1.5]),
+        ([0.5, 1.5], [0.5, 0.5]),
+    ];
+    let all = |of: &dyn Fn([f64; 2], [f64; 2]) -> Vec<String>| {
+        sides
+            .iter()
+            .flat_map(|&(a, b)| of(a, b))
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        ("rim all round", all(&rim)),
+        ("floor all round", all(&floor)),
+        (
+            "two rim edges at a corner",
+            [rim(sides[0].0, sides[0].1), rim(sides[1].0, sides[1].1)].concat(),
+        ),
+        (
+            "rim and floor of one side",
+            [rim(sides[0].0, sides[0].1), floor(sides[0].0, sides[0].1)].concat(),
+        ),
+        ("rim and floor all round", [all(&rim), all(&floor)].concat()),
+        (
+            "corner edges",
+            sides
+                .iter()
+                .flat_map(|&(a, _)| edges_from_to(&before, [a[0], a[1], 0.6], [a[0], a[1], 1.0]))
+                .collect(),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (case, edges) in cases {
+        assert!(edges.len() >= 2, "{case}: {edges:?}");
+        let mut program = pocketed_block();
+        program.push("round", FilletArgs { edges, radius: 0.1 });
+        match program.build::<S>(&NoFiles) {
+            Err(e) => failures.push(format!("{case}: {}", e.root_message())),
+            Ok(part) => {
+                if let Err(e) = check_valid(&part) {
+                    failures.push(format!("{case}: invalid: {e}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+
+    // Rounded all round, the rim is mitred at the corners: the round faces
+    // meet where their tangent lines do, on the top 0.1 out from the
+    // pocket's corners and on the walls 0.1 down its corner edges.
+    let mut program = pocketed_block();
+    program.push(
+        "round",
+        FilletArgs {
+            edges: all(&rim),
+            radius: 0.1,
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    let has_vertex = |p: [f64; 3]| {
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| (0..3).all(|k| v.point[k].could_be_equal(S::from_f64(p[k]))))
+    };
+    for [x, y] in [[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]] {
+        let out = |c: f64| if c < 1.0 { c - 0.1 } else { c + 0.1 };
+        assert!(
+            has_vertex([out(x), out(y), 1.0]),
+            "no mitre on the top at {x}, {y}"
+        );
+        assert!(has_vertex([x, y, 0.9]), "no mitre on the walls at {x}, {y}");
+        assert!(
+            !has_vertex([x, y, 1.0]),
+            "the rim's corner at {x}, {y} is still sharp"
+        );
+    }
+}
