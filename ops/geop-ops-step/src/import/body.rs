@@ -1448,6 +1448,8 @@ impl<S: Scalar> Builder<'_, S> {
 
         // Each face's patch, pointing out of the material.
         let mut face_specs = Vec::with_capacity(faces.len());
+        // Each face's patch extent, for messages.
+        let mut extents = Vec::with_capacity(faces.len());
         let mut face_names = Vec::with_capacity(faces.len());
         let mut face_shells = vec![Vec::new(); shells];
         for face in &faces {
@@ -1499,6 +1501,7 @@ impl<S: Scalar> Builder<'_, S> {
             let outer_loop = loops.remove(outer);
             face_shells[face.shell].push(face_specs.len());
             face_specs.push((surface, outer_loop, loops));
+            extents.push(patch.extent);
             face_names.push(face.name.clone());
         }
 
@@ -1513,17 +1516,18 @@ impl<S: Scalar> Builder<'_, S> {
         let mut history: Vec<Vec<f64>> = vec![Vec::new(); edges.len()];
         for round in 0..WIDENINGS {
             let mut gaps = vec![[0.0f64; 3]; edges.len()];
-            for ((surface, outer, holes), face_name) in face_specs.iter().zip(&face_names) {
+            for (((surface, outer, holes), face_name), extent) in
+                face_specs.iter().zip(&face_names).zip(&extents)
+            {
                 for (on, pcurve) in outer.iter().chain(holes.iter().flatten()) {
                     if let CoedgeOnLocal::Edge(e, _) = *on {
-                        let gap = edge_gap(&read[e], &edges[e].curve, surface, pcurve).map_err(
-                            |err| {
+                        let (gap, worst) =
+                            edge_gap(&edges[e].curve, surface, pcurve).map_err(|err| {
                                 err.with_context(format!(
                             "measuring how far the edge {} lies from where its pcurve puts it",
                             edges[e].name.join(",")
                         ))
-                            },
-                        )?;
+                            })?;
                         // Widened by it either way, the edge must still be
                         // one curve to the kernel.
                         let most = total[e] + gap.iter().copied().fold(0.0, f64::max);
@@ -1534,11 +1538,21 @@ impl<S: Scalar> Builder<'_, S> {
                                 |err| format!("not measured: {err}"),
                                 |d| format!("{d:e} mm"),
                             );
+                            let furthest = worst.map_or_else(String::new, |w| {
+                                format!(
+                                    ", furthest {:e} mm at {} of the pcurve, which puts it at {:?}, the edge's nearest point {:?}",
+                                    w.apart, w.at, w.point, w.near
+                                )
+                            });
                             return Err(GeopError::new(format!(
-                                "the edge {} lies up to {most:e} mm from where its pcurve puts it on its face {} (measured {gap:?} per coordinate after widening it by {:?} in {round} rounds; the edge's own points lie up to {off} from the surface) — the curve widened by that either way would be wider than the {ACCURACY:e} mm the kernel can carry as one curve",
+                                "the edge {} lies up to {most:e} mm from where its pcurve puts it on its face {}, its own points up to {off} from the surface — the curve widened by that either way would be wider than the {ACCURACY:e} mm the kernel can carry as one curve (measured {gap:?} per coordinate after widening it by {:?} in {round} rounds{furthest}; the edge from {:?} to {:?}, the pcurve from {:?} to {:?} on the patch over the angles and profile parameters {extent:?})",
                                 edges[e].name.join(","),
                                 face_name.join(","),
                                 history[e],
+                                to_p3(&read[e].evaluate(read[e].domain().0)?),
+                                to_p3(&read[e].evaluate(read[e].domain().1)?),
+                                pcurve.evaluate(pcurve.domain().0)?,
+                                pcurve.evaluate(pcurve.domain().1)?,
                             )));
                         }
                         for c in 0..3 {
@@ -2267,33 +2281,31 @@ const WIDENINGS: usize = 4;
 /// kernel's validation samples at among them.
 const GAP_SAMPLES: usize = 64;
 
+/// Golden-section steps finding the nearest point of an edge to a pcurve's
+/// sample: from two table steps down to a rounding of the parameter.
+const NEAREST_ITERATIONS: usize = 80;
+
 /// How far, per coordinate, the points a pcurve puts on its surface lie
 /// from the edge's curve `curve` — sampled, each against the curve's
 /// nearest point: how far the point's midpoint, the pcurve's own best
 /// guess, lies outside the curve's enclosure there.
-///
-/// `read` is the curve as read, before any widening: the nearest point's
-/// parameter is found on it. Found on a widened curve, Newton's last step
-/// inherits its width, and the parameter it settles on is off along the
-/// curve by about that — which would be measured as a gap of its own, and
-/// widen the curve again, round after round.
 fn edge_gap<S: Scalar>(
-    read: &NurbCurve3D<S>,
     curve: &NurbCurve3D<S>,
     surface: &NurbSurface3D<S>,
     pcurve: &NurbCurve2D<S>,
-) -> GeopResult<[f64; 3]> {
+) -> GeopResult<([f64; 3], Option<Worst>)> {
     let (t0, t1) = pcurve.domain();
     let (c0, c1) = curve.domain();
     let mut gap = [0.0f64; 3];
+    let mut worst: Option<Worst> = None;
     // Each sample's nearest curve point: the nearest of a table of the
     // curve's points, polished by Newton.
     let (c0f, c1f) = (c0.to_f64(), c1.to_f64());
-    let rows = 8 * read.control_points.len() + 32;
+    let rows = 8 * curve.control_points.len() + 32;
     let table: Vec<(f64, P3)> = (0..=rows)
         .map(|k| {
             let t = c0f + (c1f - c0f) * k as f64 / rows as f64;
-            Ok((t, super::geometry::point_at(read, t)?))
+            Ok((t, super::geometry::point_at(curve, t)?))
         })
         .collect::<GeopResult<_>>()?;
     let step = (c1f - c0f) / rows as f64;
@@ -2315,15 +2327,47 @@ fn edge_gap<S: Scalar>(
             .iter()
             .min_by(|a, b| distance(a.1, target).total_cmp(&distance(b.1, target)))
             .expect("a table of points");
-        let window = S::from_f64((seed - step).max(c0f)).union(S::from_f64((seed + step).min(c1f)));
-        let s = read.refine_parameter_at_point(window, &point)?.sharpen();
-        let s = if s.definitely_less(c0) {
-            c0
-        } else if s.definitely_greater(c1) {
-            c1
-        } else {
-            s
+        // Which parameter is a free choice — a nearer point only measures
+        // a smaller gap — so it is found in `f64`, on the curve's
+        // midpoints, by golden section between the table's neighbours of
+        // the nearest. (Newton's refinement gives its window back for a
+        // point at an end, reached a rounding past it, and the window's
+        // middle is half a step off; on a widened curve its last step
+        // inherits the width, and is off along the curve by about that.)
+        let (mut a, mut b) = ((seed - step).max(c0f), (seed + step).min(c1f));
+        let gap_at = |t: f64| -> GeopResult<f64> {
+            Ok(distance(super::geometry::point_at(curve, t)?, target))
         };
+        let ratio = (5f64.sqrt() - 1.0) / 2.0;
+        let (mut x, mut y) = (b - ratio * (b - a), a + ratio * (b - a));
+        let (mut fx, mut fy) = (gap_at(x)?, gap_at(y)?);
+        for _ in 0..NEAREST_ITERATIONS {
+            if fx <= fy {
+                b = y;
+                (y, fy) = (x, fx);
+                x = b - ratio * (b - a);
+                fx = gap_at(x)?;
+            } else {
+                a = x;
+                (x, fx) = (y, fy);
+                y = a + ratio * (b - a);
+                fy = gap_at(y)?;
+            }
+        }
+        // The ends are the domain's own.
+        let candidates = [
+            (c0f, c0),
+            (c1f, c1),
+            ((a + b) / 2.0, S::from_f64((a + b) / 2.0)),
+        ];
+        let mut s = candidates[2].1;
+        let mut best = gap_at(candidates[2].0)?;
+        for &(t, exact) in &candidates[..2] {
+            let d = gap_at(t)?;
+            if d < best {
+                (s, best) = (exact, d);
+            }
+        }
         let near = curve.evaluate(s)?;
         // How far apart the two enclosures are, where they do not overlap:
         // what the curve must widen by to reach the point.
@@ -2332,9 +2376,28 @@ fn edge_gap<S: Scalar>(
                 .max(near[c].lower().sub(point[c].upper()).upper().to_f64())
                 .max(0.0);
             gap[c] = gap[c].max(apart);
+            if worst.is_none_or(|w: Worst| apart > w.apart) {
+                worst = Some(Worst {
+                    apart,
+                    at: i as f64 / GAP_SAMPLES as f64,
+                    point: to_p3(&point),
+                    near: to_p3(&near),
+                });
+            }
         }
     }
-    Ok(gap)
+    Ok((gap, worst))
+}
+
+/// Where along a pcurve [`edge_gap`] found it furthest from its edge: the
+/// fraction of its domain, the point it puts on the surface there, and the
+/// edge's nearest point.
+#[derive(Clone, Copy, Debug)]
+struct Worst {
+    apart: f64,
+    at: f64,
+    point: P3,
+    near: P3,
 }
 
 /// How far the points of `curve` lie from `surface`, sampled: each
