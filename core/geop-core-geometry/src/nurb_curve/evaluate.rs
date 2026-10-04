@@ -1,30 +1,68 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    vector::{Vector, Vector2, Vector3},
+    vector::{Vector2, Vector3},
 };
 
 use super::NurbCurve;
-use crate::spline::{centered, de_boor, find_span};
+use crate::{
+    knot_insertion::pinned_clamped_end,
+    spline::{centered, de_boor, find_span},
+};
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
-    /// The homogeneous point `(A(t), W(t))` relative to a control point of
-    /// the span ([`centered`]), that point's Cartesian position, and the
-    /// knot span: the Cartesian point is `origin + A / W`.
+    /// The Cartesian point at `t`, its `D − 1` coordinates written to `out`.
     ///
-    /// Relative, because `A / W` divides two enclosures interval arithmetic
-    /// cannot correlate, and its width grows with `|A|`: an interval `t`
-    /// would give a point as wide as the curve is far from the origin,
-    /// rather than as wide as the stretch of curve it covers.
-    pub(super) fn homogeneous(&self, t: S) -> GeopResult<(Vector<S, D>, Vector<S, D>, usize)> {
+    /// Evaluated twice and intersected — both are enclosures of the one
+    /// point: `A / W` as it is, and relative to a control point of the span
+    /// ([`centered`]), `origin + A / W`. The first divides two enclosures
+    /// interval arithmetic cannot correlate, so its width grows with `|A|`:
+    /// an interval `t` gives a point as wide as the curve is far from the
+    /// origin, rather than as wide as the stretch of curve it covers. The
+    /// second is as wide as that stretch, but moving away and back costs a
+    /// rounding of the origin, which near the origin is wider than the first
+    /// — and wider than the control points, which containment searches clip
+    /// against, say the curve is.
+    ///
+    /// At a clamped end, pinned sharply, the curve is its end control point.
+    fn evaluate_into(&self, t: S, out: &mut [S]) -> GeopResult<()> {
         let p = self.degree;
-        let span = find_span(p, &self.knot_vector, self.control_points.len() - 1, t)?;
-        let (local, origin) = centered(&self.control_points[span - p..=span]);
-        Ok((
-            de_boor(p, &self.knot_vector[span - p..], &local, t, p),
-            origin,
-            span,
-        ))
+        let n = self.control_points.len();
+        let span = find_span(p, &self.knot_vector, n - 1, t)?;
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "NurbCurve::evaluate(t={t:?}, span={span}): degree={}, knot_vector={:?}, control_points={:?}",
+                self.degree, self.knot_vector, self.control_points
+            ))
+        };
+        let inverse = |w: S| -> GeopResult<S> {
+            if w.could_be_equal(S::ZERO) {
+                return Err(ctx(GeopError::new(format!(
+                    "weight is zero at evaluation point (homogeneous de_boor result w={w:?})"
+                ))));
+            }
+            S::ONE.div(w).with_context(&ctx)
+        };
+        if let Some(first) = pinned_clamped_end(t, &self.knot_vector, n, p) {
+            let end = self.control_points[if first { 0 } else { n - 1 }];
+            let inv_w = inverse(end[D - 1])?;
+            for (c, o) in out.iter_mut().enumerate() {
+                *o = end[c].mul(inv_w);
+            }
+            return Ok(());
+        }
+        let local = &self.control_points[span - p..=span];
+        let knots = &self.knot_vector[span - p..];
+        let absolute = de_boor(p, knots, local, t, p);
+        let (moved, origin) = centered(local);
+        let relative = de_boor(p, knots, &moved, t, p);
+        // The weights are not moved: one `W` for both.
+        let inv_w = inverse(absolute[D - 1])?;
+        for (c, o) in out.iter_mut().enumerate() {
+            let near = origin[c].add(relative[c].mul(inv_w));
+            *o = absolute[c].mul(inv_w).intersect(near);
+        }
+        Ok(())
     }
 }
 
@@ -33,25 +71,9 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 impl<S: Scalar> NurbCurve<S, 4> {
     /// Evaluate the 3-D NURBS curve at `t`, returning a Cartesian `Vector3`.
     pub fn evaluate(&self, t: S) -> GeopResult<Vector3<S>> {
-        let (hw, origin, span) = self.homogeneous(t)?;
-        let w = hw[3];
-        if w.could_be_equal(S::ZERO) {
-            return Err(GeopError::new(format!(
-                "weight is zero at evaluation point (t={t:?}, span={span}, homogeneous de_boor result w={w:?}, degree={}, knot_vector={:?}, control_points={:?})",
-                self.degree, self.knot_vector, self.control_points
-            )));
-        }
-        let inv_w = S::ONE.div(w).with_context(&|e: GeopError| {
-            e.with_context(format!(
-                "NurbCurve::evaluate(t={t}): degree={}, knot_vector={:?}, control_points={:?}",
-                self.degree, self.knot_vector, self.control_points
-            ))
-        })?;
-        let mut result = Vector3::zero();
-        for c in 0..3 {
-            result[c] = origin[c].add(hw[c].mul(inv_w));
-        }
-        Ok(result)
+        let mut out = [S::ZERO; 3];
+        self.evaluate_into(t, &mut out)?;
+        Ok(Vector3::from_array(out))
     }
 }
 
@@ -60,25 +82,9 @@ impl<S: Scalar> NurbCurve<S, 4> {
 impl<S: Scalar> NurbCurve<S, 3> {
     /// Evaluate the 2-D pcurve at `t`, returning a Cartesian `Vector2`.
     pub fn evaluate(&self, t: S) -> GeopResult<Vector2<S>> {
-        let (hw, origin, span) = self.homogeneous(t)?;
-        let w = hw[2];
-        if w.could_be_equal(S::ZERO) {
-            return Err(GeopError::new(format!(
-                "weight is zero at evaluation point (t={t:?}, span={span}, homogeneous de_boor result w={w:?}, degree={}, knot_vector={:?}, control_points={:?})",
-                self.degree, self.knot_vector, self.control_points
-            )));
-        }
-        let inv_w = S::ONE.div(w).with_context(&|e: GeopError| {
-            e.with_context(format!(
-                "NurbCurve::evaluate(t={t}): degree={}, knot_vector={:?}, control_points={:?}",
-                self.degree, self.knot_vector, self.control_points
-            ))
-        })?;
-        let mut result = Vector2::zero();
-        for c in 0..2 {
-            result[c] = origin[c].add(hw[c].mul(inv_w));
-        }
-        Ok(result)
+        let mut out = [S::ZERO; 2];
+        self.evaluate_into(t, &mut out)?;
+        Ok(Vector2::from_array(out))
     }
 }
 
