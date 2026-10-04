@@ -457,7 +457,7 @@ fn an_example_of_several_files_adds_its_files() {
     assert!(!program.can_undo);
     assert_eq!(
         program.workspace_examples,
-        ["pin_in_plate", "chain", "parametric_plates", "four_bar"]
+        ["pin_in_plate", "chain", "parametric_plates", "four_bar", "arm"]
     );
     let part = update.scene.unwrap().part;
     let instances: Vec<&str> = part.instances.iter().map(|i| i.name.as_str()).collect();
