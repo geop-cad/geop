@@ -142,6 +142,16 @@ function flatten(part: PartView, hidden: string[] = []): Scene {
       scene.sketch_points.push({ sketch: sketch.name, id: point.id, at: inPlane(sketch.plane, point.at) });
     }
   }
+  for (const sketch of part.sketches3d ?? []) {
+    for (const curve of sketch.curves) {
+      const color = curve.construction ? CONSTRUCTION_COLOR : SKETCH_COLOR;
+      const points = curve.polyline;
+      for (let i = 1; i < points.length; i++) line(points[i - 1], points[i], color, sketch.name, curve.id, null);
+    }
+    for (const point of sketch.points) {
+      scene.sketch_points.push({ sketch: sketch.name, id: point.id, at: point.at });
+    }
+  }
   return scene;
 }
 
@@ -325,7 +335,10 @@ function tint(colors: Float32Array, k: number) {
 function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[], hidden: string[]) {
   const named = (type: EntityRef["type"]) =>
     new Set(highlights.flatMap((h) => (h.type === type && "name" in h ? [h.name] : [])));
-  const [faces, solids, sketches, edges, vertices] = (["Face", "Solid", "Sketch", "Edge", "Vertex"] as const).map(named);
+  const [faces, solids, planar, edges, vertices, spatial] = (
+    ["Face", "Solid", "Sketch", "Edge", "Vertex", "Sketch3d"] as const
+  ).map(named);
+  const sketches = new Set([...planar, ...spatial]);
   /** A curve's or a point's key: its sketch and its id there. */
   const curveKey = (sketch: string, id: number) => `${sketch}\u0000${id}`;
   const curves = new Set(highlights.flatMap((h) => (h.type === "SketchCurve" ? [curveKey(h.sketch, h.curve)] : [])));

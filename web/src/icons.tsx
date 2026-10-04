@@ -380,6 +380,14 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M10 16 A7 7 0 0 0 7.8 10.8" />
     </>
   ),
+  add_sketch3d: (
+    <>
+      <path d="M3 16 L8 13 L8 6 L16 3" />
+      <path d="M3 16 L3 11 M3 16 L7 17" strokeDasharray="1.2 1.2" />
+      {dot(8, 13, 1.4)}
+      {dot(8, 6, 1.4)}
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

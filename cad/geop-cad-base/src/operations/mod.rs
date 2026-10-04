@@ -44,6 +44,8 @@ mod set_tests;
 #[cfg(test)]
 mod shell_tests;
 #[cfg(test)]
+mod sketch3d_tests;
+#[cfg(test)]
 mod sketch_tests;
 #[cfg(test)]
 mod stress_tests;
@@ -53,8 +55,6 @@ mod sweep_loft_tests;
 mod tests;
 #[cfg(test)]
 mod view_tests;
-#[cfg(test)]
-mod sketch3d_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

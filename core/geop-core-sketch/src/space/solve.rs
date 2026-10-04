@@ -529,7 +529,10 @@ fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopR
     for _ in 0..SEED_NEWTON_STEPS {
         let at = S::from_f64(t);
         let off = plain(curve.evaluate(at)?.sub(p));
-        let (d1, d2) = (plain(curve.tangent(at)?), plain(curve.second_derivative(at)?));
+        let (d1, d2) = (
+            plain(curve.tangent(at)?),
+            plain(curve.second_derivative(at)?),
+        );
         let slope = dot(d1, d1) + dot(off, d2);
         if !(slope > 0.0) {
             break;

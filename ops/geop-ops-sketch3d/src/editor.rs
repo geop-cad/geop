@@ -837,10 +837,14 @@ pub(crate) fn form<'a, S: Scalar>(
     let mut tools: Vec<Action> = Tool::ALL
         .iter()
         .map(|&(t, name, label, _)| {
-            Action::new(name, label)
-                .icon(format!("sketch3d_{name}"))
-                .group("Draw")
-                .active(t == tool)
+            // The planar sketch's icons; selecting has none, and shows
+            // its label.
+            let action = Action::new(name, label).group("Draw").active(t == tool);
+            if t == Tool::Select {
+                action
+            } else {
+                action.icon(name)
+            }
         })
         .collect();
     let finishing = if tool == Tool::Spline {

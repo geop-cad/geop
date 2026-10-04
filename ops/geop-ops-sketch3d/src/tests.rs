@@ -223,7 +223,11 @@ fn spline_goes_on_smoothly_from_a_line() {
     };
     assert_eq!(points.len(), 3);
     assert!(close(&e.at(points[1]), [3.0, 1.0, 1.0]));
-    assert!(close(&e.at(points[2]), [4.0, 1.0, 2.0]), "{:?}", e.at(points[2]));
+    assert!(
+        close(&e.at(points[2]), [4.0, 1.0, 2.0]),
+        "{:?}",
+        e.at(points[2])
+    );
     assert!(
         sketch
             .constraints
@@ -257,7 +261,8 @@ fn selections_are_constrained_and_points_dragged() {
     let p = e.points();
     let (a, b) = (e.at(p[0]), e.at(p[1]));
     assert!(
-        (a[0].to_f64() - b[0].to_f64()).abs() < 1e-9 && (a[1].to_f64() - b[1].to_f64()).abs() < 1e-9,
+        (a[0].to_f64() - b[0].to_f64()).abs() < 1e-9
+            && (a[1].to_f64() - b[1].to_f64()).abs() < 1e-9,
         "{a:?} {b:?}"
     );
     // Dragged sideways, the top end takes the line with it, upright.
@@ -327,7 +332,10 @@ fn references_follow_the_part() {
     let at = |part: Part<S>| {
         let built = AddSketch3d.apply(part, "route", &args, &NoFiles).unwrap();
         let s = built.sketch3d(built.sketch3d_id("route").unwrap()).unwrap();
-        (s.points[&p].at.map(|c| c.cast::<S>()), s.points[&q].at.map(|c| c.cast::<S>()))
+        (
+            s.points[&p].at.map(|c| c.cast::<S>()),
+            s.points[&q].at.map(|c| c.cast::<S>()),
+        )
     };
     let (a, b) = at(with_datums([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
     assert!(close(&a, [1.0, 0.0, 0.0]));
@@ -348,7 +356,10 @@ fn arcs_take_three_clicks() {
     e.key("a");
     let along_y = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
     e.click(along_y(0.0, 0.0));
-    e.click(along_y(1.0 - std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2));
+    e.click(along_y(
+        1.0 - std::f64::consts::FRAC_1_SQRT_2,
+        std::f64::consts::FRAC_1_SQRT_2,
+    ));
     e.click(along_y(1.0, 1.0));
     let sketch = e.sketch();
     let arcs: Vec<_> = sketch
@@ -359,7 +370,10 @@ fn arcs_take_three_clicks() {
     assert_eq!(arcs.len(), 1);
     let (&arc, _) = arcs[0];
     let pieces = sketch
-        .curve_nurbs(arc, &geop_core_sketch::space::Enclosure3d::<S>::as_drawn(&sketch))
+        .curve_nurbs(
+            arc,
+            &geop_core_sketch::space::Enclosure3d::<S>::as_drawn(&sketch),
+        )
         .unwrap();
     let mid = pieces[0].evaluate(S::from_f64(0.5)).unwrap();
     // A quarter circle about (1, 0, 0) in the y = 0 plane.

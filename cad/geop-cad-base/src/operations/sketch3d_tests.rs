@@ -117,7 +117,10 @@ fn a_path_of_two_chains_is_refused() {
         let b = route.add_point(v([x + 1.0, 0.0, 0.0]));
         route.add_line(a, b);
     }
-    let error = piped(0.2, route).build::<S>(&NoFiles).err().expect("refused");
+    let error = piped(0.2, route)
+        .build::<S>(&NoFiles)
+        .err()
+        .expect("refused");
     assert!(error.root_message().contains("2 chains"), "{error:?}");
 }
 
@@ -126,7 +129,10 @@ fn a_path_of_two_chains_is_refused() {
 #[test]
 fn a_bend_tighter_than_the_pipe_is_refused() {
     let route = crate::examples::pipe_route(0.25);
-    let error = piped(0.3, route).build::<S>(&NoFiles).err().expect("refused");
+    let error = piped(0.3, route)
+        .build::<S>(&NoFiles)
+        .err()
+        .expect("refused");
     assert!(error.root_message().contains("bend"), "{error:?}");
 }
 
@@ -140,9 +146,26 @@ fn a_bend_tighter_than_the_pipe_is_refused() {
 fn sweeps_along_paths_of_varied_curvature() {
     let splines: [&[[f64; 3]]; 4] = [
         &[[0.0, 0.0, 0.0], [3.0, 0.2, 0.1], [6.0, 0.0, 0.3]],
-        &[[0.0, 0.0, 0.0], [2.0, 1.0, 0.0], [3.0, 3.0, 0.0], [2.0, 5.0, 0.0]],
-        &[[0.0, 0.0, 0.0], [2.0, 2.0, 1.0], [0.0, 4.0, 2.0], [-2.0, 2.0, 3.0], [0.0, 0.0, 4.0]],
-        &[[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [1.5, 1.0, 1.5], [1.0, 2.0, 1.0], [2.0, 3.0, 0.0]],
+        &[
+            [0.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [3.0, 3.0, 0.0],
+            [2.0, 5.0, 0.0],
+        ],
+        &[
+            [0.0, 0.0, 0.0],
+            [2.0, 2.0, 1.0],
+            [0.0, 4.0, 2.0],
+            [-2.0, 2.0, 3.0],
+            [0.0, 0.0, 4.0],
+        ],
+        &[
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [1.5, 1.0, 1.5],
+            [1.0, 2.0, 1.0],
+            [2.0, 3.0, 0.0],
+        ],
     ];
     for (i, points) in splines.iter().enumerate() {
         for r in [0.05, 0.15, 0.3] {
