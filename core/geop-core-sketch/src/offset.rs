@@ -221,7 +221,10 @@ impl<S: Scalar> Sketch<S> {
                 let hi = points.iter().map(|q| q[k]).fold(f64::MIN, f64::max);
                 hi - lo
             };
-            span(0).hypot(span(1)).max(1.0) / RELATIVE_TOLERANCE as f64
+            let size = span(0).hypot(span(1));
+            // As the solver: one, where the sketch has no size at all.
+            let size = if size > 0.0 { size } else { 1.0 };
+            size / RELATIVE_TOLERANCE as f64
         };
         let pieces: Vec<Plain> = pieces_of
             .iter()

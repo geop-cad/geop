@@ -1117,4 +1117,72 @@ mod tools {
             z(1)
         );
     }
+
+    /// The box's top projected into a sketch on it, and its outline offset
+    /// 0.1 in: the offset is the sketch's one region — the projection is
+    /// construction — fully constrained by the part, and it follows the
+    /// part when the program is built, a pad on the box.
+    #[test]
+    fn projected_edges_offset_into_a_profile() {
+        let mut program = examples::box_with_drill_hole();
+        let built = program.build::<S>(&NoFiles).unwrap();
+        let top = EntityRef::Face {
+            name: "extrude(box,end)".into(),
+        };
+        let plane = top.clone();
+        let (mut sketch, reference) = projected(&built, &plane, top);
+        let line = *sketch
+            .curves
+            .iter()
+            .find(|(_, c)| matches!(c.kind, CurveKind::Line { .. }))
+            .unwrap()
+            .0;
+        let outline = sketch.chain_through(line).unwrap();
+        assert_eq!(outline.len(), 4);
+        let chain = sketch.chain(&outline).unwrap();
+        // Inwards: towards the outline's middle, wherever the face's own
+        // frame puts it.
+        let corners: Vec<[f64; 2]> = outline
+            .iter()
+            .flat_map(|c| sketch.curves[c].points())
+            .map(|p| geop_core_sketch::plain::xy(&sketch, p))
+            .collect();
+        let middle =
+            [0, 1].map(|k| corners.iter().map(|q| q[k]).sum::<f64>() / corners.len() as f64);
+        let inside = sketch.chain_side(&chain, middle).unwrap();
+        let toward = Design::from_f64(0.1 * inside.signum());
+        sketch.offset(&outline, toward, Corners::Round).unwrap();
+        let report = sketch.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        assert_eq!(sketch.regions().unwrap().len(), 1);
+        program.push(
+            "pad_sketch",
+            AddSketchArgs {
+                plane: Some(plane),
+                sketch,
+                references: vec![reference],
+                ..Default::default()
+            },
+        );
+        program.push(
+            "pad",
+            ExtrudeArgs {
+                sketch: "pad_sketch".into(),
+                extent: Extents::blind(0.2),
+                face: false,
+                combine: Combine::NewBody,
+            },
+        );
+        let part = program.build::<S>(&NoFiles).unwrap();
+        if let Err(e) = check_valid(&part) {
+            panic!("{e}");
+        }
+        let tallest = part
+            .topology()
+            .vertices
+            .values()
+            .map(|v| v.point[2].to_f64())
+            .fold(f64::MIN, f64::max);
+        assert!((tallest - 1.2).abs() < 1e-9, "{tallest}");
+    }
 }

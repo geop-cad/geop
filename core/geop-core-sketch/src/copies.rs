@@ -236,6 +236,15 @@ impl<S: Scalar> Sketch<S> {
                 "a pattern of {count} is no pattern: it takes 2 or more"
             )));
         }
+        match *step {
+            Step::Along { spacing, .. } if !spacing.definitely_greater(S::ZERO) => {
+                return Err(GeopError::new(format!(
+                    "a linear pattern's spacing must be more than 0, not {spacing:?}"
+                )));
+            }
+            Step::Round { angle, .. } => once_round(angle, count)?,
+            _ => {}
+        }
         let except = match *step {
             Step::Along { along, .. } => Some(along),
             Step::Round { .. } => None,
@@ -452,6 +461,12 @@ impl<S: Scalar> Sketch<S> {
                 "a pattern of {count} is no pattern: it takes 2 or more"
             )));
         }
+        if let Some(Constraint::Angle { value, .. }) = self
+            .pattern_spacing(by)
+            .and_then(|k| self.constraints.get(&k))
+        {
+            once_round(*value, count)?;
+        }
         let now = steps.values().max().copied().unwrap_or(0) + 1;
         if count < now {
             let gone: Vec<PointId> = steps
@@ -536,6 +551,19 @@ impl<S: Scalar> Sketch<S> {
         }
         own
     }
+}
+
+/// Checks that `count` copies `angle` apart turn — they do not stay put —
+/// and go round once at most, the last short of the first.
+fn once_round<S: Scalar>(angle: S, count: usize) -> GeopResult<()> {
+    let turned = angle.abs().mul(S::from_f64((count - 1) as f64));
+    if angle.could_be_equal(S::ZERO) || !turned.definitely_less(S::TWO.mul(S::PI)) {
+        return Err(GeopError::new(format!(
+            "{count} copies {:.3}° apart do not go round once short of the first: a circular pattern turns, once at most",
+            angle.to_f64().to_degrees()
+        )));
+    }
+    Ok(())
 }
 
 /// One copy of a pattern: its points by class, and its curves.
@@ -792,6 +820,11 @@ mod tests {
             })
             .count();
         assert_eq!(spokes, 6);
+        // Eight round the circle: 45° apart first, then two more.
+        if let Some(Constraint::Angle { value, .. }) = s.constraints.get_mut(&made.spacing) {
+            *value = n(PI / 4.0);
+        }
+        assert!(s.solve().unwrap().converged);
         s.set_pattern_count(made.by, 8).unwrap();
         assert_eq!(s.pattern_count(made.by), Some(8));
         assert!(s.solve().unwrap().converged);
@@ -827,5 +860,30 @@ mod tests {
             )
             .unwrap_err();
         assert!(e.root_message().contains("2 or more"), "{e}");
+        let d = s.add_point(n(3.0), n(0.0));
+        let hole = s.add_circle(d, n(0.5));
+        let e = s
+            .pattern(
+                &[hole],
+                &Step::Round {
+                    center: c,
+                    angle: n(PI / 3.0),
+                },
+                7,
+            )
+            .unwrap_err();
+        assert!(e.root_message().contains("once"), "{e}");
+        let made = s
+            .pattern(
+                &[hole],
+                &Step::Round {
+                    center: c,
+                    angle: n(PI / 3.0),
+                },
+                6,
+            )
+            .unwrap();
+        let e = s.set_pattern_count(made.by, 7).unwrap_err();
+        assert!(e.root_message().contains("once"), "{e}");
     }
 }

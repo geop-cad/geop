@@ -222,11 +222,13 @@ impl<S: Scalar> Editing<'_, S> {
         };
         let full = spacing.filter(|k| self.args.formulas.get(k) == Some(&full_turn(now)));
         let changed = self.change(|s| {
-            s.set_pattern_count(by, count)?;
+            // Spread over the full circle anew first, so the copies added
+            // are placed where they go.
             if let Some(c) = full.and_then(|k| s.constraints.get_mut(&k)) {
                 constraints::set_value(c, (360.0 / count as f64).to_radians());
+                s.solve()?;
             }
-            Ok(())
+            s.set_pattern_count(by, count)
         });
         if let (Some(()), Some(k)) = (changed, full) {
             self.args.formulas.insert(k, full_turn(count));
