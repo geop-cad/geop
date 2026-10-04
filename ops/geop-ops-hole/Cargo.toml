@@ -1,0 +1,14 @@
+[package]
+name = "geop-ops-hole"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-core-sketch.workspace = true
+geop-ops.workspace = true
+geop-ops-booleans.workspace = true
+geop-ops-extrude-revolve.workspace = true
+serde.workspace = true

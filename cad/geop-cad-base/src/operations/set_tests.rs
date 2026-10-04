@@ -29,7 +29,9 @@ fn every_operation_is_offered() {
             "chamfer",
             "shell",
             "add_datum",
-            "add_part"
+            "add_part",
+            "hole",
+            "thread"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

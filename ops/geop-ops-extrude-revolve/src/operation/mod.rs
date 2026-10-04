@@ -14,7 +14,7 @@ mod loft;
 mod revolve;
 mod sweep;
 
-pub use extrude::{Extrude, ExtrudeArgs, shape_loops};
+pub use extrude::{Extrude, ExtrudeArgs, reach_past, shape_loops};
 pub use loft::{Loft, LoftArgs};
 pub use revolve::{Revolve, RevolveArgs};
 pub use sweep::{Sweep, SweepArgs};
@@ -537,7 +537,7 @@ fn no_target() -> GeopError {
 /// points of all their faces' surfaces — a NURBS surface lies within the
 /// hull of its control points — as plain numbers, for sizing a tool that has
 /// to reach past them. None for no solids.
-fn hull<S: Scalar>(part: &Part<S>, targets: &[String]) -> GeopResult<Option<Vec<[f64; 3]>>> {
+pub fn hull<S: Scalar>(part: &Part<S>, targets: &[String]) -> GeopResult<Option<Vec<[f64; 3]>>> {
     let model = part.topology();
     let mut points = Vec::new();
     for target in targets {

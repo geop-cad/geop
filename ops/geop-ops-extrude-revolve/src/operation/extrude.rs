@@ -310,7 +310,7 @@ impl Operation for Extrude {
 /// `-1` — reaches past everything of the solid whose convex hull `hull`
 /// spans: a side going up to its next face has to be built at least that
 /// long to meet whichever face that is.
-fn reach_past<S: Scalar>(
+pub fn reach_past<S: Scalar>(
     hull: &[[f64; 3]],
     plane: &CoordinateSystem<S>,
     sign: f64,

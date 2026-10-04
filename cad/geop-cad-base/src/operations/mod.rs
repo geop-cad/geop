@@ -5,7 +5,8 @@
 //! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
 //! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`.
+//! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
+//! holes and threads in `geop_ops_hole`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -19,6 +20,7 @@ use geop_ops_extrude_revolve::{
     Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_hole::{Hole, HoleArgs, Thread, ThreadArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,8 @@ mod edit_tests;
 mod editor_tests;
 #[cfg(test)]
 mod fillet_tests;
+#[cfg(test)]
+mod hole_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
@@ -101,6 +105,12 @@ pub enum PartOperation {
     /// already there.
     #[operation(label = "Part")]
     AddPart(AddPartArgs),
+    /// Drill simple, counterbored, countersunk or tapped holes at points on
+    /// a planar face, sized by ISO tables or by hand.
+    Hole(HoleArgs),
+    /// Put an ISO metric thread on a cylindrical face: recorded as a
+    /// cosmetic thread, or modelled.
+    Thread(ThreadArgs),
 }
 
 /// A program of the editor's operations.
