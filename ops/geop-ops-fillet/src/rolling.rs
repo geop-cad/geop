@@ -98,10 +98,6 @@ pub const DEVIATION: f64 = 1e-6;
 const NEWTON_ITERATIONS: usize = 30;
 /// Newton iterations of each foot-point projection.
 const PROJECT_ITERATIONS: usize = 20;
-/// How far off its true foot point, relative to the ball, a contact found
-/// on the faces an edge runs between may be and count as found exactly:
-/// rounding, and no more. Only spares trying other faces (see [`place`]).
-const ROUNDING: f64 = 1e3 * f64::EPSILON;
 /// Seed of the ray casting behind `face_contains`, whose answer does not
 /// depend on it.
 const SEED: u64 = 0xB1E2_D000_0000_0002;
@@ -598,7 +594,17 @@ fn place<S: Scalar>(
     // state its direction exactly, where the edge's curve — traced as an
     // intersection, say — only encloses its points. At a vertex where the
     // faces change, that is what puts the ball's section through it.
-    let across = normal_at(model, own.faces[0], &p)?.prod_cross(&normal_at(model, own.faces[1], &p)?);
+    let mut normals = [Vector3::zero(); 2];
+    for k in 0..2 {
+        let surface = &model.get_face(own.faces[k])?.surface;
+        let seed = match previous {
+            Some(prev) if prev.faces[k] == own.faces[k] => prev.uv[k],
+            _ => seed_on(surface, &p)?,
+        };
+        let (u, v) = foot(surface, &p, seed)?;
+        normals[k] = surface.normal(u, v)?;
+    }
+    let across = normals[0].prod_cross(&normals[1]);
     let tangent = if across.prod_dot(&along).definitely_less(S::ZERO) {
         across.neg()
     } else {
@@ -655,9 +661,10 @@ fn place<S: Scalar>(
                 continue;
             }
         };
-        // A true foot point on both of the edge's own faces, but for
-        // rounding, is the ball: no need to try other faces.
-        if pair == own.faces && off <= scale * ROUNDING {
+        // A true foot point on both of the edge's own faces — off it by no
+        // more than the blend may stray from the ball anywhere — is the
+        // ball, seeded where the edge is: no need to try other faces.
+        if pair == own.faces && off <= DEVIATION * scale {
             return Ok(station);
         }
         tried.push((pair, format!("{off:e} off")));
