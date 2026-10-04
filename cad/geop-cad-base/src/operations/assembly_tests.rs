@@ -140,7 +140,10 @@ fn the_editor_places_parts_from_its_files() {
         panic!("the file is chosen from a list");
     };
     let files: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
-    assert_eq!(files, ["", "pin.geop", "plate.geop"]);
+    // The workspace's own, then the standard parts.
+    let (own, standard) = files.split_at(3);
+    assert_eq!(own, ["", "pin.geop", "plate.geop"]);
+    assert!(!standard.is_empty() && standard.iter().all(|f| f.starts_with("std:")));
 
     // What a viewer keeps: every component it was sent.
     let mut known = BTreeMap::new();
