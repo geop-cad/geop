@@ -166,6 +166,13 @@ fn a_flat_bill_groups_repeated_parts() {
     );
     assert_eq!(bom.line("1").unwrap().name, "bracket");
     assert_eq!(bom.line("2").unwrap().name, "Test screw");
+    // Where each is placed, from the assembly: what a drawing balloons.
+    assert_eq!(bom.line("1").unwrap().placements, ["b1", "b2"]);
+    assert_eq!(
+        bom.line("2").unwrap().placements,
+        ["b1/s1", "b1/s2", "b2/s1", "b2/s2", "s1", "s2", "s3"]
+    );
+    assert_eq!(bom.line("3").unwrap().placements, ["s4"]);
     let LineKind::Part {
         parameters,
         material,

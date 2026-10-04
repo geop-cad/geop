@@ -7,6 +7,7 @@ pub mod drawing;
 pub mod dxf;
 pub mod hidden_lines;
 pub mod operation;
+pub mod scene;
 pub mod section;
 pub mod sheet;
 pub mod silhouette;

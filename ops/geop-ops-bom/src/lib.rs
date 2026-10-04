@@ -115,6 +115,13 @@ pub struct Line {
     pub designation: Option<String>,
     #[serde(flatten)]
     pub kind: LineKind,
+    /// Where the parts it counts are placed, as the entities of placed
+    /// parts are named: in a flat bill from the assembly, `arm/screw` for
+    /// the part placed as `screw` in the one placed as `arm`, `""` for the
+    /// assembly's own bodies; in an indented one from the sub-assembly it
+    /// is listed under. Empty for a wire. What a drawing balloons.
+    #[serde(skip)]
+    pub placements: Vec<String>,
 }
 
 /// A bill of materials.
@@ -170,33 +177,56 @@ struct Info<S: Scalar> {
 }
 
 /// The parts placed in a part, grouped: one per kind of part, in the order
-/// each was first placed, with how many there are, and the component the
-/// first is (which keeps its mass properties once integrated).
+/// each was first placed, with the names they are placed as, and the
+/// component the first is (which keeps its mass properties once
+/// integrated).
 struct Group<'p, S: Scalar> {
     key: String,
     file: &'p str,
     part: &'p Part<S>,
     component: &'p Component<S>,
-    count: u64,
+    names: Vec<&'p str>,
+}
+
+impl<S: Scalar> Group<'_, S> {
+    /// How many there are.
+    fn count(&self) -> u64 {
+        self.names.len() as u64
+    }
 }
 
 fn groups<S: Scalar>(part: &Part<S>) -> Vec<Group<'_, S>> {
     let mut out: Vec<Group<'_, S>> = Vec::new();
-    for (_, instance) in part.instances() {
+    for (id, instance) in part.instances() {
         let file = instance.component.file.as_str();
         let key = key(file, instance.part());
+        let name = part.name_of(id).unwrap_or_default();
         match out.iter_mut().find(|g| g.key == key) {
-            Some(group) => group.count += 1,
+            Some(group) => group.names.push(name),
             None => out.push(Group {
                 key,
                 file,
                 part: instance.part(),
                 component: &instance.component,
-                count: 1,
+                names: vec![name],
             }),
         }
     }
     out
+}
+
+/// The paths of the parts placed as `name` in each of the parts placed at
+/// `paths` (see [`Line::placements`]).
+fn placed_in(paths: &[String], names: &[&str]) -> Vec<String> {
+    paths
+        .iter()
+        .flat_map(|path| {
+            names.iter().map(move |name| match path.as_str() {
+                "" => name.to_string(),
+                _ => format!("{path}{}{name}", geop_ops::operation::INSTANCE_SEPARATOR),
+            })
+        })
+        .collect()
 }
 
 /// Builds a bill of materials, remembering what it worked out of each part.
@@ -302,21 +332,22 @@ impl<S: Scalar> Builder<S> {
         for group in groups(part) {
             let placed =
                 self.whole_mass(&group.key, group.file, group.part, Some(group.component))?;
-            mass = mass.and_then(|m| Ok(m.add(times(group.count, placed?))));
+            mass = mass.and_then(|m| Ok(m.add(times(group.count(), placed?))));
         }
         self.whole.insert(key.to_string(), mass.clone());
         Ok(mass)
     }
 
-    /// The line of the part `key`, `quantity` of it, weighing `unit_mass`
-    /// each.
+    /// The line of the part `key`, placed at `placements`, weighing
+    /// `unit_mass` each.
     fn part_line(
         &self,
         key: &str,
         level: usize,
-        quantity: u64,
+        placements: Vec<String>,
         unit_mass: &Result<S, String>,
     ) -> Line {
+        let quantity = placements.len() as u64;
         let info = &self.infos[key];
         let (unit, total, error) = match unit_mass {
             Ok(m) => (
@@ -342,28 +373,34 @@ impl<S: Scalar> Builder<S> {
                 total_mass: total,
                 error,
             },
+            placements,
         }
     }
 
-    /// Adds the parts of `part` — placed `multiplier` times in all — to
-    /// the flat bill `lines`, by key: itself if it has bodies of its own,
-    /// or is no assembly; the parts placed in it, however deep; its wires.
+    /// Adds the parts of `part` — placed at `paths` (see
+    /// [`Line::placements`]) — to the flat bill `lines`, by key: itself if
+    /// it has bodies of its own, or is no assembly; the parts placed in it,
+    /// however deep; its wires.
     fn flat(
         &mut self,
         key: &str,
         file: &str,
         part: &Part<S>,
         component: Option<&Component<S>>,
-        multiplier: u64,
+        paths: &[String],
         lines: &mut Vec<(String, Line)>,
     ) -> GeopResult<()> {
+        let multiplier = paths.len() as u64;
         let info = self.info(key, file, part, component)?;
         if info.own_bodies || part.instances().next().is_none() {
             let mass = info.own_mass.clone();
             match lines.iter_mut().find(|(k, _)| k == key) {
-                Some((_, line)) => add_quantity(line, multiplier),
+                Some((_, line)) => {
+                    add_quantity(line, multiplier);
+                    line.placements.extend_from_slice(paths);
+                }
                 None => {
-                    let line = self.part_line(key, 0, multiplier, &mass);
+                    let line = self.part_line(key, 0, paths.to_vec(), &mass);
                     lines.push((key.to_string(), line));
                 }
             }
@@ -374,7 +411,7 @@ impl<S: Scalar> Builder<S> {
                 group.file,
                 group.part,
                 Some(group.component),
-                multiplier * group.count,
+                &placed_in(paths, &group.names),
                 lines,
             )?;
         }
@@ -411,7 +448,8 @@ impl<S: Scalar> Builder<S> {
         for group in groups(part) {
             let mass =
                 self.whole_mass(&group.key, group.file, group.part, Some(group.component))?;
-            let mut line = self.part_line(&group.key, level, group.count, &mass);
+            let placements = group.names.iter().map(|n| n.to_string()).collect();
+            let mut line = self.part_line(&group.key, level, placements, &mass);
             let item = next(&mut line);
             lines.push(line);
             self.indented(group.part, &item, 0, level + 1, lines)?;
@@ -481,6 +519,7 @@ fn wire_lines<S: Scalar>(part: &Part<S>, level: usize, quantity: u64) -> Vec<(St
                         cut_length,
                         total_length: scale_unit(cut_length, quantity),
                     },
+                    placements: Vec::new(),
                 },
             ));
         }
@@ -504,7 +543,7 @@ pub fn bom<S: Scalar>(part: &Part<S>, file: &str, structure: Structure) -> GeopR
     let lines = match structure {
         Structure::Flat => {
             let mut keyed = Vec::new();
-            builder.flat(&root, file, part, None, 1, &mut keyed)?;
+            builder.flat(&root, file, part, None, &[String::new()], &mut keyed)?;
             let mut lines: Vec<Line> = keyed.into_iter().map(|(_, line)| line).collect();
             for (k, line) in lines.iter_mut().enumerate() {
                 line.item = (k + 1).to_string();
@@ -516,7 +555,7 @@ pub fn bom<S: Scalar>(part: &Part<S>, file: &str, structure: Structure) -> GeopR
             let info = builder.info(&root, file, part, None)?;
             if info.own_bodies || part.instances().next().is_none() {
                 let mass = info.own_mass.clone();
-                let mut line = builder.part_line(&root, 1, 1, &mass);
+                let mut line = builder.part_line(&root, 1, vec![String::new()], &mass);
                 line.item = "1".into();
                 lines.push(line);
             }

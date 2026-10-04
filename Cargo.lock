@@ -364,6 +364,7 @@ dependencies = [
  "geop-ops",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",
+ "geop-ops-inspect",
  "serde",
 ]
 

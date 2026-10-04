@@ -213,6 +213,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
         name: format!("part {k}"),
         designation: "ISO 4762 M4x12".into(),
         material: "Steel".into(),
+        ..Default::default()
     };
     let lines: Vec<PartsListLine> = (1..=5).map(line).collect();
     let args = DrawingArgs {
@@ -243,4 +244,180 @@ fn a_bill_of_materials_stands_on_the_title_block() {
         error.contains("40 lines") && error.contains("A4"),
         "{error}"
     );
+}
+
+/// A block `size` on a side, as a component to place.
+fn block(size: f64) -> std::sync::Arc<geop_ops::Component<S>> {
+    let mut part = Part::<S>::new();
+    cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(size, size, size)).unwrap();
+    std::sync::Arc::new(geop_ops::Component::new(
+        "block.geop".into(),
+        part,
+        Default::default(),
+    ))
+}
+
+/// Places `component` in `part` as `name`, at `at`, turned `degrees` about
+/// `x`, `y` and `z`.
+fn place(
+    part: &mut Part<S>,
+    component: &std::sync::Arc<geop_ops::Component<S>>,
+    name: &str,
+    at: Vector3<S>,
+    degrees: [f64; 3],
+) {
+    let pose = geop_core_math::primitives::Pose::from_euler(at, degrees.map(S::from_f64)).unwrap();
+    let instance = geop_ops::Instance {
+        component: component.clone(),
+        pose,
+        parameter: None,
+        fixed: true,
+        flexible: false,
+    };
+    part.add_instance(instance, name).unwrap();
+}
+
+/// A hundred blocks of one part in a row, placed alike but for where: one
+/// view of the block serves them all, and each draws its square from the
+/// front, none hiding another.
+#[test]
+fn repeated_parts_share_their_view() {
+    use crate::scene::Scene;
+    let mut part = Part::<S>::new();
+    let unit = block(1.0);
+    for k in 0..100 {
+        place(&mut part, &unit, &format!("b{k}"), v(2.0 * k as f64, 0.0, 0.0), [0.0; 3]);
+    }
+    let scene = Scene::of(&part).unwrap();
+    assert_eq!(scene.bodies.len(), 100);
+    assert_eq!(scene.groups().len(), 1, "one view of the block for all");
+    let front = scene
+        .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
+        .unwrap();
+    assert_eq!((count(&front, true), count(&front, false)), (400, 0));
+    assert_extents(&front, [0.0, 0.0, 199.0, 1.0]);
+
+    // Turned, a block is seen from another side: a view of its own.
+    place(&mut part, &unit, "turned", v(0.0, 5.0, 0.0), [0.0, 0.0, 90.0]);
+    assert_eq!(Scene::of(&part).unwrap().groups().len(), 2);
+}
+
+/// A block of side 2 in front of another, which stands 1 to its right and
+/// 1 higher: from the front, the corner of the one behind that the front
+/// one covers is hidden — two dashed sides inside the front square — and
+/// its other sides are seen; the front one is seen whole.
+#[test]
+fn a_part_in_front_hides_one_behind() {
+    use crate::scene::Scene;
+    let mut part = Part::<S>::new();
+    let big = block(2.0);
+    place(&mut part, &big, "front", v(0.0, 0.0, 0.0), [0.0; 3]);
+    place(&mut part, &big, "back", v(1.0, 5.0, 1.0), [0.0; 3]);
+    let scene = Scene::of(&part).unwrap();
+    let front = scene
+        .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
+        .unwrap();
+    let of = |body: usize, visible: bool| {
+        front
+            .lines
+            .iter()
+            .filter(|l| l.body == body && l.visible == visible)
+            .count()
+    };
+    assert_eq!(of(0, true), 4, "{:#?}", summary(&front));
+    assert_eq!(of(0, false), 0, "{:#?}", summary(&front));
+    // The block behind: its left and bottom sides cut where they pass
+    // behind the front one, the halves inside hidden.
+    assert_eq!(of(1, false), 2, "{:#?}", summary(&front));
+    assert_eq!(of(1, true), 4, "{:#?}", summary(&front));
+    for line in front.lines.iter().filter(|l| !l.visible) {
+        let e = line.curve.domain();
+        for t in [e.0, e.1] {
+            let p = line.curve.evaluate(t).unwrap();
+            assert!(
+                (0..2).all(|k| p[k].to_f64() >= 1.0 - 1e-9 && p[k].to_f64() <= 2.0 + 1e-9),
+                "a hidden line inside the front square: {:#?}",
+                summary(&front)
+            );
+        }
+    }
+    let without = scene
+        .project(
+            &ViewKind::Front.frame().unwrap(),
+            &ViewOptions {
+                hidden_lines: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(count(&without, false), 0);
+    assert_eq!(count(&without, true), 8);
+}
+
+/// An assembly's bill of materials balloons each line once, however often
+/// its part is placed, around the view that shows them all, with the items
+/// the caller numbered; a line of no part drawn gets none.
+#[test]
+fn an_assembly_balloons_each_line_once() {
+    use crate::{
+        DrawingArgs, PartsListLine, compose,
+        sheet::{Layer, Shape},
+    };
+    let mut part = Part::<S>::new();
+    let (big, small) = (block(4.0), block(1.0));
+    place(&mut part, &big, "base", v(0.0, 0.0, 0.0), [0.0; 3]);
+    let mut placements = Vec::new();
+    for k in 0..4 {
+        let name = format!("peg{k}");
+        place(&mut part, &small, &name, v(k as f64, 1.0, 4.0), [0.0; 3]);
+        placements.push(name);
+    }
+    let lines = vec![
+        PartsListLine {
+            item: "1".into(),
+            quantity: 1,
+            name: "base".into(),
+            placements: vec!["base".into()],
+            ..Default::default()
+        },
+        PartsListLine {
+            item: "2".into(),
+            quantity: 4,
+            name: "peg".into(),
+            placements,
+            ..Default::default()
+        },
+        PartsListLine {
+            item: "3".into(),
+            quantity: 1,
+            name: "wire".into(),
+            ..Default::default()
+        },
+    ];
+    let args = DrawingArgs {
+        bom: true,
+        ..Default::default()
+    };
+    let sheet = compose(&part, &args, "", &lines).unwrap();
+    let balloons: Vec<[f64; 2]> = sheet
+        .strokes
+        .iter()
+        .filter_map(|s| match s.shape {
+            Shape::Circle { center, radius } if s.layer == Layer::Dimension && radius == 4.0 => {
+                Some(center)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(balloons.len(), 2, "{balloons:?}");
+    let distance = (balloons[0][0] - balloons[1][0]).hypot(balloons[0][1] - balloons[1][1]);
+    assert!(distance >= 8.0, "the balloons overlap: {balloons:?}");
+    for item in ["1", "2"] {
+        let labelled = sheet
+            .labels
+            .iter()
+            .filter(|l| l.layer == Layer::Dimension && l.text == item)
+            .count();
+        assert_eq!(labelled, 1, "balloon {item}");
+    }
 }

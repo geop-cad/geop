@@ -339,3 +339,114 @@ fn every_example_draws() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// The example workspace `name` built: its first file, as that file's
+/// path, and the part.
+fn example_assembly(name: &str) -> (&'static str, Part<S>) {
+    let (_, files) = crate::examples::workspaces()
+        .into_iter()
+        .find(|(n, _)| *n == name)
+        .expect("the example is there");
+    let files = files();
+    let (path, program) = files[0].clone();
+    let files = files
+        .into_iter()
+        .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
+        .collect();
+    let workspace = crate::Workspace::<S>::new(crate::stdlib::WithStandardParts(files));
+    (path, program.build(&workspace.scope(path)).unwrap())
+}
+
+/// The paper's `y` range a line spans: its heights in the front view.
+fn heights(line: &geop_ops_drawing::ViewLine<S>) -> (f64, f64) {
+    let (a, b) = line.curve.domain();
+    let (p, q) = (line.curve.evaluate(a).unwrap(), line.curve.evaluate(b).unwrap());
+    let (p, q) = (p[1].to_f64(), q[1].to_f64());
+    (p.min(q), p.max(q))
+}
+
+/// The bolted plate from the front: the 5 mm plate, the M4x12 screw's
+/// head on it, its shank hidden inside the plate and inside the 3.2 mm nut
+/// under it and seen below that, down to its end 7 under the plate. With
+/// its bill of materials, the sheet balloons the plate, the screw and the
+/// nut — items 1 to 3.
+#[test]
+fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
+    use geop_ops_drawing::{
+        scene::Scene,
+        sheet::{Layer, Shape},
+    };
+    let (path, part) = example_assembly("bolted_plate");
+    let scene = Scene::of(&part).unwrap();
+    let paths: Vec<&str> = scene.bodies.iter().map(|b| b.path.as_str()).collect();
+    assert_eq!(paths, ["plate", "screw", "nut"]);
+    let front = scene
+        .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
+        .unwrap();
+    let of = |path: &str, visible: bool| -> Vec<(f64, f64)> {
+        front
+            .lines
+            .iter()
+            .filter(|l| scene.bodies[l.body].path == path && l.visible == visible)
+            .map(heights)
+            .collect()
+    };
+    let inside = |(lo, hi): (f64, f64), from: f64, to: f64| lo >= from - 1e-9 && hi <= to + 1e-9;
+    let screw_hidden = of("screw", false);
+    assert!(
+        screw_hidden
+            .iter()
+            .any(|&h| inside(h, -3.2, 5.0) && h.1 - h.0 > 8.1),
+        "the shank through the plate and the nut is hidden: {screw_hidden:?}"
+    );
+    let screw_seen = of("screw", true);
+    assert!(
+        screw_seen
+            .iter()
+            .all(|&h| !inside(h, 0.0, 5.0) || h.1 - h.0 < 1e-9),
+        "nothing of the screw is seen through the plate: {screw_seen:?}"
+    );
+    assert!(
+        screw_seen.iter().any(|&h| h.0 >= 5.0 - 1e-9),
+        "its head is seen on the plate: {screw_seen:?}"
+    );
+    assert!(
+        screw_seen
+            .iter()
+            .any(|&h| inside(h, -7.0, -3.2) && h.1 - h.0 > 3.0),
+        "its end is seen under the nut: {screw_seen:?}"
+    );
+    let nut_seen = of("nut", true);
+    assert!(
+        !nut_seen.is_empty() && nut_seen.iter().all(|&h| inside(h, -3.2, 0.0)),
+        "the nut is seen under the plate: {nut_seen:?}"
+    );
+
+    let args = DrawingArgs {
+        views: vec![ViewKind::Front],
+        bom: true,
+        ..Default::default()
+    };
+    let parts = crate::inspect::parts_list(&part, path, &args).unwrap();
+    let sheet = compose(&part, &args, "", &parts).unwrap();
+    let balloons = sheet
+        .strokes
+        .iter()
+        .filter(|s| {
+            s.layer == Layer::Dimension
+                && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
+        })
+        .count();
+    assert_eq!(balloons, 3);
+    for item in ["1", "2", "3"] {
+        assert_eq!(
+            sheet
+                .labels
+                .iter()
+                .filter(|l| l.layer == Layer::Dimension && l.text == item)
+                .count(),
+            1,
+            "balloon {item}"
+        );
+    }
+}
