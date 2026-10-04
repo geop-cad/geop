@@ -314,3 +314,79 @@ fn variable_radius_on_a_straight_edge() {
         }
     }
 }
+
+/// A cylinder of radius 0.5 and height 1 standing on the origin, with a
+/// flat cut along it at `x = 0.3`: a D-shaped shaft.
+fn d_shaft() -> Part<S> {
+    let mut part = Part::new();
+    let shaft =
+        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::from_f64(0.5), S::ONE).unwrap();
+    let flat = cube_solid(&mut part, "f", v(0.3, -1.0, -1.0), v(1.0, 1.0, 2.0)).unwrap();
+    let namer = Namer::new("flat", "f").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        shaft,
+        flat,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part
+}
+
+/// The edges at the D-shaft's two top corners rounded: the flat's top
+/// edge, straight between planes, swept; the top's rim and the flat's
+/// sides, each between a plane and the cylinder, rolled. All end at the
+/// balls touching the top, the flat and the cylinder, whose pieces round
+/// the corners.
+#[test]
+fn d_shaft_fillet_top_corners() {
+    let mut part = d_shaft();
+    let y = 0.16f64.sqrt();
+    let model = part.topology();
+    let corners: Vec<_> = model
+        .vertices
+        .iter()
+        .filter(|(_, vertex)| {
+            [y, -y]
+                .iter()
+                .any(|&y| vertex.point.could_be_equal(&v(0.3, y, 1.0)))
+        })
+        .map(|(&id, _)| id)
+        .collect();
+    assert_eq!(corners.len(), 2);
+    let mut edges: Vec<String> = model
+        .edges
+        .iter()
+        .filter(|(_, e)| corners.contains(&e.start_vertex) || corners.contains(&e.end_vertex))
+        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+        .collect();
+    edges.sort();
+    edges.dedup();
+    let r = 0.1;
+    blended(&mut part, &edges, &BlendShape::round(r));
+    // `r` below the top, from the flat and inside the cylinder.
+    let y = (0.16f64 - 0.04).sqrt();
+    let centers = [y, -y].map(|y| v::<S>(0.3 - r, y, 1.0 - r));
+    let balls: Vec<_> = part
+        .topology()
+        .faces
+        .iter()
+        .filter(|&(&id, _)| part.name_of(id).unwrap().ends_with(",corner)"))
+        .collect();
+    assert_eq!(balls.len(), 2);
+    for (_, face) in balls {
+        let ps = samples(&face.surface, 4);
+        let near = |c: &Vector3<S>| ps[0][1] * c[1].to_f64() > 0.0;
+        let center = centers.iter().find(|c| near(c)).unwrap();
+        for p in ps {
+            let off = v::<S>(p[0], p[1], p[2]).sub(center).norm().to_f64() - r;
+            assert!(
+                off.abs() <= 2.0 * DEVIATION * r,
+                "{p:?} is {off:e} off the ball"
+            );
+        }
+    }
+}

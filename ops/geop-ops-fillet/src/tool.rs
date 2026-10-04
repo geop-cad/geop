@@ -17,7 +17,7 @@ use geop_core_math::{
     vector::{Vector, Vector2, Vector3, Vector4},
 };
 use geop_core_topology::{
-    Sense, SolidId,
+    FaceId, Sense, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, Namer, Part};
@@ -205,6 +205,8 @@ pub(crate) struct Corner<S: Scalar> {
     pub(crate) namer: Namer,
     pub(crate) center: Vector3<S>,
     pub(crate) radius: S,
+    /// The faces the ball touches, one per contact.
+    pub(crate) faces: Vec<FaceId>,
     pub(crate) contacts: Vec<Vector3<S>>,
     pub(crate) apex: Vector3<S>,
     pub(crate) inside: Vector3<S>,
@@ -672,14 +674,4 @@ fn corner_faces<S: Scalar>(
         names.faces.push(corner.namer.name(&[&format!("side{k}")]));
     }
     Ok(())
-}
-
-/// Builds `tool` into a solid named `N(tool)`, `namer` the blended edge's
-/// (see [`build_tools`]).
-pub(crate) fn build_tool<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
-    tool: &Tool<S>,
-) -> GeopResult<SolidId> {
-    build_tools(part, &[(namer, tool)], &[], namer.name(&["tool"]))
 }

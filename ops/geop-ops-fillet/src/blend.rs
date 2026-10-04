@@ -96,7 +96,7 @@ use geop_ops_extrude_revolve::{
 };
 
 use crate::corner;
-use crate::rolling::{self, Radii, Rolled, tangent_chain};
+use crate::rolling::{self, Chain, Radii, Rolled, tangent_chain};
 use crate::tool::{self, Cap, Corner, Tool, ToolSpan, ToolStation, embed};
 
 /// What a blend replaces an edge's corner with (see the module docs).
@@ -1054,7 +1054,7 @@ pub(crate) struct Plan<S: Scalar> {
 /// it — or rolled along a tangent chain (see [`crate::rolling`]).
 enum Planned<S: Scalar> {
     Swept(Plan<S>, Vec<EdgeId>),
-    Rolled(Rolled<S>),
+    Rolled(Chain),
 }
 
 /// Whether both faces of `edge` are planes.
@@ -1136,9 +1136,7 @@ fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopR
         BlendShape::Chamfer { .. } => Err(GeopError::new(
             "only a straight edge between two planes, and a whole circle between planes across its axis and cylinders and cones around it, are chamfered",
         )),
-        BlendShape::Fillet { radii } => {
-            Ok(Planned::Rolled(rolling::plan_rolled(part, chain, radii)?))
-        }
+        BlendShape::Fillet { .. } => Ok(Planned::Rolled(chain)),
     }
 }
 
@@ -1304,7 +1302,7 @@ pub fn blend<S: Scalar>(
     let mut solid: Option<SolidId> = None;
     let mut covered: Vec<EdgeId> = Vec::new();
     let mut plans: Vec<(Plan<S>, ToolProfile<S>)> = Vec::new();
-    let mut rolled: Vec<(String, Rolled<S>)> = Vec::new();
+    let mut chains: Vec<(String, Chain)> = Vec::new();
     for name in edges {
         let ctx = with_context!("edge {name:?}");
         let edge = part.edge_id(name).with_context(ctx)?;
@@ -1332,46 +1330,49 @@ pub fn blend<S: Scalar>(
                 covered.extend(blended);
                 plans.push((plan, profile));
             }
-            Planned::Rolled(r) => {
-                rolling::check_touches(part.topology(), &r).with_context(ctx)?;
-                covered.extend(r.chain.edges());
-                rolled.push((name.clone(), r));
+            Planned::Rolled(chain) => {
+                covered.extend(chain.edges());
+                chains.push((name.clone(), chain));
             }
         }
     }
     let groups = mitre(part.topology(), &mut plans)?;
-    refuse_rolled_corners(&plans, &rolled)?;
-    let corners = corner::plan_corners(part, namer, &mut plans, &rolled, &covered, shape)?;
-    // The tools joined at corners are built whole, each such component of
-    // them one solid; mitred ones are joined by a union.
-    let components = join_at_corners((0..plans.len()).map(|i| vec![i]).collect(), &corners);
-    let groups = join_at_corners(groups, &corners);
-    let mut target = solid.expect("at least one edge");
-    for (edge, r) in &rolled {
-        let ctx = with_context!("blending edge {edge:?}");
-        let scope = namer.scoped(edge);
-        let tool = tool::build_tool(part, &scope, &r.tool)
-            .with_context(with_context!("the tool of edge {edge:?}"))?;
-        target = apply_tool(part, &scope, target, tool, r.bend).with_context(ctx)?;
+    let corners = corner::plan_corners(part, namer, &mut plans, &chains, &covered, shape)?;
+    let mut rolled: Vec<(String, Rolled<S>)> = Vec::new();
+    if let BlendShape::Fillet { radii } = shape {
+        for ((name, chain), ends) in chains.into_iter().zip(corners.chains) {
+            let ctx = with_context!("edge {name:?}");
+            let r = rolling::plan_rolled(part, chain, radii, ends).with_context(ctx)?;
+            rolling::check_touches(part.topology(), &r).with_context(ctx)?;
+            rolled.push((name, r));
+        }
     }
+    refuse_rolled_corners(&plans, &rolled)?;
+    let tools = Tools {
+        plans: &plans,
+        rolled: &rolled,
+        corners: &corners.corners,
+    };
+    // The tools — the plans', then the rolled ones', by index past them —
+    // joined at corners are built whole, each such component of them one
+    // solid; mitred ones are joined by a union, and applied as one. The
+    // rolled ones first.
+    let all = plans.len() + rolled.len();
+    let components = join_at_corners((0..all).map(|i| vec![i]).collect(), tools.corners);
+    let groups = (plans.len()..all).map(|i| vec![i]).chain(groups).collect();
+    let groups = join_at_corners(groups, tools.corners);
+    let mut target = solid.expect("at least one edge");
     for group in groups {
-        let (first, _) = &plans[group[0]];
-        let ctx = with_context!("blending edge {:?}", first.edge);
-        let scope = namer.scoped(&first.edge);
+        let first = tools.edge(group[0]);
+        let ctx = with_context!("blending edge {first:?}");
+        let scope = namer.scoped(first);
         let mut tool: Option<SolidId> = None;
         for component in components.iter().filter(|c| group.contains(&c[0])) {
-            let (plan, profile) = &plans[component[0]];
-            let own = namer.scoped(&plan.edge);
-            let at: Vec<&Corner<S>> = corners
-                .iter()
-                .filter(|c| c.ends.iter().any(|e| component.contains(&e.tool)))
-                .collect();
-            let built = if at.is_empty() {
-                sweep_tool(part, &own, &plan.section, profile)
-            } else {
-                tools_with_corners(part, namer, &plans, component, &at)
-            }
-            .with_context(with_context!("the tool of edge {:?}", plan.edge))?;
+            let edge = tools.edge(component[0]);
+            let own = namer.scoped(edge);
+            let built = tools
+                .build(part, namer, component)
+                .with_context(with_context!("the tool of edge {edge:?}"))?;
             tool = Some(match tool {
                 None => built,
                 Some(joined) => boolean(
@@ -1382,17 +1383,110 @@ pub fn blend<S: Scalar>(
                     BooleanOp::Union,
                     RemeshParams::default(),
                 )
-                .with_context(with_context!(
-                    "joining the mitred tool of edge {:?}",
-                    plan.edge
-                ))?
+                .with_context(with_context!("joining the mitred tool of edge {edge:?}"))?
                 .ok_or_else(|| GeopError::new("joining mitred tools left nothing"))?,
             });
         }
         let tool = tool.expect("a group has members");
-        target = apply_tool(part, &scope, target, tool, first.section.bend).with_context(ctx)?;
+        let bend = tools.bend(group[0]);
+        target = apply_tool(part, &scope, target, tool, bend).with_context(ctx)?;
     }
     part.rename(target, namer.root())
+}
+
+/// Every tool of a blend: the swept ones' plans, the rolled ones — by index
+/// past the plans — and the corners joining them.
+struct Tools<'a, S: Scalar> {
+    plans: &'a [(Plan<S>, ToolProfile<S>)],
+    rolled: &'a [(String, Rolled<S>)],
+    corners: &'a [Corner<S>],
+}
+
+impl<S: Scalar> Tools<'_, S> {
+    /// The name of the edge tool `i` was planned for.
+    fn edge(&self, i: usize) -> &str {
+        match self.plans.get(i) {
+            Some((plan, _)) => &plan.edge,
+            None => &self.rolled[i - self.plans.len()].0,
+        }
+    }
+
+    /// Which way the edge of tool `i` bends.
+    fn bend(&self, i: usize) -> Bend {
+        match self.plans.get(i) {
+            Some((plan, _)) => plan.section.bend,
+            None => self.rolled[i - self.plans.len()].1.bend,
+        }
+    }
+
+    /// The tools `component` — joined at corners, or one on its own —
+    /// built into one solid: swept, or built whole with the corners (see
+    /// [`tool::build_tools`]), named after the first one's tool.
+    fn build(&self, part: &mut Part<S>, namer: &Namer, component: &[usize]) -> GeopResult<SolidId> {
+        let at: Vec<&Corner<S>> = self
+            .corners
+            .iter()
+            .filter(|c| c.ends.iter().any(|e| component.contains(&e.tool)))
+            .collect();
+        if let ([i], true) = (component, at.is_empty())
+            && let Some((plan, profile)) = self.plans.get(*i)
+        {
+            return sweep_tool(part, &namer.scoped(&plan.edge), &plan.section, profile);
+        }
+        let namers: Vec<Namer> = component
+            .iter()
+            .map(|&i| namer.scoped(self.edge(i)))
+            .collect();
+        // Each tool, and the faces its section touches first and second at
+        // its first and last station.
+        let mut tools = Vec::new();
+        let mut touching = Vec::new();
+        for &i in component {
+            match self.plans.get(i) {
+                Some((plan, profile)) => {
+                    let (tool, swapped) = straight_tool(&plan.section, profile)?;
+                    let [l, r] = plan.section.faces;
+                    let faces = if swapped { [r, l] } else { [l, r] };
+                    tools.push(tool);
+                    touching.push([faces, faces]);
+                }
+                None => {
+                    let rolled = &self.rolled[i - self.plans.len()].1;
+                    tools.push(rolled.tool.clone());
+                    touching.push([rolled.contact_faces(false), rolled.contact_faces(true)]);
+                }
+            }
+        }
+        // The corners' ends, by tool of the component, and the contacts
+        // their sections run between.
+        let mut joined = Vec::new();
+        for &corner in &at {
+            let mut corner = corner.clone();
+            for end in &mut corner.ends {
+                let t = component
+                    .iter()
+                    .position(|&i| i == end.tool)
+                    .ok_or_else(|| GeopError::new("a corner joins a tool of another component"))?;
+                let contact = |face: FaceId| corner_contact(&corner.faces, face);
+                let faces = touching[t][usize::from(end.at_end)];
+                end.contacts = [contact(faces[0])?, contact(faces[1])?];
+                end.tool = t;
+            }
+            joined.push(corner);
+        }
+        let refs: Vec<(&Namer, &Tool<S>)> = namers.iter().zip(&tools).collect();
+        tool::build_tools(part, &refs, &joined, namers[0].name(&["tool"]))
+    }
+}
+
+/// Which of a corner's contacts, the corner touching `faces`, lies on
+/// `face`.
+fn corner_contact(faces: &[FaceId], face: FaceId) -> GeopResult<usize> {
+    faces.iter().position(|&f| f == face).ok_or_else(|| {
+        GeopError::new(format!(
+            "a tool ending at a corner touches face {face}, which the corner's ball does not"
+        ))
+    })
 }
 
 /// `groups` of plans to apply as one tool, joined further wherever
@@ -1413,50 +1507,6 @@ fn join_at_corners<S: Scalar>(groups: Vec<Vec<usize>>, corners: &[Corner<S>]) ->
         groups.push(joined);
     }
     groups
-}
-
-/// The tools of the straight edges `group` of `plans` and the `corners`
-/// their tools meet at, built whole into one solid (see
-/// [`tool::build_tools`]), named after the first edge's tool.
-fn tools_with_corners<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
-    plans: &[(Plan<S>, ToolProfile<S>)],
-    group: &[usize],
-    corners: &[&Corner<S>],
-) -> GeopResult<SolidId> {
-    let namers: Vec<Namer> = group
-        .iter()
-        .map(|&i| namer.scoped(&plans[i].0.edge))
-        .collect();
-    let mut tools = Vec::new();
-    let mut swapped = Vec::new();
-    for &i in group {
-        let (plan, profile) = &plans[i];
-        let (tool, swap) = straight_tool(&plan.section, profile)
-            .with_context(with_context!("the tool of edge {:?}", plan.edge))?;
-        tools.push(tool);
-        swapped.push(swap);
-    }
-    // The corners' ends, by tool of the group, contacts in the order the
-    // tools' sections run.
-    let mut joined = Vec::new();
-    for &corner in corners {
-        let mut corner = corner.clone();
-        for end in &mut corner.ends {
-            let t = group
-                .iter()
-                .position(|&i| i == end.tool)
-                .ok_or_else(|| GeopError::new("a corner joins a tool of another group"))?;
-            if swapped[t] {
-                end.contacts.reverse();
-            }
-            end.tool = t;
-        }
-        joined.push(corner);
-    }
-    let refs: Vec<(&Namer, &Tool<S>)> = namers.iter().zip(&tools).collect();
-    tool::build_tools(part, &refs, &joined, namers[0].name(&["tool"]))
 }
 
 /// Cuts `tool` away from `target`, or fills it in, as `bend` says — named
