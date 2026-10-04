@@ -135,7 +135,9 @@ clips the part and the placed parts and caps what it cuts open from
 stencil counters drawn with them.
 
 Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball
-bearings, T-slot extrusions, a NEMA 17 motor) live in
+bearings, T-slot extrusions, a NEMA 17 motor, involute spur gears and
+their rack, GT2 pulleys, shaft collars, flange couplings, MGN linear
+guides, hobby servos) live in
 `geop-cad-base/src/stdlib`: one program per family, generated in Rust,
 its sizes the rows of a table parameter `size`. Every workspace reads them
 as read-only files named `std:…` (`std:iso4032_hex_nut.geop`) through

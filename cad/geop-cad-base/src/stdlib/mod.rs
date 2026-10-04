@@ -12,9 +12,14 @@
 //! Every part turns around, or runs along, the `z` axis, and carries named
 //! datums to mate it by: `axis`, and a plane through the origin for the
 //! face it sits on — `seat` under a screw's head, `top` of a countersunk
-//! screw, `base` of a nut, washer, pin or standoff, `side` of a bearing,
-//! `end` of an extrusion, `face` of a motor. A concentric mate on `axis`
-//! and a coincident one on that plane place it.
+//! screw, `base` of a nut, washer, pin or standoff, `side` of a bearing or
+//! a gear, `end` of an extrusion, pulley or coupling, `face` of a motor,
+//! `mount` of a servo; a part running along `z` sits on a plane beside it,
+//! `back` of a rack, `base` of a rail, `top` of a carriage. A concentric
+//! mate on `axis` and a coincident one on that plane place it. The `axis`
+//! is a joint's connector too: a gear or a pulley turns about it, a
+//! carriage slides along its rail's, a servo's horn turns about it — and a
+//! gear coupling ties two gears, or two pulleys on a belt (see [`drive`]).
 //!
 //! Threads are not modelled: a screw's shank and a nut's bore are their
 //! nominal diameter, and [`StandardPart::threaded`] names the faces a

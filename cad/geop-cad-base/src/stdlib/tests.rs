@@ -321,6 +321,105 @@ fn a_12_tooth_spur_gear_builds() {
     }
 }
 
+/// The drive and motion parts are ordered as a bill of materials lists
+/// them — every parameter a size is chosen by — and are made of what they
+/// are made of; a servo weighs what it does.
+#[test]
+fn drive_and_motion_parts_are_designated_and_made_of_something() {
+    use geop_ops::part::State;
+
+    let text = |pairs: &[(&str, &str)]| -> State {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), ParamValue::Text(v.to_string())))
+            .collect()
+    };
+    let number = |v: f64| ParamValue::Number(geop_ops::Design::from_f64(v));
+    let mut gear = text(&[("size", "m1.5"), ("teeth", "z32")]);
+    gear.insert("width".into(), number(12.0));
+    gear.insert("bore".into(), number(8.0));
+    let mut rail = text(&[("size", "MGN12")]);
+    rail.insert("length".into(), number(250.0));
+    let mut rack = text(&[("size", "m1")]);
+    rack.insert("teeth".into(), number(25.0));
+    for (file, values, want, material) in [
+        (
+            "std:spur_gear.geop",
+            gear,
+            "Spur gear m1.5 z32 width 12 bore 8",
+            "Steel",
+        ),
+        ("std:gear_rack.geop", rack, "Gear rack m1 teeth 25", "Steel"),
+        (
+            "std:gt2_pulley_20t.geop",
+            text(&[("size", "20T-8")]),
+            "GT2 pulley 20T-8",
+            "Aluminium 6061",
+        ),
+        (
+            "std:shaft_collar.geop",
+            text(&[("size", "8")]),
+            "DIN 705 A 8",
+            "Steel",
+        ),
+        (
+            "std:flange_coupling.geop",
+            text(&[("size", "5x8")]),
+            "Flange coupling 5x8",
+            "Aluminium 6061",
+        ),
+        (
+            "std:linear_rail.geop",
+            rail,
+            "Linear rail MGN12 length 250",
+            "Steel",
+        ),
+        (
+            "std:linear_carriage.geop",
+            text(&[("size", "MGN12H")]),
+            "Linear carriage MGN12H",
+            "Steel",
+        ),
+        ("std:servo_sg90.geop", State::new(), "Servo SG90", "Plastic"),
+        (
+            "std:servo_mg996r.geop",
+            State::new(),
+            "Servo MG996R",
+            "Plastic",
+        ),
+    ] {
+        let standard = super::standard(file, &values).unwrap();
+        // Unset parameters are the family's own: designated as defined.
+        let got = if values.is_empty() {
+            super::part(file)
+                .unwrap()
+                .designate(&super::part(file).unwrap().program.inputs())
+        } else {
+            standard.designation
+        };
+        assert_eq!(got, want, "{file}");
+        let made_of = super::part(file)
+            .unwrap()
+            .program
+            .parameters
+            .material
+            .clone();
+        assert!(
+            made_of
+                .as_ref()
+                .is_some_and(|m| m.name.starts_with(material)),
+            "{file}: {made_of:?}"
+        );
+    }
+    // The SG90's envelope, weighed as its material says: 9 g.
+    let sg90 = super::part("std:servo_sg90.geop").unwrap();
+    let density = sg90.program.parameters.material.as_ref().unwrap().density;
+    let volume = 22.8 * 12.2 * (15.9 + 6.8)
+        + (32.2 - 22.8) * 12.2 * 2.5
+        + std::f64::consts::PI / 4.0 * (11.4f64.powi(2) * 4.0 + 4.8f64.powi(2) * 3.2);
+    assert!((density * volume * 1e-6 - 9.0).abs() < 1e-9);
+}
+
 /// One gap of a 20-tooth gear of module 1 cut from its blank, turned
 /// `angle` degrees round: each is one boolean of building the gear.
 fn one_gap_cut(angle: f64) -> Result<(), String> {

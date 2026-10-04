@@ -1391,6 +1391,87 @@ fn a_standard_screw_is_placed_in_a_plate() {
     }
 }
 
+/// A linear guide is placed from the standard parts as the front end does:
+/// the rail, its size and length picked in its dialog, then a carriage of
+/// the same size on it by a slider joint between their `axis` datums —
+/// which leaves it the one motion along the rail, and puts it on the rail.
+#[test]
+fn a_carriage_slides_on_a_standard_rail() {
+    use geop_ops::part::{ParamValue, pose_parameter};
+
+    let (rail, carriage) = ("std:linear_rail.geop", "std:linear_carriage.geop");
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("guide.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let update = editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    let step = update.step.unwrap();
+    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen from a list");
+    };
+    for file in [rail, carriage, "std:spur_gear.geop", "std:servo_sg90.geop"] {
+        assert!(
+            options.iter().any(|o| o.value == file),
+            "{file}: {options:?}"
+        );
+    }
+    editor.handle(dialog("file", Value::Choice(rail.into())));
+    editor.handle(dialog("fixed", Value::Bool(true)));
+    editor.handle(dialog("parameter:size", Value::Choice("MGN9".into())));
+    let update = editor.handle(dialog("parameter:length", Value::Number(300.0)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    editor.handle(dialog("file", Value::Choice(carriage.into())));
+    editor.handle(dialog("parameter:size", Value::Choice("MGN9H".into())));
+    editor.handle(dialog("add_mate", Value::Choice("slider".into())));
+    let update = editor.handle(dialog(
+        "mate:m1:entities",
+        Value::Entities(vec![
+            EntityRef::datum("part1/axis"),
+            EntityRef::datum("part2/axis"),
+        ]),
+    ));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let program = editor.program();
+    let PartOperation::AddPart(args) = &program.steps[0].operation else {
+        panic!("the rail is placed");
+    };
+    assert_eq!(
+        args.parameters.get("length"),
+        Some(&ParamValue::Number(geop_ops::Design::from_f64(300.0)))
+    );
+    let part = editor.part();
+    assert!(part.check_mates(|_| true).unwrap().converged);
+    let joints = part.joints().unwrap();
+    assert_eq!(joints.len(), 1, "{joints:?}");
+    assert_eq!(joints[0].kind, "Slider");
+    // On the rail: its axis on the rail's — the carriage drawn sitting on a
+    // rail at the origin, so its pose turns nothing and moves it only along
+    // the rail.
+    let Some(ParamValue::Pose(pose)) = program.state.get(&pose_parameter("part2")) else {
+        panic!("the carriage has a pose");
+    };
+    let origin = pose.apply(&Vector3::zero());
+    let origin = [0, 1, 2].map(|k| origin[k].to_f64());
+    assert!(
+        origin[0].abs() < 1e-6 && origin[1].abs() < 1e-6,
+        "{origin:?}"
+    );
+}
+
 /// A robot of two boards and 20 screws, driven as the front end does: the
 /// drag tool takes the screw under the pointer, and dragging it sends where
 /// that screw went — not the hundred other placed parts, which stay where
