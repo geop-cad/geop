@@ -349,7 +349,7 @@ fn combine<S: Scalar>(
             Keep::Drop => {}
         }
     }
-    check_closed(model, &decisions).with_context(&ctx)?;
+    check_closed(part, &decisions).with_context(&ctx)?;
 
     for &face_id in &reverse {
         part.reverse_face(face_id).with_context(&ctx)?;
@@ -578,11 +578,12 @@ pub const NOTHING_STOPS: &str = "up to next: nothing stops the profile";
 /// where the result touches itself along the edge. An odd count is a hole in
 /// the result, so a face was kept or dropped wrongly, or remesh left a face
 /// straddling the other solid; the error lists every face along that edge
-/// with its classification, which tells the two apart.
+/// with its name and classification, which tells the two apart.
 fn check_closed<S: Scalar>(
-    model: &Model<S>,
+    part: &Part<S>,
     decisions: &HashMap<FaceId, (FaceClassification, Keep)>,
 ) -> GeopResult<()> {
+    let model = part.topology();
     let mut uses: HashMap<EdgeId, usize> = HashMap::new();
     for (&face_id, &(_, decision)) in decisions {
         if decision == Keep::Drop {
@@ -607,10 +608,15 @@ fn check_closed<S: Scalar>(
         .into_iter()
         .map(|coedge| {
             let face = model.get_coedge(coedge)?.face;
-            Ok(match decisions.get(&face) {
-                Some((class, decision)) => format!("{face}: {class:?} -> {decision:?}"),
-                None => format!("{face}: not in either solid"),
-            })
+            let name = part.name_of(face).unwrap_or("?");
+            let decision = match decisions.get(&face) {
+                Some((class, decision)) => format!("{class:?} -> {decision:?}"),
+                None => "not in either solid".to_string(),
+            };
+            Ok(format!(
+                "{face} {name:?}: {decision}, bounded by {:?}",
+                face_corners(model, face)?
+            ))
         })
         .collect::<GeopResult<_>>()?;
     Err(GeopError::new(format!(
@@ -619,6 +625,26 @@ fn check_closed<S: Scalar>(
         model.get_vertex(e.end_vertex)?.point,
         faces.join(", ")
     )))
+}
+
+/// The corners of `face_id`'s boundaries, outer loop first — what an error
+/// shows of a face, to tell which curves were imprinted into it.
+fn face_corners<S: Scalar>(model: &Model<S>, face_id: FaceId) -> GeopResult<Vec<Vec<[f64; 3]>>> {
+    let at = |v: VertexId| -> GeopResult<[f64; 3]> {
+        let p = model.get_vertex(v)?.point;
+        Ok([0, 1, 2].map(|k| p[k].to_f64()))
+    };
+    model
+        .get_face(face_id)?
+        .boundaries()
+        .map(|boundary| match boundary {
+            BoundaryType::Vertex(v) => Ok(vec![at(v)?]),
+            BoundaryType::Loop(anchor) => model
+                .iterate_loop_coedges(anchor)
+                .map(|c| at(model.coedge_start_vertex_id(c)?))
+                .collect(),
+        })
+        .collect()
 }
 
 /// Where `face_id` sits relative to `other_solid`, decided at points strictly
@@ -694,26 +720,9 @@ pub fn classify_face<S: Scalar>(
     )?;
     if let Some(&(classification, point)) = decided.first() {
         if let Some((other, other_point)) = decided.iter().find(|(c, _)| *c != classification) {
-            // The face's boundary, corner by corner: which curves were
-            // imprinted into it, and so — between the two points — which
-            // one was not.
-            let corners = |boundary: BoundaryType| -> GeopResult<Vec<[f64; 3]>> {
-                let at = |v: VertexId| -> GeopResult<[f64; 3]> {
-                    let p = model.get_vertex(v)?.point;
-                    Ok([0, 1, 2].map(|k| p[k].to_f64()))
-                };
-                match boundary {
-                    BoundaryType::Vertex(v) => Ok(vec![at(v)?]),
-                    BoundaryType::Loop(anchor) => model
-                        .iterate_loop_coedges(anchor)
-                        .map(|c| at(model.coedge_start_vertex_id(c)?))
-                        .collect(),
-                }
-            };
-            let loops = face
-                .boundaries()
-                .map(corners)
-                .collect::<GeopResult<Vec<_>>>()?;
+            // The face's boundary: which curves were imprinted into it, and
+            // so — between the two points — which one was not.
+            let loops = face_corners(model, face_id)?;
             return Err(GeopError::new(format!(
                 "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}"
             )));
@@ -1472,6 +1481,140 @@ mod tests {
         let block = cube(&mut part, CORNER, UNIT);
         let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.3, 1.0, Axis::Z);
         op(&mut part, block, bore, BooleanOp::Difference);
+    }
+
+    /// A plate 6 by 3 and a blind hole to drill into it from its top: a
+    /// cylinder of radius 0.33 around `(3, 1.5)`, its start cap flush with
+    /// the top.
+    fn plate_and_blind_hole(
+        part: &mut M,
+    ) -> (geop_core_topology::SolidId, geop_core_topology::SolidId) {
+        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
+        let plate = cube(part, [0.0, 0.0, 0.0], [6.0, 3.0, 0.5]);
+        let hole = cylinder(part, [3.0, 1.5, 0.2], 0.33, 0.3, Axis::Z);
+        (plate, hole)
+    }
+
+    /// The plate and hole of [`plate_and_blind_hole`] remeshed, and the disc
+    /// the remesh cuts from the plate's top, inside the hole's rim.
+    fn plate_and_blind_hole_remeshed(
+        part: &mut M,
+    ) -> (geop_core_topology::SolidId, geop_core_topology::FaceId) {
+        let (plate, hole) = plate_and_blind_hole(part);
+        crate::remesh::remesh::remesh(part, &namer(), plate, hole, RemeshParams::default())
+            .unwrap();
+        let model = part.topology();
+        if let Err(errors) = validate_fast(&validation(), model) {
+            panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
+        }
+        let in_rim = |p: &[f64; 3]| (p[0] - 3.0).hypot(p[1] - 1.5) < 0.34 && p[2] > 0.49;
+        let disc = model
+            .solid_faces(plate)
+            .unwrap()
+            .into_iter()
+            .find(|&face| {
+                let corners = super::face_corners(model, face).unwrap();
+                corners.len() == 1 && corners[0].iter().all(in_rim)
+            })
+            .expect("a face of the plate inside the hole's rim");
+        (hole, disc)
+    }
+
+    /// Reported as the parametric plate made 6 wide with an M6 hole: the
+    /// result was left open along the hole's rim, as the disc cut from the
+    /// top was classified outside the hole rather than on its cap.
+    #[test]
+    fn plate_minus_blind_hole_from_its_top() {
+        let mut part = M::new();
+        let (plate, hole) = plate_and_blind_hole(&mut part);
+        op(&mut part, plate, hole, BooleanOp::Difference);
+    }
+
+    /// The disc cut from the plate's top lies on the hole's start cap, so
+    /// every point a boolean classifies it by is on the hole's boundary.
+    #[test]
+    fn blind_hole_cap_covers_the_disc_cut_from_the_top() {
+        use geop_core_topology::contains::{
+            face::face_interior_point_where,
+            shell::{PointClassification, shell_contains},
+        };
+        let mut part = M::new();
+        let (hole, disc) = plate_and_blind_hole_remeshed(&mut part);
+        let model = part.topology();
+        let params = RemeshParams::default();
+        let shell = model.get_solid(hole).unwrap().shells[0];
+        let mut checked = 0;
+        face_interior_point_where(
+            model,
+            disc,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+            super::SEED,
+            |u, v| {
+                let point = model.get_face(disc)?.surface.evaluate(u, v)?;
+                let class = shell_contains(
+                    model,
+                    shell,
+                    point,
+                    params.max_nodes,
+                    params.curve_curve_min_subdivision_size,
+                    super::SEED,
+                )?;
+                assert!(
+                    !matches!(
+                        class,
+                        PointClassification::Inside | PointClassification::Outside
+                    ),
+                    "{point:?} of the disc, at uv=({u:?}, {v:?}), is {class:?}"
+                );
+                checked += 1;
+                Ok(false)
+            },
+        )
+        .unwrap();
+        assert!(checked > 0);
+    }
+
+    /// The point the disc cut from the plate's top was once classified by:
+    /// beside it — 0.44 from the hole's axis, the rim 0.33 — and outside it,
+    /// as a point and as the box around it `face_interior_point_where` asks
+    /// about. With the boolean's seed, the first ray from the box grazes the
+    /// rim; cast from the box itself, it counted that as one crossing.
+    #[test]
+    fn point_beside_the_disc_cut_from_the_top_is_outside_it() {
+        use geop_core_math::scalars::Ring;
+        use geop_core_topology::contains::face::{PointClassification, face_contains};
+        let mut part = M::new();
+        let (_, disc) = plate_and_blind_hole_remeshed(&mut part);
+        let model = part.topology();
+        let (u, v) = (
+            ScalInF64::from_f64(0.42698015887332674),
+            ScalInF64::from_f64(0.5220523370528238),
+        );
+        let point = model
+            .get_face(disc)
+            .unwrap()
+            .surface
+            .evaluate(u, v)
+            .unwrap();
+        assert!(
+            (point[0].to_f64() - 3.0).hypot(point[1].to_f64() - 1.5) > 0.4,
+            "{point:?}"
+        );
+        let params = RemeshParams::default();
+        let epsilon = params.curve_curve_min_subdivision_size;
+        let neighbourhood = |t: ScalInF64| t.sub(epsilon).union(t.add(epsilon));
+        let mut wrong = Vec::new();
+        for (u, v) in [(u, v), (neighbourhood(u), neighbourhood(v))] {
+            for seed in (0..64).chain([super::SEED]) {
+                let class =
+                    face_contains(model, disc, u, v, params.max_nodes, epsilon, seed).unwrap();
+                if class != PointClassification::Outside {
+                    wrong.push(format!("{class:?} at ({u:?}, {v:?}) with seed {seed}"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

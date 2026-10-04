@@ -104,6 +104,14 @@ pub fn loops_contain<S: Scalar>(
         }
     }
 
+    // The query touches no vertex and no pcurve, so — connected as it is —
+    // all of it lies on one side of the boundary, and any one point of it
+    // decides which: the ray is cast from a sharp one. Cast from a wide
+    // query, the ray would be a strip, and a strip merely grazing a pcurve
+    // overlaps it as a crossing does — one hit, flipping the parity — where
+    // a ray from any single point of the query misses it or crosses twice.
+    let origin = Vector2::from_array([query[0].midpoint(), query[1].midpoint()]);
+
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
     let du = u_hi.sub(u_lo);
@@ -117,11 +125,11 @@ pub fn loops_contain<S: Scalar>(
     let mut last_rejection = String::new();
     'attempt: for _ in 0..MAX_RAY_ATTEMPTS {
         let dir = rng.next_direction2::<S>();
-        let far = query.add(&dir.prod_scalar(ray_length));
+        let far = origin.add(&dir.prod_scalar(ray_length));
         let ray: NurbCurve2D<S> = NurbCurve::try_new(
             1,
             vec![
-                Vector3::from_array([query[0], query[1], S::ONE]),
+                Vector3::from_array([origin[0], origin[1], S::ONE]),
                 Vector3::from_array([far[0], far[1], S::ONE]),
             ],
             vec![S::ZERO, S::ZERO, S::ONE, S::ONE],

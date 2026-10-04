@@ -262,15 +262,13 @@ fn the_parametric_plate_is_a_plate_with_a_hole() {
     );
 }
 
-/// The parametric plate made 6 wide with an M6 hole: the hole's cut
-/// leaves the boolean's result open along the hole's edge on the top face
-/// ("the kept faces use edge ... 3 time(s)" — the hole's start cap
-/// `OnSameNormal` with the top). The same plate 4 wide with M4, or 5 wide
-/// with M6, cuts fine — which is why the `parametric_plates` example places
-/// it 5 wide. A boolean defect, not a sketch one: the sketch solves to a
-/// circle of radius 0.33 around (3, 1.5) on the top, as meant.
+/// The parametric plate made 6 wide with an M6 hole. Its cut once left the
+/// result open around the hole's rim: the disc cut from the top was taken
+/// for outside the hole, because the point classifying it, beside the rim,
+/// was found inside the disc by a ray grazing the rim — cast from a box
+/// around the point, it was a strip, and touching the rim counted as one
+/// crossing. Reduced to a plate and a cylinder in the booleans' tests.
 #[test]
-#[ignore = "boolean: cutting the hole of this plate leaves its result open"]
 fn wide_plate_with_an_m6_hole() {
     let mut plate = examples::parametric_plate();
     let ParameterKind::Number { expression, .. } = &mut plate.parameters.values[0].kind else {

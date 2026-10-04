@@ -312,6 +312,23 @@ control point to a box so wide the pcurve had no usable tangent left
 ("Cannot normalize zero"), and took the sweep from 0/175 failing scenes to
 12/175. Fix the parameter, not the geometry.
 
+### Ask a question about a box only where its answer holds for a box
+
+The converse trap. `face_interior_point_where` asks `face_contains` about a
+box of `±epsilon` around a candidate, so the accepted point keeps clear of
+the boundary. The vertex and pcurve checks answer that honestly for a box.
+But the ray casting after them built its ray from the box, which turns the
+ray into a strip. A strip that merely grazes a pcurve overlaps it the way a
+crossing does, so it gives one hit, and the parity flips. A point 0.44 from
+a hole's axis (the rim 0.33) was found "inside" the disc cut from the
+plate's top, and the boolean kept that disc and left the result open.
+
+Once the box is known to touch no boundary, all of it lies on one side,
+and one sharp point of it decides which side. Before you run an
+interval computation on a wide input, check that its answer still means
+something for every point in that input. Parity counting does not:
+counting crossings only makes sense for a ray from a single point.
+
 ## Subdivide to isolate, then Newton to refine
 
 Subdivision and Newton are different tools and neither does the other's job.
