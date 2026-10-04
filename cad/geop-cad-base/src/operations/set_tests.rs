@@ -46,6 +46,9 @@ fn every_operation_is_offered() {
             "extend_surface",
             "extract_face",
             "project_curve",
+            "base_flange",
+            "edge_flange",
+            "flat_pattern",
             "add_part",
             "part_pattern",
             "route"

@@ -54,6 +54,9 @@ ops/geop-ops-shell            shelling: a solid hollowed to walls of one
 ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, joint it, drag it; patterns of
                                placed parts
+ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends
+                               and reliefs, the flat pattern; the sheet model
+                               recorded on the body and thickened into it
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
 ops/geop-ops-harness          wire harnesses: wires routed through connectors

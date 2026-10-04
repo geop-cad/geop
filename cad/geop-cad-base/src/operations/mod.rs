@@ -10,7 +10,7 @@
 //! wire harness routes in `geop_ops_harness`,
 //! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
 //! 3-D sketches in `geop_ops_sketch3d`, ribs, lips, grooves and drafts in
-//! `geop_ops_plastic`.
+//! `geop_ops_plastic`, sheet metal in `geop_ops_sheetmetal`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -31,6 +31,9 @@ use geop_ops_pattern::{
     MoveBody, MoveBodyArgs,
 };
 use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
+use geop_ops_sheetmetal::{
+    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs,
+};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
@@ -66,6 +69,8 @@ mod program_tests;
 pub(crate) mod regression_tests;
 #[cfg(test)]
 mod set_tests;
+#[cfg(test)]
+mod sheetmetal_tests;
 #[cfg(test)]
 mod shell_tests;
 #[cfg(test)]
@@ -127,7 +132,6 @@ pub enum PartOperation {
     /// Hollow a solid out to walls of one thickness, open where faces are
     /// picked.
     Shell(ShellArgs),
-    /// Tilt planar faces about a neutral plane, so the part comes out of
     /// its mould.
     Draft(DraftArgs),
     /// Raise a lip along the rim of one half of an enclosure.
@@ -178,6 +182,17 @@ pub enum PartOperation {
     /// Project a sketch's curves onto a face, dividing the face along them.
     #[operation(label = "Project curve")]
     ProjectCurve(ProjectCurveArgs),
+    /// Tilt planar faces about a neutral plane, so the part comes out of
+    /// Start a sheet-metal body: a plate from a sketch's area, or a bent
+    /// strip from a chain of lines and arcs.
+    #[operation(label = "Base flange")]
+    BaseFlange(BaseFlangeArgs),
+    /// Bend a flange up from a straight edge of a sheet-metal body.
+    #[operation(label = "Edge flange")]
+    EdgeFlange(EdgeFlangeArgs),
+    /// Unfold a sheet-metal body into its flat pattern.
+    #[operation(label = "Flat pattern")]
+    FlatPattern(FlatPatternArgs),
     /// Place the part another program file builds, and mate it to what is
     /// already there.
     #[operation(label = "Part")]

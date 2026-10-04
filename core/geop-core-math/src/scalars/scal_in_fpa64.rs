@@ -330,6 +330,22 @@ impl Scalar for ScalInFPA64 {
         ScalInFPA64::from_f64_outward(lo, hi)
     }
 
+    fn acos(self) -> GeopResult<Self> {
+        // As `sqrt` does: in f64, rounded outward, and back.
+        let lo_f = self.lo as f64 / SCALE as f64;
+        let hi_f = self.hi as f64 / SCALE as f64;
+        if hi_f < -1.0 || lo_f > 1.0 {
+            return Err(GeopError::new(format!(
+                "ScalInFPA64::acos: {self:?} lies outside [-1, 1]"
+            )));
+        }
+        let (lo, hi) = (lo_f.max(-1.0), hi_f.min(1.0));
+        Ok(ScalInFPA64::from_f64_outward(
+            next_down_f64(hi.acos()).max(0.0),
+            next_up_f64(lo.acos()),
+        ))
+    }
+
     fn could_be_equal(self, other: Self) -> bool {
         self.lo <= other.hi && other.lo <= self.hi
     }

@@ -26,6 +26,9 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
 use geop_ops_pattern::{Direction, LinearPatternArgs, Spacing};
+use geop_ops_sheetmetal::{
+    BaseFlangeArgs, EdgeFlangeArgs, FlangePosition, LengthReference, SheetMetalRules,
+};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
@@ -1908,6 +1911,56 @@ pub fn pipe() -> Program {
     program
 }
 
+/// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick with two
+/// holes (`plate`), a flange bent up along part of its front edge with
+/// reliefs beside it (`front`), and one along all of its back edge
+/// (`back`) — the bent body is `edge_flange(back)`.
+pub fn sheet_metal_bracket() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.2);
+    circle(&mut outline, [0.5, 0.6], 0.15);
+    circle(&mut outline, [1.5, 0.6], 0.15);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "plate",
+        BaseFlangeArgs {
+            sketch: "outline".into(),
+            rules: SheetMetalRules {
+                thickness: 0.08,
+                bend_radius: 0.08,
+                ..SheetMetalRules::default()
+            },
+            depth: 1.0,
+            flip: false,
+        },
+    );
+    let edge = |line: CurveId| format!("base_flange(plate,outline,{line},b)");
+    let flange = |line: CurveId, length: f64, offset: f64| EdgeFlangeArgs {
+        edge: edge(line),
+        angle: 90.0,
+        length,
+        reference: LengthReference::OuterSharp,
+        position: FlangePosition::MaterialInside,
+        radius: None,
+        offset_start: offset,
+        offset_end: offset,
+    };
+    program.push("front", flange(lines[0], 0.6, 0.3));
+    program.push("back", flange(lines[2], 0.4, 0.0));
+    program
+}
+
 pub fn all() -> Vec<(&'static str, Program)> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole()),
@@ -1922,6 +1975,7 @@ pub fn all() -> Vec<(&'static str, Program)> {
         ("link", link()),
         ("parametric_plate", parametric_plate()),
         ("airfoil_wing", airfoil_wing()),
+        ("sheet_metal_bracket", sheet_metal_bracket()),
         ("pipe", pipe()),
         ("patterned_plate", patterned_plate()),
         ("horn", horn()),

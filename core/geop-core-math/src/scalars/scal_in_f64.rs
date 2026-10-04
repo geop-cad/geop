@@ -217,6 +217,21 @@ impl Scalar for ScalInF64 {
         ScalInF64::new(lo, hi)
     }
 
+    fn acos(self) -> GeopResult<Self> {
+        if self.hi < -1.0 || self.lo > 1.0 {
+            return Err(GeopError::new(format!(
+                "ScalInF64::acos: {self:?} lies outside [-1, 1]"
+            )));
+        }
+        // Decreasing: the upper bound gives the smaller angle. Widened by
+        // an ULP against roundoff in the libm call, like `sin`/`cos`.
+        let (lo, hi) = (self.lo.max(-1.0), self.hi.min(1.0));
+        Ok(ScalInF64::new(
+            next_down(hi.acos()).max(0.0),
+            next_up(lo.acos()).min(next_up(std::f64::consts::PI)),
+        ))
+    }
+
     fn could_be_equal(self, other: Self) -> bool {
         self.lo <= other.hi && other.lo <= self.hi
     }
@@ -453,6 +468,15 @@ mod tests {
         // Interval [-1, 4] straddles zero — sqrt should succeed and contain 2
         let r = iv(-1.0, 4.0).sqrt().unwrap();
         assert!(r.could_be_equal(pt(2.0)));
+    }
+
+    #[test]
+    fn acos_encloses_the_angle() {
+        let r = iv(-0.5, 0.5).acos().unwrap();
+        assert!(r.could_be_equal(pt(std::f64::consts::FRAC_PI_2)));
+        assert!(r.lo <= std::f64::consts::FRAC_PI_3 && r.hi >= 2.0 * std::f64::consts::FRAC_PI_3);
+        assert!(pt(-1.0).acos().unwrap().could_be_equal(ScalInF64::PI));
+        assert!(pt(1.5).acos().is_err());
     }
 
     #[test]
