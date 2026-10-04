@@ -177,7 +177,7 @@ fn a_gear_pair_turns_its_follower_by_its_ratio() {
         assembly.joints[0].angle.value.to_f64(),
         assembly.joints[1].angle.value.to_f64(),
     );
-    assert!((driver - 90.0).abs() < 0.1, "{driver}");
+    assert!((driver - 90.0).abs() < 0.1, "{driver}: {report:?}");
     assert!((follower + driver / 2.0).abs() < 1e-6, "{follower}");
     let turned = assembly.bodies[1].pose.euler_degrees()[2];
     assert!((turned - follower).abs() < 1e-6, "{turned} vs {follower}");

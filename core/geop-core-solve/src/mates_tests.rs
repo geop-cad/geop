@@ -721,12 +721,19 @@ fn drag_mated_arm(targets: usize) -> Vec<SolveReport<S>> {
 }
 
 /// The drags of `reports` whose mates the constrained minimization did not
-/// meet by itself — left for the least-squares pass after it.
+/// meet by itself — left for the least-squares pass after it — or that took
+/// every step it may.
 fn unmet<T: Scalar>(reports: &[SolveReport<T>]) -> Vec<String> {
     reports
         .iter()
         .enumerate()
-        .filter(|(_, r)| !r.converged || r.phases.len() > 1)
+        .filter(|(_, r)| {
+            !r.converged
+                || r.phases.len() > 1
+                || r.phases
+                    .iter()
+                    .any(|p| p.stop == geop_core_math::least_squares::Stop::Budget)
+        })
         .map(|(k, r)| format!("drag {k}: {r:?}"))
         .collect()
 }
@@ -744,10 +751,11 @@ fn a_mated_arm_follows_its_tip() {
     assert!(unmet.is_empty(), "{}", unmet.join("\n"));
 }
 
-/// [`a_mated_arm_follows_its_tip`], through 40 drags. (A few still spend
-/// every step on the preferences once the mates hold and the tip is there:
-/// the model's curvature leaves out the constraints' where it is negative,
-/// which a BFGS estimate cannot learn.)
+/// [`a_mated_arm_follows_its_tip`], through 40 drags, none taking every
+/// step it may. (Drags 9, 11 and 33 once spent every step on the
+/// preferences once the mates held and the tip was there: the model's
+/// curvature left out the constraints' where it is negative, which a BFGS
+/// estimate cannot learn — see `least_squares`.)
 #[test]
 #[ignore = "slow: a mated arm dragged 40 times — run with `cargo test -- --ignored`"]
 fn a_mated_arm_follows_its_tip_through_every_drag() {
