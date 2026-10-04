@@ -9,7 +9,7 @@
 
 pub mod library;
 
-pub use library::{Files, FilesMut, Library, NoFiles, Workspace};
+pub use library::{Files, FilesMut, Library, NoFiles, Workspace, is_program};
 
 use std::{
     cell::RefCell,

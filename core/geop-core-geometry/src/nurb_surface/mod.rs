@@ -6,6 +6,7 @@ mod offset;
 mod patch;
 mod project;
 mod reverse;
+mod revolve;
 mod split;
 mod translate;
 

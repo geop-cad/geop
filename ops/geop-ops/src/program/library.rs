@@ -1,6 +1,7 @@
 //! [`Library`]: where a program finds the parts it places — the parts other
-//! program files build, by file name — and [`Workspace`], the library of a
-//! set of files.
+//! program files build, by file name — and the other files its steps read,
+//! as an import reads a STEP file; and [`Workspace`], the library of a set
+//! of files.
 //!
 //! Placing a part runs the program of another file, which may place parts
 //! of its own. So the files of a workspace form a graph, and it has to be
@@ -43,9 +44,20 @@ pub trait Library<S: Scalar> {
     /// moves (see [`crate::part::State`]).
     fn component(&self, file: &str, overrides: &State) -> GeopResult<Arc<Component<S>>>;
 
-    /// The files the program being built could place, as it would name
-    /// them: every file but its own.
+    /// The files the program being built could place or read, as it would
+    /// name them: every file but its own — programs (see [`is_program`])
+    /// and any other.
     fn files(&self) -> Vec<String>;
+
+    /// The text of the file `file`, relative to the program being built:
+    /// a file a step reads as data, as an import reads a STEP file.
+    fn read(&self, file: &str) -> GeopResult<String>;
+}
+
+/// Whether the file `path` is a program, which a part can be placed from:
+/// a `.geop` file.
+pub fn is_program(path: &str) -> bool {
+    path.ends_with(".geop")
 }
 
 /// The library of a program that places no parts: it has no files.
@@ -61,13 +73,19 @@ impl<S: Scalar> Library<S> for NoFiles {
     fn files(&self) -> Vec<String> {
         Vec::new()
     }
+
+    fn read(&self, file: &str) -> GeopResult<String> {
+        Err(GeopError::new(format!(
+            "cannot read {file:?}: this program is built without any other files"
+        )))
+    }
 }
 
 /// Where a [`Workspace`] reads files from.
 pub trait Files {
     /// The text of the file `path`.
     fn read(&self, path: &str) -> GeopResult<String>;
-    /// Every program file there is, by path.
+    /// Every file there is, by path: programs and the files they read.
     fn list(&self) -> Vec<String>;
 }
 
@@ -326,6 +344,10 @@ impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
             .filter(|f| *f != self.file)
             .map(|f| relative(&self.file, &f))
             .collect()
+    }
+
+    fn read(&self, file: &str) -> GeopResult<String> {
+        self.workspace.files.read(&resolve(&self.file, file))
     }
 }
 

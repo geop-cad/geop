@@ -207,6 +207,7 @@ dependencies = [
  "geop-ops-pattern",
  "geop-ops-plastic",
  "geop-ops-rasterize",
+ "geop-ops-sheetmetal",
  "geop-ops-shell",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
@@ -434,6 +435,20 @@ dependencies = [
  "geop-core-topology",
  "geop-ops",
  "geop-ops-extrude-revolve",
+]
+
+[[package]]
+name = "geop-ops-sheetmetal"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-sketch",
+ "geop-core-topology",
+ "geop-ops",
+ "geop-ops-extrude-revolve",
+ "geop-ops-rasterize",
+ "serde",
 ]
 
 [[package]]

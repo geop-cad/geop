@@ -115,6 +115,7 @@ pub use part::{
 pub use operation::{Context, EntityRef, Operation, OperationInfo, Operations};
 pub use program::{
     Files, FilesMut, Library, NoFiles, Program, ProgramRunner, Step, StepResult, Workspace,
+    is_program,
 };
 
 #[doc(hidden)]
