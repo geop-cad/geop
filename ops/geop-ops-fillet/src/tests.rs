@@ -34,7 +34,7 @@ fn cylinder() -> Part<S> {
 fn blended(mut part: Part<S>, edges: &[&str], shape: BlendShape) -> Part<S> {
     let edges: Vec<String> = edges.iter().map(|e| e.to_string()).collect();
     let namer = Namer::new("fillet", "F").unwrap();
-    blend(&mut part, &namer, &edges, shape).unwrap();
+    blend(&mut part, &namer, &edges, &shape).unwrap();
     let params = ValidationParameters::default();
     if let Err(e) = validate(&params, part.topology()) {
         panic!("{e:?}");
@@ -76,7 +76,7 @@ fn cube_fillet_one_edge() {
     let part = blended(
         unit_cube(),
         &["cube(b,p0)"],
-        BlendShape::Fillet { radius: 0.2 },
+        BlendShape::round(0.2),
     );
     assert_eq!(part.topology().faces.len(), 7);
     assert_has_face(&part, "fillet(F,cube(b,p0),fillet)");
@@ -120,7 +120,7 @@ fn cube_fillet_two_parallel_edges() {
     let part = blended(
         unit_cube(),
         &["cube(b,p0)", "cube(b,p2)"],
-        BlendShape::Fillet { radius: 0.3 },
+        BlendShape::round(0.3),
     );
     assert_eq!(part.topology().faces.len(), 8);
 }
@@ -133,7 +133,7 @@ fn cylinder_rim_fillet() {
         vec!["cylinder(c,p1,q0)"],
         vec!["cylinder(c,p1,q0)", "cylinder(c,p1,q2)"],
     ] {
-        let part = blended(cylinder(), &edges, BlendShape::Fillet { radius: 0.1 });
+        let part = blended(cylinder(), &edges, BlendShape::round(0.1));
         assert_has_face(&part, "fillet(F,cylinder(c,p1,q0),fillet,q0)");
         let on_circle = |r: f64, z: f64| {
             part.topology().vertices.values().any(|vertex| {
@@ -156,7 +156,7 @@ fn cylinder_both_rims_fillet() {
     blended(
         cylinder(),
         &["cylinder(c,p1,q0)", "cylinder(c,p2,q0)"],
-        BlendShape::Fillet { radius: 0.2 },
+        BlendShape::round(0.2),
     );
 }
 
@@ -172,7 +172,7 @@ fn cube_fillet_top_edges() {
             "cube(b,c2,start)",
             "cube(b,c3,start)",
         ],
-        BlendShape::Fillet { radius: 0.2 },
+        BlendShape::round(0.2),
     );
 }
 
@@ -205,7 +205,7 @@ fn cylinder_rim_chamfer() {
 fn refusal(mut part: Part<S>, edges: &[&str], shape: BlendShape) -> String {
     let namer = Namer::new("fillet", "F").unwrap();
     let edges: Vec<String> = edges.iter().map(|e| e.to_string()).collect();
-    match blend(&mut part, &namer, &edges, shape) {
+    match blend(&mut part, &namer, &edges, &shape) {
         Ok(()) => panic!("blending {edges:?} into {shape:?} is not refused"),
         Err(e) => format!("{e:?}"),
     }
@@ -216,7 +216,7 @@ fn refusal(mut part: Part<S>, edges: &[&str], shape: BlendShape) -> String {
 /// their boundary, or ending exactly on the cube's opposite edge.
 #[test]
 fn refuses_what_it_cannot_blend() {
-    let round = |radius| BlendShape::Fillet { radius };
+    let round = |radius| BlendShape::round(radius);
     let bevel = |d| BlendShape::Chamfer { distances: [d, d] };
     refusal(unit_cube(), &["cube(b,p0)"], round(0.0));
     refusal(unit_cube(), &[], round(0.1));

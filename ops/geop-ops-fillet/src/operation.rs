@@ -13,7 +13,10 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::blend::{BlendShape, blend};
+use crate::{
+    blend::{BlendShape, blend},
+    rolling::Radii,
+};
 
 /// Edges by name, as a reference field holds them.
 fn edge_refs(names: &[String]) -> Vec<EntityRef> {
@@ -55,10 +58,18 @@ fn edges_field<'a, S: Scalar, A: 'a>(
 /// the operation `F`: the solid is consumed and the result named
 /// `fillet(F)`. Every face, edge and vertex that survives keeps its name;
 /// the round face of edge `E` is `fillet(F,E,fillet)` — by quarter turn,
-/// `fillet(F,E,fillet,q0)`, ..., for a circle — and what applying it
-/// creates is named as a boolean names it, `fillet(F,E,...)` (see
-/// [`crate::blend::blend`]). A convex edge is cut round, a concave one
-/// filled in.
+/// `fillet(F,E,fillet,q0)`, ..., for a circle, and by edge of its tangent
+/// chain, `fillet(F,E,fillet,s0)`, ..., for one rolled along several (see
+/// [`crate::rolling`]) — and what applying it creates is named as a
+/// boolean names it, `fillet(F,E,...)` (see [`crate::blend::blend`]). A
+/// convex edge is cut round, a concave one filled in.
+///
+/// Any edge is rounded: a straight one between two planes and a circle
+/// around its faces' axis exactly, every other one by a ball rolled along
+/// it, which also takes its tangent chain along. With `end_radius` the
+/// radius changes linearly along each chain, from `radius` where its first
+/// picked edge starts to `end_radius` where the chain ends; `vertex_radii`
+/// set it at vertices along a chain, linearly in between.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Fillet;
 
@@ -67,6 +78,48 @@ pub struct FilletArgs {
     /// The edges to round, all of one solid.
     pub edges: Vec<String>,
     pub radius: f64,
+    /// The radius at the end of every chain, if it changes along it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_radius: Option<f64>,
+    /// Radii at vertices along the chains.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vertex_radii: Vec<VertexRadius>,
+}
+
+/// The radius a fillet has at a vertex, by name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VertexRadius {
+    pub vertex: String,
+    pub radius: f64,
+}
+
+impl FilletArgs {
+    /// Round `edges` with `radius`, the same all along.
+    pub fn constant(edges: Vec<String>, radius: f64) -> Self {
+        FilletArgs {
+            edges,
+            radius,
+            end_radius: None,
+            vertex_radii: Vec::new(),
+        }
+    }
+
+    /// Whether the radius changes along the edges.
+    fn variable(&self) -> bool {
+        self.end_radius.is_some() || !self.vertex_radii.is_empty()
+    }
+
+    fn radii(&self) -> Radii {
+        Radii {
+            radius: self.radius,
+            end_radius: self.end_radius,
+            at_vertices: self
+                .vertex_radii
+                .iter()
+                .map(|v| (v.vertex.clone(), v.radius))
+                .collect(),
+        }
+    }
 }
 
 impl Operation for Fillet {
@@ -75,13 +128,11 @@ impl Operation for Fillet {
 
     /// No edges yet, and a small radius.
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> FilletArgs {
-        FilletArgs {
-            edges: Vec::new(),
-            radius: 0.1,
-        }
+        FilletArgs::constant(Vec::new(), 0.1)
     }
 
-    /// The edges, picked, and the radius.
+    /// The edges, picked, and the radius — and, varying, the radius at the
+    /// end and at vertices picked, each a number of its own.
     fn form<'a, S: Scalar>(
         &self,
         _: Context<'a, S>,
@@ -96,6 +147,75 @@ impl Operation for Fillet {
             Number::new("radius", args.radius, Unit::Length).range(0.0, 1.0),
             |args, radius| args.radius = radius,
         );
+        f.checkbox(
+            "variable",
+            "variable radius",
+            args.variable(),
+            |args, on| {
+                args.end_radius = on.then_some(args.radius);
+                if !on {
+                    args.vertex_radii.clear();
+                }
+            },
+        );
+        if args.variable() {
+            f.number(
+                "end_radius",
+                Number::new(
+                    "end radius",
+                    args.end_radius.unwrap_or(args.radius),
+                    Unit::Length,
+                )
+                .range(0.0, 1.0),
+                |args, radius| args.end_radius = Some(radius),
+            );
+            let vertices = args
+                .vertex_radii
+                .iter()
+                .map(|v| EntityRef::Vertex {
+                    name: v.vertex.clone(),
+                })
+                .collect();
+            f.reference(
+                "radius_vertices",
+                "radii at vertices",
+                vertices,
+                &[Role::Point],
+                None,
+                true,
+                |e, picked| {
+                    let radius = e.args.radius;
+                    let old = std::mem::take(&mut e.args.vertex_radii);
+                    e.args.vertex_radii = picked
+                        .iter()
+                        .filter_map(|p| match p {
+                            EntityRef::Vertex { name } => Some(name.clone()),
+                            _ => None,
+                        })
+                        .map(|vertex| VertexRadius {
+                            radius: old
+                                .iter()
+                                .find(|v| v.vertex == vertex)
+                                .map_or(radius, |v| v.radius),
+                            vertex,
+                        })
+                        .collect();
+                },
+            );
+            f.optional("radius_vertices");
+            for (i, v) in args.vertex_radii.iter().enumerate() {
+                f.number(
+                    &format!("vertex_radius_{i}"),
+                    Number::new(format!("radius at {}", v.vertex), v.radius, Unit::Length)
+                        .range(0.0, 1.0),
+                    move |args, radius| {
+                        if let Some(v) = args.vertex_radii.get_mut(i) {
+                            v.radius = radius;
+                        }
+                    },
+                );
+            }
+        }
         f
     }
 
@@ -108,15 +228,10 @@ impl Operation for Fillet {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("fillet({operation_id}, {args:?})");
         let namer = Namer::new("fillet", operation_id)?;
-        blend(
-            &mut part,
-            &namer,
-            &args.edges,
-            BlendShape::Fillet {
-                radius: args.radius,
-            },
-        )
-        .with_context(ctx)?;
+        let shape = BlendShape::Fillet {
+            radii: args.radii(),
+        };
+        blend(&mut part, &namer, &args.edges, &shape).with_context(ctx)?;
         Ok(part)
     }
 }
@@ -205,7 +320,7 @@ impl Operation for Chamfer {
             &mut part,
             &namer,
             &args.edges,
-            BlendShape::Chamfer {
+            &BlendShape::Chamfer {
                 distances: args.distances(),
             },
         )
