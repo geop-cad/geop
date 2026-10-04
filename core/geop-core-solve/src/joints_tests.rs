@@ -332,3 +332,76 @@ fn joints_that_hold_nothing_are_refused() {
     .to_string();
     assert!(err.contains("needs joint 0 to turn"), "{err}");
 }
+
+/// A 6-axis robot arm: six links in a chain on revolute joints about `z`,
+/// `y`, `y`, `x`, `y`, `x`, each link 1 long, set to 100 random poses, one
+/// after the other: at every one, every joint holds, at the angle it was
+/// set to.
+#[test]
+#[ignore = "slow: a 6-axis arm at 100 poses — run with `cargo test -- --ignored`"]
+fn a_six_axis_arm_reaches_random_poses() {
+    let axes = [
+        Z,
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+    ];
+    let bodies = (0..6).map(|i| body([0.0, 0.0, i as f64])).collect();
+    let joints = axes
+        .iter()
+        .enumerate()
+        .map(|(i, &axis)| Joint {
+            kind: revolute(Some(-170.0), Some(170.0)),
+            a: end(
+                i.checked_sub(1),
+                if i == 0 { [0.0; 3] } else { [0.0, 0.0, 1.0] },
+                axis,
+            ),
+            b: end(Some(i), [0.0; 3], axis),
+            angle: Coordinate::free(n(0.0)),
+            distance: Coordinate::free(n(0.0)),
+        })
+        .collect();
+    let mut assembly = joints_of(bodies, joints);
+    let mut seed: u64 = 12345;
+    let mut random = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 11) as f64 / (1u64 << 53) as f64) * 340.0 - 170.0
+    };
+    for pose in 0..100 {
+        let angles: Vec<f64> = (0..6).map(|_| random()).collect();
+        for (joint, &angle) in assembly.joints.iter_mut().zip(&angles) {
+            joint.angle = Coordinate {
+                value: n(angle),
+                held: true,
+            };
+        }
+        let report = assembly.solve(&[]).unwrap();
+        assert!(report.converged, "pose {pose} {angles:?}: {report:?}");
+        for (i, joint) in assembly.joints.iter().enumerate() {
+            let [measured, along] =
+                joint.measure(|b| b.map_or(Pose::identity(), |b| assembly.bodies[b].pose));
+            let off = (measured - angles[i] + 540.0).rem_euclid(360.0) - 180.0;
+            assert!(
+                off.abs() < 1e-6,
+                "pose {pose}, joint {i}: {measured} vs {}",
+                angles[i]
+            );
+            assert!(along.abs() < 1e-6, "pose {pose}, joint {i}: {along} along");
+        }
+    }
+}
+
+fn joints_of(bodies: Vec<Body<S>>, joints: Vec<Joint<S>>) -> Assembly<S> {
+    Assembly {
+        bodies,
+        constraints: Vec::new(),
+        joints,
+        couplings: Vec::new(),
+        scale: n(1.0),
+    }
+}

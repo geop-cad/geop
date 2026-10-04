@@ -1002,14 +1002,27 @@ pub fn arm_assembly() -> Program {
     program.push("upper", placed("link.geop", true, Vec::new()));
     program.push(
         "fore",
-        placed("link.geop", false, vec![hinged("fore", "upper", -150.0, 150.0)]),
+        placed(
+            "link.geop",
+            false,
+            vec![hinged("fore", "upper", -150.0, 150.0)],
+        ),
     );
     program.push(
         "hand",
-        placed("link.geop", false, vec![hinged("hand", "fore", -120.0, 120.0)]),
+        placed(
+            "link.geop",
+            false,
+            vec![hinged("hand", "fore", -120.0, 120.0)],
+        ),
     );
     let (elbow, wrist) = (30.0_f64, -45.0_f64);
-    let turned = |angle: f64| [3.0 * angle.to_radians().cos(), 3.0 * angle.to_radians().sin()];
+    let turned = |angle: f64| {
+        [
+            3.0 * angle.to_radians().cos(),
+            3.0 * angle.to_radians().sin(),
+        ]
+    };
     let fore = [3.0, 0.0];
     let [dx, dy] = turned(elbow);
     let hand = [fore[0] + dx, fore[1] + dy];

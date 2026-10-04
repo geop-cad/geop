@@ -156,10 +156,7 @@ impl<S: Scalar> JointKind<S> {
 
     /// The motions it frees.
     pub fn motions(&self) -> Vec<Motion> {
-        Motion::ALL
-            .into_iter()
-            .filter(|&m| self.moves(m))
-            .collect()
+        Motion::ALL.into_iter().filter(|&m| self.moves(m)).collect()
     }
 
     /// The limits of `motion`'s coordinate, `[min, max]`, either missing.
@@ -471,11 +468,7 @@ pub(crate) struct JointResidual<S: Scalar> {
 }
 
 /// The value at `param` among `values`, the values of `params`.
-fn value_of<'v, T: Scalar>(
-    params: &[usize],
-    values: &'v [Value<T>],
-    param: usize,
-) -> &'v Value<T> {
+fn value_of<'v, T: Scalar>(params: &[usize], values: &'v [Value<T>], param: usize) -> &'v Value<T> {
     let slot = params
         .iter()
         .position(|&p| p == param)
@@ -487,20 +480,13 @@ impl<S: Scalar> JointResidual<S> {
     /// The residual of `joint`, its coordinates' parameters as `coordinates`
     /// gives them — per motion, the index of the parameter, if it is one.
     pub fn new(joint: Joint<S>, coordinates: [Option<usize>; 2], scale: S) -> GeopResult<Self> {
-        let mut params: Vec<usize> = [joint.a.body, joint.b.body]
-            .into_iter()
-            .flatten()
-            .collect();
+        let mut params: Vec<usize> = [joint.a.body, joint.b.body].into_iter().flatten().collect();
         params.extend(coordinates.iter().flatten());
         let mut held = [Held::Value(S::ZERO); 2];
         for (k, motion) in Motion::ALL.into_iter().enumerate() {
             held[k] = match coordinates[k] {
                 Some(p) => Held::Param(p),
-                None => Held::Value(to_variable(
-                    motion,
-                    joint.coordinate(motion).value,
-                    S::ONE,
-                )?),
+                None => Held::Value(to_variable(motion, joint.coordinate(motion).value, S::ONE)?),
             };
         }
         Ok(JointResidual {
@@ -511,11 +497,7 @@ impl<S: Scalar> JointResidual<S> {
         })
     }
 
-    fn end(
-        &self,
-        values: &[Value<Dual<S>>],
-        end: &JointEnd<S>,
-    ) -> GeopResult<(V<S>, V<S>, V<S>)> {
+    fn end(&self, values: &[Value<Dual<S>>], end: &JointEnd<S>) -> GeopResult<(V<S>, V<S>, V<S>)> {
         let c = &end.connector;
         Ok(match end.body {
             Some(body) => {
@@ -561,7 +543,16 @@ impl<S: Scalar> Residual<S, { super::MATE_VARS }> for JointResidual<S> {
         let distance = self.coordinate(values, 1)?;
         let l = Dual::cst(self.scale);
         out.extend(ob.sub(&oa.add(&za.prod_scalar(distance))).to_array());
-        out.extend(zb.prod_cross(&za).prod_scalar(l).to_array());
+        // The axes parallel: `b`'s axis has no part along `a`'s reference
+        // or the direction square to both. Two rows, of rank two wherever
+        // the axes are nearly parallel — `zb × za`, three rows, has rank
+        // three while they are not quite parallel and two once they are,
+        // and a row whose slope fades as the joint closes is one the
+        // minimizer can neither drop nor resolve (a 6-axis arm stalled on
+        // it).
+        let ya = za.prod_cross(&ra);
+        out.push(zb.prod_dot(&ra).mul(l));
+        out.push(zb.prod_dot(&ya).mul(l));
         // How far `b`'s reference is turned past the angle, `φ - θ`, as
         // `2 tan((φ - θ) / 2)` from its sine and cosine: zero only at
         // `φ = θ` — a sine alone is zero half a turn away too — and one
@@ -570,7 +561,6 @@ impl<S: Scalar> Residual<S, { super::MATE_VARS }> for JointResidual<S> {
         // vanish to second order only: a row that, at a solution the
         // minimizer reached to its tolerance, has a slope as small as that
         // tolerance and still counts as a constraint, pinning the joint.
-        let ya = za.prod_cross(&ra);
         let (cos, sin) = (angle.cos(), angle.sin());
         let u = ra.prod_scalar(cos).add(&ya.prod_scalar(sin));
         let t = ya.prod_scalar(cos).sub(&ra.prod_scalar(sin));

@@ -558,8 +558,18 @@ impl<S: Scalar> Assembly<S> {
             }
         }
         let mut all: Vec<&dyn Residual<S, MATE_VARS>> = Vec::new();
-        all.extend(residuals.mates.iter().map(|m| m as &dyn Residual<S, MATE_VARS>));
-        all.extend(residuals.joints.iter().map(|m| m as &dyn Residual<S, MATE_VARS>));
+        all.extend(
+            residuals
+                .mates
+                .iter()
+                .map(|m| m as &dyn Residual<S, MATE_VARS>),
+        );
+        all.extend(
+            residuals
+                .joints
+                .iter()
+                .map(|m| m as &dyn Residual<S, MATE_VARS>),
+        );
         all.extend(
             residuals
                 .couplings
@@ -709,9 +719,7 @@ impl<S: Scalar> Assembly<S> {
                     continue;
                 }
                 match joint.kind.limits(motion) {
-                    [Some(min), _] if c.value.definitely_less(min) => {
-                        beyond.push((i, motion, min))
-                    }
+                    [Some(min), _] if c.value.definitely_less(min) => beyond.push((i, motion, min)),
                     [_, Some(max)] if c.value.definitely_greater(max) => {
                         beyond.push((i, motion, max))
                     }

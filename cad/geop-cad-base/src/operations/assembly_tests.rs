@@ -1232,7 +1232,10 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     let placed = |fixed: bool, mates: Vec<(&str, Mate)>| AddPartArgs {
         file: "link.geop".into(),
         fixed,
-        mates: mates.into_iter().map(|(id, m)| (id.to_string(), m)).collect(),
+        mates: mates
+            .into_iter()
+            .map(|(id, m)| (id.to_string(), m))
+            .collect(),
         ..Default::default()
     };
     program.push("base", placed(true, Vec::new()));
@@ -1256,7 +1259,10 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     // The mate is written flat, by the coupling's own type.
     let json = program.to_json().unwrap();
     let compact: String = json.split_whitespace().collect();
-    assert!(compact.contains(r#""type":"gear","ratio":2.0,"reverse":true"#), "{json}");
+    assert!(
+        compact.contains(r#""type":"gear","ratio":2.0,"reverse":true"#),
+        "{json}"
+    );
     assert_eq!(Program::from_json(&json).unwrap().steps, program.steps);
 
     let driver = "add_part(driver,m1).angle";
@@ -1274,5 +1280,12 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     program.state.extend(moved);
     let turned = pose_of(&program, "driven").euler_degrees()[2];
     assert!((turned + 45.0).abs() < 1e-9, "{turned}");
-    assert!(program.build(&library).unwrap().check_mates().unwrap().converged);
+    assert!(
+        program
+            .build(&library)
+            .unwrap()
+            .check_mates()
+            .unwrap()
+            .converged
+    );
 }

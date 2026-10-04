@@ -238,7 +238,11 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
     let mates = args(
         false,
         &[
-            ("m1", MateKind::Constraint(Kind::Concentric), [axis("b"), axis("a")]),
+            (
+                "m1",
+                MateKind::Constraint(Kind::Concentric),
+                [axis("b"), axis("a")],
+            ),
             (
                 "m2",
                 MateKind::Constraint(Kind::Distance { value: n(1.5) }),
@@ -337,8 +341,16 @@ fn a_drag_pulls_the_point_grabbed() {
     let mates = args(
         false,
         &[
-            ("m1", MateKind::Constraint(Kind::Concentric), [axis("b"), axis("a")]),
-            ("m2", MateKind::Constraint(Kind::Coincident), [base("b"), base("a")]),
+            (
+                "m1",
+                MateKind::Constraint(Kind::Concentric),
+                [axis("b"), axis("a")],
+            ),
+            (
+                "m2",
+                MateKind::Constraint(Kind::Coincident),
+                [base("b"), base("a")],
+            ),
         ],
     );
     let part = place(with_a(&library), "b", Pose::identity(), &mates, &library);

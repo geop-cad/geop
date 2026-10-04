@@ -41,7 +41,13 @@ fn mate_roles(kind: &MateKind) -> &'static [Role] {
         MateKind::Constraint(Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. }) => {
             &[Role::Line, Role::Plane, Role::Round]
         }
-        MateKind::Joint(_) => &[Role::Circle, Role::Round, Role::Point, Role::Line, Role::Plane],
+        MateKind::Joint(_) => &[
+            Role::Circle,
+            Role::Round,
+            Role::Point,
+            Role::Line,
+            Role::Plane,
+        ],
         MateKind::Coupling(_) => &[],
     }
 }
@@ -292,7 +298,10 @@ fn selected<'a, S: Scalar>(
         );
         f.text(
             "mate_hint",
-            format!("Choose {}: the joints of the parts placed so far.", mate.needs()),
+            format!(
+                "Choose {}: the joints of the parts placed so far.",
+                mate.needs()
+            ),
             Tone::Hint,
         );
         return;
@@ -345,8 +354,10 @@ fn selected<'a, S: Scalar>(
                     set_joint(edit.state, edit.session, &parameter, v);
                 }
             });
-            f.dialog
-                .push(key, Control::Number(Number::new(motion.name(), value.value, unit)));
+            f.dialog.push(
+                key,
+                Control::Number(Number::new(motion.name(), value.value, unit)),
+            );
         }
         if !matches!(kind, JointKind::Revolute { .. } | JointKind::Slider { .. }) {
             continue;
@@ -396,7 +407,6 @@ fn selected<'a, S: Scalar>(
         }
     }
 }
-
 
 /// The lowest `m1`, `m2`, ... not yet a mate's id.
 fn fresh_mate_id(mates: &BTreeMap<String, Mate>) -> String {
@@ -632,7 +642,8 @@ pub(crate) fn form<'a, S: Scalar>(
             let what = match mate.kind {
                 MateKind::Coupling(_) => mate.joints.join(" & "),
                 _ => {
-                    let entities: Vec<String> = mate.entities.iter().map(EntityRef::label).collect();
+                    let entities: Vec<String> =
+                        mate.entities.iter().map(EntityRef::label).collect();
                     entities.join(" & ")
                 }
             };
@@ -691,7 +702,13 @@ pub(crate) fn form<'a, S: Scalar>(
         .as_ref()
         .and_then(|id| args.mates.get_key_value(id))
     {
-        selected(&mut f, id, mate, joints.iter().find(|j| j.name == namer(id)), &joints);
+        selected(
+            &mut f,
+            id,
+            mate,
+            joints.iter().find(|j| j.name == namer(id)),
+            &joints,
+        );
     }
 
     if let Some((part, _)) = built

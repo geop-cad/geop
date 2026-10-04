@@ -78,9 +78,7 @@ fn motion<S: Scalar>(
             Quaternion::identity(),
         ),
         Layout::Circular { angle } => {
-            let half = S::from_f64(angle)
-                .mul(k)
-                .mul(S::PI.div(S::from_i64(360))?);
+            let half = S::from_f64(angle).mul(k).mul(S::PI.div(S::from_i64(360))?);
             let rotation = Quaternion::new(
                 half.cos(),
                 direction[0].mul(half.sin()),
@@ -196,9 +194,14 @@ impl Operation for PartPattern {
                     .map(|name| Choice::new(name, name)),
             )
             .collect();
-        f.select("part", "part", args.part.clone(), options, true, |args, part| {
-            args.part = part.to_string()
-        });
+        f.select(
+            "part",
+            "part",
+            args.part.clone(),
+            options,
+            true,
+            |args, part| args.part = part.to_string(),
+        );
         f.reference(
             "axis",
             "along or round",

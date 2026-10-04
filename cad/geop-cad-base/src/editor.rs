@@ -21,8 +21,7 @@ use std::collections::BTreeMap;
 use geop_core_math::vector::Vector3;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_ops::{
-    Context, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
-    Design,
+    Context, Design, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
     assembly::{Drag, JointInfo, MateFreedom},
     operation::Role,
     parameters::{Parameters, Resolved},
@@ -566,8 +565,7 @@ impl<S: Scalar> Editor<S> {
                         local: grab.local,
                         target: target.sharpen(),
                     };
-                    if let Ok((moved, report)) =
-                        self.runner.part().solve_mates(None, &[], &[drag])
+                    if let Ok((moved, report)) = self.runner.part().solve_mates(None, &[], &[drag])
                     {
                         self.program.state.extend(moved);
                         self.dragged = Some(report);

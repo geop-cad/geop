@@ -22,11 +22,11 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-pub use geop_core_solve::mates::{CouplingKind, JointKind, Kind, Motion};
 use geop_core_solve::mates::{
     Assembly, Body, Connector, Constraint, Coordinate, Coupling, Feature, Geometry, Joint,
     JointEnd, Pull as BodyPull,
 };
+pub use geop_core_solve::mates::{CouplingKind, JointKind, Kind, Motion};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -137,9 +137,9 @@ impl Mate {
                 "a point, a line or a plane"
             }
             MateKind::Constraint(Kind::Concentric) => "something round, or a line",
-            MateKind::Constraint(
-                Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. },
-            ) => "a line or a plane",
+            MateKind::Constraint(Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. }) => {
+                "a line or a plane"
+            }
             MateKind::Joint(_) => "a circular edge, a sketch circle or a datum",
             MateKind::Coupling(CouplingKind::Gear { .. }) => "two joints that turn",
             MateKind::Coupling(_) => "a joint that turns, then one that slides",
@@ -191,7 +191,11 @@ impl Mate {
             return Some(Connector::new(arc.circle.center, arc.circle.normal, None));
         }
         if let Some(frame) = &aspects.frame {
-            return Some(Connector::new(*frame.origin(), *frame.w(), Some(*frame.u())));
+            return Some(Connector::new(
+                *frame.origin(),
+                *frame.w(),
+                Some(*frame.u()),
+            ));
         }
         if let (Some(round), false) = (&aspects.round, aspects.face) {
             return Some(Connector::new(round.point, round.direction, None));
@@ -535,9 +539,7 @@ impl<S: Scalar> Part<S> {
             };
             coupling
                 .validate(&assembly.joints)
-                .map_err(|e| {
-                    e.with_context(format!("joints {:?} and {:?}", joints[0], joints[1]))
-                })
+                .map_err(|e| e.with_context(format!("joints {:?} and {:?}", joints[0], joints[1])))
                 .with_context(ctx)?;
             assembly.couplings.push(coupling);
             coupling_names.push(name);
@@ -641,7 +643,11 @@ impl<S: Scalar> Part<S> {
         let mut every: Vec<String> = Vec::new();
         for (name, mate) in self.all_mates(&bodies) {
             if let MateKind::Joint(kind) = mate.kind {
-                every.extend(kind.motions().into_iter().map(|m| joint_parameter(&name, m)));
+                every.extend(
+                    kind.motions()
+                        .into_iter()
+                        .map(|m| joint_parameter(&name, m)),
+                );
             }
         }
         let (moved, report) = self.solve_mates(None, &every, &[])?;
@@ -741,7 +747,11 @@ impl<S: Scalar> Part<S> {
         let mut names: Vec<String> = bodies.iter().filter_map(|b| b.parameter.clone()).collect();
         for (name, mate) in self.all_mates(&bodies) {
             if let MateKind::Joint(kind) = mate.kind {
-                names.extend(kind.motions().into_iter().map(|m| joint_parameter(&name, m)));
+                names.extend(
+                    kind.motions()
+                        .into_iter()
+                        .map(|m| joint_parameter(&name, m)),
+                );
             }
         }
         names

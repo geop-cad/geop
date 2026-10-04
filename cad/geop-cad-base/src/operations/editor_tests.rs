@@ -697,7 +697,11 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
     assert!(update.error.is_none(), "{:?}", update.error);
     assert_eq!(state_number(&editor, elbow), -60.0);
     let fore = turn_of(&editor, "fore");
-    assert!((fore + 60.0).abs() < 1e-9, "{fore} {:?}", editor.program().state);
+    assert!(
+        (fore + 60.0).abs() < 1e-9,
+        "{fore} {:?}",
+        editor.program().state
+    );
 
     // Set in the program's panel: the hand turns, the forearm stays.
     let wrist = "add_part(hand,m1).angle";
