@@ -26,15 +26,19 @@ mod names;
 mod resolve;
 mod sketch;
 mod state;
+mod thread;
 
 pub use cable::{Cable, CutWire};
-pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
+pub use describe::{
+    EdgeDescription, FaceDescription, InstanceDescription, PartDescription, ThreadDescription,
+};
 pub use edit::BodyNames;
 pub use ids::{DatumId, InstanceId, RefId, SketchId};
 pub use instance::{Component, Instance};
 pub use names::{NameRegistry, Namer, validate_operation_id};
 pub use sketch::PlacedSketch;
 pub use state::{ParamValue, State, pose_parameter};
+pub use thread::CosmeticThread;
 
 /// A complete, editable CAD part: its boundary-representation topology, the
 /// sketches and datums used to build it — starting with the frame
@@ -63,6 +67,8 @@ pub struct Part<S: Scalar> {
     /// The cables routed in it, by the name of the solid each is swept
     /// into (see [`Cable`]).
     pub(crate) cables: BTreeMap<String, Cable<S>>,
+    /// Its cosmetic threads, by name (see [`CosmeticThread`]).
+    pub(crate) threads: BTreeMap<String, CosmeticThread<S>>,
     /// The parameter values the part is built with (see [`Part::pose_parameter`]).
     pub(crate) inputs: State,
     /// The parameters its steps declared, with the values they read.
@@ -90,6 +96,7 @@ impl<S: Scalar> Part<S> {
             instances: BTreeMap::new(),
             mates: BTreeMap::new(),
             cables: BTreeMap::new(),
+            threads: BTreeMap::new(),
             inputs: State::new(),
             declared: State::new(),
             parameters: crate::parameters::Parameters::default(),

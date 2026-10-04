@@ -34,7 +34,9 @@ fn every_operation_is_offered() {
             "circular_pattern",
             "mirror",
             "move_body",
-            "route"
+            "route",
+            "hole",
+            "thread"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

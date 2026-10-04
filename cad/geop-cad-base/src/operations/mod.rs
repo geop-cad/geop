@@ -7,7 +7,8 @@
 //! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
 //! existing bodies in `geop_ops_edit`, placed parts in `geop_ops_assembly`,
 //! patterns, mirrors and moves of bodies in `geop_ops_pattern`,
-//! wire harness routes in `geop_ops_harness`.
+//! wire harness routes in `geop_ops_harness`,
+//! holes and threads in `geop_ops_hole`.
 //! Which of them an editor offers is the editor's choice, made here.
 
 use geop_ops::Operations;
@@ -21,11 +22,12 @@ use geop_ops_extrude_revolve::{
     Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_harness::{Route, RouteArgs};
+use geop_ops_hole::{Hole, HoleArgs, Thread, ThreadArgs};
 use geop_ops_pattern::{
     CircularPattern, CircularPatternArgs, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs,
     MoveBody, MoveBodyArgs,
 };
-use geop_ops_harness::{Route, RouteArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use serde::{Deserialize, Serialize};
@@ -41,9 +43,11 @@ mod editor_tests;
 #[cfg(test)]
 mod fillet_tests;
 #[cfg(test)]
-mod pattern_tests;
-#[cfg(test)]
 mod harness_tests;
+#[cfg(test)]
+mod hole_tests;
+#[cfg(test)]
+mod pattern_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
@@ -126,6 +130,12 @@ pub enum PartOperation {
     /// Route a bundle of wires from a connector through clips to another
     /// connector, its bends checked and every wire's cut length reported.
     Route(RouteArgs),
+    /// Drill simple, counterbored, countersunk or tapped holes at points on
+    /// a planar face, sized by ISO tables or by hand.
+    Hole(HoleArgs),
+    /// Put an ISO metric thread on a cylindrical face: recorded as a
+    /// cosmetic thread, or modelled.
+    Thread(ThreadArgs),
 }
 
 /// A program of the editor's operations.

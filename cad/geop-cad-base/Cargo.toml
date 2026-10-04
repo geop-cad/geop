@@ -21,6 +21,7 @@ geop-ops-pattern.workspace = true
 geop-ops-harness.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+geop-ops-hole.workspace = true
 
 [dev-dependencies]
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }

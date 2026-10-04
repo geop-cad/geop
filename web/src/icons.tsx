@@ -295,6 +295,19 @@ const ICONS: Record<string, ReactElement> = {
       <circle cx="10" cy="10" r="1.6" strokeWidth="1" />
     </>
   ),
+  hole: (
+    <>
+      <path d="M2.5 6 L17.5 6 M2.5 6 L2.5 17 M17.5 6 L17.5 17" />
+      <path d="M5 6 L5 9 L7.5 9 L7.5 17 M15 6 L15 9 L12.5 9 L12.5 17" />
+      <path d="M10 2 L10 17" strokeWidth="1" strokeDasharray="1.5 1.5" />
+    </>
+  ),
+  thread: (
+    <>
+      <path d="M6 3 L6 17 M14 3 L14 17" />
+      <path d="M6 5 L14 7 M6 9 L14 11 M6 13 L14 15" strokeWidth="1" />
+    </>
+  ),
   drag: (
     <>
       <path d="M10 2.5 L10 17.5 M2.5 10 L17.5 10" />

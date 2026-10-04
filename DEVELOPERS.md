@@ -65,4 +65,8 @@ cad/geop-cad-cli              the `geop` command-line tool
 ops/geop-ops-pattern          linear and circular patterns, mirrors and
                                moves of bodies, copied as new bodies or
                                combined with a solid; their operations
+ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
+                               countersink, tapped) and threads, cosmetic or
+                               modelled along a helix; the hole and thread
+                               operations
 ```

@@ -1,5 +1,7 @@
 mod compatible;
 mod evaluate;
+mod helix;
+pub use helix::{Handedness, HelixRow, cos_sin, helix_rows};
 mod interpolate;
 mod refine;
 pub use interpolate::true_point_fractions;

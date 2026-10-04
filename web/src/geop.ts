@@ -109,6 +109,8 @@ export interface PartView {
     points: { id: number; at: [number, number] }[];
   }[];
   datums: DatumInfo[];
+  /** Cosmetic threads, each drawn as the helix it runs along on its face, and what it is called (`M6x1`). */
+  threads: { name: string; designation: string; polyline: Vec3[] }[];
   /** The part's solids, oldest first. */
   solids: string[];
   /** The parts placed in it, drawn by reference. */

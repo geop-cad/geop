@@ -154,6 +154,31 @@ pub struct ViewDatum<S: Scalar> {
     pub frame: CoordinateSystem<S>,
 }
 
+/// A cosmetic thread of the part (see [`crate::CosmeticThread`]), drawn as
+/// the helix it runs along on its face, and what it is called.
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound = "S: Scalar")]
+pub struct ViewThread<S: Scalar> {
+    pub name: String,
+    pub designation: String,
+    pub polyline: Vec<Vector3<S>>,
+}
+
+/// Segments a cosmetic thread's helix is drawn with per span of a quarter
+/// turn.
+const THREAD_SEGMENTS: usize = 8;
+
+/// The helix of `thread` as a polyline.
+fn thread_polyline<S: Scalar>(thread: &crate::CosmeticThread<S>) -> GeopResult<Vec<Vector3<S>>> {
+    let helix = thread.helix()?;
+    // A span between every pair of the double interior knots.
+    let spans = (helix.control_points.len() - 1) / 2;
+    let n = (spans * THREAD_SEGMENTS) as i64;
+    (0..=n)
+        .map(|i| helix.evaluate(S::from_ratio(i, n)?))
+        .collect()
+}
+
 /// Where the drawing is and how big: the center and diagonal (at least 1)
 /// of the box around it. Datum planes and axes, which are endless, are
 /// drawn this big around the point of them nearest the center.
@@ -229,6 +254,8 @@ pub struct PartView<S: Scalar> {
     pub faces: Vec<ViewFace<S>>,
     pub sketches: Vec<ViewSketch<S>>,
     pub datums: Vec<ViewDatum<S>>,
+    /// Its cosmetic threads.
+    pub threads: Vec<ViewThread<S>>,
     /// The part's solids, oldest first.
     pub solids: Vec<String>,
     /// Every part placed in it, and in those, however deep.
@@ -476,6 +503,16 @@ impl<S: Scalar> PartView<S> {
                     frame: datum.frame.clone(),
                 })
                 .collect(),
+            threads: part
+                .threads()
+                .map(|(name, thread)| {
+                    Ok(ViewThread {
+                        name: name.to_string(),
+                        designation: thread.designation.clone(),
+                        polyline: thread_polyline(thread)?,
+                    })
+                })
+                .collect::<GeopResult<_>>()?,
             solids: solids.into_iter().map(|s| name(s.into())).collect(),
             instances: Vec::new(),
             extent: Extent {
