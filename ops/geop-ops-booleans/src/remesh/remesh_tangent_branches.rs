@@ -194,7 +194,7 @@ fn tangent_branch_points<S: Scalar>(
 /// where that is excluded exactly, before [`tangent_branch_points`] searches
 /// for one.
 ///
-/// Two cases are excluded, and both are the configurations that make the
+/// Three cases are excluded, and all are configurations that make the
 /// search exhaustive: two surfaces that agree in curvature all along the edge
 /// never let it discard a stretch, so it evaluates every one of its
 /// `2^ISOLATION_LEVELS` pieces and finds nothing. Two copies of one solid
@@ -204,6 +204,12 @@ fn tangent_branch_points<S: Scalar>(
 /// - **The same patch.** Where `g` and `f` are one surface, `g ∩ f` is that
 ///   surface, not branches leaving the edge; the overlap is imprinting's to
 ///   handle.
+/// - **Two flat faces.** Two planes tangent along the edge are one plane,
+///   which they share, not branches leaving the edge — the face a hole or a
+///   boss is cut from and the tool's end lying on it, two patches of one
+///   plane. Flat as [`NurbSurface3D::as_plane`] decides it, to within what
+///   the arithmetic resolves: a bend below that is rounding, and its
+///   curvature only noise for the search to chase.
 /// - **Opposite sides.** Where the edge runs along a boundary edge of `f`
 ///   (the other solid's copy of it), `f` lies to one side of it, and a branch
 ///   leaving into both faces needs `g` on that same side. Material lies left
@@ -224,6 +230,10 @@ fn branch_can_leave<S: Scalar>(
 ) -> GeopResult<bool> {
     let (face_g, face_f) = (model.get_face(g)?, model.get_face(f)?);
     if face_g.surface.could_be_equal(&face_f.surface) {
+        return Ok(false);
+    }
+    let flat = |face: &geop_core_topology::Face<S>| matches!(face.surface.as_plane(), Ok(Some(_)));
+    if flat(face_g) && flat(face_f) {
         return Ok(false);
     }
 

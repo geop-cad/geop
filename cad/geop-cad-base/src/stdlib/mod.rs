@@ -112,55 +112,64 @@ struct Entry {
     text: String,
 }
 
-/// Every family, built once: or why one would not build.
-fn entries() -> Result<&'static [Entry], &'static str> {
-    static ENTRIES: OnceLock<Result<Vec<Entry>, String>> = OnceLock::new();
-    let built = ENTRIES.get_or_init(|| {
-        let families: [fn() -> GeopResult<StandardPart>; 14] = [
-            fasteners::iso4762,
-            fasteners::iso7380,
-            fasteners::iso10642,
-            fasteners::iso4017,
-            fasteners::iso4032,
-            fasteners::iso10511,
-            fasteners::iso7089,
-            fasteners::iso7090,
-            fasteners::iso8734,
-            fasteners::hex_standoff,
-            components::ball_bearing,
-            components::tslot_2020,
-            components::tslot_2040,
-            components::nema17,
-        ];
-        families
-            .iter()
-            .map(|family| {
-                let part = family()?;
-                let text = part.program.to_json()?;
-                Ok(Entry { part, text })
-            })
-            .collect::<GeopResult<_>>()
-            .map_err(|e: GeopError| format!("building the standard parts: {e}"))
+/// What builds a family, given the file it is placed from.
+type Family = fn(&'static str) -> GeopResult<StandardPart>;
+
+/// Every family: the file it is placed from, and what builds it. Listing
+/// the files builds nothing; each family is built the first time it is
+/// read (see [`entry`]).
+const FAMILIES: [(&str, Family); 14] = [
+    ("std:iso4762_socket_head_cap_screw.geop", fasteners::iso4762),
+    ("std:iso7380_button_head_screw.geop", fasteners::iso7380),
+    ("std:iso10642_countersunk_screw.geop", fasteners::iso10642),
+    ("std:iso4017_hex_head_screw.geop", fasteners::iso4017),
+    ("std:iso4032_hex_nut.geop", fasteners::iso4032),
+    ("std:iso10511_nylon_insert_nut.geop", fasteners::iso10511),
+    ("std:iso7089_washer.geop", fasteners::iso7089),
+    ("std:iso7090_chamfered_washer.geop", fasteners::iso7090),
+    ("std:iso8734_dowel_pin.geop", fasteners::iso8734),
+    ("std:hex_standoff.geop", fasteners::hex_standoff),
+    ("std:ball_bearing.geop", components::ball_bearing),
+    ("std:tslot_2020.geop", components::tslot_2020),
+    ("std:tslot_2040.geop", components::tslot_2040),
+    ("std:nema17_stepper.geop", components::nema17),
+];
+
+/// The family placed from `file`, built once, the first time it is asked
+/// for: or why it would not build. `None` for a file that is no standard
+/// part.
+fn entry(file: &str) -> Option<GeopResult<&'static Entry>> {
+    static ENTRIES: [OnceLock<Result<Entry, String>>; FAMILIES.len()] =
+        [const { OnceLock::new() }; FAMILIES.len()];
+    let k = FAMILIES.iter().position(|(f, _)| *f == file)?;
+    let (file, family) = FAMILIES[k];
+    let built = ENTRIES[k].get_or_init(|| {
+        let part = family(file).map_err(|e| format!("building the standard part {file}: {e}"))?;
+        let text = part
+            .program
+            .to_json()
+            .map_err(|e| format!("writing the standard part {file}: {e}"))?;
+        Ok(Entry { part, text })
     });
-    built.as_deref().map_err(String::as_str)
+    Some(built.as_ref().map_err(|e| GeopError::new(e.clone())))
 }
 
-/// Every standard part.
+/// Every standard part, each built if it was not yet.
 pub fn parts() -> GeopResult<impl Iterator<Item = &'static StandardPart>> {
-    Ok(entries().map_err(GeopError::new)?.iter().map(|e| &e.part))
+    let parts = FAMILIES
+        .iter()
+        .map(|(file, _)| part(file))
+        .collect::<GeopResult<Vec<_>>>()?;
+    Ok(parts.into_iter())
 }
 
 /// The standard part placed from `file`.
 pub fn part(file: &str) -> GeopResult<&'static StandardPart> {
-    parts()?
-        .find(|p| p.file == file)
-        .ok_or_else(|| no_such_part(file))
+    Ok(&entry(file).ok_or_else(|| no_such_part(file))??.part)
 }
 
 fn no_such_part(file: &str) -> GeopError {
-    let known: Vec<&str> = parts()
-        .map(|parts| parts.map(|p| p.file).collect())
-        .unwrap_or_default();
+    let known: Vec<&str> = FAMILIES.iter().map(|(f, _)| *f).collect();
     GeopError::new(format!(
         "there is no standard part {file:?}: there are {}",
         known.join(", ")
@@ -192,12 +201,7 @@ impl<F: Files> Files for WithStandardParts<F> {
         if !path.starts_with(PREFIX) {
             return self.0.read(path);
         }
-        let entries = entries().map_err(GeopError::new)?;
-        entries
-            .iter()
-            .find(|e| e.part.file == path)
-            .map(|e| e.text.clone())
-            .ok_or_else(|| no_such_part(path))
+        Ok(entry(path).ok_or_else(|| no_such_part(path))??.text.clone())
     }
 
     fn list(&self) -> Vec<String> {
@@ -207,9 +211,7 @@ impl<F: Files> Files for WithStandardParts<F> {
             .into_iter()
             .filter(|f| !f.starts_with(PREFIX))
             .collect();
-        if let Ok(entries) = entries() {
-            files.extend(entries.iter().map(|e| e.part.file.to_string()));
-        }
+        files.extend(FAMILIES.iter().map(|(file, _)| file.to_string()));
         files
     }
 }

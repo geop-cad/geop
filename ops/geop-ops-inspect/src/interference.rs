@@ -128,7 +128,7 @@ fn check_pair<S: Scalar>(
     if let Some(solid) = overlap {
         let volume = scratch
             .topology()
-            .mass_properties(solid, S::ONE)
+            .mass_properties(solid)
             .with_context(&ctx)?
             .volume;
         return Ok(Some((Contact::Overlap, Some(Bounded::of(volume)))));

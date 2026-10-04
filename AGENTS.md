@@ -603,6 +603,30 @@ booleans or the solver. When a regression test needs a slow setup, split
 it: a fast test of the actual defect, and an ignored test of the
 combinations.
 
+## Count the work, not the seconds
+
+A drag in a 2000-part robot went from 0.25 s to minutes, and nothing
+timed it. The editor builds every step's form on every change, for the
+step list; the added part's form asked the whole assembly how free its
+part was, a dense null space over every part's variables. Once per step,
+that is cubic in the parts. What fixed it, and what to keep doing:
+
+- A form shown in a list is of the step's arguments and the program's
+  state. Questions about what was built, over the whole assembly, are for
+  the one dialog open, once per edit.
+- A system that splits into independent groups is solved group by group,
+  and so is any question about it (`Assembly::freedom`, like the solve).
+- Listing must not build: example programs and standard parts are listed
+  by name, and made when opened or read.
+- Guard scaling with a count (`geop_ops::assembly::mates_resolved`), not
+  a time: a quadratic shows at 80 parts as clearly as at 2000.
+
+Timings mislead. Two builds of the same code differ by up to 30% (how
+code is split into codegen units), and other jobs on the machine slow
+everything. Compare CPU time, run the old and new binaries interleaved,
+and build both the same way. `perf` is not allowed here: profile by
+interrupting a capped run under gdb at intervals and counting stacks.
+
 ## Working in parallel worktrees
 
 Features developed side by side in separate worktrees (one agent each)

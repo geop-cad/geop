@@ -11,6 +11,11 @@ use crate::spline::{de_boor, find_span};
 
 impl<S: Scalar> NurbSurface<S, 4> {
     /// Evaluate the surface at `(u, v)`, returning a 3-D Cartesian point.
+    ///
+    /// Only the `(p + 1) × (q + 1)` control points acting on the spans of
+    /// `u` and `v` are touched: each column of them is evaluated at `u`,
+    /// and those at `v`, every de Boor run over its local points with the
+    /// knots shifted to match (the same arithmetic as over all of them).
     pub fn evaluate(&self, u: S, v: S) -> GeopResult<Vector3<S>> {
         let p = self.degree_u;
         let q = self.degree_v;
@@ -18,15 +23,18 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let nv = self.num_v;
 
         let span_u = find_span(p, &self.knot_vector_u, nu - 1, u)?;
-
-        let mut col_pts: Vec<Vector<S, 4>> = Vec::with_capacity(nv);
-        for j in 0..nv {
-            let row: Vec<Vector<S, 4>> = (0..nu).map(|i| self.control_points[i * nv + j]).collect();
-            col_pts.push(de_boor(p, &self.knot_vector_u, &row, u, span_u));
-        }
-
         let span_v = find_span(q, &self.knot_vector_v, nv - 1, v)?;
-        let hw = de_boor(q, &self.knot_vector_v, &col_pts, v, span_v);
+        let (base_u, base_v) = (span_u - p, span_v - q);
+
+        let col_pts: Vec<Vector<S, 4>> = (base_v..=span_v)
+            .map(|j| {
+                let column: Vec<Vector<S, 4>> = (base_u..=span_u)
+                    .map(|i| self.control_points[i * nv + j])
+                    .collect();
+                de_boor(p, &self.knot_vector_u[base_u..], &column, u, p)
+            })
+            .collect();
+        let hw = de_boor(q, &self.knot_vector_v[base_v..], &col_pts, v, q);
 
         let w = hw[3];
         if w.could_be_equal(S::ZERO) {

@@ -161,7 +161,7 @@ fn example_mass_properties_are_consistent() {
                 let Some(half) = half else {
                     return Ok(S::ZERO);
                 };
-                Ok(scratch.topology().mass_properties(half, S::ONE)?.volume)
+                Ok(scratch.topology().mass_properties(half)?.volume)
             });
             match halves {
                 [Ok(a), Ok(b)] => {

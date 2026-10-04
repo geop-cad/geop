@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use geop_core_math::{geop_error::GeopError, scalars::Scalar};
 
 use crate::{
-    CoedgeGeometry, FaceId, Model,
+    CoedgeGeometry, FaceId, Model, VertexId,
     contains::{
         face::{PointClassification, face_contains},
         rng::Rng,
@@ -43,20 +43,25 @@ fn adjacent_face_pairs<S: Scalar>(model: &Model<S>) -> HashSet<(FaceId, FaceId)>
             .collect();
         mark_all(&faces);
     }
-    for &vertex_id in model.vertices.keys() {
-        let faces: Vec<FaceId> = model
-            .coedges
-            .values()
-            .filter(|c| match c.geometry {
-                CoedgeGeometry::Edge(edge_id) => {
-                    let edge = &model.edges[&edge_id];
-                    edge.start_vertex == vertex_id || edge.end_vertex == vertex_id
-                }
-                CoedgeGeometry::Vertex(v) => v == vertex_id,
-            })
-            .map(|c| c.face)
-            .collect();
-        mark_all(&faces);
+    // The faces at each vertex, in one pass over the coedges.
+    let mut faces_at: HashMap<VertexId, Vec<FaceId>> = HashMap::new();
+    for coedge in model.coedges.values() {
+        let vertices = match coedge.geometry {
+            CoedgeGeometry::Edge(edge_id) => {
+                let edge = &model.edges[&edge_id];
+                [Some(edge.start_vertex), Some(edge.end_vertex)]
+            }
+            CoedgeGeometry::Vertex(v) => [Some(v), None],
+        };
+        for v in vertices.into_iter().flatten() {
+            let faces = faces_at.entry(v).or_default();
+            if !faces.contains(&coedge.face) {
+                faces.push(coedge.face);
+            }
+        }
+    }
+    for faces in faces_at.values() {
+        mark_all(faces);
     }
     pairs
 }
@@ -77,7 +82,8 @@ fn adjacent_face_pairs<S: Scalar>(model: &Model<S>) -> HashSet<(FaceId, FaceId)>
 /// iterations — except the very last round, which is left unsharpened: the
 /// convergence check right after needs that residual imprecision, or an
 /// otherwise-genuine match can round to just outside `could_be_equal`'s
-/// tolerance.
+/// tolerance. Once a round's sharpened result is its own seed, the rounds
+/// stop there with the identical answer (see the loop).
 pub fn check_face_face_numerical_intersection<S: Scalar>(
     params: &ValidationParameters<S>,
     errors: &mut Vec<GeopError>,
@@ -111,6 +117,11 @@ fn check_faces_of_body<S: Scalar>(
             }
             let face_a = &model.faces[&face_a_id];
             let face_b = &model.faces[&face_b_id];
+            // Surfaces apart share no point, so no projection between them
+            // converges: of a body of many patches, most pairs.
+            if !face_a.surface.could_overlap(&face_b.surface) {
+                continue;
+            }
 
             let (au_lo, au_hi) = face_a.surface.domain_u();
             let (av_lo, av_hi) = face_a.surface.domain_v();
@@ -133,6 +144,7 @@ fn check_faces_of_body<S: Scalar>(
                     let Ok((nu2, nv2)) = face_b.surface.project(p1, u2, v2, 1) else {
                         break;
                     };
+                    let seeds = [u1, v1, u2, v2];
                     u2 = nu2;
                     v2 = nv2;
 
@@ -149,10 +161,18 @@ fn check_faces_of_body<S: Scalar>(
                     // whose (still-uncertain) result feeds the convergence
                     // check right below the loop.
                     if round + 1 < params.face_face_newton_iterations {
-                        u1 = u1.midpoint();
-                        v1 = v1.midpoint();
-                        u2 = u2.midpoint();
-                        v2 = v2.midpoint();
+                        let sharp = [u1, v1, u2, v2].map(Scalar::midpoint);
+                        // Seeded as this round was, every round left would
+                        // repeat it to the bit, the last one's unsharpened
+                        // result included: that result is this one's.
+                        if sharp
+                            .iter()
+                            .zip(&seeds)
+                            .all(|(a, b)| a.is_sharp() && b.is_sharp() && a.could_be_equal(*b))
+                        {
+                            break;
+                        }
+                        [u1, v1, u2, v2] = sharp;
                     }
                 }
 

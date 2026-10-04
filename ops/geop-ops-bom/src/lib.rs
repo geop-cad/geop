@@ -38,7 +38,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_ops::{
-    Part,
+    Component, Part,
     parameters::ParameterKind,
     part::{ParamValue, State},
 };
@@ -200,11 +200,13 @@ struct Info<S: Scalar> {
 }
 
 /// The parts placed in a part, grouped: one per kind of part, in the order
-/// each was first placed, with how many there are.
+/// each was first placed, with how many there are, and the component the
+/// first is (which keeps its mass properties once integrated).
 struct Group<'p, S: Scalar> {
     key: String,
     file: &'p str,
     part: &'p Part<S>,
+    component: &'p Component<S>,
     count: u64,
 }
 
@@ -219,6 +221,7 @@ fn groups<S: Scalar>(part: &Part<S>) -> Vec<Group<'_, S>> {
                 key,
                 file,
                 part: instance.part(),
+                component: &instance.component,
                 count: 1,
             }),
         }
@@ -237,17 +240,32 @@ struct Builder<'f, S: Scalar> {
 }
 
 impl<S: Scalar> Builder<'_, S> {
-    fn info(&mut self, key: &str, file: &str, part: &Part<S>) -> GeopResult<&Info<S>> {
+    /// What the bill needs of the part `key`, built from `file` — placed
+    /// as `component`, unless it is the part the bill is of.
+    fn info(
+        &mut self,
+        key: &str,
+        file: &str,
+        part: &Part<S>,
+        component: Option<&Component<S>>,
+    ) -> GeopResult<&Info<S>> {
         if !self.infos.contains_key(key) {
-            let info = self.work_out(file, part).with_context(&|e: GeopError| {
-                e.with_context(format!("the bill of materials line of {file:?}"))
-            })?;
+            let info = self
+                .work_out(file, part, component)
+                .with_context(&|e: GeopError| {
+                    e.with_context(format!("the bill of materials line of {file:?}"))
+                })?;
             self.infos.insert(key.to_string(), info);
         }
         Ok(&self.infos[key])
     }
 
-    fn work_out(&self, file: &str, part: &Part<S>) -> GeopResult<Info<S>> {
+    fn work_out(
+        &self,
+        file: &str,
+        part: &Part<S>,
+        component: Option<&Component<S>>,
+    ) -> GeopResult<Info<S>> {
         let stem = file
             .rsplit(['/', ':'])
             .next()
@@ -279,6 +297,7 @@ impl<S: Scalar> Builder<'_, S> {
             let solid = PlacedSolid {
                 name: name.clone(),
                 part,
+                component,
                 solid: part.solid_id(name)?,
                 pose: None,
             };
@@ -309,13 +328,15 @@ impl<S: Scalar> Builder<'_, S> {
         key: &str,
         file: &str,
         part: &Part<S>,
+        component: Option<&Component<S>>,
     ) -> GeopResult<Result<S, String>> {
         if let Some(mass) = self.whole.get(key) {
             return Ok(mass.clone());
         }
-        let mut mass = self.info(key, file, part)?.own_mass.clone();
+        let mut mass = self.info(key, file, part, component)?.own_mass.clone();
         for group in groups(part) {
-            let placed = self.whole_mass(&group.key, group.file, group.part)?;
+            let placed =
+                self.whole_mass(&group.key, group.file, group.part, Some(group.component))?;
             mass = mass.and_then(|m| Ok(m.add(times(group.count, placed?))));
         }
         self.whole.insert(key.to_string(), mass.clone());
@@ -367,10 +388,11 @@ impl<S: Scalar> Builder<'_, S> {
         key: &str,
         file: &str,
         part: &Part<S>,
+        component: Option<&Component<S>>,
         multiplier: u64,
         lines: &mut Vec<(String, Line)>,
     ) -> GeopResult<()> {
-        let info = self.info(key, file, part)?;
+        let info = self.info(key, file, part, component)?;
         if info.own_bodies || part.instances().next().is_none() {
             let mass = info.own_mass.clone();
             match lines.iter_mut().find(|(k, _)| k == key) {
@@ -386,6 +408,7 @@ impl<S: Scalar> Builder<'_, S> {
                 group.key.as_str(),
                 group.file,
                 group.part,
+                Some(group.component),
                 multiplier * group.count,
                 lines,
             )?;
@@ -421,7 +444,8 @@ impl<S: Scalar> Builder<'_, S> {
             line.item.clone()
         };
         for group in groups(part) {
-            let mass = self.whole_mass(&group.key, group.file, group.part)?;
+            let mass =
+                self.whole_mass(&group.key, group.file, group.part, Some(group.component))?;
             let mut line = self.part_line(&group.key, level, group.count, &mass);
             let item = next(&mut line);
             lines.push(line);
@@ -521,7 +545,7 @@ pub fn bom<S: Scalar>(
     let lines = match structure {
         Structure::Flat => {
             let mut keyed = Vec::new();
-            builder.flat(&root, file, part, 1, &mut keyed)?;
+            builder.flat(&root, file, part, None, 1, &mut keyed)?;
             let mut lines: Vec<Line> = keyed.into_iter().map(|(_, line)| line).collect();
             for (k, line) in lines.iter_mut().enumerate() {
                 line.item = (k + 1).to_string();
@@ -530,7 +554,7 @@ pub fn bom<S: Scalar>(
         }
         Structure::Indented => {
             let mut lines = Vec::new();
-            let info = builder.info(&root, file, part)?;
+            let info = builder.info(&root, file, part, None)?;
             if info.own_bodies || part.instances().next().is_none() {
                 let mass = info.own_mass.clone();
                 let mut line = builder.part_line(&root, 1, 1, &mass);
@@ -542,7 +566,10 @@ pub fn bom<S: Scalar>(
             lines
         }
     };
-    let total_mass = builder.whole_mass(&root, file, part)?.ok().map(Bounded::of);
+    let total_mass = builder
+        .whole_mass(&root, file, part, None)?
+        .ok()
+        .map(Bounded::of);
     Ok(Bom {
         structure,
         lines,

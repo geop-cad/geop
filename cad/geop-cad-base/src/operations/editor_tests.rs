@@ -803,6 +803,10 @@ fn new_route_is_picked_and_its_wires_chosen() {
 /// A sweep made in the editor: the horn's sketches picked, its rail
 /// dropped for a twist and taper, the profile kept facing one way —
 /// the dialog showing the twist and scale only once there is no rail.
+///
+/// It is made a new body first: joined to the horn, every change in the
+/// dialog would run a boolean of the sweep with it, which is not what is
+/// tested here.
 #[test]
 fn sweep_with_rails_twist_and_orientation() {
     let mut editor = Editor::new();
@@ -823,6 +827,7 @@ fn sweep_with_rails_twist_and_orientation() {
     editor.handle(Command::New {
         kind: "sweep".into(),
     });
+    editor.handle(dialog("combine", Value::Choice("new_body".into())));
     let sketch = |name: &str| Value::Entities(vec![EntityRef::Sketch { name: name.into() }]);
     editor.handle(dialog("profile", sketch("mouth")));
     editor.handle(dialog("path", sketch("axis")));
@@ -845,7 +850,6 @@ fn sweep_with_rails_twist_and_orientation() {
         panic!("the twist is shown without rails");
     };
     assert_eq!(twist.value, 90.0);
-    editor.handle(dialog("combine", Value::Choice("new_body".into())));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     assert_eq!(solids(&update), 2);

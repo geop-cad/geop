@@ -1435,9 +1435,13 @@ pub fn bolted_plate() -> Program {
 /// the one to open first first.
 pub type ExampleFiles = Vec<(&'static str, Program)>;
 
+/// An example by name, with what makes it: a program, or the files of one
+/// made of several.
+pub type Example<T> = (&'static str, fn() -> T);
+
 /// Every example made of several files, by name, each with what makes its
 /// files: listing them builds nothing (see [`all`]).
-pub fn workspaces() -> Vec<(&'static str, fn() -> ExampleFiles)> {
+pub fn workspaces() -> Vec<Example<ExampleFiles>> {
     vec![
         ("pin_in_plate", || {
             vec![
@@ -1998,7 +2002,7 @@ pub fn subd_mouse() -> Program {
 /// Every example, by name, each with what makes its program: listing them
 /// builds nothing — an editor lists them when it starts, and making one
 /// may solve sketches, or build a part to name its faces.
-pub fn all() -> Vec<(&'static str, fn() -> Program)> {
+pub fn all() -> Vec<Example<Program>> {
     vec![
         ("box_with_drill_hole", box_with_drill_hole),
         ("bracket", bracket),
