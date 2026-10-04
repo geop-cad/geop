@@ -296,8 +296,22 @@ export type Control =
   /** Pressing one sends its value as a choice. */
   | { type: "actions"; actions: Action[] }
   | { type: "checkbox"; label: string; value: boolean }
-  /** A slider over `range`, if given. */
-  | { type: "number"; label: string; value: number; unit: Unit; range: [number, number] | null; step: number }
+  /**
+   * A slider over `range`, if given. A field that takes formulas has
+   * `text`: the value as given — a number, or a formula of the parameters —
+   * edited in place of `value` and sent back as `text`; `value` is what it
+   * comes to, `error` why it does not evaluate.
+   */
+  | {
+      type: "number";
+      label: string;
+      value: number;
+      unit: Unit;
+      range: [number, number] | null;
+      step: number;
+      text: string | null;
+      error: string | null;
+    }
   /** Found by typing, if `searchable`. */
   | { type: "select"; label: string; value: string; options: Choice[]; searchable: boolean }
   /** A colour, `#rrggbb`, sent back as `text`. */

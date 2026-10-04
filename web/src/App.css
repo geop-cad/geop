@@ -928,6 +928,21 @@ button.inline {
   font-family: ui-monospace, monospace;
 }
 
+/* A number field that takes formulas: wider, for the formula's text. */
+.formula-number {
+  grid-template-columns: minmax(1rem, max-content) minmax(0, 1fr) 7rem;
+}
+.formula-number input.formula-input {
+  width: 7rem;
+  box-sizing: border-box;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+.formula-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* A choice among many, found by typing. */
 .search-select-box {
   position: relative;

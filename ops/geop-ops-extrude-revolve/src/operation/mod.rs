@@ -138,6 +138,23 @@ impl Extent {
     pub fn blind(amount: impl Into<Formula>) -> Self {
         Extent::Blind(amount.into())
     }
+
+    /// Where it ends, its length as the step building `part` reads it.
+    fn end<S: Scalar>(&self, part: &mut Part<S>) -> GeopResult<End> {
+        Ok(match self {
+            Extent::Blind(length) => End::Blind(length.evaluate(part)?),
+            Extent::UpToNext => End::UpToNext,
+            Extent::ThroughAll => End::ThroughAll,
+        })
+    }
+}
+
+/// Where a side ends: an [`Extent`], its length evaluated.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum End {
+    Blind(f64),
+    UpToNext,
+    ThroughAll,
 }
 
 /// How far an extrude or revolve goes, from its sketch's plane: `side1`
@@ -175,7 +192,7 @@ impl Extents {
     }
 
     /// What to build for it, see [`Plan`], in the step building `part` —
-    /// which a length's formula reads its parameters from: `far(sign)` is
+    /// which its lengths' formulas read the parameters of: `far(sign)` is
     /// how far, the way `sign` says, reaches past the solid it is combined
     /// with.
     fn plan<S: Scalar>(
@@ -183,23 +200,17 @@ impl Extents {
         part: &mut Part<S>,
         far: impl Fn(f64) -> GeopResult<f64>,
     ) -> GeopResult<Plan> {
-        use Extent::*;
+        use End::*;
         let ahead = if self.reversed { -1.0 } else { 1.0 };
-        let mut length = |extent: &Extent| -> GeopResult<Option<f64>> {
-            match extent {
-                Blind(d) => Ok(Some(d.evaluate(part)?)),
-                UpToNext | ThroughAll => Ok(None),
-            }
-        };
-        let blind1 = length(&self.side1)?;
-        let blind2 = match &self.side2 {
-            Some(e) if !self.symmetric => length(e)?,
+        let side1 = self.side1.end(part)?;
+        let side2 = match &self.side2 {
+            Some(e) if !self.symmetric => Some(e.end(part)?),
             _ => None,
         };
-        let side = |sign: f64, extent: &Extent, blind: Option<f64>| -> GeopResult<Side> {
-            Ok(match extent {
-                Blind(_) => Side {
-                    to: sign * blind.expect("a blind side's length is evaluated"),
+        let side = |sign: f64, end: End| -> GeopResult<Side> {
+            Ok(match end {
+                Blind(d) => Side {
+                    to: sign * d,
                     up_to_next: false,
                 },
                 ThroughAll => Side {
@@ -212,14 +223,11 @@ impl Extents {
                 },
             })
         };
-        let sides = match (&self.side1, self.symmetric, &self.side2) {
-            (Blind(_), true, _) => {
-                let d = blind1.expect("a blind side's length is evaluated");
-                return Ok(Plan::Whole(-d / 2.0, d / 2.0));
-            }
-            (e, true, _) => vec![side(ahead, e, blind1)?, side(-ahead, e, blind1)?],
-            (e, false, None) => vec![side(ahead, e, blind1)?],
-            (e, false, Some(e2)) => vec![side(ahead, e, blind1)?, side(-ahead, e2, blind2)?],
+        let sides = match (side1, self.symmetric, side2) {
+            (Blind(d), true, _) => return Ok(Plan::Whole(-d / 2.0, d / 2.0)),
+            (e, true, _) => vec![side(ahead, e)?, side(-ahead, e)?],
+            (e, false, None) => vec![side(ahead, e)?],
+            (e, false, Some(e2)) => vec![side(ahead, e)?, side(-ahead, e2)?],
         };
         Ok(if sides.iter().any(|s| s.up_to_next) {
             Plan::Sides(sides)
