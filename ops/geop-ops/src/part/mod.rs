@@ -3,7 +3,7 @@
 //! ([`NameRegistry`], [`Namer`]) — changed only through `Part`'s own
 //! methods, so no entity is ever without a name.
 
-use std::collections::BTreeMap;
+use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -64,6 +64,9 @@ pub struct Part<S: Scalar> {
     declared: State,
     /// What its parameters are defined as (see [`Part::parameters`]).
     pub(crate) parameters: crate::parameters::Parameters,
+    /// What the operation family that built a solid recorded on it, by the
+    /// solid's name (see [`Part::body_data`]).
+    body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,
     /// The next sketch, datum or instance id: ids count up in the order
     /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,
@@ -87,6 +90,7 @@ impl<S: Scalar> Part<S> {
             inputs: State::new(),
             declared: State::new(),
             parameters: crate::parameters::Parameters::default(),
+            body_data: BTreeMap::new(),
             next_id: 1,
         };
         let origin = Datum {
@@ -141,6 +145,29 @@ impl<S: Scalar> Part<S> {
         }
     }
 
+    /// Records `data` on the solid named `solid`: what the operation family
+    /// that built it needs to know about it beyond its topology — which of
+    /// a sheet-metal body's faces are bends, say — for the operations of
+    /// that family to read back ([`Part::body_data`]). Replaces whatever
+    /// was recorded on it before.
+    ///
+    /// The record belongs to that one solid: an operation that consumes the
+    /// solid — any that does not know the record — builds a solid of
+    /// another name, which has none.
+    pub fn set_body_data<T: Any + Send + Sync>(&mut self, solid: &str, data: T) -> GeopResult<()> {
+        self.solid_id(solid)?;
+        self.body_data.insert(solid.to_string(), Arc::new(data));
+        Ok(())
+    }
+
+    /// What was recorded on the solid named `solid` (see
+    /// [`Part::set_body_data`]), if it is of type `T` and the solid still
+    /// exists.
+    pub fn body_data<T: Any>(&self, solid: &str) -> Option<&T> {
+        self.solid_id(solid).ok()?;
+        self.body_data.get(solid)?.downcast_ref()
+    }
+
     /// Forgets the name of every entity that no longer exists — for an
     /// operation that deletes by reachability rather than one id at a time
     /// (see [`Model::assemble_solid`]).
@@ -152,6 +179,9 @@ impl<S: Scalar> Part<S> {
             .filter(|&id| self.exists(id))
             .collect();
         self.names.retain(|id| alive.contains(&id));
+        let names = &self.names;
+        self.body_data
+            .retain(|solid, _| matches!(names.id_of(solid), Some(RefId::Solid(_))));
     }
 
     /// Checks the invariant every method keeps: every vertex, edge, face,

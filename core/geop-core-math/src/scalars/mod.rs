@@ -56,6 +56,10 @@ pub trait Scalar: Field + Copy + Display + Default {
     /// [`Scalar::INFINITY`]-adjacent value, which just widen to `[-1, 1]`.
     fn sin(self) -> Self;
     fn cos(self) -> Self;
+    /// Outward-rounded enclosure of `acos` over the interval, in `[0, π]`:
+    /// the angle whose cosine it is. The part of the interval beyond
+    /// `[-1, 1]` is left out; an interval with nothing in `[-1, 1]` fails.
+    fn acos(self) -> GeopResult<Self>;
 
     // Three-valued comparisons
     fn could_be_equal(self, other: Self) -> bool;

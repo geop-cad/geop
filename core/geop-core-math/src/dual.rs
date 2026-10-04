@@ -211,6 +211,14 @@ impl<S: Scalar, const N: usize> Scalar for Dual<S, N> {
         self.chain(self.v.cos(), df)
     }
 
+    /// `d acos(x) = -1 / sqrt(1 - x^2)`, which fails where it is infinite,
+    /// at `x = ±1`.
+    fn acos(self) -> GeopResult<Self> {
+        let root = S::ONE.sub(self.v.mul(self.v)).sqrt()?;
+        let df = S::ONE.div(root)?.neg();
+        Ok(self.chain(self.v.acos()?, df))
+    }
+
     fn could_be_equal(self, other: Self) -> bool {
         self.v.could_be_equal(other.v)
     }

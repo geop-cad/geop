@@ -1,0 +1,18 @@
+[package]
+name = "geop-ops-sheetmetal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-core-sketch.workspace = true
+geop-ops.workspace = true
+# For its line and arc constructors, and the profiles a sketch's area
+# becomes (`shape_loops`).
+geop-ops-extrude-revolve.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+geop-ops-rasterize.workspace = true
