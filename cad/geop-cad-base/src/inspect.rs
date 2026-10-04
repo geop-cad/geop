@@ -1,6 +1,7 @@
 //! The inspect tools of the [`crate::Editor`]: the measure tool, which
 //! picks entities and says what they measure, and the questions asked of
-//! the part as drawn — its mass properties, which of its solids interfere.
+//! the part as drawn — its mass properties, which of its solids interfere,
+//! its bill of materials.
 //!
 //! None of it is an operation: inspecting changes no program, adds no step
 //! and is nothing to undo. The editor keeps the measure tool's picks as it
@@ -13,6 +14,7 @@ use geop_ops::{
     operation::Role,
     ui::{Dialog, PartView, Presentation, Shape, StepEditEvent, Style, Visual},
 };
+use geop_ops_bom::{Bom, Structure, bom};
 use geop_ops_inspect::{
     InterferenceReport, MassReport, Measurement, interference_report, mass_report, measure,
 };
@@ -26,6 +28,8 @@ pub enum Query {
     MassProperties,
     /// Which of its solids overlap, and which touch.
     Interference,
+    /// Its bill of materials, laid out as `structure` says.
+    Bom { structure: Structure },
 }
 
 /// What the inspect tools found, as an update carries it.
@@ -38,14 +42,26 @@ pub enum Inspection<S: Scalar> {
     Measure(Measurement<S>),
     MassProperties(MassReport),
     Interference(InterferenceReport),
+    Bom(Bom),
 }
 
-/// The answer to `query` about `part`.
-pub fn answer<S: Scalar>(query: Query, part: &Part<S>) -> GeopResult<Inspection<S>> {
+/// The answer to `query` about `part`, which the program `file` builds.
+pub fn answer<S: Scalar>(query: Query, part: &Part<S>, file: &str) -> GeopResult<Inspection<S>> {
     Ok(match query {
         Query::MassProperties => Inspection::MassProperties(mass_report(part)?),
         Query::Interference => Inspection::Interference(interference_report(part)?),
+        Query::Bom { structure } => Inspection::Bom(bill_of_materials(part, file, structure)?),
     })
+}
+
+/// The bill of materials of `part`, which the program `file` builds, its
+/// standard parts designated by their norms (see [`crate::stdlib`]).
+pub fn bill_of_materials<S: Scalar>(
+    part: &Part<S>,
+    file: &str,
+    structure: Structure,
+) -> GeopResult<Bom> {
+    bom(part, file, structure, &crate::stdlib::standard)
 }
 
 /// What the measure tool picks: points, edges, faces — and datums, by their

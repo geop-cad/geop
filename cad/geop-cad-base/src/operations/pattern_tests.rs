@@ -398,21 +398,17 @@ fn three_turned_boxes_joined() {
 
 /// The same three boxes, the last a copy of the first turned 26°.
 ///
-/// Fails in the second join, (a ∪ b) ∪ c: imprinting c's top edge onto
-/// b's top cap (coplanar, z = 1) is refused as a degenerate split, because
-/// an edge on that cap's outer loop near b's outer corner, cut where c's
-/// outer end crosses b's, has a pcurve 4e-4 wide and an end vertex 5.5e-5
-/// wide. Ruled out: the turned copy's interval width (sharpening every
-/// moved control point and vertex fails the same way), the order the copy's
-/// entities are built in (turning a drawn box in place, `MoveBody` without
-/// copy, fails identically, same ids), and the first join (a ∪ turned copy
-/// alone stays tight, see `turned_copy_joined_stays_tight`). Drawn at 26°
-/// instead (`three_turned_boxes_joined`), c passes: the drawn box's caps
-/// are parametrized along the sketch's axes, the turned box's along its
-/// own sides, so the coplanar caps' parametrizations differ — the next
-/// thing to look at, in the boolean's coplanar imprint.
+/// The second join, (a ∪ b) ∪ c, once failed imprinting c's bottom edge
+/// onto b's bottom cap. b's inner top edge lies in c's top plane and ends
+/// on c's inner side; the piercing search met c's cap only at that end
+/// vertex, and its last box, 1.4e-4 short of the end and 1.4e-5 outside
+/// the cap, was split at as a crossing — Newton cannot refine a curve
+/// lying in the surface's tangent plane. That left vertices 5e-5 wide, and
+/// a pcurve through one too wide for the imprint to tell its ring's area
+/// from zero. Drawn boxes passed only because their caps' patches extend
+/// past the edge: there it lay on the patch and was imprinted. Only a
+/// transversal crossing is now a piercing.
 #[test]
-#[ignore = "boolean: joining a turned box to two overlapping ones fails on coplanar caps, see the doc comment"]
 fn three_turned_boxes_one_a_turned_copy_joined() {
     let mut program = Program::new();
     for (k, name) in ["a", "b"].into_iter().enumerate() {
@@ -452,6 +448,8 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
     );
     let part = program.build::<S>(&NoFiles).unwrap();
     assert_valid(&part);
+    let (width, edge) = widest_pcurve(&part);
+    assert!(width < 1e-9, "{edge}: {width:e}");
 }
 
 /// The widest control point of any pcurve of `part`, and the edge it

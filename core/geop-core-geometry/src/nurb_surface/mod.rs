@@ -112,6 +112,17 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         self.aabb = compute_aabb(&self.control_points);
     }
 
+    /// The diagonal of the box around the control points: by the convex
+    /// hull property, a length the whole patch fits within — the size of
+    /// the feature it is part of, for choices that should scale with it.
+    pub fn size(&self) -> GeopResult<S> {
+        self.aabb
+            .iter()
+            .take(D - 1)
+            .fold(S::ZERO, |sum, axis| sum.add(axis.width().mul(axis.width())))
+            .sqrt()
+    }
+
     /// Valid parameter range in the u direction: `(u_min, u_max)`.
     pub fn domain_u(&self) -> (S, S) {
         (

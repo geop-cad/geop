@@ -197,6 +197,7 @@ dependencies = [
  "geop-core-topology",
  "geop-ops",
  "geop-ops-assembly",
+ "geop-ops-bom",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-drawing",
@@ -229,6 +230,7 @@ dependencies = [
  "geop-cad-base",
  "geop-core-math",
  "geop-ops",
+ "geop-ops-bom",
  "geop-ops-drawing",
  "geop-ops-rasterize",
  "geop-ops-step",
@@ -303,6 +305,18 @@ dependencies = [
  "geop-ops-extrude-revolve",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "geop-ops-bom"
+version = "0.1.0"
+dependencies = [
+ "geop-core-math",
+ "geop-ops",
+ "geop-ops-extrude-revolve",
+ "geop-ops-inspect",
+ "geop-ops-sheetmetal",
+ "serde",
 ]
 
 [[package]]

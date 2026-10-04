@@ -104,10 +104,24 @@ const MIN_TRACED_LEGS: usize = 8;
 /// makes a trace wander off instead of following the curve.
 const STEPS_PER_REVOLUTION: usize = 64;
 
-/// The marching step to use at `(u_a, v_a)` / `(u_b, v_b)`: `step_size`,
-/// shortened so a full turn of whichever surface is curving harder there
-/// would take [`STEPS_PER_REVOLUTION`] steps. A surface that's locally flat
-/// reports no curvature radius and so imposes no limit.
+/// How many marching steps to spend across the smaller of the two surfaces
+/// a trace runs between (see [`NurbSurface3D::size`]), where neither
+/// curves. The curve lies on both, so this is the scale of the features it
+/// can pass: the stride grows and shrinks with the part instead of being
+/// fixed in model units. A fixed 0.1 took 400 steps along a 40 mm cut, and
+/// the volume integrated along the cubic fitted through them came out wider
+/// than `long_bars_overlap` allows; it was also more than a cut 0.05 wide.
+/// Like [`STEPS_PER_REVOLUTION`] this bounds effort and the fit's width,
+/// not whether a trace finds its end — a stride reaches a vertex wherever
+/// one lies on it (see [`candidate_within`]).
+const STEPS_ACROSS_PATCH: usize = 16;
+
+/// The marching step to use at `(u_a, v_a)` / `(u_b, v_b)`: a
+/// [`STEPS_ACROSS_PATCH`]th of the smaller surface, shortened so a full
+/// turn of whichever surface is curving harder there would take
+/// [`STEPS_PER_REVOLUTION`] steps. A surface that's locally flat reports no
+/// curvature radius and so imposes no limit. Sharp: where a stride lands is
+/// a free choice.
 fn adaptive_step_size<S: Scalar>(
     surf_a: &NurbSurface3D<S>,
     surf_b: &NurbSurface3D<S>,
@@ -115,12 +129,15 @@ fn adaptive_step_size<S: Scalar>(
     v_a: S,
     u_b: S,
     v_b: S,
-    step_size: S,
 ) -> GeopResult<S> {
     let arc = S::TWO
         .mul(S::PI)
         .div(S::from_i64(STEPS_PER_REVOLUTION as i64))?;
-    let mut step = step_size;
+    let mut step = surf_a
+        .size()?
+        .min(surf_b.size()?)
+        .div(S::from_i64(STEPS_ACROSS_PATCH as i64))?
+        .sharpen();
     for radius in [
         surf_a.curvature_radius(u_a, v_a)?,
         surf_b.curvature_radius(u_b, v_b)?,
@@ -130,7 +147,7 @@ fn adaptive_step_size<S: Scalar>(
     {
         let limit = radius.abs().mul(arc);
         if limit.definitely_less(step) {
-            step = limit;
+            step = limit.sharpen();
         }
     }
     Ok(step)
@@ -142,10 +159,9 @@ fn adaptive_step_size<S: Scalar>(
 /// `max_solutions`/`max_nodes`/`min_subdivision_size` bound the
 /// `curve_surface_intersect` searches used to classify each pair (and the
 /// `curve_could_contain`/`surface_could_contain` single-shape searches used
-/// while tracing). `step_size` is the marching step length along a traced
-/// intersection curve; `max_trace_steps` bounds how many such steps a
+/// while tracing). `max_trace_steps` bounds how many marching steps a
 /// single trace may take before it's considered to have failed to find a
-/// terminating vertex.
+/// terminating vertex (see [`adaptive_step_size`] for how long each is).
 pub fn remesh_edges_x_faces<S: Scalar>(
     part: &mut Part<S>,
     naming: &mut BooleanNaming<S>,
@@ -154,12 +170,11 @@ pub fn remesh_edges_x_faces<S: Scalar>(
     max_solutions: usize,
     max_nodes: usize,
     min_subdivision_size: S,
-    step_size: S,
     max_trace_steps: usize,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
-            "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size}, step_size={step_size}, max_trace_steps={max_trace_steps})"
+            "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size}, max_trace_steps={max_trace_steps})"
         ))
     };
 
@@ -253,7 +268,6 @@ pub fn remesh_edges_x_faces<S: Scalar>(
             &candidates,
             max_nodes,
             min_subdivision_size,
-            step_size,
             max_trace_steps,
         )
         .with_context(&ctx)?;
@@ -343,7 +357,28 @@ fn find_piercing_crossing<S: Scalar>(
                 // `min_subdivision_size`-wide one, and the vertex point
                 // evaluated from it would be just as wide. Polish it before
                 // anything downstream looks at it.
-                let (t, _uv) = refine_crossing(&edge.curve, &face.surface, t, uv);
+                let (t, uv) = refine_crossing(&edge.curve, &face.surface, t, uv);
+                // Only a transversal crossing is a piercing. Where the curve
+                // runs along the surface's tangent plane the crossing is not
+                // regular, Newton cannot pin it down, and the box is what the
+                // search left at its handoff threshold — not a point the
+                // curve is known to meet the patch at. On
+                // `three_turned_boxes_one_a_turned_copy_joined` a top edge
+                // lying in another box's top plane, ending on that cap's
+                // boundary, met the patch only at its own end vertex; the
+                // search's last box stopped 1.4e-4 short of it, 1.4e-5
+                // outside the cap, and was split at as a crossing, leaving a
+                // vertex 5e-5 wide that a later imprint could not get past.
+                // A curve tangent to a face is the coincidence phase's and the
+                // tangent branches' to handle. Where the surface has no normal
+                // to ask (a pole, whose parametrization collapses), nothing
+                // says the crossing is tangential, and it is kept.
+                if let (Ok(tangent), Ok(normal)) =
+                    (edge.curve.tangent(t), face.surface.normal(uv[0], uv[1]))
+                    && tangent.prod_dot(&normal).could_be_equal(S::ZERO)
+                {
+                    continue;
+                }
                 // A `t` that isn't *definitely* strictly inside the domain
                 // could be the domain bound itself — i.e. the crossing may
                 // be the edge's own start or end vertex, which is a shared
@@ -788,6 +823,18 @@ fn find_tracing_start_points<S: Scalar>(
 /// module uses, so a vertex that genuinely lies on both faces still
 /// terminates the trace exactly as before — this only rejects the ones that
 /// never belonged.
+///
+/// Lying on both surfaces is still not lying on the stretch of curve a
+/// stride runs along. Once the march has committed to a `stride` — a
+/// direction, and the distance along it to the plane the corrector lands
+/// on — the vertex it reaches is one between `point` and that plane. One
+/// definitely behind `point` is not it: the march left it behind, or it
+/// lies on the curve's other side of the start. On `narrow_groove` a trace
+/// leaving the cut's inner corner along the wall found, one stride later,
+/// the vertex 0.05 *behind* its start, where the cut's outer floor edge
+/// crosses the wall's plane outside the wall, nearer than anything ahead —
+/// and spliced a spur out of the wall to it. One definitely past the plane
+/// is the next stride's to reach.
 #[allow(clippy::too_many_arguments)]
 fn candidate_within<S: Scalar>(
     model: &Model<S>,
@@ -795,6 +842,7 @@ fn candidate_within<S: Scalar>(
     origin: VertexId,
     point: &Vector3<S>,
     radius: S,
+    stride: Option<(&Vector3<S>, S)>,
     surf_a: &NurbSurface3D<S>,
     surf_b: &NurbSurface3D<S>,
     max_nodes: usize,
@@ -807,9 +855,16 @@ fn candidate_within<S: Scalar>(
             continue;
         }
         let candidate_point = model.get_vertex(candidate)?.point;
-        let d = candidate_point.sub(point).norm_sq();
+        let offset = candidate_point.sub(point);
+        let d = offset.norm_sq();
         if !d.could_be_less(radius_sq) {
             continue;
+        }
+        if let Some((heading, length)) = stride {
+            let along = offset.prod_dot(heading);
+            if along.definitely_less(S::ZERO) || along.definitely_greater(length) {
+                continue;
+            }
         }
         if best.is_some() && !d.could_be_less(best.expect("checked").1) {
             continue;
@@ -1088,7 +1143,6 @@ fn trace_from_start_point<S: Scalar>(
     candidates: &[VertexId],
     max_nodes: usize,
     min_subdivision_size: S,
-    step_size: S,
     max_trace_steps: usize,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
@@ -1136,7 +1190,6 @@ fn trace_from_start_point<S: Scalar>(
             candidates,
             max_nodes,
             min_subdivision_size,
-            step_size,
             max_trace_steps,
         )
         .with_context(&|e: GeopError| e.with_context(format!("face_a={face_a}, face_b={face_b}")))
@@ -1233,7 +1286,6 @@ fn trace_one_side<S: Scalar>(
     candidates: &[VertexId],
     max_nodes: usize,
     min_subdivision_size: S,
-    step_size: S,
     max_trace_steps: usize,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| {
@@ -1298,7 +1350,7 @@ fn trace_one_side<S: Scalar>(
     // domain — a distinction the raw domain bounds can't make. Once a
     // direction is committed the march just follows the curve; re-testing
     // containment every step would only re-derive the same answer.
-    let first_step = adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0, step_size)
+    let first_step = adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0)
         .with_context(&ctx)?;
     let mut chosen = None;
     let mut last_rejection: Option<(PointClassification, PointClassification)> = None;
@@ -1319,6 +1371,7 @@ fn trace_one_side<S: Scalar>(
         v,
         &point,
         first_step,
+        None,
         &surf_a,
         &surf_b,
         max_nodes,
@@ -1421,10 +1474,10 @@ fn trace_one_side<S: Scalar>(
     // `Inside`, so if a splice below reports a degenerate split, this says
     // whether the direction choice was wrong or something later moved the
     // curve onto the boundary.
-    let (first_ua, first_va, first_ub, first_vb) = (u_a, v_a, u_b, v_b);
+    let (first_ua, first_va, first_ub, first_vb, first_dir) = (u_a, v_a, u_b, v_b, dir);
     let ctx = |e: GeopError| {
         ctx(e).with_context(format!(
-            "direction chosen with face_a={first_a:?} at uv=({first_ua:?}, {first_va:?}), face_b={first_b:?} at uv=({first_ub:?}, {first_vb:?}), rejected direction saw {last_rejection:?}"
+            "from {point:?} along {first_dir:?}, direction chosen with face_a={first_a:?} at uv=({first_ua:?}, {first_va:?}), face_b={first_b:?} at uv=({first_ub:?}, {first_vb:?}), rejected direction saw {last_rejection:?}"
         ))
     };
 
@@ -1434,33 +1487,52 @@ fn trace_one_side<S: Scalar>(
     // (for `interpolate_enclosing` below).
     let mut params = vec![(u_a0, v_a0, u_b0, v_b0), (u_a, v_a, u_b, v_b)];
 
-    // March until we reach another vertex. "Reached" means within one
-    // `step_size` — the walk moves in `step_size` strides, so a vertex
-    // closer than that is one the very next stride would pass.
+    // March until we reach another vertex: one on the stretch of curve the
+    // next stride runs along, from `cur_point` up to the plane at `step`
+    // along `dir` that the corrector lands it on (see `candidate_within`).
     let mut hit_vertex = None;
     for _ in 0..max_trace_steps {
-        let reach = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, step_size)
+        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b)
             .with_context(&ctx)?;
-        if let Some(hit) = candidate_within(
-            model,
-            candidates,
-            v,
-            &cur_point,
-            reach,
-            &surf_a,
-            &surf_b,
-            max_nodes,
-            min_subdivision_size,
-        )? {
+        let reached = |radius: S| {
+            candidate_within(
+                model,
+                candidates,
+                v,
+                &cur_point,
+                radius,
+                Some((&dir, step)),
+                &surf_a,
+                &surf_b,
+                max_nodes,
+                min_subdivision_size,
+            )
+        };
+        // Every point of the plane the stride lands on is at least `step`
+        // from `cur_point`, so a vertex ahead within `step` is reached
+        // whatever the stride does — and is found without taking it, which
+        // matters where the curve ends at the edge of a patch the stride
+        // would have to leave.
+        if let Some(hit) = reached(step).with_context(&ctx)? {
             hit_vertex = Some(hit);
             break;
         }
-
-        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, step_size)
-            .with_context(&ctx)?;
         let (next_point, na, va, nb, vb) =
             predictor_corrector_step(&surf_a, &surf_b, cur_point, dir, u_a, v_a, u_b, v_b, step)
                 .with_context(&ctx)?;
+        // The rest of the stride: where the curve bends away from `dir` it
+        // meets the plane farther than `step` away, and a vertex in between
+        // lies ahead of the plane but outside a ball of radius `step`. Within
+        // the chord, though, since along an arc turning less than half a
+        // revolution the distance from its start only grows. Checking the
+        // ball alone, the stride stepped over such a vertex: on
+        // `chained_differences_block_with_two_slots_and_a_sphere` the
+        // sphere's circle across the first slot's floor ran past the corner
+        // of the second slot it ends at.
+        if let Some(hit) = reached(next_point.sub(&cur_point).norm()).with_context(&ctx)? {
+            hit_vertex = Some(hit);
+            break;
+        }
         cur_point = next_point;
         (u_a, v_a, u_b, v_b) = (na, va, nb, vb);
         points.push(cur_point);
@@ -1749,7 +1821,6 @@ mod tests {
             MAX_EDGE_INTERSECTIONS,
             MAX_NODES,
             curve_curve_min_subdivision_size(),
-            ScalInF64::from_f64(0.1),
             200,
         )
         .unwrap();

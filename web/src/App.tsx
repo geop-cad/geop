@@ -4,6 +4,8 @@ import {
   applyScene,
   loadGeop,
   send,
+  type Bom,
+  type BomStructure,
   type Command,
   type EditEvent,
   type Placed,
@@ -16,6 +18,7 @@ import {
   type Presentation,
   type Program,
   type ProgramState,
+  type Query,
   type SceneState,
   type StepState,
   type Update,
@@ -104,6 +107,7 @@ function App() {
   /** The last answers to the inspect questions — until the part changes. */
   const [mass, setMass] = useState<MassReport | null>(null);
   const [interference, setInterference] = useState<InterferenceReport | null>(null);
+  const [bom, setBom] = useState<Bom | null>(null);
   const [inspecting, setInspecting] = useState(false);
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
@@ -167,6 +171,7 @@ function App() {
         // The answers were about the part as it was.
         setMass(null);
         setInterference(null);
+        setBom(null);
         placedRef.current = applyScene(placedRef.current, update.scene);
         setPlaced(placedRef.current);
       }
@@ -176,6 +181,7 @@ function App() {
       setMeasurement(inspection?.kind === "measure" ? inspection : null);
       if (inspection?.kind === "mass_properties") setMass(inspection);
       if (inspection?.kind === "interference") setInterference(inspection);
+      if (inspection?.kind === "bom") setBom(inspection);
       setError(update.error);
       if (!update.error && EDITS.includes(command.command)) {
         trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
@@ -393,6 +399,16 @@ function App() {
     else download(file.name, file.text ?? "", format === "svg" ? "image/svg+xml" : "application/dxf");
   }
 
+  /** Write the bill of materials of the part shown as a CSV file, and save it. */
+  async function exportBom(structure: BomStructure) {
+    const update = await dispatch({ command: "export_bom", structure });
+    const file = update?.export;
+    if (file?.text == null) return;
+    if (host) host.saveFile(file);
+    else download(file.name, file.text, "text/csv");
+    trackFile("saved");
+  }
+
   /** Export the assembly as a URDF robot, a ZIP archive, and save it. */
   async function exportUrdf() {
     const update = await dispatch({ command: "export_urdf" });
@@ -538,7 +554,7 @@ function App() {
   );
 
   /** Ask a question of the part as drawn; the answer replaces the last. */
-  async function inspect(query: "mass_properties" | "interference") {
+  async function inspect(query: Query) {
     setInspecting(true);
     await dispatch({ command: "inspect", query });
     setInspecting(false);
@@ -563,8 +579,10 @@ function App() {
           measurement={measurement}
           mass={mass}
           interference={interference}
+          bom={bom}
           busy={inspecting}
           onQuery={(query) => void inspect(query)}
+          onExportBom={(structure) => void exportBom(structure)}
           section={section}
           onSection={setSection}
           size={scene?.part.extent.size ?? 1}
