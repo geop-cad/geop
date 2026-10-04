@@ -2,11 +2,14 @@
 //! pulleys, shaft collars and flange couplings. Each turns around the `z`
 //! axis — the rack runs along it — its datum `axis`.
 //!
-//! A gear's teeth, a rack's and a pulley's are what is left of a blank
-//! when one gap, patterned round it or along it, is cut away: a boolean
-//! per tooth, the price of a tooth count that is a parameter like any
-//! other. Every gap reaches past the blank on all sides it leaves by, so
-//! that no face of it lies on one of the blank's.
+//! A gear's teeth are what is left of a disc when one gap, patterned round
+//! it, is cut away: a boolean per tooth, the price of a tooth count that is
+//! a parameter like any other — building a gear takes seconds per tooth.
+//! Every gap reaches past the disc on all sides it leaves by, so that no
+//! face of it lies on one of the disc's. A rack and a pulley, whose teeth
+//! would be cut along one long edge or past two flanges, are each drawn in
+//! one profile instead: a rack of at most [`RACK_TEETH`] teeth cut to
+//! length, and a pulley family per tooth count.
 //!
 //! # Meshing
 //!
