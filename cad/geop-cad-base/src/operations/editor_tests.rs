@@ -2833,7 +2833,10 @@ fn a_3d_sketch_point_and_line_are_picked() {
     assert!(highlights.contains(&corner), "{highlights:?}");
     editor.handle(click_at(from_above(3.004, 1.0)));
     editor.handle(click_at(from_above(2.0, 1.005)));
-    editor.handle(dialog("construction", Value::Choice("parallel".into())));
+    editor.handle(dialog(
+        "construction",
+        Value::Choice("parallel".into()),
+    ));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let PartOperation::AddDatum(datum) = &editor.program().steps.last().unwrap().operation else {
