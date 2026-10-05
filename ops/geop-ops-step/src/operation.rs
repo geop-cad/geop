@@ -16,7 +16,7 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::import::{ImportedBody, read_step};
+use crate::import::{Healing, ImportedBody, read_step};
 
 /// Adds every body of the STEP file `file` — its solids, and its sheets of
 /// faces — to the part, where the file has them: the parts of an assembly
@@ -119,7 +119,7 @@ pub fn add_bodies<S: Scalar>(
                 &solid,
                 Healed {
                     label: body.label,
-                    lines: body.healed,
+                    healing: body.healed,
                 },
             )?;
         }
@@ -134,8 +134,7 @@ pub fn add_bodies<S: Scalar>(
 pub struct Healed {
     /// What the file calls the solid.
     pub label: String,
-    /// One line per kind of entity rebuilt.
-    pub lines: Vec<String>,
+    pub healing: Healing,
 }
 
 impl Operation for ImportStep {
@@ -186,10 +185,10 @@ impl Operation for ImportStep {
                     f.text(
                         &format!("healed_{k}"),
                         format!(
-                            "{} ({}) disagrees with itself further than the kernel can carry, and was rebuilt where its surfaces meet: {}.",
+                            "Healed {} ({}): {}.",
                             healed.label,
                             solid,
-                            healed.lines.join("; ")
+                            healed.healing.summary()
                         ),
                         Tone::Hint,
                     );

@@ -32,7 +32,7 @@
 //!   uncertainty bounds it: what is rebuilt lies on its surfaces to within
 //!   it, and what cannot be is refused, naming the entities and saying how
 //!   far. What was rebuilt, and how far it moved, is reported
-//!   ([`ImportedBody::healed`]).
+//!   ([`Healing`]).
 //!
 //! Every surface is built as an exact NURBS patch covering its face — or,
 //! for a B-spline, taken as it is — oriented so its normal points out of
@@ -75,9 +75,81 @@ pub struct ImportedBody<S: Scalar> {
     pub edge_names: Vec<Vec<String>>,
     pub face_names: Vec<Vec<String>>,
     /// What was rebuilt where the file disagrees with itself further than
-    /// the kernel can carry (see `heal`): one line per kind of entity, none
-    /// where nothing was.
-    pub healed: Vec<String>,
+    /// the kernel can carry (see `heal`).
+    pub healed: Healing,
+}
+
+/// What [`heal`] rebuilt of a body where its file disagrees with itself
+/// further than the kernel can carry, and how far it moved.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Healing {
+    /// Each vertex moved to where its faces meet, and how far.
+    pub vertices: Vec<(String, f64)>,
+    /// Each edge rebuilt where its faces meet, and how far it moved at most.
+    pub edges: Vec<(String, f64)>,
+    /// Each face rebuilt from its edges.
+    pub faces: Vec<String>,
+    /// The file's uncertainty, which everything rebuilt meets to.
+    pub uncertainty: f64,
+}
+
+impl Healing {
+    pub fn is_empty(&self) -> bool {
+        self.vertices.is_empty() && self.edges.is_empty() && self.faces.is_empty()
+    }
+
+    /// How far anything moved, at most.
+    pub fn furthest(&self) -> f64 {
+        self.vertices
+            .iter()
+            .chain(&self.edges)
+            .map(|m| m.1)
+            .fold(0.0, f64::max)
+    }
+
+    /// In one sentence, for a user: how far, how much, which faces.
+    pub fn summary(&self) -> String {
+        let mut out = format!(
+            "its faces disagree with each other by up to {:.1e} mm (the file states {:e} mm): {} vertices and {} edges were moved onto them",
+            self.furthest(),
+            self.uncertainty,
+            self.vertices.len(),
+            self.edges.len()
+        );
+        if !self.faces.is_empty() {
+            out += &format!(
+                ", and {} faces rebuilt from their edges: {}",
+                self.faces.len(),
+                self.faces.join(", ")
+            );
+        }
+        out
+    }
+
+    /// Entity by entity, how far each moved.
+    pub fn details(&self) -> Vec<String> {
+        let line = |what: &str, moved: &[(String, f64)]| {
+            let names: Vec<String> = moved
+                .iter()
+                .map(|(name, by)| format!("{name} by {by:.1e}"))
+                .collect();
+            format!("{what}: {}", names.join(", "))
+        };
+        let mut out = Vec::new();
+        if !self.vertices.is_empty() {
+            out.push(line("vertices put where their faces meet", &self.vertices));
+        }
+        if !self.edges.is_empty() {
+            out.push(line("edges rebuilt where their faces meet", &self.edges));
+        }
+        if !self.faces.is_empty() {
+            out.push(format!(
+                "faces rebuilt from their edges, their surfaces contradicting their neighbours': {}",
+                self.faces.join(", ")
+            ));
+        }
+        out
+    }
 }
 
 /// Search budget for the containment searches `fit_pcurve` falls back on.
@@ -2849,7 +2921,7 @@ fn heal<S: Scalar>(
     edges: &mut [Edge<S>],
     vertices: &mut [Vertex<S>],
     scope: &Scope,
-) -> GeopResult<(Vec<bool>, Vec<String>)> {
+) -> GeopResult<(Vec<bool>, Healing)> {
     let mut faces_of_edge: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
     let mut faces_of_vertex: Vec<Vec<usize>> = vec![Vec::new(); vertices.len()];
     let mut edges_of_vertex: Vec<Vec<usize>> = vec![Vec::new(); vertices.len()];
@@ -2990,6 +3062,11 @@ fn heal<S: Scalar>(
     // What was moved, and how far, for the report.
     let mut moved_vertices: Vec<(String, f64)> = Vec::new();
     let mut moved_edges: Vec<(String, f64)> = Vec::new();
+    // How far each vertex and edge lies from the surfaces of its faces kept,
+    // as the first pass measured it: the second measures again only where
+    // a face of it is to be rebuilt since.
+    let mut vertex_apart: Vec<Option<(Vec<usize>, f64)>> = vec![None; vertices.len()];
+    let mut edge_apart: Vec<Option<(Vec<usize>, f64)>> = vec![None; edges.len()];
     // Twice: first deciding which faces are rebuilt, everywhere, then
     // moving what is to move onto the surfaces kept — so that a vertex is
     // not put where a surface meets the others that a later vertex finds
@@ -3004,7 +3081,11 @@ fn heal<S: Scalar>(
             let what = format!("healing the vertex {} at {at:?}", vertices[v].label());
             let vctx = |e: GeopError| e.with_context(what.clone());
             let fs = kept(&faces_of_vertex[v], &rebuild);
-            let apart = furthest(at, &fs).map_err(&vctx)?;
+            let apart = match &vertex_apart[v] {
+                Some((measured, apart)) if *measured == fs => *apart,
+                _ => furthest(at, &fs).map_err(&vctx)?,
+            };
+            vertex_apart[v] = Some((fs.clone(), apart));
             if 2.0 * apart <= ACCURACY {
                 continue;
             }
@@ -3037,11 +3118,18 @@ fn heal<S: Scalar>(
             let at = |f: f64| super::geometry::point_at(&old, lo + (hi - lo) * f);
             let (start, end) = (edges[e].start, edges[e].end);
             let fs = kept(&faces_of_edge[e], &rebuild);
-            let mut apart = 0.0f64;
-            let midpoints = Midpoints::of(&old);
-            for (surface, grid) in surfaces(&fs) {
-                apart = apart.max(strays(&midpoints, surface, grid).map_err(&ectx)?);
-            }
+            let apart = match &edge_apart[e] {
+                Some((measured, apart)) if *measured == fs => *apart,
+                _ => {
+                    let midpoints = Midpoints::of(&old);
+                    let mut apart = 0.0f64;
+                    for (surface, grid) in surfaces(&fs) {
+                        apart = apart.max(strays(&midpoints, surface, grid).map_err(&ectx)?);
+                    }
+                    apart
+                }
+            };
+            edge_apart[e] = Some((fs.clone(), apart));
             if !moved[start] && !moved[end] && 2.0 * apart <= ACCURACY {
                 continue;
             }
@@ -3136,35 +3224,16 @@ fn heal<S: Scalar>(
             moved_edges.push((edges[e].label(), furthest_shift.get()));
         }
     }
-    // The report: how many, how far, which.
-    let line = |what: &str, moved: &[(String, f64)]| {
-        let most = moved.iter().map(|m| m.1).fold(0.0, f64::max);
-        let names: Vec<String> = moved
-            .iter()
-            .map(|(name, by)| format!("{name} by {by:.1e}"))
-            .collect();
-        format!(
-            "{} {what}, moved up to {most:.1e} mm: {}",
-            moved.len(),
-            names.join(", ")
-        )
+    let healing = Healing {
+        vertices: moved_vertices,
+        edges: moved_edges,
+        faces: (0..faces.len())
+            .filter(|&f| rebuild[f])
+            .map(|f| names(&[f]))
+            .collect(),
+        uncertainty: scope.uncertainty,
     };
-    let mut report = Vec::new();
-    if !moved_vertices.is_empty() {
-        report.push(line("vertices put where their faces meet", &moved_vertices));
-    }
-    if !moved_edges.is_empty() {
-        report.push(line("edges rebuilt where their faces meet", &moved_edges));
-    }
-    let rebuilt: Vec<usize> = (0..faces.len()).filter(|&f| rebuild[f]).collect();
-    if !rebuilt.is_empty() {
-        report.push(format!(
-            "{} faces rebuilt from their edges, their surfaces contradicting their neighbours': {}",
-            rebuilt.len(),
-            names(&rebuilt)
-        ));
-    }
-    Ok((rebuild, report))
+    Ok((rebuild, healing))
 }
 
 /// The most faces at one vertex or edge among which [`heal`] chooses which to
@@ -3297,6 +3366,10 @@ const GAP_SAMPLES: usize = 64;
 /// sample: from two table steps down to a rounding of the parameter.
 const NEAREST_ITERATIONS: usize = 80;
 
+/// Of those, the last ones, taken on the curve's enclosure rather than its
+/// midpoints in `f64`.
+const NEAREST_ON_ENCLOSURE: usize = 12;
+
 /// How far, per coordinate, the points a pcurve puts on its surface lie
 /// from the edge's curve `curve` — sampled, each against the curve's
 /// nearest point: how far the point's midpoint, the pcurve's own best
@@ -3347,34 +3420,54 @@ fn edge_gap<S: Scalar>(
         // point at an end, reached a rounding past it, and the window's
         // middle is half a step off; on a widened curve its last step
         // inherits the width, and is off along the curve by about that.)
+        // The midpoints in `f64` narrow the window, which is cheap; the
+        // enclosure's own midpoints, which the gap is measured against,
+        // decide its last bits, where the two differ by roundings.
         let (mut a, mut b) = ((seed - step).max(c0f), (seed + step).min(c1f));
-        let gap_at = |t: f64| -> GeopResult<f64> { Ok(distance(midpoints.point(t), target)) };
+        let gap_at = |t: f64, k: usize| -> GeopResult<f64> {
+            if k + NEAREST_ON_ENCLOSURE < NEAREST_ITERATIONS {
+                Ok(distance(midpoints.point(t), target))
+            } else {
+                Ok(distance(super::geometry::point_at(curve, t)?, target))
+            }
+        };
         let ratio = (5f64.sqrt() - 1.0) / 2.0;
         let (mut x, mut y) = (b - ratio * (b - a), a + ratio * (b - a));
-        let (mut fx, mut fy) = (gap_at(x)?, gap_at(y)?);
-        for _ in 0..NEAREST_ITERATIONS {
+        let (mut fx, mut fy) = (gap_at(x, 0)?, gap_at(y, 0)?);
+        for k in 0..NEAREST_ITERATIONS {
+            if k + NEAREST_ON_ENCLOSURE == NEAREST_ITERATIONS {
+                // From here on, on the enclosure.
+                (fx, fy) = (gap_at(x, k)?, gap_at(y, k)?);
+            }
             if fx <= fy {
                 b = y;
                 (y, fy) = (x, fx);
                 x = b - ratio * (b - a);
-                fx = gap_at(x)?;
+                fx = gap_at(x, k)?;
             } else {
                 a = x;
                 (x, fx) = (y, fy);
                 y = a + ratio * (b - a);
-                fy = gap_at(y)?;
+                fy = gap_at(y, k)?;
             }
         }
-        // The ends are the domain's own.
+        // The ends are the domain's own. Which of the three is nearest is
+        // told on the curve's enclosure, which is what the gap is measured
+        // against: its midpoints can call an interior point next to an end
+        // as near as the end, where the enclosure there holds the point
+        // and the end's does not.
         let candidates = [
             (c0f, c0),
             (c1f, c1),
             ((a + b) / 2.0, S::from_f64((a + b) / 2.0)),
         ];
+        let exact_gap_at = |t: f64| -> GeopResult<f64> {
+            Ok(distance(super::geometry::point_at(curve, t)?, target))
+        };
         let mut s = candidates[2].1;
-        let mut best = gap_at(candidates[2].0)?;
+        let mut best = exact_gap_at(candidates[2].0)?;
         for &(t, exact) in &candidates[..2] {
-            let d = gap_at(t)?;
+            let d = exact_gap_at(t)?;
             if d < best {
                 (s, best) = (exact, d);
             }

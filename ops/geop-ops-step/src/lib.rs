@@ -12,7 +12,7 @@ pub mod import;
 pub mod part21;
 
 pub use export::write_step;
-pub use import::{ImportedBody, read_step};
+pub use import::{Healing, ImportedBody, read_step};
 pub mod operation;
 
 pub use operation::{ImportStep, ImportStepArgs, add_bodies, is_step_file};

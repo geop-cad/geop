@@ -702,14 +702,7 @@ fn a_face_whose_surface_contradicts_its_neighbours_is_rebuilt_from_its_edges() {
     );
     let text = file(".MILLI.,.METRE.", &text);
     let bodies = read_step::<S>(&text).unwrap();
-    assert!(
-        bodies[0]
-            .healed
-            .iter()
-            .any(|l| l.contains("1 faces rebuilt from their edges")),
-        "{:?}",
-        bodies[0].healed
-    );
+    assert_eq!(bodies[0].healed.faces.len(), 1, "{:?}", bodies[0].healed);
     let part = import(&text);
     let model = part.topology();
     assert_eq!(counts(model), (7, 15, 10));

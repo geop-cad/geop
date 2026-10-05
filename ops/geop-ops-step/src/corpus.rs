@@ -86,15 +86,22 @@ fn import_file(path: &Path, full: bool) -> Result<Imported, String> {
     let n = bodies.len();
     let healed = bodies
         .iter()
-        .flat_map(|b| b.healed.iter().map(|line| format!("{}: {line}", b.label)))
+        .flat_map(|b| {
+            b.healed
+                .details()
+                .into_iter()
+                .map(|line| format!("{}: {line}", b.label))
+        })
         .collect();
     let mut part = Part::new();
     add_bodies(&mut part, &Namer::new("import", "i").unwrap(), bodies)
         .map_err(|e| format!("{e:?}"))?;
     if full && let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
+        // The cause first, as the table groups by it; then the whole.
+        let first = format!("{:?}", errors[0]);
         return Err(format!(
-            "RootError: full validation: {}",
-            cause(&format!("{:?}", errors[0]))
+            "RootError: full validation: {}\nin full: {first}",
+            cause(&first)
         ));
     }
     Ok((n, part.topology().faces.len(), healed))

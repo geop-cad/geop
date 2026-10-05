@@ -1956,7 +1956,7 @@ fn an_import_that_heals_the_file_says_what_it_rebuilt() {
         );
     };
     assert!(
-        text.contains("1 vertices put where their faces meet, moved up to 3.0e-4 mm"),
+        text.contains("by up to 3.0e-4 mm") && text.contains("1 vertices and"),
         "{text}"
     );
     assert!(editor.handle(Command::Commit).error.is_none());
