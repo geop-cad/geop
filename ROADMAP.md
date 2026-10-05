@@ -49,8 +49,10 @@ below is what was missing then, and where each item stands now.
 - Caching for large assemblies: incremental workspace, instanced drawing,
   independent groups solved apart (a drag in 2000 parts takes about 0.25 s).
 - Standard parts: ISO screws, nuts, washers, dowel pins, standoffs, bearings,
-  T-slot extrusions, NEMA 17 steppers (`std:` files), with datums for mating,
-  designations and materials.
+  T-slot extrusions, NEMA 17 steppers, involute spur gears and racks, GT2
+  pulleys, shaft collars, flange couplings, MGN rails and carriages, hobby
+  servos (`std:` files), with datums for mating and joints, designations and
+  materials.
 - Wire harness routes: connectors and clips, bend radius checked, cut lengths.
 
 ### Inspection and output
@@ -74,7 +76,8 @@ below is what was missing then, and where each item stands now.
 
 - Booleans and geometry: surface evaluation over an interval parameter
   still uses one knot span (curves now unite all spans), the main remaining
-  cost in the slow stress tests; an arc split many times grows wide; a
+  cost in the slow stress tests; an arc split many times grows wide (so
+  gears stop at 80 teeth); a
   fixed-point cylinder far from the origin exhausts its search budget.
 - Fillets: rolling over a crease, mitres for rolled fillets, corners where
   fillets arrive with different radii.
