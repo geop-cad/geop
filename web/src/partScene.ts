@@ -32,8 +32,8 @@ export interface Scene {
   line_sketches: (string | null)[];
   line_curves: (number | null)[];
   line_edges: (string | null)[];
-  /** Every sketch's points, by the sketch and their id in it. */
-  sketch_points: { sketch: string; id: number; at: Vec3 }[];
+  /** Every sketch's points, by the sketch and their id in it — none for a 3-D sketch's, a vertex named in `point_names`. */
+  sketch_points: { sketch: string; id: number | null; at: Vec3 }[];
   /** Per triangle: its corners, its color, its corners' normals, and the index in `faces` of its face. */
   triangles: [Vec3, Vec3, Vec3, number][];
   normals: [Vec3, Vec3, Vec3][];
@@ -80,6 +80,8 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     if (!shown(v.solid, v.faces)) continue;
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
+    // A 3-D sketch's point: drawn as its sketch's, shown and hidden with it.
+    if (v.sketch != null) scene.sketch_points.push({ sketch: v.sketch, id: null, at: v.at });
   }
   const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, curve: number | null, edge: string | null) => {
     scene.lines.push([...a, ...b, color]);
@@ -89,7 +91,9 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
   };
   for (const e of part.edges) {
     if (!shown(e.solid, e.faces)) continue;
-    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name);
+    // A 3-D sketch's curve: drawn as its sketch's, shown and hidden with it.
+    const color = e.sketch == null ? EDGE_COLOR : SKETCH_COLOR;
+    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], color, e.sketch, null, e.name);
   }
   for (const t of part.threads) {
     for (let i = 1; i < t.polyline.length; i++) line(t.polyline[i - 1], t.polyline[i], THREAD_COLOR, null, null, null);
@@ -112,16 +116,6 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     }
     for (const point of sketch.points) {
       scene.sketch_points.push({ sketch: sketch.name, id: point.id, at: inPlane(sketch.plane, point.at) });
-    }
-  }
-  for (const sketch of part.sketches3d ?? []) {
-    for (const curve of sketch.curves) {
-      const color = curve.construction ? CONSTRUCTION_COLOR : SKETCH_COLOR;
-      const points = curve.polyline;
-      for (let i = 1; i < points.length; i++) line(points[i - 1], points[i], color, sketch.name, curve.id, null);
-    }
-    for (const point of sketch.points) {
-      scene.sketch_points.push({ sketch: sketch.name, id: point.id, at: point.at });
     }
   }
   return scene;
@@ -355,7 +349,9 @@ export function applyHighlight(group: THREE.Group, scene: Scene, highlights: Ent
   const points = scene.points
     .filter((_, i) => vertices.has(scene.point_names[i]))
     .map(([x, y, z]): Vec3 => [x, y, z])
-    .concat(scene.sketch_points.filter((p) => sketchPoints.has(curveKey(p.sketch, p.id))).map((p) => p.at));
+    .concat(
+      scene.sketch_points.filter((p) => p.id != null && sketchPoints.has(curveKey(p.sketch, p.id))).map((p) => p.at),
+    );
   if (points.length) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(points.flatMap(([x, y, z]) => [x, y, z])), 3));

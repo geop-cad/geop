@@ -1174,3 +1174,65 @@ mod tools {
         assert!((tallest - 1.2).abs() < 1e-9, "{tallest}");
     }
 }
+
+/// A sketch projects another sketch's curve, and a 3-D sketch's, as it
+/// projects an edge: a planar sketch's circle on the floor seen from above
+/// is that circle, keyed by the sketch and the curve; a 3-D sketch's line
+/// rising across the view is the line beneath it, keyed by its edge's name.
+#[test]
+fn sketch_curves_are_projected() {
+    let mut program = Program::new();
+    let mut floor = Sketch::new();
+    let c = floor.add_point(examples::n(1.0), examples::n(1.0));
+    let circle = floor.add_circle(c, examples::n(0.5));
+    program.push(
+        "floor",
+        AddSketchArgs {
+            plane: Some(origin_plane(FrameAxis::Z)),
+            sketch: floor,
+            ..Default::default()
+        },
+    );
+    let mut route = geop_ops_sketch3d::Sketch3d::new();
+    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(examples::n));
+    let (a, b) = (route.add_point(at([3.0, 0.0, 1.0])), route.add_point(at([4.0, 2.0, 3.0])));
+    route.add_line(a, b);
+    program.push(
+        "route",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: route,
+            references: Vec::new(),
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    let above = origin_plane(FrameAxis::Z);
+
+    let curve = EntityRef::SketchCurve {
+        sketch: "floor".into(),
+        curve: circle,
+    };
+    let (sketch, reference) = projected(&part, &above, curve);
+    assert_eq!(kinds(&sketch), ["circle"]);
+    assert!(reference.curves.keys().all(|k| k == &format!("floor,{circle}")));
+
+    let edge = EntityRef::Edge {
+        name: "sketch3d(route,c2)".into(),
+    };
+    let (sketch, reference) = projected(&part, &above, edge);
+    assert_eq!(kinds(&sketch), ["line"]);
+    assert_eq!(
+        reference.curves.keys().collect::<Vec<_>>(),
+        ["sketch3d(route,c2)"]
+    );
+    let mut ends: Vec<[f64; 2]> = sketch
+        .points
+        .values()
+        .map(|p| [p.x.to_f64(), p.y.to_f64()])
+        .collect();
+    ends.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9;
+    assert!(
+        near(ends[0], [3.0, 0.0]) && near(ends[1], [4.0, 2.0]),
+        "{ends:?}"
+    );
+}

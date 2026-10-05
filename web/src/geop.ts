@@ -96,9 +96,12 @@ export interface ViewInstance {
 
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
-  /** Each with the solid it belongs to, if any — else the faces standing on their own it bounds, hidden with all of them. */
-  vertices: { name: string; solid: string | null; faces: string[]; at: Vec3 }[];
-  edges: { name: string; solid: string | null; faces: string[]; polyline: Vec3[] }[];
+  /**
+   * Each with the solid it belongs to, if any — else the faces standing on their own it bounds, hidden with all of
+   * them — and the 3-D sketch it is a point or a curve of, if any: drawn as the sketch's, shown and hidden with it.
+   */
+  vertices: { name: string; solid: string | null; faces: string[]; sketch: string | null; at: Vec3 }[];
+  edges: { name: string; solid: string | null; faces: string[]; sketch: string | null; polyline: Vec3[] }[];
   /** Triangulated, with the kernel's surface normal at each corner. */
   faces: { name: string; solid: string | null; triangles: [Vec3, Vec3, Vec3][]; normals: [Vec3, Vec3, Vec3][] }[];
   /** Curves in their plane's `u`/`v` coordinates. */
@@ -107,12 +110,6 @@ export interface PartView {
     plane: Frame;
     curves: { id: number; construction: boolean; polyline: [number, number][] }[];
     points: { id: number; at: [number, number] }[];
-  }[];
-  /** 3-D sketches: curves and points in space. */
-  sketches3d: {
-    name: string;
-    curves: { id: number; construction: boolean; polyline: Vec3[] }[];
-    points: { id: number; at: Vec3 }[];
   }[];
   datums: DatumInfo[];
   /** Cosmetic threads, each drawn as the helix it runs along on its face, and what it is called (`M6x1`). */
@@ -275,6 +272,7 @@ export type Role =
   | "line"
   | "plane"
   | "edge"
+  | "curve"
   | "circle"
   | "round"
   | "face"
@@ -348,7 +346,9 @@ export type Shape =
   | { shape: "label"; at: Vec3; text: string; offset: Vec3 }
   | { shape: "handle"; at: Vec3; direction: Vec3 }
   /** A placed part, by its instance's name, drawn lit when hovered or selected. */
-  | { shape: "instance"; name: string };
+  | { shape: "instance"; name: string }
+  /** The world's x, y and z as arrows from `at`, a constant size on screen (see `TRIAD_REACHES` in visuals3d.ts). */
+  | { shape: "triad"; at: Vec3 };
 
 export type Style =
   | "free"

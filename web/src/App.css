@@ -383,6 +383,9 @@ button.small {
   background: #5a2020;
   border-color: #ff5d5d;
 }
+.visual-label.snap {
+  border-color: #58e07a;
+}
 
 button.inline {
   margin-left: 0.4rem;
