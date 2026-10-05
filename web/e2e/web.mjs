@@ -146,7 +146,7 @@ await check("at 1625 px the big operations are big, the small ones small, and ev
   const labels = async (selector) => (await page.locator(selector).allInnerTexts()).map((l) => l.replace(/\s+/g, " ").trim());
   const big = await labels(".operation-ribbon button.op-button.big");
   const small = await labels(".operation-ribbon button.op-button.small");
-  const wantBig = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Linear pattern", "Boundary surface", "Base flange", "Part", "Drawing"];
+  const wantBig = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Linear pattern", "SubD", "Base flange", "Part", "Drawing"];
   expect(JSON.stringify(tier("Big")) === JSON.stringify(wantBig), `the editor's big operations: ${tier("Big").join(", ")}`);
   expect(JSON.stringify(big) === JSON.stringify(wantBig), `big: ${big.join(", ")}`);
   const wantSmall = [...tier("Small"), "Drag"];

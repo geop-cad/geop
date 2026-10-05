@@ -196,7 +196,7 @@ pub enum PartOperation {
     DeleteBody(DeleteBodyArgs),
     /// Span a face standing on its own between two edges, or fill a closed
     /// loop of edges — optionally tangent to the flat faces along them.
-    #[operation(label = "Boundary surface", group = Surface, tier = Big)]
+    #[operation(label = "Boundary surface", group = Surface, tier = Small)]
     BoundarySurface(BoundarySurfaceArgs),
     /// Copy faces a distance along their normals into a face standing on
     /// its own.
@@ -241,7 +241,7 @@ pub enum PartOperation {
     FlatPattern(FlatPatternArgs),
     /// Shape a freeform body by dragging the vertices, edges and faces of a
     /// control cage, built as its smooth subdivision surface.
-    #[operation(label = "SubD", group = Surface, tier = Menu)]
+    #[operation(label = "SubD", group = Surface, tier = Big)]
     Subd(SubdArgs),
     /// Place the part another program file builds, and mate it to what is
     /// already there.
@@ -265,7 +265,7 @@ pub enum PartOperation {
     ImportStep(ImportStepArgs),
     /// Span a face standing on its own through a network of curves — u
     /// curves crossing v curves — running along every one of them.
-    #[operation(label = "UV surface", group = Surface, tier = Menu)]
+    #[operation(label = "UV surface", group = Surface, tier = Small)]
     NetworkSurface(NetworkSurfaceArgs),
 }
 
