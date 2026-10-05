@@ -22,7 +22,7 @@
 //! where the involute's parametrization turns singular. Below that a real
 //! flank turns into the root fillet its cutter leaves; here it runs on
 //! straight down along its tangent to the root circle. The flank goes on
-//! past the tip circle, and an arc there closes the gap: cut from a disc
+//! past the tip circle, where the gap closes over it: cut from a disc
 //! of the tip diameter, it leaves the teeth, the disc's rim crossing the
 //! flanks rather than meeting a corner of the gap.
 
@@ -52,7 +52,7 @@ pub struct Gap {
     pub foot: [f64; 2],
     /// The control points of the flank's Bézier curve, from where the
     /// straight line up from the foot meets it to [`PAST_TIP`] past the
-    /// tip circle — where the arc closing the gap joins it to its mirror
+    /// tip circle — where the gap closes over it, to its mirror
     /// image.
     pub flank: [[f64; 2]; DEGREE + 1],
     /// How far, at most, the flank is from the involute: the tail of the

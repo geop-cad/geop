@@ -152,9 +152,15 @@ pub fn spur_gear() -> GeopResult<StandardPart> {
     )?;
 
     // One gap, round from its foot on the root circle: up its lower side,
-    // over the arc past the tip circle, down its upper side — the lower
-    // one's mirror image — and back along the root circle. Extruded both
+    // over a point on `x` past the tip circle, down its upper side — the
+    // lower one's mirror image — and back across the root. Extruded both
     // ways from the gear's middle, past both its sides.
+    //
+    // Only lines and the flanks, every point placed by a formula: a sketch
+    // the solver places in one step for any size. With arcs, whose sweeps
+    // it has to find, a gear far from the one drawn sent it off to
+    // infinity. The root is so a chord of the root circle, at most
+    // `r (1 - cos(π / 2z))` below it — 0.04 of a module for 12 teeth.
     let mut gap = Drawing::new(&program.parameters)?;
     let at = |column: &str, sign: &str| format!("{sign}{m} * {TEETH}.{column}");
     let lower =
@@ -172,11 +178,12 @@ pub fn spur_gear() -> GeopResult<StandardPart> {
     let upper_foot = upper(&mut gap, "f")?;
     gap.line(foot, flank[0]);
     gap.bezier(flank.clone());
-    let past = format!("{m} * ({z} / 2 + 1.5)");
-    gap.arc(flank[DEGREE], upper_flank[0], &past, true)?;
+    let past = gap.point(format!("{m} * ({z} / 2 + 2.5)"), "0")?;
+    gap.line(flank[DEGREE], past);
+    gap.line(past, upper_flank[0]);
     gap.bezier(upper_flank.clone());
     gap.line(upper_flank[DEGREE], upper_foot);
-    gap.arc(upper_foot, foot, &format!("{m} * ({z} / 2 - 1.25)"), false)?;
+    gap.line(upper_foot, foot);
     plane_datum(&mut program, "middle", "width / 2");
     extrude(
         &mut program,
