@@ -139,6 +139,10 @@ export interface OperationInfo {
   kind: string;
   label: string;
   doc: string;
+  /** The section of the toolbar it is in: `Features` (see `geop_ops::OperationGroup`). */
+  group: string;
+  /** Whether it is one of the few used most, shown big. */
+  primary: boolean;
 }
 
 /** A step of a program: an operation with its arguments, and its id. */

@@ -70,8 +70,10 @@ below is what was missing then, and where each item stands now.
 
 ### Editor and front ends
 - Web app and VS Code extension: every operation, inspect and BOM panels,
-  joint values, every export; camera framing; a scrolling toolbar; the
-  kernel restarted with the program after a crash.
+  joint values, every export; camera framing; a ribbon of the operations
+  by group that fits the window without scrolling; text selected only
+  inside a dialog or panel; the kernel restarted with the program after a
+  crash.
 - End-to-end checks: `npm run e2e` and `npm run e2e:vscode` in `web/`.
 
 ## Next

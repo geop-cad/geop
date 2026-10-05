@@ -560,9 +560,17 @@ button.inline {
   display: none;
 }
 
+.mobile-only {
+  display: none;
+}
+
 @media (max-width: 860px) {
-  .desktop-only {
+  /* Above any display a part of the desktop layout sets itself. */
+  .app .desktop-only {
     display: none;
+  }
+  .mobile-only {
+    display: block;
   }
 
   .body {
@@ -1053,9 +1061,9 @@ button.inline {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  height: 44px;
+  min-height: 44px;
   box-sizing: border-box;
-  padding: 0 0.6rem;
+  padding: 3px 0.6rem;
   background: #141414;
   border-bottom: 1px solid #2c2c2c;
   flex-shrink: 0;
@@ -1102,32 +1110,152 @@ button.inline {
 .toolbar .icon {
   flex-shrink: 0;
 }
-.operation-tools {
-  display: flex;
-  gap: 2px;
-}
-.operation-strip {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #3a3a3a transparent;
-}
 .toolbar > :not(.operation-strip):not(.toolbar-spacer) {
   flex-shrink: 0;
 }
 .op-button.active,
-.toolbar .op-button.active {
+.toolbar .op-button.active,
+.toolbar .dropdown-trigger.active,
+.toolbar .dropdown-menu button.dropdown-item.active {
   background: #5a4520;
   border-color: #ffa040;
   color: #ffc070;
 }
+
+/* The operations, as a ribbon (see OperationRibbon.tsx): it takes the
+   width the rest of the bar leaves, and the groups are shown at the levels
+   that fit it — nothing scrolls. */
+.operation-strip {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: stretch;
+  position: relative;
+  display: flex;
+}
+.operation-ribbon {
+  display: flex;
+  align-items: stretch;
+}
+.ribbon-group {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 3px;
+  border-left: 1px solid #2a2a2a;
+}
+.ribbon-group:first-child {
+  border-left-color: transparent;
+}
+.ribbon-buttons {
+  display: flex;
+  gap: 2px;
+  height: 66px;
+}
+.ribbon-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.toolbar .op-button.big,
+.toolbar .dropdown-trigger.big {
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  height: auto;
+  min-width: 50px;
+  padding: 4px 5px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.toolbar .op-button.big > .icon,
+.toolbar .dropdown-trigger.big > .icon:first-child {
+  width: 24px;
+  height: 24px;
+}
+.toolbar .dropdown-trigger.big {
+  flex: 1;
+  gap: 2px;
+}
+.toolbar .op-button.small {
+  height: 21px;
+  gap: 5px;
+  padding: 0 5px 0 3px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.toolbar .op-button.small > .icon {
+  width: 15px;
+  height: 15px;
+}
+/* A group's name, under its buttons: the menu of all of them. */
+.ribbon-menu {
+  display: flex;
+}
+.toolbar .dropdown-trigger.ribbon-label {
+  flex: 1;
+  justify-content: center;
+  gap: 1px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+.toolbar .dropdown-trigger.ribbon-label > .icon:last-child {
+  width: 11px;
+  height: 11px;
+}
+/* The hidden copy each group's widths are measured in. */
+.ribbon-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+.ribbon-measure > div {
+  display: flex;
+  width: max-content;
+}
+
+/* Nothing in the chrome is text to select; a drag selects only within the
+   dialog or panel it starts in (see selection.ts). */
+button,
+.toolbar,
+.mobile-tabbar,
+.editor-tabs,
+.panel h2,
+.dropdown-menu {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.app.selecting {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.app.selecting .select-scope {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .stats {
-  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.72rem;
+  line-height: 1.35;
   color: #777;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  padding: 0 0.4rem;
+  padding: 0 0.3rem;
+}
+.stats-separator {
+  display: none;
 }
 .mode-badge {
   font-size: 0.75rem;
@@ -1222,12 +1350,28 @@ button.inline {
   background: #303030;
 }
 
-/* The operations on a phone: the same buttons, in their own tab. */
-.mobile-tab-content .operation-tools {
+/* The operations on a phone: the same buttons, a section per group, in their own tab. */
+.operation-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.operation-grid-group h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.operation-grid-buttons {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
 }
-.mobile-tab-content .op-button {
+.operation-grid .op-button {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;

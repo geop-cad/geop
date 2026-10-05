@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startBridge } from "./bridge.mjs";
-import { Checks, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
+import { Checks, clickOperation, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 run("cargo", ["build", "--release", "-p", "geop-cad-cli"], ROOT);
@@ -163,7 +163,7 @@ await check("a kernel that crashes is restarted with the document", async () => 
   // The standard parts are placed again — the files came back too — and it still edits.
   const placed = await page.locator(".structure-panel .structure-name").allInnerTexts();
   expect(placed.includes("screw"), `the standard parts are gone: ${placed.join(", ")}`);
-  await page.locator(".desktop-only .operation-tools button.op-button", { hasText: /^Sketch$/ }).click();
+  await clickOperation(page, "Sketch");
   await settle(page);
   expect((await page.locator(".desktop-only .popup").count()) === 1, "Sketch did not open after the crash");
   return after;

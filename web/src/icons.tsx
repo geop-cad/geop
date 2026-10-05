@@ -620,6 +620,14 @@ const ICONS: Record<string, ReactElement> = {
       {dot(10, 14, 1.2)}
     </>
   ),
+  // More of what there is no room for: three dots.
+  more: (
+    <>
+      {dot(4.5, 10)}
+      {dot(10, 10)}
+      {dot(15.5, 10)}
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */
