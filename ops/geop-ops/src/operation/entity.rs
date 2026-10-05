@@ -4,6 +4,7 @@
 //! ([`INSTANCE_SEPARATOR`]).
 
 use crate::Part;
+use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind},
@@ -189,6 +190,17 @@ impl std::fmt::Display for EntityRef {
     }
 }
 
+/// A curve picked to build on (see [`EntityRef::resolve_curve`]): where it
+/// runs, and the names of it and of its ends, with where they are — what
+/// is built from it is named after these.
+#[derive(Clone, Debug)]
+pub struct NamedCurve<S: Scalar> {
+    pub name: String,
+    pub curve: NurbCurve3D<S>,
+    pub start: (String, Vector3<S>),
+    pub end: (String, Vector3<S>),
+}
+
 /// A right-handed orthonormal frame at `origin` with `w` along `normal`,
 /// and `u` the world axis most parallel to the plane normal to it,
 /// projected into that plane — so frames with parallel normals line up.
@@ -265,6 +277,74 @@ impl EntityRef {
                 Ok(part.sketch(id).with_context(ctx)?.plane.clone())
             }
             _ => Err(GeopError::new(format!("{self} is not planar"))),
+        }
+    }
+
+    /// The curve it refers to in `part` — an edge, of a face or of a wire,
+    /// or a planar sketch's curve, in space — with names for it and its
+    /// ends: an edge's own and its vertices', a sketch curve `c3`'s of
+    /// sketch `K` `K,c3`, and its ends' `K,p1` after the points there — a
+    /// closed one's `K,c3,seam`. Fails for anything else.
+    pub fn resolve_curve<S: Scalar>(&self, part: &Part<S>) -> GeopResult<NamedCurve<S>> {
+        let ctx = with_context!("resolving the curve of {self}");
+        if let Some((name, inner)) = self.split_instance() {
+            let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
+            let curve = inner.resolve_curve(instance.part()).with_context(ctx)?;
+            let motion = instance.pose.motion();
+            let prefix = |n: String| format!("{name}{INSTANCE_SEPARATOR}{n}");
+            return Ok(NamedCurve {
+                name: prefix(curve.name),
+                curve: curve.curve.transform(&motion),
+                start: (prefix(curve.start.0), motion.apply(&curve.start.1)),
+                end: (prefix(curve.end.0), motion.apply(&curve.end.1)),
+            });
+        }
+        match self {
+            EntityRef::Edge { name } => {
+                let model = part.topology();
+                let edge = model.get_edge(part.edge_id(name).with_context(ctx)?)?;
+                let end = |v| -> GeopResult<(String, Vector3<S>)> {
+                    let vertex_name = part.name_of(v).ok_or_else(|| {
+                        GeopError::new(format!("{v}, an end of edge {name:?}, has no name"))
+                    })?;
+                    Ok((vertex_name.to_string(), model.get_vertex(v)?.point))
+                };
+                Ok(NamedCurve {
+                    name: name.clone(),
+                    curve: edge.curve.clone(),
+                    start: end(edge.start_vertex).with_context(ctx)?,
+                    end: end(edge.end_vertex).with_context(ctx)?,
+                })
+            }
+            EntityRef::SketchCurve { sketch, curve } => {
+                let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
+                let geometry = placed.sketch.enclose::<S>().with_context(ctx)?;
+                let class = placed.sketch.point_classes();
+                let end = |p: PointId| {
+                    (
+                        format!("{sketch},{}", class[&p]),
+                        placed.plane.uv_to_xyz(&geometry.points[&p]),
+                    )
+                };
+                let in_space = placed.curve_in_space(*curve, &geometry).with_context(ctx)?;
+                let (start, end) = match placed.sketch.curve(*curve)?.endpoints() {
+                    Some((s, e)) => (end(s), end(e)),
+                    None => {
+                        let seam = in_space.evaluate(in_space.domain().0)?;
+                        let name = format!("{sketch},{curve},seam");
+                        ((name.clone(), seam), (name, seam))
+                    }
+                };
+                Ok(NamedCurve {
+                    name: format!("{sketch},{curve}"),
+                    curve: in_space,
+                    start,
+                    end,
+                })
+            }
+            other => Err(GeopError::new(format!(
+                "{other} is no curve: pick an edge or a sketch's curve"
+            ))),
         }
     }
 

@@ -6,7 +6,8 @@ use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
 };
-use geop_core_sketch::Sketch;
+use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
+use geop_core_sketch::{CurveId, Enclosure, Sketch, profile::curve_nurbs};
 
 use super::Part;
 use super::ids::SketchId;
@@ -22,6 +23,21 @@ use crate::Design;
 pub struct PlacedSketch<S: Scalar> {
     pub plane: CoordinateSystem<S>,
     pub sketch: Sketch<Design>,
+}
+
+impl<S: Scalar> PlacedSketch<S> {
+    /// The curve `curve` of the sketch where its plane puts it: one NURBS
+    /// from its start to its end — a circle round from its seam — of the
+    /// sketch solved as `geometry` says (see [`Sketch::enclose`]).
+    pub fn curve_in_space(
+        &self,
+        curve: CurveId,
+        geometry: &Enclosure<S>,
+    ) -> GeopResult<NurbCurve3D<S>> {
+        let pieces = curve_nurbs(&self.sketch, geometry, curve)?;
+        let plane = &self.plane;
+        NurbCurve::join(&pieces)?.embed(plane.origin(), plane.u(), plane.v())
+    }
 }
 
 impl<S: Scalar> Part<S> {

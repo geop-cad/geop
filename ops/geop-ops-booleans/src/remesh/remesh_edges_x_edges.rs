@@ -38,16 +38,24 @@ enum EdgeEdgeAction<S: Scalar> {
     },
 }
 
-/// An existing vertex whose point could be `point`, if any — so a crossing
+/// A vertex of `bodies` whose point could be `point`, if any — so a crossing
 /// shared by more than two edges (e.g. three edges meeting at one point)
 /// reuses the single vertex the first pair created there instead of each
-/// pair minting its own.
-fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Option<VertexId> {
-    model
-        .vertices
-        .iter()
-        .find(|(_, v)| v.point.could_be_equal(point))
-        .map(|(&id, _)| id)
+/// pair minting its own. Only the two bodies' own: a vertex of another
+/// body, or of a wire, that happens to lie there is near, not theirs.
+fn find_vertex_at_point<S: Scalar>(
+    model: &Model<S>,
+    bodies: [Body; 2],
+    point: &Vector3<S>,
+) -> GeopResult<Option<VertexId>> {
+    for body in bodies {
+        for v in model.iter_body_vertices(body)? {
+            if model.get_vertex(v)?.point.could_be_equal(point) {
+                return Ok(Some(v));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The first actionable `solid_a` edge x `solid_b` edge pair, if any — see
@@ -165,7 +173,8 @@ fn find_edge_edge_action<S: Scalar>(
                     continue;
                 }
 
-                let vertex = find_vertex_at_point(model, &point);
+                let vertex =
+                    find_vertex_at_point(model, [solid_a, solid_b], &point).with_context(&ctx)?;
 
                 return Ok(Some(EdgeEdgeAction::Split {
                     edge_a,
@@ -257,7 +266,13 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                         #[cfg(debug_assertions)]
                         {
                             let threshold = curve_curve_min_subdivision_size.mul(S::from_f64(10.0));
-                            for (existing_id, existing) in part.topology().vertices.iter() {
+                            let model = part.topology();
+                            let existing = model
+                                .iter_body_vertices(solid_a)
+                                .with_context(&ctx)?
+                                .chain(model.iter_body_vertices(solid_b).with_context(&ctx)?);
+                            for existing_id in existing {
+                                let existing = model.get_vertex(existing_id).with_context(&ctx)?;
                                 let dist = point.sub(&existing.point).norm();
                                 debug_assert!(
                                     !dist.definitely_less(threshold),

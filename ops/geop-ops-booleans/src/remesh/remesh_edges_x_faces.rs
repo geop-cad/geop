@@ -258,8 +258,8 @@ pub fn remesh_edges_x_faces<S: Scalar>(
             .filter(|s| !found.contains(&s.vertex)),
     );
 
-    // Every vertex in the model is a candidate endpoint, not just the start
-    // points. A traced curve does run from one piercing point to another in
+    // Every vertex of the two bodies is a candidate endpoint, not just the
+    // start points. A traced curve does run from one piercing point to another in
     // the common case, but it can equally end at a vertex that was already
     // there before this pass — a corner where the two solids' edges were
     // merged by `remesh_vertices`, say, which is a perfectly good place for
@@ -267,10 +267,17 @@ pub fn remesh_edges_x_faces<S: Scalar>(
     // and so never appears in `starts`. Restricting the search to `starts`
     // makes those traces run to the edge of the patch and fail, having
     // walked right past the vertex they should have stopped at.
-    // Sorted: the order candidates are tried in must not depend on hash
-    // order, or neither would the traced curves.
-    let mut candidates: Vec<VertexId> = model.vertices.keys().copied().collect();
+    // Only theirs: a traced curve lies on a face of each, so it ends at a
+    // vertex of one of them, never at one of a third body — another solid,
+    // a wire — that lies near. Sorted: the order candidates are tried in
+    // must not depend on hash order, or neither would the traced curves.
+    let mut candidates: Vec<VertexId> = model
+        .iter_body_vertices(solid_a)
+        .with_context(&ctx)?
+        .chain(model.iter_body_vertices(solid_b).with_context(&ctx)?)
+        .collect();
     candidates.sort_by_key(|v| v.0);
+    candidates.dedup();
     for start in &starts {
         trace_from_start_point(
             part,
@@ -296,13 +303,22 @@ fn edge_is_boundary_of_face<S: Scalar>(model: &Model<S>, edge_id: EdgeId, face_i
     })
 }
 
-/// An existing vertex whose point could be `point`, if any.
-fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Option<VertexId> {
-    model
-        .vertices
-        .iter()
-        .find(|(_, v)| v.point.could_be_equal(point))
-        .map(|(&id, _)| id)
+/// A vertex of `bodies` whose point could be `point`, if any. Only the two
+/// bodies' own: a vertex of another body, or of a wire, that happens to lie
+/// there is near, not theirs.
+fn find_vertex_at_point<S: Scalar>(
+    model: &Model<S>,
+    bodies: [Body; 2],
+    point: &Vector3<S>,
+) -> GeopResult<Option<VertexId>> {
+    for body in bodies {
+        for v in model.iter_body_vertices(body)? {
+            if model.get_vertex(v)?.point.could_be_equal(point) {
+                return Ok(Some(v));
+            }
+        }
+    }
+    Ok(None)
 }
 
 // ── Phase 1: split every genuine (transversal) piercing crossing ───────────
@@ -435,7 +451,8 @@ fn find_piercing_crossing<S: Scalar>(
                     // interior piercing needing a split.
                     continue;
                 }
-                let vertex = find_vertex_at_point(model, &point);
+                let vertex = find_vertex_at_point(model, [edge_solid, face_solid], &point)
+                    .with_context(&ctx)?;
                 return Ok(Some((edge_id, t, vertex, point, face_id)));
             }
             settled.insert((edge_id, face_id));

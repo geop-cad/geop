@@ -1,4 +1,5 @@
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::Motion,
     scalars::Scalar,
     vector::{Vector3, Vector4},
@@ -37,6 +38,33 @@ impl<S: Scalar> NurbCurve<S, 4> {
                 self.aabb[2].add(offset[2]),
             ],
         }
+    }
+}
+
+impl<S: Scalar> NurbCurve<S, 3> {
+    /// This 2-D curve as the planar 3-D curve `origin + x e1 + y e2` for
+    /// `(x, y)` along it: a sketch's curve where its plane puts it. An
+    /// affine map of the homogeneous control points `(w x, w y, w)` to
+    /// `(w origin + (w x) e1 + (w y) e2, w)`, so it is exact for any NURBS
+    /// and divides by no weight.
+    pub fn embed(
+        &self,
+        origin: &Vector3<S>,
+        e1: &Vector3<S>,
+        e2: &Vector3<S>,
+    ) -> GeopResult<NurbCurve<S, 4>> {
+        let control_points = self
+            .control_points
+            .iter()
+            .map(|cp| {
+                let p = origin
+                    .prod_scalar(cp[2])
+                    .add(&e1.prod_scalar(cp[0]))
+                    .add(&e2.prod_scalar(cp[1]));
+                Vector4::from_array([p[0], p[1], p[2], cp[2]])
+            })
+            .collect();
+        NurbCurve::try_new(self.degree, control_points, self.knot_vector.clone())
     }
 }
 

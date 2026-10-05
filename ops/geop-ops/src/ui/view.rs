@@ -67,6 +67,9 @@ pub struct ViewVertex<S: Scalar> {
     /// The faces it is a corner of. Of no solid, it is hidden with all of
     /// them; a face hit does not hide it (see [`PartView::pick`]).
     pub faces: Vec<String>,
+    /// The 3-D sketch it is a point of — a vertex of the wire the sketch
+    /// is built as (see [`Part::add_sketch3d`]).
+    pub sketch: Option<String>,
     pub at: Vector3<S>,
 }
 
@@ -88,9 +91,13 @@ pub struct ViewEdge<S: Scalar> {
     /// The faces it bounds. Of no solid, it is hidden with all of them; a
     /// face hit does not hide it (see [`PartView::pick`]).
     pub faces: Vec<String>,
+    /// The 3-D sketch it is a curve of — an edge of the wire the sketch is
+    /// built as (see [`Part::add_sketch3d`]): picked as a curve, or for
+    /// the whole sketch where a path is asked for.
+    pub sketch: Option<String>,
     pub polyline: Vec<Vector3<S>>,
-    /// What it can be picked as: an edge, and a line or a circle if it is
-    /// one.
+    /// What it can be picked as: a curve, an edge of a face, and a line or
+    /// a circle if it is one.
     #[serde(skip)]
     pub roles: Vec<Role>,
 }
@@ -143,33 +150,6 @@ pub struct ViewSketch<S: Scalar> {
     pub regions: Vec<Vec<Vec<Vector2<S>>>>,
     pub curves: Vec<ViewCurve<S>>,
     pub points: Vec<ViewSketchPoint<S>>,
-}
-
-/// A curve of a 3-D sketch, as drawn, in space.
-#[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct ViewCurve3d<S: Scalar> {
-    pub id: CurveId,
-    pub construction: bool,
-    pub polyline: Vec<Vector3<S>>,
-}
-
-/// A point of a 3-D sketch, as drawn.
-#[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct ViewPoint3d<S: Scalar> {
-    pub id: PointId,
-    pub at: Vector3<S>,
-}
-
-/// A 3-D sketch of the part, as drawn: its curves and points, in space.
-/// Picked as a whole, on its curves, for what runs along it.
-#[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct ViewSketch3d<S: Scalar> {
-    pub name: String,
-    pub curves: Vec<ViewCurve3d<S>>,
-    pub points: Vec<ViewPoint3d<S>>,
 }
 
 /// A datum of the part.
@@ -286,7 +266,6 @@ pub struct PartView<S: Scalar> {
     pub edges: Vec<ViewEdge<S>>,
     pub faces: Vec<ViewFace<S>>,
     pub sketches: Vec<ViewSketch<S>>,
-    pub sketches3d: Vec<ViewSketch3d<S>>,
     pub datums: Vec<ViewDatum<S>>,
     /// Its cosmetic threads.
     pub threads: Vec<ViewThread<S>>,
@@ -471,36 +450,20 @@ impl<S: Scalar> PartView<S> {
             })
             .collect::<GeopResult<_>>()?;
 
-        let sketches3d = part
-            .sketches3d()
-            .map(|(id, s)| {
-                let cast = |p: &Vector3<Design>| p.map(|c| c.cast::<S>());
-                Ok(ViewSketch3d {
-                    name: name(id.into()),
-                    curves: s
-                        .curves
-                        .iter()
-                        .filter(|(_, c)| c.is_drawn())
-                        .map(|(&id, c)| {
-                            Ok(ViewCurve3d {
-                                id,
-                                construction: c.construction,
-                                polyline: s.curve_polyline(id)?.iter().map(cast).collect(),
-                            })
-                        })
-                        .collect::<GeopResult<_>>()?,
-                    points: s
-                        .points
-                        .iter()
-                        .filter(|(_, p)| !p.fixed)
-                        .map(|(&id, p)| ViewPoint3d {
-                            id,
-                            at: cast(&p.at),
-                        })
-                        .collect(),
-                })
-            })
-            .collect::<GeopResult<_>>()?;
+        // The 3-D sketch each edge and vertex of a wire is part of.
+        let mut sketch_of = std::collections::HashMap::new();
+        for (id, _) in part.sketches3d() {
+            if let Some(wire) = part.sketch3d_wire(id)? {
+                let wire = model.get_wire(wire)?;
+                let sketch = name(id.into());
+                for &v in &wire.vertices {
+                    sketch_of.insert(crate::RefId::from(v), sketch.clone());
+                }
+                for &e in &wire.edges {
+                    sketch_of.insert(crate::RefId::from(e), sketch.clone());
+                }
+            }
+        }
 
         // A vertex is a corner of the solid an edge at it bounds, and of the
         // faces those edges bound.
@@ -535,6 +498,7 @@ impl<S: Scalar> PartView<S> {
                     name: name(id.into()),
                     solid: corner_of.get(&id).map(|&s| name(s.into())),
                     faces: faces_at_corner.get(&id).cloned().unwrap_or_default(),
+                    sketch: sketch_of.get(&id.into()).cloned(),
                     at: *p,
                 })
                 .collect(),
@@ -545,6 +509,7 @@ impl<S: Scalar> PartView<S> {
                     ViewEdge {
                         solid: solid_of_edge(model, id).map(|s| name(s.into())),
                         faces: faces_of_edge.get(&id).cloned().unwrap_or_default(),
+                        sketch: sketch_of.get(&id.into()).cloned(),
                         roles: roles_of(&EntityRef::Edge { name: edge.clone() }, part),
                         name: edge,
                         polyline: polyline.clone(),
@@ -568,7 +533,6 @@ impl<S: Scalar> PartView<S> {
                 })
                 .collect(),
             sketches,
-            sketches3d,
             datums: part
                 .datums()
                 .map(|(id, datum)| ViewDatum {
@@ -752,21 +716,13 @@ impl<S: Scalar> PartView<S> {
     /// The box around everything drawn: the union of every point of it,
     /// and of the corners of every placed part's own box, where it is.
     fn measure(&self) -> GeopResult<Extent<S>> {
-        let sketch_points = self
-            .sketches
-            .iter()
-            .flat_map(|sketch| {
-                sketch
-                    .curves
-                    .iter()
-                    .flat_map(|c| &c.polyline)
-                    .map(|p| sketch.plane.uv_to_xyz(p))
-            })
-            .chain(
-                self.sketches3d
-                    .iter()
-                    .flat_map(|s| s.curves.iter().flat_map(|c| c.polyline.iter().copied())),
-            );
+        let sketch_points = self.sketches.iter().flat_map(|sketch| {
+            sketch
+                .curves
+                .iter()
+                .flat_map(|c| &c.polyline)
+                .map(|p| sketch.plane.uv_to_xyz(p))
+        });
         let hull = self
             .vertices
             .iter()
@@ -849,6 +805,21 @@ impl<S: Scalar> PartView<S> {
         let accept = |layer: &Layer<'_, S>, entity: &EntityRef, its: &[Role]| {
             accept_of(layer, entity, its, None)
         };
+        // What a vertex or an edge `entity` is picked as: itself, or —
+        // where a path is asked for — the 3-D sketch `sketch` it is part of.
+        let taken = |layer: &Layer<'_, S>,
+                     entity: EntityRef,
+                     its: &[Role],
+                     solid: Option<&String>,
+                     sketch: Option<&String>| {
+            if accept_of(layer, &entity, its, solid) {
+                return Some(entity);
+            }
+            let whole = EntityRef::Sketch3d {
+                name: sketch?.clone(),
+            };
+            accept(layer, &whole, &[Role::Path]).then_some(whole)
+        };
         let nearest = |hits: Vec<PartHit<S>>| hits.into_iter().min_by(|a, b| nearer(a.t, b.t));
 
         let frames = layers
@@ -892,7 +863,8 @@ impl<S: Scalar> PartView<S> {
                 let entity = EntityRef::Vertex {
                     name: v.name.clone(),
                 };
-                (entity, v.at, v.solid.as_ref(), &v.faces[..])
+                let entity = taken(l, entity, &[Role::Point], v.solid.as_ref(), v.sketch.as_ref());
+                (entity, v.at, &v.faces[..])
             });
             let sketch_points = l.view.sketches.iter().flat_map(|sketch| {
                 sketch.points.iter().map(|p| {
@@ -900,11 +872,12 @@ impl<S: Scalar> PartView<S> {
                         sketch: sketch.name.clone(),
                         point: p.id,
                     };
-                    (entity, sketch.plane.uv_to_xyz(&p.at), None, &[][..])
+                    let entity = accept(l, &entity, &[Role::Point]).then_some(entity);
+                    (entity, sketch.plane.uv_to_xyz(&p.at), &[][..])
                 })
             });
-            for (entity, at, solid, faces) in vertices.chain(sketch_points) {
-                if accept_of(l, &entity, &[Role::Point], solid)
+            for (entity, at, faces) in vertices.chain(sketch_points) {
+                if let Some(entity) = entity
                     && let Some(t) = near(ray.distance_to_point(&at), faces)
                 {
                     points.push(l.hit(PartHit {
@@ -944,7 +917,8 @@ impl<S: Scalar> PartView<S> {
                 let entity = EntityRef::Edge {
                     name: e.name.clone(),
                 };
-                if accept_of(l, &entity, &e.roles, e.solid.as_ref()) {
+                if let Some(entity) = taken(l, entity, &e.roles, e.solid.as_ref(), e.sketch.as_ref())
+                {
                     let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
                     polyline_hit(entity, &e.faces, &mut segments);
                 }
@@ -961,18 +935,6 @@ impl<S: Scalar> PartView<S> {
                             c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
                         polyline_hit(entity, &[], &mut segments);
                     }
-                }
-            }
-            for sketch in &l.view.sketches3d {
-                let entity = EntityRef::Sketch3d {
-                    name: sketch.name.clone(),
-                };
-                if accept(l, &entity, &[Role::Path]) {
-                    let mut segments = sketch
-                        .curves
-                        .iter()
-                        .flat_map(|c| c.polyline.windows(2).map(|w| (w[0], w[1])));
-                    polyline_hit(entity, &[], &mut segments);
                 }
             }
         }
@@ -1029,7 +991,12 @@ impl<S: Scalar> PartView<S> {
         let fills = |its: &[Role]| its.iter().any(|r| roles.contains(r));
         match entity {
             EntityRef::Sketch3d { name } => {
-                self.sketches3d.iter().any(|s| s.name == *name) && fills(&[Role::Path])
+                let of = |sketch: &Option<String>| sketch.as_ref() == Some(name);
+                fills(&[Role::Path])
+                    && (self.edges.iter().any(|e| of(&e.sketch))
+                        || self.vertices.iter().any(|v| of(&v.sketch)))
+                    || self.edges.iter().any(|e| of(&e.sketch) && fills(&e.roles))
+                    || self.vertices.iter().any(|v| of(&v.sketch)) && fills(&[Role::Point])
             }
             EntityRef::Sketch { name } => self.sketches.iter().any(|s| {
                 s.name == *name

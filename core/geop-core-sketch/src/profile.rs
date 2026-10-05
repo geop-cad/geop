@@ -506,7 +506,7 @@ impl ProfileLoop {
         for edge in &self.edges {
             let curve = edge.curve;
             let ctx = with_context!("converting sketch curve {curve} to NURBS");
-            let pieces = edge_pieces(sketch, geometry, curve).with_context(ctx)?;
+            let pieces = curve_nurbs(sketch, geometry, curve).with_context(ctx)?;
             let (first, last) = curve_joints(sketch, curve).with_context(ctx)?;
             let n = pieces.len();
             // Joint `j`, in the curve's own direction: where piece `j` starts
@@ -612,7 +612,7 @@ pub fn curve_polyline<S: Scalar>(
     sketch: &Sketch<S>,
     curve: CurveId,
 ) -> GeopResult<Vec<Vector2<S>>> {
-    let pieces = edge_pieces(sketch, &Enclosure::as_drawn(sketch), curve)?;
+    let pieces = curve_nurbs(sketch, &Enclosure::as_drawn(sketch), curve)?;
     let mut out = Vec::new();
     for piece in &pieces {
         let spans = if piece.degree == 1 {
@@ -694,7 +694,7 @@ fn rotated<S: Scalar>(v: Vector2<S>, cos: S, sin: S) -> Vector2<S> {
 /// `geometry` — how many pieces, from the sketch as drawn, which is design
 /// data, so the pieces and their names do not depend on how precisely the
 /// geometry is known.
-fn edge_pieces<D: Scalar, S: Scalar>(
+pub fn curve_nurbs<D: Scalar, S: Scalar>(
     sketch: &Sketch<D>,
     geometry: &Enclosure<S>,
     curve: CurveId,

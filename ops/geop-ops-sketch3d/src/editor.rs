@@ -193,7 +193,7 @@ fn locate<S: Scalar>(
     if let Some(view) = context.view
         && let Some(hit) = view.pick(
             pointer,
-            &[Role::Point, Role::Edge, Role::Face, Role::Plane],
+            &[Role::Point, Role::Curve, Role::Face, Role::Plane],
             None,
         )
     {

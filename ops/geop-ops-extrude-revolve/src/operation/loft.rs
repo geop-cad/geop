@@ -14,7 +14,7 @@ use geop_ops::{
 use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
-use super::{extrude::sketch_profile, sweep::path_chain};
+use super::{extrude::sketch_profile, paths_field, sweep::path_chain};
 use crate::{
     loft::{Section, loft, mark},
     path_sweep::Guide,
@@ -64,8 +64,8 @@ pub struct LoftArgs {
     /// other.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub matches: Vec<EntityRef>,
-    /// Sketches whose curves guide the loft from the first profile to the
-    /// last — at most three — instead of matching points.
+    /// Sketches or 3-D sketches whose curves guide the loft from the first
+    /// profile to the last — at most three — instead of matching points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guides: Vec<String>,
     /// Loft into faces standing on their own, rather than a solid.
@@ -144,29 +144,14 @@ impl Operation for Loft {
                 },
             );
             f.optional("matches");
-            let guides = args
-                .guides
-                .iter()
-                .map(|name| EntityRef::Sketch { name: name.clone() })
-                .collect();
-            f.reference(
+            paths_field(
+                &mut f,
+                before,
                 "guides",
                 "guide curves",
-                guides,
-                &[Role::Sketch],
-                None,
-                true,
-                |edit, picked| {
-                    edit.args.guides = picked
-                        .into_iter()
-                        .filter_map(|entity| match entity {
-                            EntityRef::Sketch { name } => Some(name),
-                            _ => None,
-                        })
-                        .collect();
-                },
+                &args.guides,
+                |args, guides| args.guides = guides,
             );
-            f.optional("guides");
         }
         f.checkbox("face", "face", args.face, |args, b| args.face = b);
         if !args.face {

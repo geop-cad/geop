@@ -10,7 +10,7 @@ use geop_core_math::{
 use geop_core_sketch::{Shape, space::Sketch3d};
 use geop_ops::{
     Context, Design, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
+    operation::Operation,
     ui::{Choice, Form, Number, Unit},
 };
 use geop_ops_booleans::{Combine, Tool};
@@ -18,10 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     extrude::{region_loops, shape_loops, sketch_profile},
-    path_field, sketch_field,
+    path_field, paths_field, sketch_field,
 };
 use crate::{
-    common::embed_curve,
     path_sweep::{Control, Guide, Orientation, PathChain, sweep_along},
     sweep::SweepLoop,
 };
@@ -78,7 +77,8 @@ pub struct SweepArgs {
     /// The profile's size at the end, as a multiple of its size where drawn.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub end_scale: f64,
-    /// Sketches whose curves guide the profile — one or two.
+    /// Sketches or 3-D sketches whose curves guide the profile — one or
+    /// two.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rails: Vec<String>,
     /// Sweep the profile's curves into faces standing on their own, rather
@@ -160,31 +160,14 @@ impl Operation for Sweep {
         path_field(&mut f, before, "path", &args.path, |args, path| {
             args.path = path
         });
-        if before.sketches().next().is_some() {
-            let rails = args
-                .rails
-                .iter()
-                .map(|name| EntityRef::Sketch { name: name.clone() })
-                .collect();
-            f.reference(
-                "rails",
-                "guide rails",
-                rails,
-                &[Role::Sketch],
-                None,
-                true,
-                |edit, picked| {
-                    edit.args.rails = picked
-                        .into_iter()
-                        .filter_map(|entity| match entity {
-                            EntityRef::Sketch { name } => Some(name),
-                            _ => None,
-                        })
-                        .collect();
-                },
-            );
-            f.optional("rails");
-        }
+        paths_field(
+            &mut f,
+            before,
+            "rails",
+            "guide rails",
+            &args.rails,
+            |args, rails| args.rails = rails,
+        );
         f.select(
             "orientation",
             "orientation",
@@ -335,7 +318,7 @@ pub fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain
         curves: profile
             .curves
             .iter()
-            .map(|c| embed_curve(c, plane.origin(), plane.u(), plane.v()))
+            .map(|c| c.embed(plane.origin(), plane.u(), plane.v()))
             .collect::<GeopResult<_>>()?,
         curve_names: profile.curve_names,
         joint_names: profile.joint_names,

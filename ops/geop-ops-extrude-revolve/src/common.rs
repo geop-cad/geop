@@ -180,25 +180,6 @@ pub fn embed_point<S: Scalar>(
     Vector4::from_array([p[0], p[1], p[2], cp[2]])
 }
 
-/// The planar 3-D curve `origin + x e1 + y e2` for `(x, y)` along `curve`.
-/// An affine map of the control points, so it is exact for any NURBS.
-pub fn embed_curve<S: Scalar>(
-    curve: &NurbCurve2D<S>,
-    origin: &Vector3<S>,
-    e1: &Vector3<S>,
-    e2: &Vector3<S>,
-) -> GeopResult<NurbCurve3D<S>> {
-    NurbCurve::try_new(
-        curve.degree,
-        curve
-            .control_points
-            .iter()
-            .map(|cp| embed_point(cp, origin, e1, e2))
-            .collect(),
-        curve.knot_vector.clone(),
-    )
-}
-
 /// A bilinear (degree 1x1) surface patch with corners `P00, P01, P10, P11`
 /// (control points laid out `[P00, P10, P11, P01]`, `num_v = 2`).
 pub fn bilinear<S: Scalar>(

@@ -48,7 +48,7 @@ use geop_core_topology::{
 };
 use geop_ops::{BodyNames, Namer, Part};
 
-use crate::common::{Profile, bilinear, embed_curve, embed_point, end_point, line2, start_point};
+use crate::common::{Profile, bilinear, embed_point, end_point, line2, start_point};
 
 /// Where the profile's plane is at one station of a path: a profile point
 /// `(x, y)` lies at `origin + x e1 + y e2`.
@@ -70,7 +70,7 @@ impl<S: Scalar> Frame<S> {
     /// The profile curve `curve` at this station. An affine map of its
     /// control points, so exact for any NURBS.
     pub fn curve(&self, curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve3D<S>> {
-        embed_curve(curve, &self.origin, &self.e1, &self.e2)
+        curve.embed(&self.origin, &self.e1, &self.e2)
     }
 }
 

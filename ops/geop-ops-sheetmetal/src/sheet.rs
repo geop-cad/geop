@@ -30,7 +30,7 @@ use geop_core_math::{
 };
 use geop_core_topology::Body;
 use geop_ops::{Namer, Part};
-use geop_ops_extrude_revolve::common::{embed_curve, end_point, line2, start_point};
+use geop_ops_extrude_revolve::common::{end_point, line2, start_point};
 use serde::{Deserialize, Serialize};
 
 use crate::thicken::thicken;
@@ -150,7 +150,7 @@ impl<S: Scalar> Placement<S> {
     /// The sheet curve `curve` in space: exact, an affine map of its
     /// control points.
     pub fn curve(&self, curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve3D<S>> {
-        embed_curve(curve, &self.origin, &self.e1, &self.e2)
+        curve.embed(&self.origin, &self.e1, &self.e2)
     }
 
     /// The same placement `t` further along the normal: the B side's.

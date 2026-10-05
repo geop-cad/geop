@@ -67,7 +67,10 @@ fn fill(program: &mut Program, id: &str, edges: Vec<String>) {
     program.push(
         id,
         BoundarySurfaceArgs {
-            edges,
+            edges: edges
+                .into_iter()
+                .map(|name| EntityRef::Edge { name })
+                .collect(),
             tangent: Vec::new(),
         },
     );

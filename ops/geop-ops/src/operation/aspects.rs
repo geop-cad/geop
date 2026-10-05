@@ -1,8 +1,14 @@
 //! [`Aspects`]: what an entity a step builds on can be used as — a point, a
-//! line, a plane, an arc, something round, a curve, a face, a solid, a
-//! sheet, a sketch, or several of these at once — and the [`Role`]s that lets it fill. Which of them an
-//! entity is decides what it can be picked for, and what can be built on
-//! it.
+//! line, a plane, an arc, something round, a curve, an edge of a face, a
+//! face, a solid, a sheet, a sketch, or several of these at once — and the
+//! [`Role`]s that lets it fill. Which of them an entity is decides what it
+//! can be picked for, and what can be built on it.
+//!
+//! A curve is any: an edge of a solid or of a sheet, an edge of a wire —
+//! a 3-D sketch's line, arc or spline — or a curve of a planar sketch.
+//! What runs along a curve takes any of them ([`Role::Curve`]); what
+//! changes the faces at an edge — a fillet, a flange — only an edge of a
+//! face ([`Role::Edge`]).
 
 use geop_core_geometry::{
     nurb_curve::NurbCurve3D,
@@ -22,9 +28,9 @@ use super::EntityRef;
 use crate::Part;
 
 /// Everything an entity can be used as. An entity is usually several at
-/// once: a straight edge is a line and a curve, a circular edge an arc, a
-/// curve and something round, a datum point a point and a frame, a datum
-/// frame the same.
+/// once: a straight edge is a line, a curve and an edge, a circular edge an
+/// arc, a curve, an edge and something round, a sketch's line a line and a
+/// curve, a datum point a point and a frame, a datum frame the same.
 #[derive(Clone, Debug, Default)]
 pub struct Aspects<S: Scalar> {
     pub point: Option<Vector3<S>>,
@@ -35,10 +41,14 @@ pub struct Aspects<S: Scalar> {
     pub plane: Option<CoordinateSystem<S>>,
     pub arc: Option<Arc<S>>,
     /// The axis it turns around: a circular edge, a cylinder, a cone, a
-    /// sketch circle.
+    /// sketch's arc or circle.
     pub round: Option<Axis<S>>,
-    /// An edge's curve, whatever its shape.
+    /// The curve it runs along, whatever its shape: an edge's — of a face
+    /// or of a wire — or a sketch's curve's, in space.
     pub curve: Option<NurbCurve3D<S>>,
+    /// An edge of a face, of a solid or of a sheet: where faces meet, or
+    /// where a sheet ends.
+    pub edge: bool,
     /// Its own axes, if it has any: a datum's frame.
     pub frame: Option<CoordinateSystem<S>>,
     /// A face, whatever its shape and whatever body it is part of.
@@ -82,6 +92,7 @@ impl<S: Scalar> Aspects<S> {
                 g.arc = curve.as_arc().with_context(ctx)?;
                 g.round = g.arc.as_ref().map(|arc| arc.circle.axis());
                 g.curve = Some(curve);
+                g.edge = part.topology().wire_of_edge(id).is_none();
             }
             EntityRef::Face { name } => {
                 let id = part.face_id(name).with_context(ctx)?;
@@ -139,9 +150,14 @@ impl<S: Scalar> Aspects<S> {
                     CurveKind::Circle { center, .. } => {
                         g.round = Some(Axis::try_new(at(center), *placed.plane.w())?);
                     }
-                    // Arcs and splines fill no role yet: nothing picks them.
                     CurveKind::Arc { .. } | CurveKind::Spline { .. } => {}
                 }
+                let curve = placed.curve_in_space(*curve, &geometry).with_context(ctx)?;
+                if matches!(kind, CurveKind::Arc { .. } | CurveKind::Circle { .. }) {
+                    g.arc = curve.as_arc().with_context(ctx)?;
+                    g.round = g.round.or(g.arc.as_ref().map(|arc| arc.circle.axis()));
+                }
+                g.curve = Some(curve);
             }
         }
         Ok(g)
@@ -172,6 +188,7 @@ impl<S: Scalar> Aspects<S> {
             }),
             round: self.round.map(axis),
             curve: self.curve.map(|c| c.transform(pose)),
+            edge: self.edge,
             frame: frame(self.frame)?,
             face: self.face,
             solid: self.solid,
@@ -201,8 +218,11 @@ pub enum Role {
     Line,
     /// A planar face, a datum plane, a frame's plane.
     Plane,
-    /// Any edge.
+    /// An edge of a face — of a solid or of a sheet.
     Edge,
+    /// Any curve: an edge, a 3-D sketch's line, arc or spline, a planar
+    /// sketch's curve.
+    Curve,
     /// A circular edge.
     Circle,
     /// Something that turns around an axis: a circular edge, a cylindrical,
@@ -221,11 +241,12 @@ pub enum Role {
 }
 
 impl Role {
-    pub const ALL: [Role; 11] = [
+    pub const ALL: [Role; 12] = [
         Role::Point,
         Role::Line,
         Role::Plane,
         Role::Edge,
+        Role::Curve,
         Role::Circle,
         Role::Round,
         Role::Face,
@@ -240,7 +261,8 @@ impl Role {
             Role::Point => aspects.point.is_some(),
             Role::Line => aspects.line.is_some(),
             Role::Plane => aspects.plane.is_some(),
-            Role::Edge => aspects.curve.is_some(),
+            Role::Edge => aspects.edge,
+            Role::Curve => aspects.curve.is_some(),
             Role::Circle => aspects.arc.is_some(),
             Role::Round => aspects.round.is_some(),
             Role::Face => aspects.face,
@@ -258,6 +280,7 @@ impl Role {
             Role::Line => "a line",
             Role::Plane => "a plane",
             Role::Edge => "an edge",
+            Role::Curve => "an edge or a sketch curve",
             Role::Circle => "a circular edge",
             Role::Round => "a circular edge or a round face",
             Role::Face => "a face",
@@ -275,6 +298,7 @@ impl Role {
             Role::Line => "line",
             Role::Plane => "plane",
             Role::Edge => "edge",
+            Role::Curve => "curve",
             Role::Circle => "circle",
             Role::Round => "round",
             Role::Face => "face",

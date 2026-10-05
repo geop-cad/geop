@@ -837,7 +837,7 @@ fn sweep_with_rails_twist_and_orientation() {
     editor.handle(dialog("profile", sketch("mouth")));
     editor.handle(dialog("path", sketch("axis")));
     let update = editor.handle(dialog("rails", Value::Press));
-    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Sketch]);
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Path]);
     let update = editor.handle(dialog("rails", sketch("flare")));
     let dialog_shown = update.step.unwrap().presentation.dialog;
     assert!(
@@ -967,7 +967,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     let update = editor.handle(Command::New {
         kind: "boundary_surface".into(),
     });
-    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Edge]);
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Curve]);
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,

@@ -159,12 +159,12 @@ constructions! {
     }
     Midpoint "midpoint" "Midpoint" [Point, Point] -> Point,
     "The point halfway between two points." {}
-    EdgePoint "edge_point" "Point on edge" [Edge] -> Point,
-    "A point along an edge, its z axis along the edge." {
+    EdgePoint "edge_point" "Point on edge" [Curve] -> Point,
+    "A point along an edge or a sketch's curve, its z axis along it." {
         position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
     Center "center" "Center" [Circle] -> Point,
-    "The center of a circular edge, its z axis the one the arc turns around." {}
+    "The center of a circular edge or a sketch's arc or circle, its z axis the one it turns around." {}
     ProjectOnPlane "project_on_plane" "Projection onto plane" [Point, Plane] -> Point,
     "The foot of the perpendicular dropped from a point onto a plane." {}
     ProjectOnLine "project_on_line" "Projection onto line" [Point, Line] -> Point,
@@ -195,8 +195,8 @@ constructions! {
     "The line halving the angle between two crossing lines, through where they cross — or, between parallel lines, the line halfway between them." {
         other: bool = Bool { default: false }, "Halve the other angle: the one between the first line and the second one reversed.";
     }
-    Tangent "tangent" "Tangent to edge" [Edge] -> Axis,
-    "The tangent to an edge at a point along it." {
+    Tangent "tangent" "Tangent to edge" [Curve] -> Axis,
+    "The tangent to an edge or a sketch's curve at a point along it." {
         position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
@@ -223,8 +223,8 @@ constructions! {
     "The plane through a point parallel to a plane." {}
     NormalToLine "normal_to_line" "Plane normal to line" [Line, Point] -> Plane,
     "The plane through a point perpendicular to a line." {}
-    NormalToEdge "normal_to_edge" "Plane normal to edge" [Edge] -> Plane,
-    "The plane perpendicular to an edge at a point along it." {
+    NormalToEdge "normal_to_edge" "Plane normal to edge" [Curve] -> Plane,
+    "The plane perpendicular to an edge or a sketch's curve at a point along it." {
         position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 

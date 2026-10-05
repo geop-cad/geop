@@ -24,7 +24,7 @@ use geop_core_math::{
 };
 use geop_core_topology::Sense;
 use geop_ops::Namer;
-use geop_ops_extrude_revolve::common::{arc2, embed_curve, end_point, line2, start_point};
+use geop_ops_extrude_revolve::common::{arc2, end_point, line2, start_point};
 
 use crate::{sheet::Sheet, thicken::translate2};
 
@@ -706,12 +706,7 @@ impl<S: Scalar> Seg<S> {
         if curve.degree == 1 && curve.control_points.len() == 2 {
             return Ok(Seg::Line { a, b });
         }
-        let flat = embed_curve(
-            curve,
-            &Vector3::zero(),
-            &Vector3::axis(0),
-            &Vector3::axis(1),
-        )?;
+        let flat = curve.embed(&Vector3::zero(), &Vector3::axis(0), &Vector3::axis(1))?;
         let Some(arc) = flat.as_arc()? else {
             return Ok(Seg::Other);
         };
