@@ -908,23 +908,15 @@ fn drawing_on_an_edge_on_projection() {
 fn parameters_no_step_reads_rebuild_nothing() {
     let mut program = examples::parametric_plate();
     let mut runner = crate::ProgramRunner::<S>::new();
-    let started = std::time::Instant::now();
     runner.run(&program, None, &NoFiles);
-    let build = started.elapsed();
+    assert_eq!(runner.built_anew(), program.steps.len());
     let built = runner.part().clone();
     program.parameters.color = Some("#123456".into());
-    let started = std::time::Instant::now();
     runner.run(&program, None, &NoFiles);
-    let took = started.elapsed();
     assert_eq!(runner.part().color(), Some("#123456"));
     assert_eq!(runner.part().parameters(), &program.parameters);
-    // Rebuilding the plate — a boolean among its steps — takes far longer
-    // than looking at what changed. Measured against the build itself, so
-    // a loaded machine slows both alike.
-    assert!(
-        took < build / 4,
-        "a colour change took {took:?}, the build {build:?}"
-    );
+    // Counted, not timed: no step read the colour, so none is built again.
+    assert_eq!(runner.built_anew(), 0, "a colour change rebuilt steps");
     assert_eq!(
         geop_ops::PartDescription::of(runner.part()).unwrap(),
         geop_ops::PartDescription::of(&built).unwrap()
@@ -938,17 +930,13 @@ fn colours_are_picked_without_rebuilding() {
     use crate::{Command, Editor};
     let mut editor = Editor::<S>::new();
     let program = examples::parametric_plate();
-    let started = std::time::Instant::now();
     editor.handle(Command::Load {
         program: program.clone(),
         path: None,
     });
-    let load = started.elapsed();
     let mut parameters = program.parameters.clone();
     parameters.color = Some("#123456".into());
-    let started = std::time::Instant::now();
     let update = editor.handle(Command::Parameters { parameters });
-    let took = started.elapsed();
     assert_eq!(
         update
             .scene
@@ -958,11 +946,11 @@ fn colours_are_picked_without_rebuilding() {
             .as_deref(),
         Some("#123456")
     );
-    // Against loading, which builds the plate: a loaded machine slows
-    // both alike.
-    assert!(
-        took < load / 4,
-        "picking a colour took {took:?}, loading {load:?}"
+    // Counted, not timed: drawn again, but no step built again.
+    assert_eq!(
+        editor.runner.built_anew(),
+        0,
+        "picking a colour rebuilt steps"
     );
 }
 

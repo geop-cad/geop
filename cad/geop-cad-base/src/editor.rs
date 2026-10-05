@@ -495,7 +495,7 @@ pub struct Editor<S: Scalar> {
     marker: Option<usize>,
     open: Option<Open<S>>,
     preview: bool,
-    runner: ProgramRunner<S>,
+    pub(crate) runner: ProgramRunner<S>,
     /// Counts runs, so a scene is resent only after one.
     run: u64,
     /// What each step that ran builds on (see [`geop_ops::ui::Dialog::picked`]),
