@@ -594,7 +594,8 @@ pub(crate) fn candidates<S: Scalar>(
             place([v[0].to_f64(), v[1].to_f64()])
         };
         // The pieces of each edge drawn, by body and edge.
-        let mut edges: Vec<((usize, EdgeId), Vec<Vec<P>>)> = Vec::new();
+        type Pieces = Vec<Vec<P>>;
+        let mut edges: Vec<((usize, EdgeId), Pieces)> = Vec::new();
         for line in &p.view.lines {
             let Some(edge) = line.edge else { continue };
             let (t0, t1) = line.curve.domain();

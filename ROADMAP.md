@@ -59,7 +59,9 @@ below is what was missing then, and where each item stands now.
 - Measure, mass properties from the exact B-rep, interference, section view.
 - Bills of materials, flat or indented, CSV, `geop bom`.
 - Drawings: projected views with hidden lines and silhouettes, sections,
-  dimensions, threads, title block; assembly drawings with balloons and a
+  threads, title block; annotated on the sheet in the editor, head on like a
+  sketch, with dimensions picked as a sketch's are, notes and centre marks;
+  downloaded from the dialog; assembly drawings with balloons and a
   BOM table; SVG and DXF.
 - STEP AP214 import and export; assemblies exported as product structure;
   318 of 361 public corpus files import valid (`scripts/fetch_corpus.sh`).
@@ -84,7 +86,8 @@ below is what was missing then, and where each item stands now.
 - STEP: rebuild edges that disagree with their faces from the kernel's own
   intersections (most of the remaining corpus failures); assembly import as
   placed parts.
-- Drawings: exploded views; parts that pass through each other.
+- Drawings: exploded views; parts that pass through each other; annotating
+  the section view; ordinate dimensions and tolerances.
 - Assemblies: actuator effort and velocity for URDF; collision checks for
   harness routes.
 - Configurations, design tables beyond table parameters, PDM, rendering, CAM,

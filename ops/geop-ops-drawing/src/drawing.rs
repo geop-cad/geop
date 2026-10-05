@@ -306,7 +306,7 @@ pub fn annotated<S: Scalar>(
     let mut sheet = layout.sheet.clone();
     for (index, annotation) in args.annotations.iter().enumerate() {
         annotation
-            .drawn(part, &layout)
+            .drawn(part, layout)
             .map_err(|e| {
                 e.with_context(format!(
                     "annotation {}: {}",

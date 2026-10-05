@@ -134,11 +134,15 @@ pub struct DrawingSession {
     /// The views as last projected — a `Result<Projected<S>, String>` —
     /// for the part of which revision, and what of the arguments they
     /// depend on (see [`Projected::depends_on`]).
-    projected: RefCell<Option<(u64, DrawingArgs, Rc<dyn Any>)>>,
+    projected: Kept<dyn Any>,
     /// The sheet as last laid out: for the part of which revision, and the
     /// arguments without their annotations.
-    laid_out: RefCell<Option<(u64, DrawingArgs, Rc<Result<Layout, String>>)>>,
+    laid_out: Kept<Result<Layout, String>>,
 }
+
+/// What a session keeps of what it worked out: for the part of which
+/// revision, from which arguments, and what.
+type Kept<T> = RefCell<Option<(u64, DrawingArgs, Rc<T>)>>;
 
 impl Default for DrawingSession {
     fn default() -> Self {
@@ -578,9 +582,15 @@ fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) 
 }
 
 /// An annotation as visuals: its lines and arrowheads under `key/…`, in
-/// `style`, and its value under `key` — or, for a centre mark, which has
-/// none, its first line.
-fn annotation_visuals<S: Scalar>(drawn: &Drawn, key: &str, style: Style) -> Vec<Visual<S>> {
+/// `style`, and its value under `key`, in `value` — or, for a centre mark,
+/// which has none, its first line. What is under `key` is what selects it
+/// and drags it.
+fn annotation_visuals<S: Scalar>(
+    drawn: &Drawn,
+    key: &str,
+    style: Style,
+    value: Style,
+) -> Vec<Visual<S>> {
     let mut out = Vec::new();
     for (i, (_, line)) in drawn.lines.iter().enumerate() {
         let shape = Shape::Polyline {
@@ -608,7 +618,7 @@ fn annotation_visuals<S: Scalar>(drawn: &Drawn, key: &str, style: Style) -> Vec<
                 text: text.text.clone(),
                 offset: Vector3::zero(),
             },
-            Style::Fixed,
+            value,
         ));
     }
     out
@@ -706,7 +716,16 @@ fn annotate<'a, S: Scalar>(
                 } else {
                     Style::Guide
                 };
-                f.visuals.extend(annotation_visuals(&drawn, &key, style));
+                // Its value — or a centre mark's line — is selected and
+                // dragged, unless a tool is in hand.
+                f.visuals.extend(
+                    annotation_visuals(&drawn, &key, style, Style::Fixed)
+                        .into_iter()
+                        .map(|v| match v.key == key {
+                            true => v.selectable().draggable(),
+                            false => v,
+                        }),
+                );
             }
             Err(e) => {
                 item.tone = Tone::Error;
@@ -753,17 +772,12 @@ fn annotate<'a, S: Scalar>(
     if let (Some(annotation), Some(cursor)) = (build(s.tool, &s.picks), s.cursor)
         && let Ok((_, drawn)) = placed_at(annotation, part, layout, cursor)
     {
-        let mut placing = annotation_visuals(&drawn, "placing", Style::Draft);
-        for visual in &mut placing {
-            visual.style = Style::Draft;
-        }
-        f.visuals.extend(placing);
-    }
-    // Values can be selected and dragged, unless a tool is in hand.
-    for visual in &mut f.visuals {
-        if annotation_of(&visual.key).is_some() && !visual.key.contains('/') {
-            *visual = visual.clone().selectable().draggable();
-        }
+        f.visuals.extend(annotation_visuals(
+            &drawn,
+            "placing",
+            Style::Draft,
+            Style::Draft,
+        ));
     }
 }
 

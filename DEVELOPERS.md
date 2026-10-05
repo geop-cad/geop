@@ -30,7 +30,8 @@ core/geop-core-solve          the constraint solver every system shares:
                                groups no mate ties together
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
-                               made from geometry (mirror, patterns, offset)
+                               made from geometry (mirror, patterns, offset),
+                               how a dimension is drawn in a plane
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is
@@ -80,9 +81,11 @@ ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
                                surfaces, offset, thicken, knit, trim and
                                extend of faces standing on their own
 ops/geop-ops-drawing          2-D drawings: projected views with hidden
-                               lines and silhouettes, sections, dimensions,
-                               title block, bill of materials, SVG and DXF;
-                               the drawing step
+                               lines and silhouettes, sections, title block,
+                               bill of materials, SVG and DXF; dimensions,
+                               notes and centre marks picked on the sheet
+                               (drawn like a sketch's, `geop_core_sketch::
+                               dimension`); the drawing step
 ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
                                the editor, built as its Catmull-Clark limit
                                surface, a solid of B-spline faces; the subd
