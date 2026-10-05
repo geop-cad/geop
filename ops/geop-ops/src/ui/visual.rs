@@ -47,7 +47,16 @@ pub enum Shape<S: Scalar> {
     Instance {
         name: String,
     },
+    /// The world's `x`, `y` and `z` as three arrows from `at`, drawn at a
+    /// constant size on screen ([`TRIAD`] reaches long): what lines are
+    /// drawn along, to see them by. Hit by nothing.
+    Triad {
+        at: Vector3<S>,
+    },
 }
+
+/// How long a [`Shape::Triad`]'s arrows are, in reaches.
+pub const TRIAD: f64 = 6.0;
 
 impl<S: Scalar> Shape<S> {
     /// The area of `plane`'s `u`/`v` plane inside `outer` but outside
