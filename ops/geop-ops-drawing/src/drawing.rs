@@ -15,6 +15,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
+use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_ops::{EntityRef, Part};
 use geop_ops_inspect::bodies::resolve;
@@ -27,7 +28,8 @@ use crate::{
     scene::{Body, Scene},
     section::{cut_faces, section_part},
     sheet::{Anchor, Layer, P, Shape, Sheet, lift, strokes_of},
-    view::{ViewFrame, ViewKind},
+    annotation::{Annotation, Candidate, Drawn, candidates},
+    view::{DrawnView, ViewFrame, ViewKind},
 };
 
 /// Which side of the front view the other views go.
@@ -95,20 +97,6 @@ impl SheetSize {
     }
 }
 
-/// A dimension asked for, of entities by name.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Dimension {
-    /// The distance between two vertices, shown in the first view that
-    /// sees it at its true length.
-    Distance { from: String, to: String },
-    /// The radius of a circular edge, shown in the first view that sees
-    /// the circle round.
-    Radius { edge: String },
-    /// The diameter of a circular edge, likewise.
-    Diameter { edge: String },
-}
-
 /// What a drawing of a part shows.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DrawingArgs {
@@ -130,8 +118,10 @@ pub struct DrawingArgs {
     /// the side its normal points to, the cut hatched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<EntityRef>,
+    /// The dimensions, notes and centre marks added on the sheet, each in
+    /// one of its views (see [`Annotation`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dimensions: Vec<Dimension>,
+    pub annotations: Vec<Annotation>,
     /// The part's name, for the title block.
     #[serde(default)]
     pub name: String,
@@ -186,7 +176,7 @@ impl Default for DrawingArgs {
             tangent_edges: false,
             hidden_lines: true,
             section: None,
-            dimensions: Vec::new(),
+            annotations: Vec::new(),
             name: String::new(),
             material: String::new(),
             bom: false,
@@ -206,15 +196,15 @@ const GAP: f64 = 28.0;
 const TITLE_WIDTH: f64 = 180.0;
 const TITLE_HEIGHT: f64 = 40.0;
 /// Text heights, in millimetres.
-const TEXT: f64 = 3.5;
+pub(crate) const TEXT: f64 = 3.5;
 const TITLE_TEXT: f64 = 7.0;
 /// Arrowheads, in millimetres.
-const ARROW_LENGTH: f64 = 3.0;
-const ARROW_WIDTH: f64 = 1.0;
+pub(crate) const ARROW_LENGTH: f64 = 3.0;
+pub(crate) const ARROW_WIDTH: f64 = 1.0;
 /// How far dimension lines stand off what they measure, in millimetres.
-const DIMENSION_OFFSET: f64 = 10.0;
+pub(crate) const DIMENSION_OFFSET: f64 = 10.0;
 /// How far centre lines reach past their circle, in millimetres.
-const CENTER_OVERSHOOT: f64 = 3.0;
+pub(crate) const CENTER_OVERSHOOT: f64 = 3.0;
 /// Hatch line spacing, in millimetres.
 const HATCH_SPACING: f64 = 3.0;
 /// The bill of materials' rows, and its columns' captions and widths — as
@@ -254,47 +244,34 @@ pub fn length_label(x: f64) -> String {
 }
 
 /// A view placed on the sheet.
-struct Placed<S: Scalar> {
-    kind: Slot,
-    view: ProjectedView<S>,
+pub(crate) struct Placed<S: Scalar> {
+    pub(crate) kind: DrawnView,
+    pub(crate) view: ProjectedView<S>,
     /// Hatched regions of a section view, as boundary curves on the paper
     /// in model units, one list per cut face.
     hatched: Vec<Hatched<S>>,
     /// Its box on the paper in model units, `[x_min, y_min, x_max, y_max]`.
-    extents: [f64; 4],
+    pub(crate) extents: [f64; 4],
     /// Where its box's centre lands on the sheet.
-    center: P,
+    pub(crate) center: P,
     /// The paper it needs around its box, besides the gap between views,
     /// in millimetres: for balloons.
     margin: f64,
 }
 
-/// Where a view goes on the sheet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Slot {
-    View(ViewKind),
-    Section,
-}
-
-impl Slot {
-    /// Its column and row in the layout grid, row 0 at the top: the front
-    /// view in the middle, the others around it as `projection` says.
-    fn cell(self, projection: Projection) -> (usize, usize) {
-        let third = projection == Projection::ThirdAngle;
-        match self {
-            Slot::View(ViewKind::Front) => (1, 1),
-            Slot::View(ViewKind::Top) => (1, if third { 0 } else { 2 }),
-            Slot::View(ViewKind::Bottom) => (1, if third { 2 } else { 0 }),
-            Slot::View(ViewKind::Right) => (if third { 2 } else { 0 }, 1),
-            Slot::View(ViewKind::Left) => (if third { 0 } else { 2 }, 1),
-            Slot::View(ViewKind::Back) => (3, 1),
-            Slot::View(ViewKind::Iso) => (if third { 2 } else { 0 }, if third { 0 } else { 2 }),
-            Slot::Section => (if third { 2 } else { 0 }, if third { 2 } else { 0 }),
-        }
-    }
-
-    fn orthographic(self) -> bool {
-        self != Slot::View(ViewKind::Iso)
+/// Its column and row in the layout grid, row 0 at the top: the front view
+/// in the middle, the others around it as `projection` says.
+fn cell(view: DrawnView, projection: Projection) -> (usize, usize) {
+    let third = projection == Projection::ThirdAngle;
+    match view {
+        DrawnView::View(ViewKind::Front) => (1, 1),
+        DrawnView::View(ViewKind::Top) => (1, if third { 0 } else { 2 }),
+        DrawnView::View(ViewKind::Bottom) => (1, if third { 2 } else { 0 }),
+        DrawnView::View(ViewKind::Right) => (if third { 2 } else { 0 }, 1),
+        DrawnView::View(ViewKind::Left) => (if third { 0 } else { 2 }, 1),
+        DrawnView::View(ViewKind::Back) => (3, 1),
+        DrawnView::View(ViewKind::Iso) => (if third { 2 } else { 0 }, if third { 0 } else { 2 }),
+        DrawnView::Section => (if third { 2 } else { 0 }, if third { 2 } else { 0 }),
     }
 }
 
@@ -307,21 +284,102 @@ pub fn drawn_faces<S: Scalar>(model: &Model<S>) -> Vec<FaceId> {
 }
 
 /// The part's drawing as `args` describe it, dated `date`, with `parts`
-/// its bill of materials if `args` asks for one.
-///
-/// The part's own solids and sheets are drawn, and every part placed in
-/// it, however deep, where it is placed (see [`Scene`]). With a bill of
-/// materials, each line of it placed in the drawing gets a balloon with its
-/// item number, its leader pointing at its part in one view (see
-/// [`balloon_view`]). A dimension that no view shows truly is refused,
-/// naming it, as is a bill too long for the sheet.
+/// its bill of materials if `args` asks for one: its layout (see
+/// [`layout`]), with its annotations drawn on it. One that does not resolve
+/// — its view gone, an entity it names gone — is refused, naming it.
 pub fn compose<S: Scalar>(
     part: &Part<S>,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
 ) -> GeopResult<Sheet> {
-    let ctx = |e: GeopError| e.with_context("compose(drawing)");
+    let layout = layout(part, args, date, parts)?;
+    let mut sheet = layout.sheet.clone();
+    for (index, annotation) in args.annotations.iter().enumerate() {
+        annotation
+            .drawn(part, &layout)
+            .map_err(|e| {
+                e.with_context(format!(
+                    "annotation {}: {}",
+                    index + 1,
+                    annotation.describe()
+                ))
+            })?
+            .draw(&mut sheet);
+    }
+    Ok(sheet)
+}
+
+/// A drawing laid out on its sheet: the sheet with everything on it but
+/// the annotations, where its views are placed on it, the scale they are
+/// drawn at, and what can be picked in them to annotate (see
+/// [`Candidate`]).
+#[derive(Clone, Debug)]
+pub struct Layout {
+    pub sheet: Sheet,
+    pub(crate) views: Vec<Placement>,
+    pub scale: f64,
+    pub candidates: Vec<Candidate>,
+}
+
+/// Where a view is placed on the sheet: the middle of its box on its
+/// paper, in model units, lands on `center`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Placement {
+    pub(crate) view: DrawnView,
+    mid: P,
+    center: P,
+}
+
+impl Placement {
+    pub(crate) fn of<S: Scalar>(p: &Placed<S>) -> Self {
+        Placement {
+            view: p.kind,
+            mid: [
+                (p.extents[0] + p.extents[2]) / 2.0,
+                (p.extents[1] + p.extents[3]) / 2.0,
+            ],
+            center: p.center,
+        }
+    }
+
+    /// Where a point of its paper, in model units, lands on the sheet
+    /// drawn at `scale`.
+    pub(crate) fn place(&self, scale: f64, q: P) -> P {
+        [
+            self.center[0] + scale * (q[0] - self.mid[0]),
+            self.center[1] + scale * (q[1] - self.mid[1]),
+        ]
+    }
+}
+
+impl Layout {
+    /// The view `view` placed, or why there is none.
+    pub(crate) fn placement(&self, view: DrawnView) -> GeopResult<&Placement> {
+        self.views.iter().find(|p| p.view == view).ok_or_else(|| {
+            GeopError::new(format!(
+                "the drawing has no {view} view any more: show it again, or remove what is in it"
+            ))
+        })
+    }
+}
+
+/// The part's drawing as `args` describe it, without its annotations (see
+/// [`compose`]): its views laid out, dated `date`, with `parts` its bill of
+/// materials if `args` asks for one.
+///
+/// The part's own solids and sheets are drawn, and every part placed in
+/// it, however deep, where it is placed (see [`Scene`]). With a bill of
+/// materials, each line of it placed in the drawing gets a balloon with its
+/// item number, its leader pointing at its part in one view (see
+/// [`balloon_view`]). A bill too long for the sheet is refused.
+pub fn layout<S: Scalar>(
+    part: &Part<S>,
+    args: &DrawingArgs,
+    date: &str,
+    parts: &[PartsListLine],
+) -> GeopResult<Layout> {
+    let ctx = |e: GeopError| e.with_context("layout(drawing)");
     let (width, height) = args.sheet.size();
     let list_height = match args.bom {
         true => LIST_ROW * (parts.len() + 1) as f64,
@@ -345,15 +403,15 @@ pub fn compose<S: Scalar>(
         tangent_edges: args.tangent_edges,
         hidden_lines: args.hidden_lines,
     };
-    let mut slots: Vec<Slot> = Vec::new();
+    let mut slots: Vec<DrawnView> = Vec::new();
     for &kind in args.views.iter().filter(|_| !empty) {
-        if !slots.contains(&Slot::View(kind)) {
-            slots.push(Slot::View(kind));
+        if !slots.contains(&DrawnView::View(kind)) {
+            slots.push(DrawnView::View(kind));
         }
     }
     let mut placed = Vec::new();
     for &slot in &slots {
-        let Slot::View(kind) = slot else { continue };
+        let DrawnView::View(kind) = slot else { continue };
         let frame = kind.frame()?;
         let view = scene
             .project(&frame, &options)
@@ -363,7 +421,7 @@ pub fn compose<S: Scalar>(
     if let Some(plane) = args.section.as_ref().filter(|_| !empty) {
         let (view, hatched) = section_view(part, &scene, plane, &options)
             .map_err(|e| ctx(e.with_context(format!("the section view on {}", plane.label()))))?;
-        placed.push((Slot::Section, view, hatched));
+        placed.push((DrawnView::Section, view, hatched));
     }
     let mut placed: Vec<Placed<S>> = placed
         .into_iter()
@@ -389,9 +447,15 @@ pub fn compose<S: Scalar>(
     };
     if placed.is_empty() {
         // Its bill of materials alone.
-        draw_frame(&mut sheet, args, args.scale.unwrap_or(1.0), date);
+        let scale = args.scale.unwrap_or(1.0);
+        draw_frame(&mut sheet, args, scale, date);
         draw_parts_list(&mut sheet, parts);
-        return Ok(sheet);
+        return Ok(Layout {
+            sheet,
+            views: Vec::new(),
+            scale,
+            candidates: Vec::new(),
+        });
     }
     let balloons = match args.bom && scene.bodies.iter().any(|b| !b.path.is_empty()) {
         true => balloon_view(&scene, &placed, parts)?,
@@ -407,7 +471,7 @@ pub fn compose<S: Scalar>(
     let mut columns: Vec<(usize, f64, f64)> = Vec::new();
     let mut rows: Vec<(usize, f64, f64)> = Vec::new();
     for p in &placed {
-        let (c, r) = p.kind.cell(args.projection);
+        let (c, r) = cell(p.kind, args.projection);
         let (w, h) = (p.extents[2] - p.extents[0], p.extents[3] - p.extents[1]);
         grow(&mut columns, c, w, p.margin);
         grow(&mut rows, r, h, p.margin);
@@ -442,7 +506,7 @@ pub fn compose<S: Scalar>(
     let left = MARGIN + (area_width - used_width) / 2.0;
     let top = height - MARGIN - (area_height - used_height) / 2.0;
     for p in &mut placed {
-        let (c, r) = p.kind.cell(args.projection);
+        let (c, r) = cell(p.kind, args.projection);
         let ci = columns.iter().position(|&(k, _, _)| k == c).unwrap_or(0);
         let ri = rows.iter().position(|&(k, _, _)| k == r).unwrap_or(0);
         let x: f64 = left
@@ -465,10 +529,6 @@ pub fn compose<S: Scalar>(
     for p in &placed {
         draw_view(&mut sheet, p, scale).with_context(&ctx)?;
     }
-    for (index, dimension) in args.dimensions.iter().enumerate() {
-        draw_dimension(&mut sheet, part, &placed, dimension, index, scale)
-            .map_err(|e| ctx(e.with_context(format!("dimension {}: {dimension:?}", index + 1))))?;
-    }
     draw_threads(&mut sheet, &scene, &placed, scale, &options).with_context(&ctx)?;
     if let Some((index, targets)) = &balloons {
         draw_balloons(&mut sheet, &placed[*index], targets, scale).with_context(&ctx)?;
@@ -477,7 +537,13 @@ pub fn compose<S: Scalar>(
     if args.bom {
         draw_parts_list(&mut sheet, parts);
     }
-    Ok(sheet)
+    let candidates = candidates(&scene, &placed, scale).with_context(&ctx)?;
+    Ok(Layout {
+        sheet,
+        views: placed.iter().map(Placement::of).collect(),
+        scale,
+        candidates,
+    })
 }
 
 /// What a balloon points at: an item number, and a point of its part on
@@ -512,9 +578,9 @@ fn balloon_view<S: Scalar>(
         line_of[b] = paths.get(body.path.as_str()).copied();
     }
     let mut order: Vec<usize> = (0..placed.len())
-        .filter(|&i| matches!(placed[i].kind, Slot::View(_)))
+        .filter(|&i| matches!(placed[i].kind, DrawnView::View(_)))
         .collect();
-    order.sort_by_key(|&i| placed[i].kind != Slot::View(ViewKind::Iso));
+    order.sort_by_key(|&i| placed[i].kind != DrawnView::View(ViewKind::Iso));
     let mut best: Option<(usize, usize, Vec<Target>)> = None;
     for i in order {
         let p = &placed[i];
@@ -831,7 +897,7 @@ fn draw_thread<S: Scalar>(
     let mut labelled = !label;
     for p in placed
         .iter()
-        .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso))
+        .filter(|p| matches!(p.kind, DrawnView::View(k) if k != ViewKind::Iso))
     {
         let frame = &p.view.frame;
         let look = frame.direction.vector();
@@ -944,7 +1010,7 @@ fn grow(cells: &mut Vec<(usize, f64, f64)>, key: usize, size: f64, margin: f64) 
 
 /// Where a point of the view `p`, in model units on its paper, lands on
 /// the sheet.
-fn placer<S: Scalar>(p: &Placed<S>, scale: f64) -> impl Fn(P) -> P + '_ {
+pub(crate) fn placer<S: Scalar>(p: &Placed<S>, scale: f64) -> impl Fn(P) -> P + '_ {
     let mid = [
         (p.extents[0] + p.extents[2]) / 2.0,
         (p.extents[1] + p.extents[3]) / 2.0,
@@ -986,25 +1052,31 @@ fn draw_view<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> GeopRes
         // right.
         let [x0, y0, x1, y1] = p.extents;
         let (a, b) = (place([x0, y0]), place([x1, y0]));
-        linear_dimension(
-            sheet,
-            a,
-            b,
-            [0.0, -1.0],
-            DIMENSION_OFFSET,
+        let below = [(a[0] + b[0]) / 2.0, a[1] - DIMENSION_OFFSET];
+        Drawn::measure(
+            Measure::Linear {
+                a,
+                b,
+                along: [1.0, 0.0],
+            },
+            below,
             length_label(x1 - x0),
-        );
+        )
+        .draw(sheet);
         let (a, b) = (place([x1, y0]), place([x1, y1]));
-        linear_dimension(
-            sheet,
-            a,
-            b,
-            [1.0, 0.0],
-            DIMENSION_OFFSET,
+        let right = [a[0] + DIMENSION_OFFSET, (a[1] + b[1]) / 2.0];
+        Drawn::measure(
+            Measure::Linear {
+                a,
+                b,
+                along: [0.0, 1.0],
+            },
+            right,
             length_label(y1 - y0),
-        );
+        )
+        .draw(sheet);
     }
-    if p.kind == Slot::Section {
+    if p.kind == DrawnView::Section {
         let [_, y0, _, _] = p.extents;
         let below = place([(p.extents[0] + p.extents[2]) / 2.0, y0]);
         sheet.label(
@@ -1085,159 +1157,6 @@ fn unit(a: P) -> P {
     } else {
         [1.0, 0.0]
     }
-}
-
-/// An arrowhead with its tip at `tip`, pointing along `direction`.
-fn arrow(sheet: &mut Sheet, tip: P, direction: P) {
-    let d = unit(direction);
-    let n = [-d[1], d[0]];
-    let base = sub(tip, times(d, ARROW_LENGTH));
-    sheet.stroke(
-        Layer::Dimension,
-        Shape::Filled(vec![
-            tip,
-            add(base, times(n, ARROW_WIDTH / 2.0)),
-            sub(base, times(n, ARROW_WIDTH / 2.0)),
-        ]),
-    );
-}
-
-/// A dimension of the distance from `a` to `b` on the sheet, its line
-/// standing `offset` off them along the unit vector `side`, reading
-/// `text`.
-fn linear_dimension(sheet: &mut Sheet, a: P, b: P, side: P, offset: f64, text: String) {
-    let (a2, b2) = (add(a, times(side, offset)), add(b, times(side, offset)));
-    let reach = times(side, offset + 2.0);
-    let gap = times(side, 1.5);
-    sheet.stroke(Layer::Dimension, Shape::Line(add(a, gap), add(a, reach)));
-    sheet.stroke(Layer::Dimension, Shape::Line(add(b, gap), add(b, reach)));
-    sheet.stroke(Layer::Dimension, Shape::Line(a2, b2));
-    arrow(sheet, a2, sub(a2, b2));
-    arrow(sheet, b2, sub(b2, a2));
-    let mut along = unit(sub(b2, a2));
-    // Text reads left to right, or bottom to top.
-    if along[0] < 0.0 || (along[0] == 0.0 && along[1] < 0.0) {
-        along = times(along, -1.0);
-    }
-    let angle = along[1].atan2(along[0]).to_degrees();
-    let normal = [-along[1], along[0]];
-    let mid = times(add(a2, b2), 0.5);
-    sheet.labels.push(crate::sheet::Label {
-        layer: Layer::Dimension,
-        at: add(mid, times(normal, 1.0)),
-        height: TEXT,
-        angle,
-        anchor: Anchor::Middle,
-        text,
-    });
-}
-
-/// The dimension `dimension` (the `index`-th) in the first view that shows
-/// it truly.
-fn draw_dimension<S: Scalar>(
-    sheet: &mut Sheet,
-    part: &Part<S>,
-    placed: &[Placed<S>],
-    dimension: &Dimension,
-    index: usize,
-    scale: f64,
-) -> GeopResult<()> {
-    let orthographic = placed
-        .iter()
-        .filter(|p| matches!(p.kind, Slot::View(k) if k != ViewKind::Iso));
-    match dimension {
-        Dimension::Distance { from, to } => {
-            let (a, b) = (placed_vertex(part, from)?, placed_vertex(part, to)?);
-            let span = b.sub(&a);
-            let p = orthographic
-                .into_iter()
-                .find(|p| p.view.frame.direction.dot(&span).could_be_equal(S::ZERO))
-                .ok_or_else(|| {
-                    GeopError::new(format!(
-                        "no orthographic view sees the distance from {from} to {to} at its true \
-                         length: add a view looking perpendicular to it"
-                    ))
-                })?;
-            let frame = &p.view.frame;
-            let place = placer(p, scale);
-            let at = |q: &Vector3<S>| {
-                let v = frame.project_point(q);
-                place([v[0].to_f64(), v[1].to_f64()])
-            };
-            let (pa, pb) = (at(&a), at(&b));
-            if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) == 0.0 {
-                return Err(GeopError::new(format!(
-                    "{from} and {to} are the same point"
-                )));
-            }
-            // Off the side away from the view's centre.
-            let along = unit(sub(pb, pa));
-            let mut side = [-along[1], along[0]];
-            let mid = times(add(pa, pb), 0.5);
-            if (mid[0] - p.center[0]) * side[0] + (mid[1] - p.center[1]) * side[1] < 0.0 {
-                side = times(side, -1.0);
-            }
-            let offset = DIMENSION_OFFSET * (1.0 + (index % 3) as f64);
-            linear_dimension(
-                sheet,
-                pa,
-                pb,
-                side,
-                offset,
-                length_label(span.norm().to_f64()),
-            );
-        }
-        Dimension::Radius { edge } | Dimension::Diameter { edge } => {
-            let arc = placed_edge(part, edge)?
-                .as_arc()?
-                .ok_or_else(|| GeopError::new(format!("the edge {edge} is not circular")))?;
-            let p = orthographic
-                .into_iter()
-                .find(|p| {
-                    p.view
-                        .frame
-                        .direction
-                        .vector()
-                        .prod_cross(&arc.circle.normal)
-                        .could_be_equal(&Vector3::zero())
-                })
-                .ok_or_else(|| {
-                    GeopError::new(format!(
-                        "no orthographic view sees the circle {edge} round: add a view looking \
-                         along its axis"
-                    ))
-                })?;
-            let frame = &p.view.frame;
-            let place = placer(p, scale);
-            let c = frame.project_point(&arc.circle.center);
-            let c = place([c[0].to_f64(), c[1].to_f64()]);
-            let r = arc.circle.radius.to_f64();
-            let direction = [std::f64::consts::FRAC_1_SQRT_2; 2];
-            let rim = add(c, times(direction, r * scale));
-            let out = add(rim, times(direction, 8.0));
-            let (text, from) = match dimension {
-                Dimension::Radius { .. } => (format!("R{}", length_label(r)), c),
-                _ => (
-                    format!("⌀{}", length_label(2.0 * r)),
-                    sub(c, times(direction, r * scale)),
-                ),
-            };
-            sheet.stroke(Layer::Dimension, Shape::Line(from, out));
-            sheet.stroke(Layer::Dimension, Shape::Line(out, add(out, [6.0, 0.0])));
-            arrow(sheet, rim, direction);
-            if matches!(dimension, Dimension::Diameter { .. }) {
-                arrow(sheet, from, times(direction, -1.0));
-            }
-            sheet.label(
-                Layer::Dimension,
-                add(out, [1.0, 1.0]),
-                TEXT,
-                Anchor::Start,
-                text,
-            );
-        }
-    }
-    Ok(())
 }
 
 /// Where the vertex `name` of `part` — or of a part placed in it, named as

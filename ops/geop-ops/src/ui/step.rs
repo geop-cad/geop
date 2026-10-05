@@ -233,6 +233,13 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         &*self.session
     }
 
+    /// The operation's session, to tell it what the editor knows and the
+    /// operation cannot work out itself: a drawing's bill of materials,
+    /// which is made from the program's files.
+    pub fn session_mut(&mut self) -> &mut dyn Any {
+        &mut *self.session
+    }
+
     /// The keys of the visuals selected.
     pub fn selection(&self) -> &[String] {
         &self.selection
@@ -668,6 +675,11 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 None
             } else {
                 form.focus
+            },
+            sheet: if self.armed.is_some() {
+                None
+            } else {
+                form.sheet
             },
             // A tool that strokes takes a press anywhere.
             grab: self.grab.is_some()

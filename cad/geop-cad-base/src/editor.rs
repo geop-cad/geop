@@ -473,13 +473,16 @@ struct Open<S: Scalar> {
 /// A step being edited, as one edit left it, with the program's state.
 type Edited = (PartOperation, geop_ops::part::State);
 
-/// Which part is drawn, and without what: when it is the same as last
-/// time, the scene is not sent again.
+/// Which part is drawn, and without what — or, for a step edited on a
+/// sheet of its own, no part, the viewer framing the sheet: when it is the
+/// same as last time, the scene is not sent again.
 #[derive(Clone, PartialEq)]
 struct Shown {
     run: u64,
     steps: usize,
     hidden: Vec<String>,
+    /// The sheet's centre and size.
+    sheet: Option<([f64; 3], f64)>,
 }
 
 /// Editing a program: see the module docs.
@@ -622,6 +625,7 @@ impl<S: Scalar> Editor<S> {
             // Settling runs the whole program, so what is shown runs after.
             self.settle();
             self.rerun();
+            self.give_parts_list();
         }
         let step = self.step_state();
         let steps = self.shown_steps(step.as_ref());
@@ -630,10 +634,19 @@ impl<S: Scalar> Editor<S> {
             run: self.run,
             steps,
             hidden,
+            sheet: step.as_ref().and_then(|s| s.presentation.sheet).map(|e| {
+                (e.center.to_array().map(|c| c.to_f64()), e.size.to_f64())
+            }),
         };
         let scene = (self.shown.as_ref() != Some(&shown)).then(|| {
             self.shown = Some(shown.clone());
-            let part = self.view_of(shown.steps);
+            let part = match shown.sheet {
+                Some((center, size)) => PartView::blank(geop_ops::ui::Extent {
+                    center: Vector3::from_array(center.map(S::from_f64)),
+                    size: S::from_f64(size),
+                }),
+                None => self.view_of(shown.steps),
+            };
             let before = self.placed.take();
             let all = before.is_none();
             let before = before.unwrap_or_default();
@@ -728,6 +741,7 @@ impl<S: Scalar> Editor<S> {
             highlights: Vec::new(),
             pickable: Vec::new(),
             focus: None,
+            sheet: None,
             grab: lit.is_some(),
             prompt: None,
         })
@@ -1375,6 +1389,33 @@ impl<S: Scalar> Editor<S> {
             if let (Some(open), Some(view)) = (&mut self.open, view) {
                 open.view = view;
             }
+        }
+    }
+
+    /// Gives a drawing being edited the bill of materials of the part it
+    /// draws, which it cannot list itself (see
+    /// [`geop_ops_drawing::operation::DrawingSession::show`]) — once per
+    /// part built, and whenever it starts or stops asking for one.
+    fn give_parts_list(&mut self) {
+        let file = self.file();
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let PartOperation::Drawing(args) = open.editor.step() else {
+            return;
+        };
+        let args = args.clone();
+        let before = self.runner.part_at(open.index);
+        let Some(session) = open
+            .editor
+            .session_mut()
+            .downcast_mut::<geop_ops_drawing::operation::DrawingSession>()
+        else {
+            return;
+        };
+        if session.wants_parts(before.revision(), args.bom) {
+            let parts = inspect::parts_list(before, &file, &args);
+            session.show(before.revision(), args.bom, parts);
         }
     }
 

@@ -393,6 +393,25 @@ pub(crate) fn solid_bounded_by<S: Scalar>(part: &Part<S>, entity: &EntityRef) ->
 }
 
 impl<S: Scalar> PartView<S> {
+    /// Nothing drawn, reaching as far as `extent`: what a viewer is sent
+    /// while a step is edited on a sheet of its own (see
+    /// [`crate::ui::Form::sheet`]), which it frames.
+    pub fn blank(extent: Extent<S>) -> Self {
+        Self {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+            sketches: Vec::new(),
+            sketches3d: Vec::new(),
+            datums: Vec::new(),
+            threads: Vec::new(),
+            solids: Vec::new(),
+            instances: Vec::new(),
+            extent,
+            color: None,
+        }
+    }
+
     /// `part` as drawn.
     pub fn of(part: &Part<S>) -> GeopResult<Self> {
         let model = part.topology();

@@ -5,6 +5,7 @@
 //! materials ([`sheet`]), written as SVG or DXF, and the [`Drawing`]
 //! operation of a program, which describes one.
 
+pub mod annotation;
 pub mod drawing;
 pub mod dxf;
 pub mod hidden_lines;
@@ -16,12 +17,13 @@ pub mod silhouette;
 pub mod svg;
 pub mod view;
 
-pub use drawing::{Dimension, DrawingArgs, PartsListLine, Projection, SheetSize, compose};
+pub use annotation::{Along, Annotation, Candidate, EdgeShape, Leader, Pickable, Target};
+pub use drawing::{DrawingArgs, Layout, PartsListLine, Projection, SheetSize, compose, layout};
 pub use dxf::to_dxf;
 pub use hidden_lines::{LineKind, ProjectedView, ViewLine, ViewOptions, project_view};
 pub use operation::Drawing;
 pub use svg::to_svg;
-pub use view::{ViewFrame, ViewKind};
+pub use view::{DrawnView, ViewFrame, ViewKind};
 
 use geop_core_math::scalars::Scalar;
 

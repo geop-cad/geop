@@ -205,6 +205,7 @@ impl<S: Scalar> MeasureTool<S> {
             highlights,
             pickable: PICKS.to_vec(),
             focus: None,
+            sheet: None,
             grab: false,
             prompt: None,
         }

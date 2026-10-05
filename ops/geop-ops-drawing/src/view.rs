@@ -85,6 +85,55 @@ impl ViewKind {
     }
 }
 
+/// A view of a drawing, as its annotations name it: one looking from a
+/// direction, or the section — `front`, `iso`, `section`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
+pub enum DrawnView {
+    View(ViewKind),
+    Section,
+}
+
+impl DrawnView {
+    pub fn name(self) -> &'static str {
+        match self {
+            DrawnView::View(kind) => kind.name(),
+            DrawnView::Section => "section",
+        }
+    }
+
+    /// Whether it shows lengths as they are: every view but the isometric
+    /// one, which foreshortens them all.
+    pub fn orthographic(self) -> bool {
+        self != DrawnView::View(ViewKind::Iso)
+    }
+}
+
+impl From<DrawnView> for String {
+    fn from(view: DrawnView) -> String {
+        view.name().to_string()
+    }
+}
+
+impl TryFrom<String> for DrawnView {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        match name.as_str() {
+            "section" => Ok(DrawnView::Section),
+            _ => ViewKind::from_name(&name)
+                .map(DrawnView::View)
+                .ok_or_else(|| format!("{name:?} names no view of a drawing")),
+        }
+    }
+}
+
+impl std::fmt::Display for DrawnView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// A unit vector of a view's frame. A coordinate axis is kept as one, so
 /// projecting along it picks a coordinate rather than multiplying by 1 and
 /// 0, which would widen every interval by rounding (see `AGENTS.md`,

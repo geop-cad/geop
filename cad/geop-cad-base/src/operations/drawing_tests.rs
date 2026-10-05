@@ -8,8 +8,8 @@ use geop_core_math::{
 };
 use geop_ops::{EntityRef, NoFiles, Part, RefId};
 use geop_ops_drawing::{
-    Dimension, DrawingArgs, LineKind, ViewKind, ViewOptions, compose, drawing::drawn_faces,
-    project_view, to_dxf,
+    Along, Annotation, DrawingArgs, DrawnView, LineKind, Target, ViewKind, ViewOptions, compose,
+    drawing::drawn_faces, project_view, to_dxf,
 };
 
 use crate::{Program, examples};
@@ -67,8 +67,9 @@ fn drilled_plate_shows_its_hole_hidden() {
     assert!(top.lines.iter().all(|l| l.visible));
 }
 
-/// Dimensions asked for by name land in the views that see them truly; one
-/// no view sees truly is refused, naming it.
+/// Dimensions asked for by name land in the views they name, measured as
+/// those see them; a radius in a view that does not see its circle round
+/// is refused, naming it.
 #[test]
 fn dimensions_by_name_are_drawn() {
     let part = build(&examples::bracket());
@@ -89,13 +90,23 @@ fn dimensions_by_name_are_drawn() {
         })
     };
     let args = DrawingArgs {
-        dimensions: vec![
-            Dimension::Distance {
-                from: corner(0.0, 0.0, 0.0),
-                to: corner(40.0, 0.0, 10.0),
+        annotations: vec![
+            Annotation::Distance {
+                view: DrawnView::View(ViewKind::Front),
+                from: Target::Vertex {
+                    name: corner(0.0, 0.0, 0.0),
+                },
+                to: Target::Vertex {
+                    name: corner(40.0, 0.0, 10.0),
+                },
+                along: Along::Aligned,
+                label: [0.0, 15.0],
             },
-            Dimension::Diameter {
+            Annotation::Radius {
+                view: DrawnView::View(ViewKind::Top),
                 edge: circle.clone(),
+                diameter: true,
+                label: [12.0, 12.0],
             },
         ],
         ..Default::default()
@@ -107,7 +118,12 @@ fn dimensions_by_name_are_drawn() {
 
     let skew = DrawingArgs {
         views: vec![ViewKind::Front],
-        dimensions: vec![Dimension::Radius { edge: circle }],
+        annotations: vec![Annotation::Radius {
+            view: DrawnView::View(ViewKind::Front),
+            edge: circle,
+            diameter: false,
+            label: [10.0, 10.0],
+        }],
         ..Default::default()
     };
     let err = compose(&part, &skew, "", &[]).unwrap_err().to_string();
@@ -584,8 +600,11 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
     let args = DrawingArgs {
         views: vec![ViewKind::Top],
         section: Some(EntityRef::datum("middle")),
-        dimensions: vec![Dimension::Diameter {
+        annotations: vec![Annotation::Radius {
+            view: DrawnView::View(ViewKind::Top),
             edge: format!("plate/{hole}"),
+            diameter: true,
+            label: [12.0, 12.0],
         }],
         ..Default::default()
     };

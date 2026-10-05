@@ -14,7 +14,7 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar},
     vector::Vector2,
 };
-use geop_core_sketch::{CurveId, PointId, geometry::Arc, geometry::V};
+use geop_core_sketch::{CurveId, PointId, dimension::Measure, geometry::Arc, geometry::V};
 use geop_ops::Design;
 
 use crate::{
@@ -727,24 +727,6 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
         CurveKind::Line { start, end } => Some((p(start), p(end))),
         _ => None,
     };
-    // A linear dimension measuring from `a` to `b` along `along`.
-    let linear = |a: P2, b: P2, along: P2| -> Vec<Vec<P2>> {
-        let Some(u) = unit(along) else {
-            return Vec::new();
-        };
-        let n = [-u[1], u[0]];
-        let lift = |q: P2| add(q, scale(n, dot(sub(label, q), n)));
-        let (a2, b2) = (lift(a), lift(b));
-        // The dimension line runs between the extension lines, and on to
-        // the label if it is beside them.
-        let t = |q: P2| dot(sub(q, a2), u);
-        let (lo, hi) = (t(b2).min(0.0).min(t(label)), t(b2).max(0.0).max(t(label)));
-        vec![
-            vec![a, a2],
-            vec![b, b2],
-            vec![add(a2, scale(u, lo)), add(a2, scale(u, hi))],
-        ]
-    };
     // A circle's or an arc's center and radius, as drawn.
     let round = |curve: CurveId| -> Option<(P2, f64)> {
         match sketch.curves[&curve].kind {
@@ -757,6 +739,7 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
             _ => None,
         }
     };
+    let linear = |a: P2, b: P2, along: P2| Measure::Linear { a, b, along }.lines(label);
     match *c {
         Distance { a, b, .. } => linear(p(a), p(b), sub(p(b), p(a))),
         DistanceX { a, b, .. } => linear(p(a), p(b), [1.0, 0.0]),
@@ -801,25 +784,15 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
             lines
         }
         Radius { curve, .. } | Diameter { curve, .. } => {
-            let Some((center, r)) = round(curve) else {
+            let Some((center, radius)) = round(curve) else {
                 return Vec::new();
             };
-            let Some(d) = unit(sub(label, center)) else {
-                return Vec::new();
-            };
-            let rim = add(center, scale(d, r));
-            let from = if matches!(c, Diameter { .. }) {
-                add(center, scale(d, -r))
-            } else {
-                center
-            };
-            // Out to the label, if it is beyond the rim.
-            let to = if dot(sub(label, center), d) > r {
-                label
-            } else {
-                rim
-            };
-            vec![vec![from, to]]
+            Measure::Radial {
+                center,
+                radius,
+                diameter: matches!(c, Diameter { .. }),
+            }
+            .lines(label)
         }
         Angle { a, b, value } => {
             let (Some((a0, a1)), Some((b0, b1))) = (line_ends(a), line_ends(b)) else {
@@ -833,23 +806,13 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
             // Where the lines meet, and an arc about it through the label,
             // turning from the first line's direction by the angle.
             let s = cross(sub(b0, a0), db) / denom;
-            let vertex = add(a0, scale(da, s));
-            let r = sub(label, vertex)[0].hypot(sub(label, vertex)[1]);
-            let start = da[1].atan2(da[0]);
-            let sweep = value.to_f64();
-            let steps = 32;
-            let arc: Vec<P2> = (0..=steps)
-                .map(|i| {
-                    let t = start + sweep * i as f64 / steps as f64;
-                    add(vertex, [r * t.cos(), r * t.sin()])
-                })
-                .collect();
-            // Each line's direction, out to the arc.
-            vec![
-                arc,
-                vec![vertex, add(vertex, scale(unit(da).unwrap_or(da), r))],
-                vec![vertex, add(vertex, scale(unit(db).unwrap_or(db), r))],
-            ]
+            Measure::Angular {
+                vertex: add(a0, scale(da, s)),
+                from: da,
+                to: db,
+                sweep: value.to_f64(),
+            }
+            .lines(label)
         }
         _ => Vec::new(),
     }
