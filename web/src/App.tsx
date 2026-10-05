@@ -765,6 +765,7 @@ function App() {
                 instances={instances}
                 components={components}
                 visuals={presentation?.visuals}
+                gizmo={presentation?.gizmo ?? null}
                 highlights={[...(presentation?.highlights ?? []), ...lights]}
                 section={section && sectionPlane(section, scene.part.extent.center)}
                 pickable={presentation?.pickable}

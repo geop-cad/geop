@@ -2716,14 +2716,14 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
             .any(|v| matches!(v.shape, geop_ops::ui::Shape::Handle { .. }))
     );
 
-    // Seen from the side, the `z` arrow pulled up by 0.33: a reach of
-    // 0.009 snaps to tenths.
+    // Seen from the side, the `z` arrow pulled up by 0.31: a reach of
+    // 0.009 snaps to fiftieths.
     let side = |z: f64| pointer([0.0, -10.0, z], [0.0, 1.0, 0.0]);
     drag_gizmo(
         &mut editor,
         GizmoPart::Move(2),
         side(1.05),
-        side(1.38),
+        side(1.355),
         side(1.2),
         false,
     );
@@ -2972,7 +2972,7 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
         &mut editor,
         GizmoPart::Move(2),
         side(start[2] + 0.05),
-        side(start[2] + 10.03),
+        side(start[2] + 10.055),
         side(start[2] + 5.0),
         false,
     );

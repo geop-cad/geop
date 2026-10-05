@@ -34,7 +34,8 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is
-                               edited (events, dialogs, visuals, hit tests),
+                               edited (events, dialogs, visuals, hit tests,
+                               the gizmo every drag in space goes by),
                                parameters and the formulas reading them —
                                a sketch dimension, an operation's length,
                                angle or count — programs, the

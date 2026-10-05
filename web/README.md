@@ -60,7 +60,9 @@ npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
   that every operation opens on an empty part and on a part, and cancels;
   that a rectangle sketched by clicks extrudes, and the inspect panel weighs
   it; that a kernel that panics is restarted with the program, and says
-  so; and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
+  so; that a SubD face and a 3-D sketch point are dragged by their gizmos'
+  arrows, lit where the kernel says the pointer is (with `--shots`, a
+  screenshot half way through each drag, `gizmo-*.png`); and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
   non-empty files of their kind.
 - `npm run e2e:vscode` builds the release CLI and the extension's page
   (`build:vscode`), writes example workspaces with `geop examples

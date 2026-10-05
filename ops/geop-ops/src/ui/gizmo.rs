@@ -49,8 +49,9 @@ pub mod size {
 }
 
 /// The finest spacing of the grid the viewer draws on a plane worked in,
-/// in reaches: what a translation snaps to is the power of ten at least
-/// this far on screen.
+/// in reaches (20 pixels, a reach being 9): what a translation snaps to is
+/// the round step — 1, 2 or 5 times a power of ten — at least this far on
+/// screen.
 pub const GRID: f64 = 20.0 / 9.0;
 /// What a turn snaps to, in degrees.
 pub const ANGLE_SNAP: f64 = 15.0;
@@ -372,10 +373,16 @@ fn snap(value: f64, step: f64) -> f64 {
     (value / step).round() * step
 }
 
-/// The grid a translation snaps to, a reach being `reach`: a power of
-/// ten, at least [`GRID`] reaches.
+/// The step a translation snaps to, a reach being `reach`: 1, 2 or 5
+/// times a power of ten, at least [`GRID`] reaches.
 pub fn grid_step(reach: f64) -> f64 {
-    10f64.powf((GRID * reach).log10().ceil())
+    let least = GRID * reach;
+    let power = 10f64.powf(least.log10().floor());
+    [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .map(|m| m * power)
+        .find(|&step| step >= least)
+        .unwrap_or(10.0 * power)
 }
 
 /// `value` written to as many decimals as `step` has.
@@ -598,7 +605,7 @@ mod tests {
     }
 
     /// An arrow dragged moves along its axis only, snapped to the grid —
-    /// a power of ten, here a whole unit — unless shift is held.
+    /// here halves, a reach being a tenth — unless shift is held.
     #[test]
     fn arrows_move_along_their_axis() {
         let side = |z: f64| pointer([0.0, -10.0, z], [0.0, 1.0, 0.0]);
@@ -610,8 +617,8 @@ mod tests {
         let Change::Translate(by) = drag.change else {
             panic!("{drag:?}")
         };
-        assert_eq!([0, 1, 2].map(|k| by[k].to_f64()), [0.0, 0.0, 1.0]);
-        assert_eq!(text, "z 1");
+        assert_eq!([0, 1, 2].map(|k| by[k].to_f64()), [0.0, 0.0, 1.5]);
+        assert_eq!(text, "z 1.5");
         let (drag, _) = grab.drag(&side(0.6), &side(2.0), true).unwrap();
         let Change::Translate(by) = drag.change else {
             panic!("{drag:?}")
@@ -676,6 +683,16 @@ mod tests {
         let (drag, _) = grab.drag(&diagonal(1.25), &diagonal(0.625), false).unwrap();
         let half = drag.apply_f64([1.0, 1.0, 1.0]);
         assert!(half.iter().all(|c| (c - 0.5).abs() < 1e-12), "{half:?}");
+    }
+
+    /// The steps a translation snaps to are round, and at least 20 pixels
+    /// on screen.
+    #[test]
+    fn grid_steps_are_round() {
+        assert_eq!(grid_step(0.1), 0.5);
+        assert_eq!(grid_step(0.5), 2.0);
+        assert_eq!(grid_step(4.0), 10.0);
+        assert_eq!(grid_step(0.04), 0.1);
     }
 
     /// Turned to its own axes, the gizmo moves along them.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, type CameraPose, type Projection } from "./camera";
+import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, worldPerPixel, type CameraPose, type Projection } from "./camera";
 import { DatumLayer } from "./datums3d";
 import {
   sameEntity,
@@ -19,12 +19,14 @@ import {
   type Vec3,
   type ViewInstance,
   type Visual,
+  type GizmoView,
 } from "./geop";
 import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, localTo } from "./partScene";
 import { PlacedLayer, type PlacedLook } from "./placed3d";
 import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
+import { GizmoLayer } from "./gizmo3d";
 
 /** How far, in pixels, a press may move and still be a click. */
 const CLICK_PX = 4;
@@ -53,6 +55,8 @@ interface Props {
   components: Record<string, PartView>;
   /** What the step being edited shows, drawn over the model. */
   visuals?: Visual[];
+  /** A gizmo to move, turn or scale by, drawn over everything. */
+  gizmo?: GizmoView | null;
   /** What to draw highlighted — what is picked, what a click would pick. */
   highlights?: EntityRef[];
   /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
@@ -145,6 +149,7 @@ export function SceneViewer({
   instances,
   components,
   visuals,
+  gizmo,
   highlights,
   pickable,
   hidden,
@@ -168,6 +173,8 @@ export function SceneViewer({
   // anything.
   const visualsRef = useRef(visuals ?? []);
   visualsRef.current = visuals ?? [];
+  const gizmoRef = useRef(gizmo ?? null);
+  gizmoRef.current = gizmo ?? null;
   const highlightsRef = useRef(highlights ?? []);
   highlightsRef.current = highlights ?? [];
   const pickableRef = useRef(pickable ?? []);
@@ -282,6 +289,8 @@ export function SceneViewer({
     threeScene.add(placed.group);
     const visualLayer = new VisualLayer();
     threeScene.add(visualLayer.group);
+    const gizmoLayer = new GizmoLayer();
+    threeScene.add(gizmoLayer.group);
     const grid = new PlaneGrid();
     threeScene.add(grid.group);
 
@@ -394,6 +403,17 @@ export function SceneViewer({
       return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach };
     };
     const send = (event: PointerEvent_) => onPointerRef.current?.(event) ?? Promise.resolve(false);
+    // For the end-to-end checks, which drive the view by the pointer: where
+    // a point of the scene is on screen, in client coordinates, and how
+    // long a reach is there — what the kernel lays a gizmo out in.
+    (window as unknown as { geopView: unknown }).geopView = {
+      project: (p: Vec3) => {
+        const ndc = vec(p).project(camera);
+        const rect = container.getBoundingClientRect();
+        return [rect.left + ((ndc.x + 1) / 2) * rect.width, rect.top + ((1 - ndc.y) / 2) * rect.height];
+      },
+      reach: (p: Vec3) => worldPerPixel(camera, vec(p), Math.max(container.clientHeight, 1)) * REACH_PX,
+    };
 
     // A press: a click if it does not move, else the camera's — or, where
     // the hover offered a grab, a drag of what is under it.
@@ -612,6 +632,8 @@ export function SceneViewer({
       datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);
       visualLayer.sync(visualsRef.current);
       visualLayer.update(camera, height, controls.target);
+      gizmoLayer.sync(gizmoRef.current);
+      gizmoLayer.update(camera, height);
       grid.sync(planeRef.current);
       grid.update(camera, height, controls.target);
 
