@@ -57,7 +57,7 @@ use geop_core_topology::{
 
 use super::{
     geometry::{
-        Frame, Midpoints, P3, Profile, Revolved, Scope, SurfaceDef, SurfaceKind, add, cross,
+        Frame, Midpoints, P3, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, add, cross,
         distance, dot, norm, normalize, parameter_of, scale, sub, to_p3,
     },
     reader::{Reader, unsupported},
@@ -196,6 +196,9 @@ struct Edge<S: Scalar> {
     alive: bool,
     /// The file's `EDGE_CURVE`, for one read from it or a piece of one.
     id: Option<u64>,
+    /// Where the file's curve is a circle or a line, which: for one read
+    /// from it or a piece of one, until it is rebuilt.
+    shape: Option<Shape>,
 }
 
 impl<S: Scalar> Edge<S> {
@@ -348,6 +351,7 @@ impl<S: Scalar> Builder<'_, S> {
             .reader
             .curve(&self.scope, args.reference(3)?)
             .map_err(ctx)?;
+        let shape = curve.shape();
         let along = args.logical(4).map_err(ctx)? != reversed;
         let (a, b) = (
             to_p3(&self.vertices[start].point),
@@ -370,6 +374,7 @@ impl<S: Scalar> Builder<'_, S> {
             name: name("e", self.edge_index.len()),
             alive: true,
             id: Some(id),
+            shape,
         });
         self.edge_index.insert(id, e);
         Ok(e)
@@ -588,7 +593,8 @@ impl<S: Scalar> Builder<'_, S> {
     /// loop of every face. Returns the new vertices.
     fn split_edge(&mut self, e: usize, ts: &[S]) -> GeopResult<Vec<usize>> {
         let edge = &self.edges[e];
-        let (start, end, base, id) = (edge.start, edge.end, edge.name.clone(), edge.id);
+        let (start, end, base, id, shape) =
+            (edge.start, edge.end, edge.name.clone(), edge.id, edge.shape);
         let curve = edge.curve.clone();
         let (lo, hi) = curve.domain();
         let mut bounds = vec![lo];
@@ -623,6 +629,7 @@ impl<S: Scalar> Builder<'_, S> {
                 name,
                 alive: true,
                 id,
+                shape,
             });
         }
         self.edges[e].alive = false;
@@ -1025,6 +1032,7 @@ impl<S: Scalar> Builder<'_, S> {
                 name,
                 alive: true,
                 id: None,
+                shape: Some(revolved.iso()),
             });
         }
 
@@ -1256,6 +1264,7 @@ impl<S: Scalar> Builder<'_, S> {
                 name,
                 alive: true,
                 id: None,
+                shape: Some(revolved.iso()),
             });
         }
 
@@ -1388,6 +1397,7 @@ impl<S: Scalar> Builder<'_, S> {
                 name,
                 alive: true,
                 id: None,
+                shape: Some(revolved.iso()),
             });
         }
         let n = cuts.len();
@@ -1626,6 +1636,7 @@ impl<S: Scalar> Builder<'_, S> {
                     name,
                     alive: true,
                     id: None,
+                    shape: Some(revolved.iso()),
                 });
                 partner.insert(b, (t, m));
                 partner.insert(t, (b, m));
@@ -1935,7 +1946,7 @@ impl<S: Scalar> Builder<'_, S> {
                 let patch = Patch {
                     surface: surface.clone(),
                     extent: None,
-                    planar: false,
+                    kind: PatchKind::Other,
                 };
                 built[f] = (patch, surface, grid);
             }
@@ -2134,9 +2145,20 @@ struct Patch<S: Scalar> {
     /// For a surface of revolution, the angles and profile parameters it
     /// was built over: for messages.
     extent: Option<[f64; 4]>,
-    /// Whether it is a plane's: a parallelogram, on which every pcurve is
-    /// its edge in the plane's coordinates (see [`plane_pcurve`]).
-    planar: bool,
+    kind: PatchKind,
+}
+
+/// What a [`Patch`] is the surface of, as far as a pcurve on it can be
+/// written down rather than fitted.
+#[derive(Clone, Debug)]
+enum PatchKind {
+    /// A plane's parallelogram, on which every pcurve is its edge in the
+    /// plane's coordinates (see [`plane_pcurve`]).
+    Plane,
+    /// A surface of revolution's, on which a parallel or a meridian is a
+    /// straight pcurve (see [`Revolved::iso_line`]).
+    Revolved(Revolved),
+    Other,
 }
 
 /// A row of a patch's control points collapsed to one point: a pole of its
@@ -2401,13 +2423,13 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface,
                 extent: None,
-                planar: true,
+                kind: PatchKind::Plane,
             })
         }
         SurfaceKind::Nurbs(nurbs) => Ok(Patch {
             surface: nurbs.to_nurbs()?,
             extent: None,
-            planar: false,
+            kind: PatchKind::Other,
         }),
         SurfaceKind::Extrusion { curve, vector } => {
             let length2 = dot(*vector, *vector);
@@ -2434,7 +2456,7 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface: start.sweep(s3(scale(*vector, v1 - v0))),
                 extent: None,
-                planar: false,
+                kind: PatchKind::Other,
             })
         }
         SurfaceKind::Revolved(revolved) => {
@@ -2445,7 +2467,7 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface: revolved.patch(from, to, v0, v1)?,
                 extent: Some([from, to, v0, v1]),
-                planar: false,
+                kind: PatchKind::Revolved(revolved.clone()),
             })
         }
     }
@@ -2687,8 +2709,27 @@ fn fit_loop<S: Scalar>(
         let ctx = |e: GeopError| {
             e.with_context(format!("fitting the pcurve of the edge {}", edge.label()))
         };
-        let pcurve = if patch.planar {
+        // Not from a pole: there the pin's free parameter is taken from a
+        // point near it (see `pin`), not where the line runs.
+        let at_pole = corners[(k + n - 1) % n].is_none() || corners[k].is_none();
+        let straight = match (&patch.kind, &edge.shape) {
+            (PatchKind::Revolved(revolved), Some(shape)) => {
+                !at_pole && revolved.iso_line(shape, scope.uncertainty)
+            }
+            _ => false,
+        };
+        let pcurve = if let PatchKind::Plane = patch.kind {
             plane_pcurve(surface, &curve, pin_start, pin_end).with_context(&ctx)?
+        } else if straight {
+            // A parallel or a meridian: straight in the patch, from one
+            // end's foot point to the other's.
+            let h = |p: Vector2<S>| Vector3::from_array([p[0], p[1], S::ONE]);
+            NurbCurve::try_new(
+                1,
+                vec![h(pin_start), h(pin_end)],
+                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            )
+            .with_context(&ctx)?
         } else {
             surface
                 .fit_pcurve(
@@ -3221,6 +3262,7 @@ fn heal<S: Scalar>(
                 samples *= 2;
             };
             edges[e].curve = rebuilt;
+            edges[e].shape = None;
             moved_edges.push((edges[e].label(), furthest_shift.get()));
         }
     }

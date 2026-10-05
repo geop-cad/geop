@@ -192,6 +192,15 @@ fn a_cylinder_along_a_seam_is_cut_into_sectors() {
     // twice, and at the seam's vertex.
     assert_eq!(counts(model), (4, 8, 6));
     assert_bounds(model, [-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
+    // The sectors' rims, in six pieces, are parallels and their sides,
+    // four, meridians: straight pcurves, written down rather than fitted.
+    // (The discs' arcs are arcs in the plane.)
+    let straight = model
+        .coedges
+        .values()
+        .filter(|c| c.pcurve.degree == 1 && c.pcurve.control_points.len() == 2)
+        .count();
+    assert_eq!(straight, 10);
     assert!(part.face_id("import(i,s0,f0,q0)").is_ok());
     assert!(part.face_id("import(i,s0,f2)").is_ok());
 }
