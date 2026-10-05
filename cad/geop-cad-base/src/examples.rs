@@ -2126,10 +2126,12 @@ pub fn motor_flange() -> Program {
     program
 }
 
-/// A doubly curved panel, a saddle: a UV surface through three ribs
-/// along `x` and three spines along `y`, each a spline of a 3-D sketch
-/// through points of the saddle — the ribs' and the spines' meeting where
-/// they cross.
+/// A doubly curved panel, a saddle: a UV surface (`panel`) through three
+/// ribs along `x` and three spines along `y`, each a spline of a 3-D
+/// sketch through points of the saddle — the ribs' and the spines' meeting
+/// where they cross; and a block under it (`block`) split along it
+/// (`shaped`) into a piece with the saddle for its top and one with it for
+/// its bottom.
 pub fn curved_panel() -> Program {
     let height = |x: f64, y: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (y - 1.5).powi(2);
     let mut program = Program::new();
@@ -2174,6 +2176,35 @@ pub fn curved_panel() -> Program {
         NetworkSurfaceArgs {
             u_curves: ribs,
             v_curves: spines,
+        },
+    );
+    let mut outline = Sketch::new();
+    rectangle(&mut outline, [0.5, 0.5], 3.0, 2.0);
+    program.push(
+        "block_sketch",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "block",
+        ExtrudeArgs {
+            sketch: "block_sketch".into(),
+            extent: Extents::blind(1.5),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "shaped",
+        SplitArgs {
+            solid: "extrude(block)".into(),
+            face: "network(panel)".into(),
         },
     );
     program
@@ -2599,13 +2630,30 @@ mod tests {
     /// The motor flange is a ring with six bolt holes through it: solid in
     /// its wall, open in its bore and in every hole, the copies round the
     /// bolt circle as much as the first.
-    /// The curved panel is one valid face, through the middle of its
-    /// middle rib and spine, where they cross.
+    /// The curved panel is a valid face, through the middle of its middle
+    /// rib and spine, where they cross; it splits the block under it in
+    /// two, a point above the saddle in one and one below it in the other.
     #[test]
     fn curved_panel_round_trips() {
         let part = build_and_round_trip("curved_panel", &curved_panel());
         let description = PartDescription::of(&part).unwrap();
-        assert!(description.solids.is_empty());
+        assert_eq!(
+            description.solids.len(),
+            2,
+            "{:?}",
+            description.solids.keys()
+        );
+        for (p, expected) in [
+            ([2.0, 1.5, 1.0], [true, false]),
+            ([2.0, 1.5, 0.2], [false, true]),
+        ] {
+            let inside = ["split(shaped,0)", "split(shaped,1)"]
+                .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
+            assert!(
+                inside == expected || inside == [expected[1], expected[0]],
+                "at {p:?}: {inside:?}"
+            );
+        }
         let face = part.face_id("network(panel)").unwrap();
         let surface = &part.topology().get_face(face).unwrap().surface;
         let middle = Vector3::from_array([2.0, 1.5, 0.6].map(S::from_f64));
