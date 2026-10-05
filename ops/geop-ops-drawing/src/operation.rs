@@ -17,7 +17,7 @@
 //! part and what the views depend on are the same (see
 //! [`DrawingSession::show`]).
 
-use std::{cell::RefCell, rc::Rc};
+use std::{any::Any, cell::RefCell, rc::Rc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -40,8 +40,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     annotation::{Along, Annotation, Candidate, Drawn, EdgeShape, Leader, Pickable, Target},
     drawing::{
-        DrawingArgs, Layout, PartsListLine, Projection, SCALES, SheetSize, layout, placed_edge,
-        placed_vertex, scale_label,
+        DrawingArgs, Layout, PartsListLine, Projected, Projection, SCALES, SheetSize, annotated,
+        arrange, placed_edge, placed_vertex, project, scale_label,
     },
     sheet::{Anchor, Layer, P, Sheet},
     view::{DrawnView, ViewKind},
@@ -131,6 +131,10 @@ pub struct DrawingSession {
     /// revision and whether it was asked for: the sheet is shown once it
     /// has been given one.
     parts: Option<(u64, bool, Result<Vec<PartsListLine>, String>)>,
+    /// The views as last projected — a `Result<Projected<S>, String>` —
+    /// for the part of which revision, and what of the arguments they
+    /// depend on (see [`Projected::depends_on`]).
+    projected: RefCell<Option<(u64, DrawingArgs, Rc<dyn Any>)>>,
     /// The sheet as last laid out: for the part of which revision, and the
     /// arguments without their annotations.
     laid_out: RefCell<Option<(u64, DrawingArgs, Rc<Result<Layout, String>>)>>,
@@ -147,6 +151,7 @@ impl Default for DrawingSession {
             drag: None,
             refused: None,
             parts: None,
+            projected: RefCell::new(None),
             laid_out: RefCell::new(None),
         }
     }
@@ -168,11 +173,28 @@ impl DrawingSession {
     /// editor, which knows the program's files, does.
     pub fn show(&mut self, revision: u64, bom: bool, parts: GeopResult<Vec<PartsListLine>>) {
         self.parts = Some((revision, bom, parts.map_err(|e| e.to_string())));
+        // Laid out with the parts it had: to be laid out again.
+        *self.laid_out.get_mut() = None;
     }
 
     /// The tool in hand.
     pub fn tool(&self) -> Tool {
         self.tool
+    }
+
+    /// `args`' drawing of `part`, as downloaded — dated `date`, with
+    /// `parts` its bill of materials if `args` asks for one — from the
+    /// views as projected for the viewport (see [`crate::compose`]).
+    pub fn compose<S: Scalar>(
+        &self,
+        part: &Part<S>,
+        args: &DrawingArgs,
+        date: &str,
+        parts: &[PartsListLine],
+    ) -> GeopResult<Sheet> {
+        let projected = self.projected(part, args);
+        let projected = (*projected).as_ref().map_err(|e| GeopError::new(e.clone()))?;
+        annotated(part, args, &arrange(part, args, date, parts, projected)?)
     }
 
     /// `args`' sheet as drawn of `part` — laid out once, and kept while
@@ -184,22 +206,50 @@ impl DrawingSession {
         part: &Part<S>,
         args: &DrawingArgs,
     ) -> Option<Rc<Result<Layout, String>>> {
-        let (_, _, parts) = self.parts.as_ref()?;
+        let revision = part.revision();
+        // Until the editor has given the parts for this part and these
+        // arguments — on its way, after an edit — there is nothing to show.
+        let (_, _, parts) = self
+            .parts
+            .as_ref()
+            .filter(|(r, bom, _)| *r == revision && *bom == args.bom)?;
         let mut key = args.clone();
         key.annotations.clear();
-        let revision = part.revision();
         if let Some((r, a, laid)) = &*self.laid_out.borrow()
             && *r == revision
             && *a == key
         {
             return Some(laid.clone());
         }
-        let laid = Rc::new(match parts {
-            Ok(parts) => layout(part, args, "", parts).map_err(|e| e.root_message().to_string()),
-            Err(e) => Err(format!("the bill of materials: {e}")),
+        let laid = Rc::new(match (parts, &*self.projected(part, args)) {
+            (Ok(parts), Ok(projected)) => arrange(part, args, "", parts, projected)
+                .map_err(|e| e.root_message().to_string()),
+            (Err(e), _) => Err(format!("the bill of materials: {e}")),
+            (_, Err(e)) => Err(e.clone()),
         });
         *self.laid_out.borrow_mut() = Some((revision, key, laid.clone()));
         Some(laid)
+    }
+
+    /// `args`' views of `part`, projected — once, and kept while `part`
+    /// and what they depend on are the same.
+    fn projected<S: Scalar>(
+        &self,
+        part: &Part<S>,
+        args: &DrawingArgs,
+    ) -> Rc<Result<Projected<S>, String>> {
+        let revision = part.revision();
+        let key = Projected::<S>::depends_on(args);
+        if let Some((r, a, projected)) = &*self.projected.borrow()
+            && *r == revision
+            && *a == key
+            && let Ok(projected) = projected.clone().downcast::<Result<Projected<S>, String>>()
+        {
+            return projected;
+        }
+        let projected = Rc::new(project(part, args).map_err(|e| e.root_message().to_string()));
+        *self.projected.borrow_mut() = Some((revision, key, projected.clone()));
+        projected
     }
 }
 
@@ -509,6 +559,12 @@ fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) 
             text.at[0] + along * c - up * s,
             text.at[1] + along * s + up * c,
         ];
+        // A dimension's value as a sketch shows one; the title block's,
+        // the parts list's and the views' captions as plain text.
+        let style = match text.layer {
+            Layer::Dimension => Style::Fixed,
+            _ => Style::Paper,
+        };
         out.push(Visual::new(
             format!("{key}/text{i}"),
             Shape::Label {
@@ -516,7 +572,7 @@ fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) 
                 text: text.text.clone(),
                 offset: Vector3::zero(),
             },
-            style(text.layer),
+            style,
         ));
     }
 }
@@ -605,7 +661,6 @@ fn annotate<'a, S: Scalar>(
         .map(|&(tool, name, label)| {
             Action::new(name, label)
                 .icon(name)
-                .group("Annotate")
                 .active(s.tool == tool)
         })
         .collect();
@@ -1130,5 +1185,93 @@ impl Operation for Drawing {
             }
         }
         Ok(part)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FRONT: DrawnView = DrawnView::View(ViewKind::Front);
+
+    fn point(view: DrawnView, name: &str) -> Candidate {
+        Candidate {
+            view,
+            what: Pickable::Point {
+                target: Target::Vertex { name: name.into() },
+                at: [0.0, 0.0],
+            },
+        }
+    }
+
+    fn edge(view: DrawnView, name: &str, shape: EdgeShape) -> Candidate {
+        Candidate {
+            view,
+            what: Pickable::Edge {
+                name: name.into(),
+                points: Vec::new(),
+                shape,
+            },
+        }
+    }
+
+    fn line(name: &str) -> Candidate {
+        let shape = EdgeShape::Line {
+            start: format!("{name}.start"),
+            end: format!("{name}.end"),
+        };
+        edge(FRONT, name, shape)
+    }
+
+    /// The dimension tool makes what its picks call for: two points their
+    /// distance, a line its length, two lines their angle, a circle its
+    /// diameter and an arc its radius — and takes nothing from two views,
+    /// or from the isometric view, which foreshortens what it shows.
+    #[test]
+    fn the_dimension_tool_makes_what_its_picks_call_for() {
+        let made = |picks: &[Candidate]| build(Tool::Dimension, picks);
+        assert!(matches!(
+            made(&[point(FRONT, "a"), point(FRONT, "b")]),
+            Some(Annotation::Distance {
+                along: Along::Aligned,
+                ..
+            })
+        ));
+        let Some(Annotation::Distance { from, to, .. }) = made(&[line("l")]) else {
+            panic!("a line's length");
+        };
+        assert_eq!(
+            (from.to_string(), to.to_string()),
+            ("l.start".into(), "l.end".into())
+        );
+        assert!(matches!(
+            made(&[line("l"), line("m")]),
+            Some(Annotation::Angle { .. })
+        ));
+        let round = |full| edge(FRONT, "c", EdgeShape::Circle { full });
+        assert!(matches!(
+            made(&[round(true)]),
+            Some(Annotation::Radius { diameter: true, .. })
+        ));
+        assert!(matches!(
+            made(&[round(false)]),
+            Some(Annotation::Radius {
+                diameter: false,
+                ..
+            })
+        ));
+        assert!(made(&[point(FRONT, "a")]).is_none(), "one point is not enough");
+        let top = DrawnView::View(ViewKind::Top);
+        assert!(!fits(Tool::Dimension, &[&point(FRONT, "a"), &point(top, "b")]));
+        let iso = DrawnView::View(ViewKind::Iso);
+        assert!(!fits(Tool::Dimension, &[&point(iso, "a")]));
+        assert!(fits(Tool::Note, &[&point(iso, "a")]), "a note points into any view");
+        assert!(matches!(
+            build(Tool::Horizontal, &[line("l")]),
+            Some(Annotation::Distance {
+                along: Along::Horizontal,
+                ..
+            })
+        ));
     }
 }

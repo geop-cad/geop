@@ -367,6 +367,7 @@ dependencies = [
  "geop-ops-extrude-revolve",
  "geop-ops-inspect",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -22,7 +22,10 @@ pub trait Field: Ring {
 }
 
 // ── Core trait ────────────────────────────────────────────────────────────────
-pub trait Scalar: Field + Copy + Display + Default {
+/// A number as the kernel computes with it. A plain value, borrowing
+/// nothing (`'static`): what is worked out in one can be kept as any
+/// other value — a drawing's views, in the session editing it.
+pub trait Scalar: Field + Copy + Display + Default + 'static {
     // Constants
     const ZERO: Self;
     const ONE: Self;

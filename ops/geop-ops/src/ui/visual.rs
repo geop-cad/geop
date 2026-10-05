@@ -101,6 +101,9 @@ pub enum Style {
     Snap,
     /// What the tool in hand would remove.
     Removed,
+    /// Text printed on a sheet of its own: a drawing's title block, its
+    /// parts list, its views' captions.
+    Paper,
 }
 
 /// A value asked for in place, at `at` in the viewport: a field of the

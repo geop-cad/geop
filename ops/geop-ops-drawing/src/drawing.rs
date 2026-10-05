@@ -293,7 +293,16 @@ pub fn compose<S: Scalar>(
     date: &str,
     parts: &[PartsListLine],
 ) -> GeopResult<Sheet> {
-    let layout = layout(part, args, date, parts)?;
+    annotated(part, args, &layout(part, args, date, parts)?)
+}
+
+/// `layout`'s sheet, of `part`, with `args`' annotations drawn on it (see
+/// [`compose`]).
+pub fn annotated<S: Scalar>(
+    part: &Part<S>,
+    args: &DrawingArgs,
+    layout: &Layout,
+) -> GeopResult<Sheet> {
     let mut sheet = layout.sheet.clone();
     for (index, annotation) in args.annotations.iter().enumerate() {
         annotation
@@ -365,21 +374,89 @@ impl Layout {
 }
 
 /// The part's drawing as `args` describe it, without its annotations (see
-/// [`compose`]): its views laid out, dated `date`, with `parts` its bill of
-/// materials if `args` asks for one.
-///
-/// The part's own solids and sheets are drawn, and every part placed in
-/// it, however deep, where it is placed (see [`Scene`]). With a bill of
-/// materials, each line of it placed in the drawing gets a balloon with its
-/// item number, its leader pointing at its part in one view (see
-/// [`balloon_view`]). A bill too long for the sheet is refused.
+/// [`compose`]): its views projected (see [`project`]) and laid out (see
+/// [`arrange`]), dated `date`, with `parts` its bill of materials if `args`
+/// asks for one.
 pub fn layout<S: Scalar>(
     part: &Part<S>,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
 ) -> GeopResult<Layout> {
-    let ctx = |e: GeopError| e.with_context("layout(drawing)");
+    arrange(part, args, date, parts, &project(part, args)?)
+}
+
+/// A drawing's views projected, each with its lines visible and hidden —
+/// and the section's, with its cut faces to hatch: what laying a drawing
+/// out costs. It depends on no more of the drawing's arguments than
+/// [`Projected::depends_on`] keeps, so changing the paper, the scale, the title
+/// block or the bill of materials projects nothing again.
+#[derive(Clone)]
+pub struct Projected<S: Scalar> {
+    views: Vec<(DrawnView, ProjectedView<S>, Vec<Hatched<S>>)>,
+}
+
+impl<S: Scalar> Projected<S> {
+    /// What of `args` projecting the views depends on: the views, the
+    /// lines drawn, the section.
+    pub fn depends_on(args: &DrawingArgs) -> DrawingArgs {
+        DrawingArgs {
+            views: args.views.clone(),
+            hidden_lines: args.hidden_lines,
+            tangent_edges: args.tangent_edges,
+            section: args.section.clone(),
+            ..DrawingArgs::default()
+        }
+    }
+}
+
+/// The views of `part` that `args` ask for, projected (see [`Projected`]):
+/// its own solids and sheets, and every part placed in it, however deep,
+/// where it is placed (see [`Scene`]).
+pub fn project<S: Scalar>(part: &Part<S>, args: &DrawingArgs) -> GeopResult<Projected<S>> {
+    let ctx = |e: GeopError| e.with_context("project(drawing)");
+    let scene = Scene::of(part).with_context(&ctx)?;
+    let options = ViewOptions {
+        tangent_edges: args.tangent_edges,
+        hidden_lines: args.hidden_lines,
+    };
+    let mut views = Vec::new();
+    if scene.bodies.is_empty() {
+        return Ok(Projected { views });
+    }
+    for &kind in &args.views {
+        if views.iter().any(|(v, _, _)| *v == DrawnView::View(kind)) {
+            continue;
+        }
+        let frame = kind.frame()?;
+        let view = scene
+            .project(&frame, &options)
+            .map_err(|e| ctx(e.with_context(format!("the {} view", kind.name()))))?;
+        views.push((DrawnView::View(kind), view, Vec::new()));
+    }
+    if let Some(plane) = &args.section {
+        let (view, hatched) = section_view(part, &scene, plane, &options)
+            .map_err(|e| ctx(e.with_context(format!("the section view on {}", plane.label()))))?;
+        views.push((DrawnView::Section, view, hatched));
+    }
+    Ok(Projected { views })
+}
+
+/// The views `projected` of `part` laid out on the sheet `args` describe
+/// (see [`layout`]), dated `date`, with `parts` its bill of materials if
+/// `args` asks for one.
+///
+/// With a bill of materials, each line of it placed in the drawing gets a
+/// balloon with its item number, its leader pointing at its part in one
+/// view (see [`balloon_view`]). A bill too long for the sheet is refused.
+pub fn arrange<S: Scalar>(
+    part: &Part<S>,
+    args: &DrawingArgs,
+    date: &str,
+    parts: &[PartsListLine],
+    projected: &Projected<S>,
+) -> GeopResult<Layout> {
+    let ctx = |e: GeopError| e.with_context("arrange(drawing)");
     let (width, height) = args.sheet.size();
     let list_height = match args.bom {
         true => LIST_ROW * (parts.len() + 1) as f64,
@@ -393,8 +470,7 @@ pub fn layout<S: Scalar>(
         )));
     }
     let scene = Scene::of(part).with_context(&ctx)?;
-    let empty = scene.bodies.is_empty();
-    if empty && !args.bom {
+    if scene.bodies.is_empty() && !args.bom {
         return Err(GeopError::new(
             "the part has nothing to draw: it has no faces",
         ));
@@ -403,35 +479,16 @@ pub fn layout<S: Scalar>(
         tangent_edges: args.tangent_edges,
         hidden_lines: args.hidden_lines,
     };
-    let mut slots: Vec<DrawnView> = Vec::new();
-    for &kind in args.views.iter().filter(|_| !empty) {
-        if !slots.contains(&DrawnView::View(kind)) {
-            slots.push(DrawnView::View(kind));
-        }
-    }
-    let mut placed = Vec::new();
-    for &slot in &slots {
-        let DrawnView::View(kind) = slot else { continue };
-        let frame = kind.frame()?;
-        let view = scene
-            .project(&frame, &options)
-            .map_err(|e| ctx(e.with_context(format!("the {} view", kind.name()))))?;
-        placed.push((slot, view, Vec::new()));
-    }
-    if let Some(plane) = args.section.as_ref().filter(|_| !empty) {
-        let (view, hatched) = section_view(part, &scene, plane, &options)
-            .map_err(|e| ctx(e.with_context(format!("the section view on {}", plane.label()))))?;
-        placed.push((DrawnView::Section, view, hatched));
-    }
-    let mut placed: Vec<Placed<S>> = placed
-        .into_iter()
+    let mut placed: Vec<Placed<S>> = projected
+        .views
+        .iter()
         .filter_map(|(kind, view, hatched)| {
             let e = view.extents()?;
             Some(Placed {
-                kind,
+                kind: *kind,
                 extents: [e[0], e[1], e[2], e[3]].map(|x| x.to_f64()),
-                view,
-                hatched,
+                view: view.clone(),
+                hatched: hatched.clone(),
                 center: [0.0, 0.0],
                 margin: 0.0,
             })

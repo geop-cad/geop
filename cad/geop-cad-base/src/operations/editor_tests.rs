@@ -1752,6 +1752,80 @@ fn sheet_vertices(
         .collect()
 }
 
+/// The drilled hole's diameter dimensioned on the drawing's sheet by
+/// clicking its rim from above, and a centre mark put on it; the diameter,
+/// selected in the list, removed with Delete.
+#[test]
+fn a_hole_is_dimensioned_on_a_drawing_and_a_dimension_removed() {
+    use geop_ops_drawing::{Annotation, DrawnView, EdgeShape, Pickable, ViewKind};
+    let (mut editor, _) = editor();
+    editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing is edited");
+    };
+    let layout = geop_ops_drawing::layout(editor.part(), args, "", &[]).unwrap();
+    let rim = layout
+        .candidates
+        .iter()
+        .filter(|c| c.view == DrawnView::View(ViewKind::Top))
+        .find_map(|c| match &c.what {
+            Pickable::Edge {
+                points,
+                shape: EdgeShape::Circle { .. },
+                ..
+            } => Some(points[points.len() / 2]),
+            _ => None,
+        })
+        .expect("the hole's rim, seen round from above");
+    let click = |p: [f64; 2]| Command::Event {
+        event: StepEditEvent::Click {
+            pointer: pointer([p[0], p[1], 10.0], [0.0, 0.0, -1.0]),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let key = |key: &str| Command::Event {
+        event: StepEditEvent::Key { key: key.into() },
+    };
+    editor.handle(dialog("tools", Value::Choice("diameter".into())));
+    editor.handle(click(rim));
+    let placed = editor.handle(click([rim[0] + 15.0, rim[1] + 15.0]));
+    let step = placed.step.unwrap();
+    let Some(Control::List { items, .. }) = step.presentation.dialog.get("annotations") else {
+        panic!("the annotations are listed");
+    };
+    let detail = items[0].detail.clone().unwrap_or_default();
+    assert!(detail.starts_with('⌀') && detail.ends_with("top"), "{items:?}");
+    editor.handle(dialog("tools", Value::Choice("center_mark".into())));
+    editor.handle(click(rim));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    assert!(matches!(
+        args.annotations.as_slice(),
+        [
+            Annotation::Radius { diameter: true, .. },
+            Annotation::CenterMark { .. }
+        ]
+    ));
+
+    editor.handle(key("Escape"));
+    editor.handle(dialog("annotation:0", Value::Press));
+    let update = editor.handle(key("Delete"));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    assert!(
+        matches!(args.annotations.as_slice(), [Annotation::CenterMark { .. }]),
+        "{:?}",
+        args.annotations
+    );
+}
+
 /// A drawing step, the way the front end makes one: started — its sheet
 /// shown head on, no part drawn — its views chosen and the title block's
 /// name typed; a diagonal of the box's top dimensioned by clicking two of
@@ -2691,7 +2765,23 @@ fn an_assembly_drawing_lists_its_parts() {
         step.presentation.dialog.get("bom"),
         Some(Control::Checkbox { value: false, .. })
     ));
-    editor.handle(dialog("bom", Value::Bool(true)));
+    let ticked = editor.handle(dialog("bom", Value::Bool(true)));
+    // The sheet shown is the one downloaded: its parts list, given by the
+    // editor, and the balloons pointing at the parts.
+    let shown: Vec<String> = ticked
+        .step
+        .expect("a drawing is edited")
+        .presentation
+        .visuals
+        .into_iter()
+        .filter_map(|v| match v.shape {
+            geop_ops::ui::Shape::Label { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    for text in ["ITEM", "ISO 4762 M4x12", "ISO 4032 M4"] {
+        assert!(shown.iter().any(|t| t == text), "{text} is not shown: {shown:?}");
+    }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
 

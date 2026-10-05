@@ -4,7 +4,8 @@
 // preview` on a free port, and drives it in headless Chrome: every example
 // loads from the File menu and builds without an error; every operation
 // opens and cancels; a part is sketched and extruded by clicks; the inspect
-// panel weighs it; and every export of the File menu downloads a file.
+// panel weighs it; every export of the File menu downloads a file; and a
+// drawing is dimensioned on its sheet and downloaded from its dialog.
 //
 // Flags: `--build` rebuilds even if `dist/` looks current; `--only <text>`
 // runs only the checks whose name contains the text; `--shots` saves a
@@ -293,8 +294,6 @@ async function downloaded(action) {
 const exports = [
   ["Box with drill hole", "Download STEP", /\.step$/, (b) => b.toString().startsWith("ISO-10303-21;")],
   ["Box with drill hole", "Download STL", /\.stl$/, (b) => b.length > 84 && b.readUInt32LE(80) * 50 + 84 === b.length],
-  ["Box with drill hole", "Export drawing as SVG", /\.svg$/, (b) => b.toString().includes("<svg")],
-  ["Box with drill hole", "Export drawing as DXF", /\.dxf$/, (b) => b.toString().includes("ENTITIES")],
   ["Arm", "Export URDF", /\.zip$/, (b) => b.subarray(0, 2).toString() === "PK"],
 ];
 let loaded = null;
@@ -314,6 +313,67 @@ for (const [example, entry, name, valid] of exports) {
     return `${file.name}, ${file.size} bytes`;
   });
 }
+
+/** How many texts the SVG `text` writes on its dimension layer. */
+function dimensionTexts(text) {
+  const layer = text.slice(text.indexOf('<g class="DIMENSIONS"'));
+  return (layer.slice(0, layer.indexOf("</g>")).match(/<text/g) ?? []).length;
+}
+
+await check("a drawing is dimensioned on its sheet and downloaded from its dialog", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await operation("Drawing").click();
+  await settle(page);
+  // The sheet, framed head on: wait for the camera to glide there.
+  await page.waitForTimeout(1500);
+  const before = await downloaded(() => popup.locator("button", { hasText: "Download SVG" }).click());
+  expect(before.name.endsWith(".svg"), `downloaded ${before.name}`);
+  const dimensions = dimensionTexts(before.text.toString());
+
+  // Where a point of the sheet is on screen: it is framed whole, centred,
+  // from straight above (see `fitPose`).
+  const update = await page.evaluate(() => window.geopCommand({ command: "show" }));
+  const { sheet } = update.step.presentation;
+  const box = await page.locator("main.viewport canvas").first().boundingBox();
+  const half = (50 * Math.PI) / 360;
+  const narrowest = Math.min(half, Math.atan(Math.tan(half) * (box.width / box.height)));
+  const distance = sheet.size / 2 / Math.sin(narrowest);
+  const perMm = box.height / (2 * distance * Math.tan(half));
+  const screen = (p) => [
+    box.width / 2 + (p[0] - sheet.center[0]) * perMm,
+    box.height / 2 - (p[1] - sheet.center[1]) * perMm,
+  ];
+  // The ends of an edge the first view draws.
+  const edge = update.step.presentation.visuals.find(
+    (v) => v.key.startsWith("sheet/") && v.shape === "polyline" && v.style === "fixed" && v.points.length === 2,
+  );
+  expect(edge, "the sheet draws no edge");
+  const [a, b] = edge.points;
+  await popup.locator("button[aria-label^='Dimension']").click();
+  await settle(page);
+  for (const p of [a, b]) {
+    const [x, y] = screen(p);
+    await clickView(x - box.width / 2, y - box.height / 2);
+  }
+  // Its value, a little off the edge.
+  const along = [b[0] - a[0], b[1] - a[1]];
+  const length = Math.hypot(...along);
+  const out = [(a[0] + b[0]) / 2 - (12 * along[1]) / length, (a[1] + b[1]) / 2 + (12 * along[0]) / length];
+  const [x, y] = screen(out);
+  await clickView(x - box.width / 2, y - box.height / 2);
+  const listed = await popup.locator(".dialog-list li", { hasText: "Distance" }).count();
+  expect(listed === 1, `${listed} distances listed:\n${await popup.innerText()}`);
+
+  const after = await downloaded(() => popup.locator("button", { hasText: "Download SVG" }).click());
+  const added = dimensionTexts(after.text.toString()) - dimensions;
+  expect(added === 1, `the downloaded drawing has ${added} more dimensions, not one`);
+  const dxf = await downloaded(() => popup.locator("button", { hasText: "Download DXF" }).click());
+  expect(dxf.name.endsWith(".dxf") && dxf.text.toString().includes("ENTITIES"), `downloaded ${dxf.name}`);
+  // Left open: the screenshot (`--shots`) shows the sheet with its dimension.
+  return `${await builtCleanly()}, ${after.name}`;
+});
 
 await check("the bill of materials is saved as CSV", async () => {
   await fresh();

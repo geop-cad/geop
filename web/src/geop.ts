@@ -300,6 +300,8 @@ export type Control =
   /** Pressing one sends its value as a choice. */
   | { type: "actions"; actions: Action[] }
   | { type: "checkbox"; label: string; value: boolean }
+  /** Files the step can be saved as: pressing one downloads it in that format (see `export_drawing`). */
+  | { type: "download"; formats: Choice[] }
   /**
    * A slider over `range`, if given. A field that takes formulas has
    * `text`: the value as given — a number, or a formula of the parameters —
@@ -366,7 +368,9 @@ export type Style =
   /** Where what is drawn or dragged would snap to. */
   | "snap"
   /** What the tool in hand would remove. */
-  | "removed";
+  | "removed"
+  /** Text printed on a sheet of its own: a drawing's title block, parts list, captions. */
+  | "paper";
 
 export type Visual = { key: string; style: Style } & Shape;
 
@@ -380,6 +384,8 @@ export interface Presentation {
   pickable: Role[];
   /** A plane to work in, head on. */
   focus: Frame | null;
+  /** A sheet of its own the step is edited on, in `focus`, and how far it reaches: no part is drawn, and the view frames it. */
+  sheet: Extent | null;
   /** Whether a press where the pointer last hovered starts a drag. */
   grab: boolean;
   /** A value asked for in place, at `at`: what is typed goes to the field `key` as `text`. */

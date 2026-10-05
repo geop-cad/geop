@@ -272,7 +272,8 @@ function App() {
     if (plane) {
       beforePlaneRef.current ??= poseRef.current;
       const headOn = headOnPose(plane, poseRef.current);
-      if (frame) fitView(headOn);
+      // A sheet of its own is framed whole: it is drawn instead of the part.
+      if (frame || presentation?.sheet) fitView(headOn);
       else setFocus(headOn);
     } else if (beforePlaneRef.current) {
       const before = beforePlaneRef.current;
@@ -461,14 +462,15 @@ function App() {
     trackFile("saved");
   }
 
-  /** Export a drawing of the part, and save it: downloaded, or through VS Code. */
-  async function exportDrawing(format: "svg" | "dxf") {
+  /** The drawing being edited, written as `format` — dated today — and saved: downloaded, or through VS Code. */
+  async function exportDrawing(format: string) {
     const date = new Date().toISOString().slice(0, 10);
-    const update = await dispatch({ command: "export_drawing", format, date });
+    const update = await dispatch({ command: "export_drawing", format: format === "dxf" ? "dxf" : "svg", date });
     const file = update?.export;
     if (!file) return;
     if (host) host.saveFile(file);
-    else download(file.name, file.text ?? "", format === "svg" ? "image/svg+xml" : "application/dxf");
+    else download(file.name, file.text ?? "", format === "dxf" ? "application/dxf" : "image/svg+xml");
+    trackFile("saved");
   }
 
   /** Write the bill of materials of the part shown as a CSV file, and save it. */
@@ -697,6 +699,7 @@ function App() {
       error={error}
       onCommit={() => void close({ command: "commit" })}
       onCancel={() => void close({ command: "cancel" })}
+      onDownload={(format) => void exportDrawing(format)}
     />
   );
 
@@ -707,7 +710,6 @@ function App() {
         hosted={host != null}
         hasSteps={stepCount > 0}
         onSave={() => downloadFile(workspace.active)}
-        onExportDrawing={(format) => void exportDrawing(format)}
         onExportUrdf={() => void exportUrdf()}
         onExportStep={() => void exportStep()}
         onExportFlatPattern={() => void exportFlatPattern()}
@@ -770,6 +772,7 @@ function App() {
                 pickable={presentation?.pickable}
                 hidden={scene.hidden}
                 plane={plane}
+                grid={presentation?.sheet == null}
                 grab={presentation?.grab ?? false}
                 prompt={presentation?.prompt ?? null}
                 onPrompt={(key, text) => event({ type: "dialog", key, value: { type: "text", value: text } })}

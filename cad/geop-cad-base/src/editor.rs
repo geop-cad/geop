@@ -1184,7 +1184,22 @@ impl<S: Scalar> Editor<S> {
                 self.runner.run(&self.program, Some(index), &library);
                 let part = self.runner.part_at(index);
                 let parts = inspect::parts_list(part, &self.file(), &args)?;
-                let text = geop_ops_drawing::render(part, &args, &date, &parts, format)?;
+                // The drawing being edited is written from the views it
+                // shows: they are projected already.
+                let shown = self
+                    .open
+                    .as_ref()
+                    .filter(|open| open.index == index)
+                    .and_then(|open| {
+                        open.editor
+                            .session()
+                            .downcast_ref::<geop_ops_drawing::operation::DrawingSession>()
+                    });
+                let sheet = match shown {
+                    Some(session) => session.compose(part, &args, &date, &parts)?,
+                    None => geop_ops_drawing::compose(part, &args, &date, &parts)?,
+                };
+                let text = format.write(&sheet);
                 let base = stem.unwrap_or_else(|| "drawing".to_string());
                 self.exported = Some(Export {
                     name: format!("{base}.{}", format.extension()),

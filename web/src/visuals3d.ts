@@ -24,6 +24,7 @@ const COLORS: Record<Style, number> = {
   handle: 0xffa040,
   snap: 0x58e07a,
   removed: 0xff4f9a,
+  paper: 0xbbbbbb,
 };
 
 /** Drawn dashed: what is not part of the result. */
