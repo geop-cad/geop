@@ -6,6 +6,8 @@
 //!   loop of edges filled — a flat face for a flat loop, a Coons patch for
 //!   four edges, optionally tangent to flat faces along them, and a patch
 //!   of quadrilaterals around a center for any other number.
+//! - [`NetworkSurface`]: the face through a network of curves crossing
+//!   each other, `u` curves and `v` curves, interpolating every one.
 //! - [`OffsetSurface`]: faces copied a distance along their normals.
 //! - [`Thicken`]: a sheet made a solid of one thickness, on either side of
 //!   it or on both.
@@ -21,6 +23,7 @@
 pub mod boundary;
 pub mod extend;
 pub mod knit;
+pub mod network;
 pub mod offset;
 pub mod thicken;
 pub mod trim;
@@ -28,6 +31,7 @@ pub mod trim;
 pub use boundary::{BoundarySurface, BoundarySurfaceArgs};
 pub use extend::{ExtendSurface, ExtendSurfaceArgs};
 pub use knit::{Knit, KnitArgs};
+pub use network::{NetworkSurface, NetworkSurfaceArgs};
 pub use offset::{OffsetSurface, OffsetSurfaceArgs};
 pub use thicken::{Thicken, ThickenArgs, ThickenSide};
 pub use trim::{TrimKeep, TrimSurface, TrimSurfaceArgs};
