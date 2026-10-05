@@ -41,6 +41,9 @@ use crate::{
     stdlib::WithStandardParts,
 };
 
+/// How many files' runners an editor keeps (see `Editor::runners`): each
+/// holds every step's part, so a few large files are as many as fit.
+const KEPT_RUNNERS: usize = 6;
 /// Something the user did.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", bound = "S: Scalar")]
@@ -502,6 +505,10 @@ pub struct Editor<S: Scalar> {
     open: Option<Open<S>>,
     preview: bool,
     pub(crate) runner: ProgramRunner<S>,
+    /// The runners of the files edited before, by path, the latest last:
+    /// opened again, a file takes up its steps as they were built, rather
+    /// than building them all again. At most [`KEPT_RUNNERS`].
+    runners: Vec<(String, ProgramRunner<S>)>,
     /// Counts runs, so a scene is resent only after one.
     run: u64,
     /// What each step that ran builds on (see [`geop_ops::ui::Dialog::picked`]),
@@ -556,6 +563,7 @@ impl<S: Scalar> Editor<S> {
             open: None,
             preview: true,
             runner: ProgramRunner::new(),
+            runners: Vec::new(),
             run: 0,
             references: Vec::new(),
             shown: None,
@@ -1026,14 +1034,36 @@ impl<S: Scalar> Editor<S> {
                     // the new one may place; its history is not the new
                     // one's, and what the new one places resolves from
                     // elsewhere.
+                    let runner = match self.runners.iter().position(|(kept, _)| *kept == path) {
+                        Some(k) => self.runners.remove(k).1,
+                        None => ProgramRunner::new(),
+                    };
+                    let left_runner = std::mem::replace(&mut self.runner, runner);
                     if let Some(left) = self.path.replace(path) {
                         let text = self.program.to_json()?;
-                        self.workspace.write(&left, Some(text));
+                        if self.workspace.write(&left, Some(text)) {
+                            // Edited: what the other files built on it is
+                            // built again.
+                            let changed = BTreeSet::from([resolve("", &left)]);
+                            self.runner.forget(&changed);
+                            for (_, runner) in &mut self.runners {
+                                runner.forget(&changed);
+                            }
+                        }
+                        // Built whole, the file left is placed elsewhere as it
+                        // was built here; and opened again, it starts from
+                        // its steps as they were built.
+                        if let Some((part, read)) = left_runner.built_whole(&self.program) {
+                            self.workspace.keep(&left, part.clone(), read);
+                        }
+                        self.runners.push((left, left_runner));
+                        if self.runners.len() > KEPT_RUNNERS {
+                            self.runners.remove(0);
+                        }
                     }
                     self.undo.clear();
                     self.redo.clear();
                     self.visibility.clear();
-                    self.runner.reset();
                 }
                 self.program = program;
                 self.marker = None;
@@ -1054,6 +1084,9 @@ impl<S: Scalar> Editor<S> {
                     return Ok(Changed::Nothing);
                 }
                 self.runner.forget(&changed);
+                for (_, runner) in &mut self.runners {
+                    runner.forget(&changed);
+                }
                 // What the step being edited is built on may have changed.
                 if let Some(open) = &self.open {
                     let library = library(&self.workspace, self.path.as_deref());

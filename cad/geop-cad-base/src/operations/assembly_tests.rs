@@ -1314,3 +1314,31 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
             .converged
     );
 }
+
+/// A file an editor built whole and kept is placed as it was built: its
+/// own text is not read, let alone built again — here it is not even a
+/// program, which building it would find. Writing the file forgets it.
+#[test]
+fn a_kept_build_is_placed_without_building_its_file() {
+    use geop_ops::{Library, NoFiles, part::State};
+    let built = examples::box_with_drill_hole()
+        .build::<S>(&NoFiles)
+        .unwrap();
+    let revision = built.revision();
+    let files = BTreeMap::from([("part.geop".to_string(), "not a program".to_string())]);
+    let mut workspace = Workspace::<S>::new(WithStandardParts(files));
+    workspace.keep("part.geop", built, Default::default());
+    let placed = workspace
+        .scope("assembly.geop")
+        .component("part.geop", &State::new())
+        .expect("the kept build is placed");
+    assert_eq!(placed.part.revision(), revision);
+    assert!(workspace.write("part.geop", Some("still not a program".into())));
+    assert!(
+        workspace
+            .scope("assembly.geop")
+            .component("part.geop", &State::new())
+            .is_err(),
+        "written, the file is built again"
+    );
+}

@@ -33,7 +33,7 @@ use geop_core_math::{
 use super::{Program, ProgramRunner};
 use crate::{
     operation::Operations,
-    part::{Component, State},
+    part::{Component, Part, State},
 };
 
 /// Where a program being built finds the parts it places.
@@ -174,6 +174,20 @@ impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
         for runner in self.runners.get_mut().values_mut() {
             runner.forget(changed);
         }
+    }
+
+    /// Keeps `part` as what the file `path` builds, as an editor built it
+    /// — from the files `read` — so placing that file elsewhere takes it
+    /// rather than building the program again. Only while the files stay
+    /// as they are: writing one of them forgets it, as it forgets what was
+    /// built here. A build kept already stays, so it is drawn as before.
+    pub fn keep(&mut self, path: &str, part: Part<S>, mut read: BTreeSet<String>) {
+        let path = resolve("", path);
+        read.insert(path.clone());
+        self.built
+            .get_mut()
+            .entry(path.clone())
+            .or_insert_with(|| Arc::new(Component::new(path, part, read)));
     }
 
     /// The library the program of the file `file` is built with.

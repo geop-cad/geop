@@ -367,6 +367,17 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         }
     }
 
+    /// The part the whole of `program` builds, and every file it read, if
+    /// the last run built all of it, every step without an error: what a
+    /// library may keep as that program's file built (see
+    /// [`Workspace::keep`](library::Workspace::keep)).
+    pub fn built_whole(&self, program: &Program<O>) -> Option<(&Part<S>, BTreeSet<String>)> {
+        let whole = self.ran == program.steps.len()
+            && self.steps == program.steps
+            && self.results.iter().all(|r| r.error.is_none());
+        whole.then(|| (self.part(), self.reads.iter().flatten().cloned().collect()))
+    }
+
     /// Runs the first `stop` steps of `program` — all of them if `None` —
     /// with `library`, reusing whatever the previous runs built that still
     /// applies. See [`ProgramRunner::part`] and [`ProgramRunner::results`]

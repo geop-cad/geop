@@ -3901,3 +3901,64 @@ fn editing_an_early_sketch_builds_only_up_to_it() {
     assert_eq!(editor.runner.results().len(), steps);
     assert!(editor.runner.results().iter().all(|r| r.error.is_none()));
 }
+
+/// A file left and opened again takes up its steps as they were built:
+/// the drilled box, then an assembly placing it, then the box again,
+/// builds the box's steps once, not twice. Edited in between, it is built
+/// again from the step that changed.
+#[test]
+fn a_file_opened_again_is_not_built_again() {
+    let part = examples::box_with_drill_hole();
+    let mut assembly = Program::new();
+    assembly.push(
+        "box",
+        geop_ops_assembly::AddPartArgs {
+            file: "part.geop".into(),
+            fixed: true,
+            ..Default::default()
+        },
+    );
+    let mut editor = Editor::<S>::new();
+    let files = [
+        ("part.geop".to_string(), Some(part.to_json().unwrap())),
+        (
+            "assembly.geop".to_string(),
+            Some(assembly.to_json().unwrap()),
+        ),
+    ]
+    .into();
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let load = |editor: &mut Editor<S>, program: &Program, path: &str| {
+        let update = editor.handle(Command::Load {
+            program: program.clone(),
+            path: Some(path.into()),
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        assert!(
+            editor.runner.results().iter().all(|r| r.error.is_none()),
+            "{:?}",
+            editor.runner.results()
+        );
+    };
+    load(&mut editor, &part, "part.geop");
+    let built = editor.runner.part().revision();
+    load(&mut editor, &assembly, "assembly.geop");
+    load(&mut editor, &part, "part.geop");
+    assert_eq!(
+        editor.runner.part().revision(),
+        built,
+        "the box opened again was built again"
+    );
+
+    // Its hole drilled deeper: from that step on.
+    let mut deeper = part.clone();
+    let last = deeper.steps.len() - 1;
+    let PartOperation::Extrude(hole) = &mut deeper.steps[last].operation else {
+        panic!("the hole is an extrusion")
+    };
+    hole.extent = geop_ops_extrude_revolve::Extents::blind(-0.8);
+    assert_ne!(deeper.steps[last], part.steps[last], "the hole changed");
+    let before = editor.runner.steps_built();
+    load(&mut editor, &deeper, "part.geop");
+    assert_eq!(editor.runner.steps_built() - before, 1);
+}
