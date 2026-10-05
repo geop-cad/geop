@@ -458,18 +458,21 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
     assert!((density * volume * 1e-6 - 9.0).abs() < 1e-9);
 }
 
-/// One gap of a 20-tooth gear of module 1 cut from its blank, turned
+/// One gap of a gear of module 1 and `teeth` cut from its blank, turned
 /// `angle` degrees round: each is one boolean of building the gear.
-fn one_gap_cut(angle: f64) -> Result<(), String> {
+fn gaps_cut(teeth: &str, count: usize, angle: f64) -> Result<(), String> {
     use crate::operations::PartOperation;
     use geop_ops_pattern::Spacing;
 
     let mut program = super::part("std:spur_gear.geop").unwrap().program.clone();
+    program
+        .state
+        .insert(TEETH.into(), ParamValue::Text(teeth.into()));
     let k = program.index_of("teeth").unwrap();
     let PartOperation::CircularPattern(args) = &mut program.steps[k].operation else {
         panic!("the teeth are a circular pattern");
     };
-    args.count = 2.0.into();
+    args.count = (count as f64).into();
     args.angle = Spacing::step(angle);
     let built = program
         .build::<S>(&NoFiles)
@@ -482,7 +485,16 @@ fn one_gap_cut(angle: f64) -> Result<(), String> {
 /// usual, they came out 7e-4 wide, and the gear was not valid.
 #[test]
 fn a_gear_gap_turned_234_degrees_is_cut_valid() {
-    one_gap_cut(234.0).unwrap();
+    gaps_cut("z20", 2, 234.0).unwrap();
+}
+
+/// Every gap cut splits the rim where it crosses it, and an edge split
+/// again and again grows wider with each split: with the rim in four
+/// quarters, the ninth gap of a 42-tooth gear found it too wide to cut.
+#[test]
+#[ignore = "slow: twelve booleans — run with `cargo test -- --ignored`"]
+fn twelve_gaps_of_a_42_tooth_gear_are_cut_valid() {
+    gaps_cut("z42", 12, 360.0 / 42.0).unwrap();
 }
 
 /// A NEMA 17 stepper driving a gear pair: a 12-tooth pinion on its shaft,
