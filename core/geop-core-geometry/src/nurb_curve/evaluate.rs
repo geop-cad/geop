@@ -5,27 +5,45 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
-use crate::spline::{de_boor, find_span};
+use crate::spline::{de_boor, find_spans};
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
-    /// The homogeneous point `(A(t), W(t))` and the knot span it came from.
-    pub(super) fn homogeneous(&self, t: S) -> GeopResult<(Vector<S, D>, usize)> {
-        let span = find_span(
-            self.degree,
-            &self.knot_vector,
-            self.control_points.len() - 1,
-            t,
-        )?;
-        Ok((
-            de_boor(
+    /// The Cartesian point at `t`, in `C = D - 1` coordinates: the union of
+    /// its value on every knot span `t` reaches (see [`find_spans`]).
+    fn cartesian<const C: usize>(&self, t: S) -> GeopResult<Vector<S, C>> {
+        let n = self.control_points.len() - 1;
+        let mut out: Option<Vector<S, C>> = None;
+        for (span, piece) in find_spans(self.degree, &self.knot_vector, n, t)? {
+            let hw = de_boor(
                 self.degree,
                 &self.knot_vector,
                 &self.control_points,
-                t,
+                piece,
                 span,
-            ),
-            span,
-        ))
+            );
+            let w = hw[D - 1];
+            if w.could_be_equal(S::ZERO) {
+                return Err(GeopError::new(format!(
+                    "weight is zero at evaluation point (t={t:?}, span={span}, homogeneous de_boor result w={w:?}, degree={}, knot_vector={:?}, control_points={:?})",
+                    self.degree, self.knot_vector, self.control_points
+                )));
+            }
+            let inv_w = S::ONE.div(w).with_context(&|e: GeopError| {
+                e.with_context(format!(
+                    "NurbCurve::evaluate(t={t}): degree={}, knot_vector={:?}, control_points={:?}",
+                    self.degree, self.knot_vector, self.control_points
+                ))
+            })?;
+            let mut point = Vector::<S, C>::zero();
+            for c in 0..C {
+                point[c] = hw[c].mul(inv_w);
+            }
+            out = Some(match out {
+                Some(other) => other.union(&point),
+                None => point,
+            });
+        }
+        out.ok_or_else(|| GeopError::new(format!("NurbCurve::evaluate(t={t:?}): no knot span")))
     }
 }
 
@@ -34,25 +52,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 impl<S: Scalar> NurbCurve<S, 4> {
     /// Evaluate the 3-D NURBS curve at `t`, returning a Cartesian `Vector3`.
     pub fn evaluate(&self, t: S) -> GeopResult<Vector3<S>> {
-        let (hw, span) = self.homogeneous(t)?;
-        let w = hw[3];
-        if w.could_be_equal(S::ZERO) {
-            return Err(GeopError::new(format!(
-                "weight is zero at evaluation point (t={t:?}, span={span}, homogeneous de_boor result w={w:?}, degree={}, knot_vector={:?}, control_points={:?})",
-                self.degree, self.knot_vector, self.control_points
-            )));
-        }
-        let inv_w = S::ONE.div(w).with_context(&|e: GeopError| {
-            e.with_context(format!(
-                "NurbCurve::evaluate(t={t}): degree={}, knot_vector={:?}, control_points={:?}",
-                self.degree, self.knot_vector, self.control_points
-            ))
-        })?;
-        let mut result = Vector3::zero();
-        for c in 0..3 {
-            result[c] = hw[c].mul(inv_w);
-        }
-        Ok(result)
+        self.cartesian(t)
     }
 }
 
@@ -61,25 +61,7 @@ impl<S: Scalar> NurbCurve<S, 4> {
 impl<S: Scalar> NurbCurve<S, 3> {
     /// Evaluate the 2-D pcurve at `t`, returning a Cartesian `Vector2`.
     pub fn evaluate(&self, t: S) -> GeopResult<Vector2<S>> {
-        let (hw, span) = self.homogeneous(t)?;
-        let w = hw[2];
-        if w.could_be_equal(S::ZERO) {
-            return Err(GeopError::new(format!(
-                "weight is zero at evaluation point (t={t:?}, span={span}, homogeneous de_boor result w={w:?}, degree={}, knot_vector={:?}, control_points={:?})",
-                self.degree, self.knot_vector, self.control_points
-            )));
-        }
-        let inv_w = S::ONE.div(w).with_context(&|e: GeopError| {
-            e.with_context(format!(
-                "NurbCurve::evaluate(t={t}): degree={}, knot_vector={:?}, control_points={:?}",
-                self.degree, self.knot_vector, self.control_points
-            ))
-        })?;
-        let mut result = Vector2::zero();
-        for c in 0..2 {
-            result[c] = hw[c].mul(inv_w);
-        }
-        Ok(result)
+        self.cartesian(t)
     }
 }
 
@@ -87,7 +69,10 @@ impl<S: Scalar> NurbCurve<S, 3> {
 mod tests {
     use crate::nurb_curve::NurbCurve;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
+    use geop_core_math::{
+        scalars::Scalar,
+        vector::{Vector3, Vector4},
+    };
 
     fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
         Vector4::from_array([
@@ -220,5 +205,50 @@ mod tests {
     #[test]
     fn everything_matches_any_point() {
         for_all_scalars!(check_everything_matches_any_point);
+    }
+
+    /// Over an interval reaching across many knot spans, a curve is the union
+    /// of its spans' parts, not one span's cubic extrapolated over all of
+    /// them: a quarter circle of radius 2.25 interpolated through 49 points
+    /// came out 57 wide over its whole domain, and over an eighth of it
+    /// eight times as wide as that eighth.
+    fn check_a_wide_parameter_encloses_the_curve_tightly<S: Scalar>() {
+        let r = 2.25;
+        let points: Vec<_> = (0..=48)
+            .map(|k| {
+                let a = std::f64::consts::FRAC_PI_2 * k as f64 / 48.0;
+                Vector3::from_array([r * a.cos(), r * a.sin(), 0.0].map(S::from_f64))
+            })
+            .collect();
+        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let (t0, t1) = curve.domain();
+        for (lo, hi) in [
+            (t0, t1),
+            (t0, S::from_f64(0.125)),
+            (S::from_f64(0.3), S::from_f64(0.55)),
+        ] {
+            let box_ = curve.evaluate(lo.union(hi)).unwrap();
+            for k in 0..=64 {
+                let t = match k {
+                    0 => lo,
+                    64 => hi,
+                    _ => S::interpolate(lo, hi, S::from_ratio(k, 64).unwrap()).sharpen(),
+                };
+                let p = curve.evaluate(t).unwrap();
+                assert!(box_.could_be_equal(&p), "{t:?}: {p:?} outside {box_:?}");
+            }
+            // The arc between `lo` and `hi` spans at most its length on
+            // either axis; each span's part, evaluated over all of it in
+            // interval arithmetic, comes out somewhat wider than that.
+            let length = r * std::f64::consts::FRAC_PI_2 * (hi.to_f64() - lo.to_f64());
+            for c in 0..2 {
+                let width = box_[c].width().to_f64();
+                assert!(width < 1.5 * length, "{c}: {width} over {lo:?}..{hi:?}");
+            }
+        }
+    }
+    #[test]
+    fn a_wide_parameter_encloses_the_curve_tightly() {
+        for_all_scalars!(check_a_wide_parameter_encloses_the_curve_tightly);
     }
 }

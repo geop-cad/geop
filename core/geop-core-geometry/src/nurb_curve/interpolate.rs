@@ -136,6 +136,16 @@ fn basis_funs<S: Scalar>(span: usize, t: S, degree: usize, knots: &[S]) -> Vec<S
 /// `averaging_knots` is totally positive and nonsingular (Piegl & Tiller
 /// §9.2.1) — the same reason the reference algorithm doesn't pivot either.
 ///
+/// The matrix is banded: row `k` is nonzero only in the `degree + 1`
+/// columns of its parameter's knot span, and the spans never decrease down
+/// the rows. Elimination without pivoting keeps the band, so it runs within
+/// it: below a pivot only the rows whose band reaches its column, and in
+/// them only the columns the pivot row's band reaches. Outside the band
+/// every factor and every entry is an exact zero, and subtracting zero
+/// times zero changes nothing but the enclosure — outward rounding widened
+/// each entry by an ulp per pivot above it, and the dense elimination took
+/// `m³ / 3` steps for what the band holds in `m (degree + 1)²`.
+///
 /// Generic over the dimension `C` of `points`, which are solved for as they
 /// are: Cartesian points (see [`with_unit_weights`]) or homogeneous ones.
 fn solve_interpolation_system<S: Scalar, const C: usize>(
@@ -147,27 +157,33 @@ fn solve_interpolation_system<S: Scalar, const C: usize>(
     let m = points.len();
     let p = degree;
 
+    // Row `k`'s band: columns `first[k] ..= last[k]`.
     let mut a = vec![vec![S::ZERO; m]; m];
+    let mut first = vec![0; m];
+    let mut last = vec![0; m];
     for (k, &tk) in t.iter().enumerate() {
         let span = find_span(p, knots, m - 1, tk)?;
         let funs = basis_funs(span, tk, p, knots);
         for (j, &val) in funs.iter().enumerate() {
             a[k][span - p + j] = val;
         }
+        (first[k], last[k]) = (span - p, span);
+    }
+    if first.windows(2).any(|w| w[1] < w[0]) || last.windows(2).any(|w| w[1] < w[0]) {
+        return Err(GeopError::new(format!(
+            "NurbCurve::interpolate: parameters {t:?} do not run through the knot spans in order"
+        )));
     }
 
-    let mut rhs = vec![vec![S::ZERO; C]; m];
-    for (k, pt) in points.iter().enumerate() {
-        for c in 0..C {
-            rhs[k][c] = pt[c];
-        }
-    }
-
+    let mut rhs: Vec<Vector<S, C>> = points.to_vec();
     for col in 0..m {
         let pivot = a[col][col];
         for row in (col + 1)..m {
+            if first[row] > col {
+                break;
+            }
             let factor = a[row][col].div(pivot)?;
-            for c in col..m {
+            for c in col..=last[col] {
                 a[row][c] = a[row][c].sub(factor.mul(a[col][c]));
             }
             for c in 0..C {
@@ -176,30 +192,20 @@ fn solve_interpolation_system<S: Scalar, const C: usize>(
         }
     }
 
-    let mut ctrl = vec![vec![S::ZERO; C]; m];
+    let mut ctrl = vec![Vector::<S, C>::zero(); m];
     for row in (0..m).rev() {
-        let mut sum = rhs[row].clone();
-        for (col, ctrl_col) in ctrl.iter().enumerate().take(m).skip(row + 1) {
+        let mut sum = rhs[row];
+        for col in (row + 1)..=last[row] {
             let coef = a[row][col];
             for c in 0..C {
-                sum[c] = sum[c].sub(coef.mul(ctrl_col[c]));
+                sum[c] = sum[c].sub(coef.mul(ctrl[col][c]));
             }
         }
         for c in 0..C {
             ctrl[row][c] = sum[c].div(a[row][row])?;
         }
     }
-
-    Ok(ctrl
-        .into_iter()
-        .map(|c| {
-            let mut v = Vector::<S, C>::zero();
-            for (i, &val) in c.iter().enumerate() {
-                v[i] = val;
-            }
-            v
-        })
-        .collect())
+    Ok(ctrl)
 }
 
 /// The Cartesian points `points` as homogeneous control points of weight

@@ -1,33 +1,46 @@
 use geop_core_math::{
-    geop_error::GeopResult,
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::{Vector, Vector2, Vector3},
 };
 
 use super::NurbCurve;
-use crate::spline::{find_span, homogeneous_derivatives, rational_derivatives};
+use crate::spline::{find_spans, homogeneous_derivatives, rational_derivatives};
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// The Cartesian point and its derivatives up to order `n` at `t`:
     /// `[C(t), C'(t), …, C⁽ⁿ⁾(t)]`, with `C = D − 1`. Evaluated directly,
     /// without building any derivative curve ([`homogeneous_derivatives`],
-    /// then the quotient rule [`rational_derivatives`]).
+    /// then the quotient rule [`rational_derivatives`]) — on every knot span
+    /// `t` reaches, united (see [`find_spans`]).
     fn cartesian_derivatives<const C: usize>(
         &self,
         t: S,
         n: usize,
     ) -> GeopResult<Vec<Vector<S, C>>> {
         let p = self.degree;
-        let span = find_span(p, &self.knot_vector, self.control_points.len() - 1, t)?;
-        let local = &self.control_points[span - p..=span];
-        rational_derivatives(&homogeneous_derivatives(
-            p,
-            &self.knot_vector,
-            local,
-            span,
-            t,
-            n,
-        ))
+        let last = self.control_points.len() - 1;
+        let mut out: Option<Vec<Vector<S, C>>> = None;
+        for (span, piece) in find_spans(p, &self.knot_vector, last, t)? {
+            let local = &self.control_points[span - p..=span];
+            let derivatives = rational_derivatives(&homogeneous_derivatives(
+                p,
+                &self.knot_vector,
+                local,
+                span,
+                piece,
+                n,
+            ))?;
+            out = Some(match out {
+                Some(other) => other
+                    .iter()
+                    .zip(&derivatives)
+                    .map(|(a, b)| a.union(b))
+                    .collect(),
+                None => derivatives,
+            });
+        }
+        out.ok_or_else(|| GeopError::new(format!("NurbCurve::tangent(t={t:?}): no knot span")))
     }
 }
 

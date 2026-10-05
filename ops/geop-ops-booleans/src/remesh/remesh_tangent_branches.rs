@@ -73,11 +73,18 @@ fn curvature_gap<S: Scalar>(
     }
     let [(ug, vg), (uf, vf)] = feet;
     let (ng, nf) = (surf_g.normal(ug, vg)?, surf_f.normal(uf, vf)?);
+    // Tangent is parallel normals: their cross product zero, and their dot
+    // product `±1`. Over a stretch of the edge the normals are wide, and
+    // then each component of the cross product can be zero somewhere, if
+    // never all at once — a hole's wall turning a quarter round against the
+    // plane it is drilled into — while the dot product still shows them
+    // apart.
     let cross = ng.prod_cross(&nf);
-    if !(0..3).all(|k| cross[k].could_be_equal(S::ZERO)) {
+    let alignment = ng.prod_dot(&nf);
+    if !(0..3).all(|k| cross[k].could_be_equal(S::ZERO)) || !alignment.abs().could_be_equal(S::ONE)
+    {
         return Ok(None);
     }
-    let alignment = ng.prod_dot(&nf);
     let h_f = surf_f.mean_curvature(uf, vf)?;
     let h_f = if alignment.definitely_greater(S::ZERO) {
         h_f
