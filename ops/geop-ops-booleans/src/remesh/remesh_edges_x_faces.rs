@@ -358,7 +358,7 @@ fn find_piercing_crossing<S: Scalar>(
                 // evaluated from it would be just as wide. Polish it before
                 // anything downstream looks at it.
                 let (box_t, box_uv) = (t, uv);
-                let (t, uv) = refine_crossing(&edge.curve, &face.surface, t, uv);
+                let (t, _) = refine_crossing(&edge.curve, &face.surface, t, uv);
                 // Only a transversal crossing is a piercing. Where the curve
                 // runs along the surface's tangent plane the crossing is not
                 // regular, Newton cannot pin it down, and the box is what the
