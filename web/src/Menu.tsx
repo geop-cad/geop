@@ -29,13 +29,24 @@ interface Props {
   className?: string;
   /** Classes of the button itself. */
   triggerClassName?: string;
+  /** Whether the button ends in an arrow, saying it drops down a menu: not where its label says so itself. */
+  arrow?: boolean;
+}
+
+/** The arrow that says a button drops down a menu. */
+export function DropdownArrow() {
+  return (
+    <span className="dropdown-arrow">
+      <Icon name="chevron" />
+    </span>
+  );
 }
 
 /**
  * A button that drops down a menu: picking an entry does it and closes the
  * menu, as do a click elsewhere and Escape.
  */
-export function Menu({ label, title, entries, disabled, align = "left", className, triggerClassName }: Props) {
+export function Menu({ label, title, entries, disabled, align = "left", className, triggerClassName, arrow = true }: Props) {
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState(align);
   const root = useRef<HTMLDivElement>(null);
@@ -75,7 +86,7 @@ export function Menu({ label, title, entries, disabled, align = "left", classNam
         onClick={() => setOpen(!open)}
       >
         {label}
-        <Icon name="chevron" />
+        {arrow && <DropdownArrow />}
       </button>
       {open && (
         <div ref={menu} className={`dropdown-menu ${side}`} role="menu">

@@ -5,9 +5,9 @@
 //! implements `geop_ops::Operations` — dispatching every method to `Name` —
 //! and `From<NameArgs>` for the enum. A variant's doc comment describes the
 //! operation; `#[operation(...)]` gives its short name if that is not the
-//! variant's (`label = "..."`), the group an editor files it in, which every
-//! operation names (`group = Features`, an `OperationGroup`), and whether it
-//! is one of the few shown big (`primary`).
+//! variant's (`label = "..."`), and the group an editor files it in and how
+//! prominently, which every operation names (`group = Features, tier = Big`:
+//! an `OperationGroup` and an `OperationTier`).
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -89,7 +89,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
         };
         let mut label = op.to_string();
         let mut group: Option<Ident> = None;
-        let mut primary = false;
+        let mut tier: Option<Ident> = None;
         for attr in variant
             .attrs
             .iter()
@@ -102,12 +102,12 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 } else if meta.path.is_ident("group") {
                     group = Some(meta.value()?.parse::<Ident>()?);
                     Ok(())
-                } else if meta.path.is_ident("primary") {
-                    primary = true;
+                } else if meta.path.is_ident("tier") {
+                    tier = Some(meta.value()?.parse::<Ident>()?);
                     Ok(())
                 } else {
                     Err(meta.error(
-                        "expected `label = \"...\"`, `group = <OperationGroup>` or `primary`",
+                        "expected `label = \"...\"`, `group = <OperationGroup>` or `tier = <OperationTier>`",
                     ))
                 }
             });
@@ -115,10 +115,11 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 return e.to_compile_error().into();
             }
         }
-        let Some(group) = group else {
+        let (Some(group), Some(tier)) = (group, tier) else {
             return syn::Error::new(
                 variant.span(),
-                "every operation names its group: `#[operation(group = <OperationGroup>)]`",
+                "every operation names its group and tier: \
+                 `#[operation(group = <OperationGroup>, tier = <OperationTier>)]`",
             )
             .to_compile_error()
             .into();
@@ -132,7 +133,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 label: #label,
                 doc: #doc,
                 group: ::geop_ops::operation::OperationGroup::#group,
-                primary: #primary,
+                tier: ::geop_ops::operation::OperationTier::#tier,
             }
         });
         new_arms.push(quote! {

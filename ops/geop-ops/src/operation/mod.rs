@@ -126,38 +126,54 @@ impl<S: Scalar> Clone for Context<'_, S> {
 impl<S: Scalar> Copy for Context<'_, S> {}
 
 /// An operation of a set: how a step spells it, its short name and what it
-/// does — what an editor offers it by — and where the editor files it.
+/// does — what an editor offers it by — and where and how prominently the
+/// editor offers it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OperationInfo {
     pub kind: &'static str,
     pub label: &'static str,
     pub doc: &'static str,
     pub group: OperationGroup,
-    /// Whether it is one of the few operations used most: an editor shows
-    /// it big, the others smaller or in a menu of their group.
-    pub primary: bool,
+    pub tier: OperationTier,
 }
 
 /// What an operation works on, as an editor groups its operations: the
-/// toolbar's sections, in this order. Serialized as the group's name, as
-/// it is shown.
+/// toolbar's sections, in this order — the order of a part's workflow.
+/// Serialized as the group's name, as it is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum OperationGroup {
     /// Sketches, and the reference geometry they are drawn on.
     Sketch,
-    /// Features that add material to a solid or take it away.
+    /// What makes a solid of a sketch: extrusions, revolutions, sweeps and
+    /// lofts.
+    Solid,
+    /// Features that change a solid: holes, rounds, walls, threads.
     Features,
-    /// Whole bodies: combined, cut, copied, moved, brought in.
+    /// Whole bodies: patterned, mirrored, combined, cut, moved.
+    #[serde(rename = "Pattern & bodies")]
     Bodies,
     /// Faces standing on their own, and freeform shapes.
-    Surfaces,
+    Surface,
     /// Bodies of bent sheet, and their flat patterns.
     #[serde(rename = "Sheet metal")]
     SheetMetal,
     /// Placed parts, and what runs between them.
     Assembly,
-    /// What is made of the part for others: drawings.
+    /// What is made of the part for others, and what is brought in from
+    /// them: drawings, STEP files.
     Output,
+}
+
+/// How prominently an editor offers an operation within its group, from
+/// the few used most to the rarely used: the order the group lists them in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub enum OperationTier {
+    /// One of the few used most: a big button.
+    Big,
+    /// Used often: a small button.
+    Small,
+    /// Used rarely: only in its group's menu.
+    Menu,
 }
 
 /// One kind of operation on a [`Part`].

@@ -3402,26 +3402,27 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
 }
 
 /// The toolbar's sections are the editor's: it sends the operations group
-/// by group, in the groups' order, every operation in one, with the few
-/// used most marked to be shown big.
+/// by group, in the groups' order, every operation in one, and within a
+/// group the few used most (shown big) first, then the common ones (small),
+/// then those only in the group's menu.
 #[test]
 fn operations_are_offered_by_group() {
-    use geop_ops::{OperationGroup, Operations};
+    use geop_ops::{OperationTier, Operations};
     let (_, update) = editor();
     let operations = update.program.expect("the program is sent").operations;
     assert_eq!(operations.len(), PartOperation::infos().len());
-    let groups: Vec<OperationGroup> = operations.iter().map(|o| o.group).collect();
+    let order: Vec<_> = operations.iter().map(|o| (o.group, o.tier)).collect();
     assert!(
-        groups.is_sorted(),
-        "the groups are not one after another: {groups:?}"
+        order.is_sorted(),
+        "not group by group, the most used first: {order:?}"
     );
-    let primary: Vec<&str> = operations
+    let big: Vec<&str> = operations
         .iter()
-        .filter(|o| o.primary)
+        .filter(|o| o.tier == OperationTier::Big)
         .map(|o| o.kind)
         .collect();
     assert_eq!(
-        primary,
+        big,
         [
             "add_sketch",
             "extrude",
@@ -3429,13 +3430,23 @@ fn operations_are_offered_by_group() {
             "hole",
             "fillet",
             "boolean",
-            "add_part"
+            "linear_pattern",
+            "boundary_surface",
+            "base_flange",
+            "add_part",
+            "drawing",
         ]
     );
     let json = serde_json::to_value(&operations[0]).unwrap();
     assert_eq!(json["group"], "Sketch");
-    let sheet = operations.iter().find(|o| o.kind == "hem").unwrap();
-    assert_eq!(serde_json::to_value(sheet).unwrap()["group"], "Sheet metal");
+    assert_eq!(json["tier"], "Big");
+    let hem = operations.iter().find(|o| o.kind == "hem").unwrap();
+    assert_eq!(serde_json::to_value(hem).unwrap()["group"], "Sheet metal");
+    let mirror = operations.iter().find(|o| o.kind == "mirror").unwrap();
+    assert_eq!(
+        serde_json::to_value(mirror).unwrap()["group"],
+        "Pattern & bodies"
+    );
 }
 
 /// A click of the primary button with `pointer`.
