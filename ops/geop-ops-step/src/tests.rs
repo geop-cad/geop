@@ -325,6 +325,59 @@ fn a_torus_crossing_its_axis_is_read_between_its_poles() {
     assert_bounds(model, [-3.0, 0.0, -2.0], [3.0, 0.0, 2.0]);
 }
 
+/// A quarter of a ball of radius 1, as the faces of a SolidWorks part had
+/// one: the half above `z = 0`, cut by a plane through the centre turned 12°
+/// from `x = 0`. The sphere's axis is `y`, and its pole `(0, 1, 0)` lies
+/// inside the rim the ball has on `z = 0` — not at a vertex.
+const QUARTER_BALL: &str = "
+#100=DIRECTION('',(0.,1.,0.));
+#101=AXIS2_PLACEMENT_3D('',#5,#100,#7);
+#102=SPHERICAL_SURFACE('',#101,1.);
+#103=DIRECTION('',(0.9781476007338057,-0.20791169081775934,0.));
+#104=DIRECTION('',(0.20791169081775934,0.9781476007338057,0.));
+#105=AXIS2_PLACEMENT_3D('',#5,#103,#104);
+#106=PLANE('',#105);
+#107=PLANE('',#8);
+#110=CARTESIAN_POINT('',(0.20791169081775934,0.9781476007338057,0.));
+#111=VERTEX_POINT('',#110);
+#112=CARTESIAN_POINT('',(-0.20791169081775934,-0.9781476007338057,0.));
+#113=VERTEX_POINT('',#112);
+#120=VECTOR('',#104,1.);
+#121=LINE('',#112,#120);
+#122=CIRCLE('',#8,1.);
+#123=CIRCLE('',#105,1.);
+#130=EDGE_CURVE('',#113,#111,#121,.T.);
+#131=EDGE_CURVE('',#111,#113,#122,.T.);
+#132=EDGE_CURVE('',#111,#113,#123,.T.);
+#140=ORIENTED_EDGE('',*,*,#130,.F.);
+#141=ORIENTED_EDGE('',*,*,#131,.F.);
+#142=EDGE_LOOP('',(#140,#141));
+#143=FACE_OUTER_BOUND('',#142,.T.);
+#144=ADVANCED_FACE('bottom',(#143),#107,.F.);
+#150=ORIENTED_EDGE('',*,*,#132,.T.);
+#151=ORIENTED_EDGE('',*,*,#130,.T.);
+#152=EDGE_LOOP('',(#150,#151));
+#153=FACE_OUTER_BOUND('',#152,.T.);
+#154=ADVANCED_FACE('cut',(#153),#106,.T.);
+#160=ORIENTED_EDGE('',*,*,#131,.T.);
+#161=ORIENTED_EDGE('',*,*,#132,.F.);
+#162=EDGE_LOOP('',(#160,#161));
+#163=FACE_OUTER_BOUND('',#162,.T.);
+#164=ADVANCED_FACE('ball',(#163),#102,.T.);
+#170=CLOSED_SHELL('',(#144,#154,#164));
+#999=MANIFOLD_SOLID_BREP('quarter ball',#170);";
+
+/// A sphere's axis is a free choice: where the file's pole lies on an edge
+/// of a face, away from its ends, the face is built about another axis.
+#[test]
+fn a_ball_whose_rim_runs_through_its_pole_imports() {
+    let part = import(&file(".MILLI.,.METRE.", QUARTER_BALL));
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    let (s, c) = (0.20791169081775934, 0.9781476007338057);
+    assert_bounds(model, [-1.0, -c, 0.0], [s, 1.0, 1.0]);
+}
+
 /// A helix of radius 1 and pitch 1 turning 1.5 times, from `(1, 0, z0)`, as
 /// STEP entities from `#first` on: the kernel's own, exactly on its
 /// cylinder. The id of the curve is `#first`.
@@ -534,6 +587,88 @@ fn a_box_of_planes_and_lines_imports() {
     let part = import(&file(".MILLI.,.METRE.", &polyhedron(&p, &faces)));
     assert_eq!(counts(part.topology()), (6, 12, 8));
     assert_bounds(part.topology(), [0.0; 3], [3.0, 2.0, 1.0]);
+}
+
+/// The box of [`a_box_of_planes_and_lines_imports`], its corners counted
+/// the same way.
+const BOX: [[f64; 3]; 8] = [
+    [0.0, 0.0, 0.0],
+    [3.0, 0.0, 0.0],
+    [3.0, 2.0, 0.0],
+    [0.0, 2.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [3.0, 0.0, 1.0],
+    [3.0, 2.0, 1.0],
+    [0.0, 2.0, 1.0],
+];
+
+/// A vertex the file puts 3e-4 off the corner its three planes meet at —
+/// further than the kernel can carry as one point — with the lines of its
+/// edges running to it: the vertex is put where the planes meet, and its
+/// edges rebuilt there.
+#[test]
+fn a_vertex_off_its_faces_is_put_where_they_meet() {
+    let mut p = BOX;
+    p[6] = [3.0003, 2.0, 1.0];
+    // Each face's plane through corners of its own other than that one.
+    let faces: [&[usize]; 6] = [
+        &[0, 3, 2, 1],
+        &[7, 4, 5, 6],
+        &[0, 1, 5, 4],
+        &[5, 1, 2, 6],
+        &[2, 3, 7, 6],
+        &[3, 0, 4, 7],
+    ];
+    let part = import(&file(".MILLI.,.METRE.", &polyhedron(&p, &faces)));
+    let model = part.topology();
+    assert_eq!(counts(model), (6, 12, 8));
+    let corner = model
+        .vertices
+        .values()
+        .map(|v| v.point)
+        .find(|q| q[0].to_f64() > 2.0 && q[1].to_f64() > 1.0 && q[2].to_f64() > 0.5)
+        .expect("the corner");
+    assert!(corner.could_be_equal(&v(3.0, 2.0, 1.0)), "{corner:?}");
+}
+
+/// Four planes at a vertex that do not meet in a point: the box's top cut
+/// along a diagonal into two triangles, one of them tilted so that it
+/// passes 3e-4 above the corner the other three planes meet at. No point
+/// lies on all four, so the vertex is refused, named, with how near they
+/// come.
+#[test]
+fn faces_that_do_not_meet_at_a_vertex_are_refused_by_name() {
+    let faces: [&[usize]; 7] = [
+        &[0, 3, 2, 1],
+        &[4, 5, 6],
+        &[4, 6, 7],
+        &[0, 1, 5, 4],
+        &[1, 2, 6, 5],
+        &[2, 3, 7, 6],
+        &[3, 0, 4, 7],
+    ];
+    let text = polyhedron(&BOX, &faces);
+    // The second triangle's plane, through the corner 4, turned about the
+    // line from 4 to 7.
+    let level = "DIRECTION('',(0.0,0.0,6.0))";
+    let second = text
+        .match_indices(level)
+        .nth(1)
+        .expect("two top triangles")
+        .0;
+    let text = format!(
+        "{}DIRECTION('',(-0.0006,0.0,6.0)){}",
+        &text[..second],
+        &text[second + level.len()..]
+    );
+    let error = read_step::<S>(&file(".MILLI.,.METRE.", &text))
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        error.contains("at [3.0, 2.0, 1.0]") && error.contains("do not meet near it"),
+        "{error}"
+    );
 }
 
 /// A quarter of a cylinder as a rational B-spline surface, standing on its

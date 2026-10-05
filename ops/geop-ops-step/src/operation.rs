@@ -9,11 +9,7 @@ use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate_fast},
 };
-use geop_ops::{
-    BodyNames, Context, Library, Namer, Part,
-    operation::Operation,
-    ui::Form,
-};
+use geop_ops::{BodyNames, Context, Library, Namer, Part, operation::Operation, ui::Form};
 use serde::{Deserialize, Serialize};
 
 use crate::import::{ImportedBody, read_step};
