@@ -57,9 +57,10 @@ use geop_core_topology::{
 
 use super::{
     geometry::{
-        Frame, Midpoints, P3, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, add, cross,
-        distance, dot, norm, normalize, parameter_of, scale, sub, to_p3,
+        Frame, P3, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, add, cross, distance,
+        dot, norm, normalize, parameter_of, scale, sub, to_p3,
     },
+    midpoints::{CurveMidpoints, SurfaceMidpoints},
     reader::{Reader, unsupported},
     structure::Item,
 };
@@ -564,15 +565,16 @@ impl<S: Scalar> Builder<'_, S> {
     /// Points along a coedge, as it runs, with the edge parameter of each:
     /// `n + 1` of them, ends included.
     fn samples(&self, (e, forward): Use, n: usize) -> GeopResult<Vec<(f64, P3)>> {
-        let curve = &self.edges[e].curve;
-        let (lo, hi) = curve.domain();
-        let (lo, hi) = (lo.to_f64(), hi.to_f64());
+        // Where to sample is a free choice, and the points are compared in
+        // `f64`.
+        let midpoints = CurveMidpoints::of(&self.edges[e].curve);
+        let (lo, hi) = midpoints.domain();
         let mut out = Vec::with_capacity(n + 1);
         for i in 0..=n {
             let f = i as f64 / n as f64;
             let f = if forward { f } else { 1.0 - f };
             let t = lo + (hi - lo) * f;
-            out.push((t, super::geometry::point_at(curve, t)?));
+            out.push((t, midpoints.point(t)));
         }
         Ok(out)
     }
@@ -1929,7 +1931,7 @@ impl<S: Scalar> Builder<'_, S> {
             } else {
                 patch.surface.reverse_u()
             };
-            let grid = Grid::new(&surface).map_err(&ctx)?;
+            let grid = Grid::new(&surface);
             built.push((patch, surface, grid));
         }
         let (rebuild, healed) = heal(&faces, &built, &mut edges, &mut vertices, &scope)?;
@@ -1942,7 +1944,7 @@ impl<S: Scalar> Builder<'_, S> {
                         face.name.join(",")
                     ))
                 })?;
-                let grid = Grid::new(&surface).map_err(face_ctx(face))?;
+                let grid = Grid::new(&surface);
                 let patch = Patch {
                     surface: surface.clone(),
                     extent: None,
@@ -2559,9 +2561,11 @@ fn revolved_extent(
     Ok([lo - margin, hi + margin, v0, v1])
 }
 
-/// A grid of a patch's points, to seed projections onto it from.
-struct Grid<S: Scalar> {
-    points: Vec<(S, S, P3)>,
+/// A grid of a patch's points, to seed projections onto it from, and its
+/// midpoints to search for foot points on in `f64`.
+struct Grid {
+    surface: SurfaceMidpoints,
+    points: Vec<(f64, f64, P3)>,
 }
 
 const GRID: usize = 12;
@@ -2569,56 +2573,51 @@ const GRID: usize = 12;
 /// How many of the nearest grid points a projection tries Newton from.
 const SEEDS: usize = 4;
 
-impl<S: Scalar> Grid<S> {
-    fn new(surface: &NurbSurface3D<S>) -> GeopResult<Self> {
+impl Grid {
+    fn new<S: Scalar>(surface: &NurbSurface3D<S>) -> Self {
+        let surface = SurfaceMidpoints::of(surface);
         let (u0, u1) = surface.domain_u();
         let (v0, v1) = surface.domain_v();
-        let mut points = Vec::new();
+        let mut points = Vec::with_capacity((GRID + 1) * (GRID + 1));
         for i in 0..=GRID {
             for j in 0..=GRID {
-                // Seeds are free choices; the ends are the domain's own.
-                let at = |lo: S, hi: S, k: usize| match k {
-                    0 => lo,
-                    GRID => hi,
-                    _ => S::from_f64(
-                        lo.to_f64() + (hi.to_f64() - lo.to_f64()) * k as f64 / GRID as f64,
-                    ),
-                };
-                let u = at(u0, u1, i);
-                let v = at(v0, v1, j);
-                points.push((u, v, to_p3(&surface.evaluate(u, v)?)));
+                let u = u0 + (u1 - u0) * i as f64 / GRID as f64;
+                let v = v0 + (v1 - v0) * j as f64 / GRID as f64;
+                points.push((u, v, surface.point(u, v)));
             }
         }
-        Ok(Self { points })
+        Self { surface, points }
     }
 
-    /// The foot point of `p` on `surface`: Newton from the nearest grid
-    /// point.
-    /// Newton runs from the few nearest grid points, and the foot point
-    /// nearest `p` wins: on a curved patch the nearest grid point can lie
-    /// in the basin of another foot point.
-    fn project(&self, surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<(S, S)> {
-        let target = to_p3(p);
-        let mut seeds: Vec<&(S, S, P3)> = self.points.iter().collect();
-        seeds.sort_by(|a, b| distance(a.2, target).total_cmp(&distance(b.2, target)));
-        let mut best: Option<(f64, (S, S))> = None;
-        for (u, v, _) in seeds.into_iter().take(SEEDS) {
-            let Ok(foot) = surface.project(*p, *u, *v, 30) else {
-                continue;
-            };
-            let Ok(at) = surface.evaluate(foot.0, foot.1) else {
-                continue;
-            };
-            let d = distance(to_p3(&at), target);
-            if best.is_none_or(|(b, _)| d < b) {
-                best = Some((d, foot));
+    /// The foot point `(u, v)` of `p` on the surface's midpoints, a free
+    /// choice of where to start from or a measurement in `f64`: Newton
+    /// runs from the few nearest grid points, and from `seed` if there is
+    /// one, and the foot point nearest `p` wins — on a curved patch the
+    /// nearest grid point can lie in the basin of another foot point, and a
+    /// seed at a pole may lead down the wrong meridian.
+    fn foot(&self, p: P3, seed: Option<(f64, f64)>) -> (f64, f64) {
+        let mut near: Vec<&(f64, f64, P3)> = self.points.iter().collect();
+        let nearest = SEEDS.min(near.len());
+        near.select_nth_unstable_by(nearest - 1, |a, b| {
+            distance(a.2, p).total_cmp(&distance(b.2, p))
+        });
+        let seeds = near[..nearest].iter().map(|&&(u, v, _)| (u, v));
+        let mut best = (f64::INFINITY, (near[0].0, near[0].1));
+        for (u, v) in seed.into_iter().chain(seeds) {
+            let (u, v) = self.surface.project(p, u, v);
+            let d = distance(self.surface.point(u, v), p);
+            if d < best.0 {
+                best = (d, (u, v));
             }
         }
-        best.map(|(_, foot)| foot).ok_or_else(|| {
-            GeopError::new(format!(
-                "no foot point of {p:?} on the face's surface was found"
-            ))
-        })
+        best.1
+    }
+
+    /// The foot point of `p` on `surface`, the patch's own: Newton on the
+    /// enclosures, from the foot point on its midpoints.
+    fn project<S: Scalar>(&self, surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<(S, S)> {
+        let (u, v) = self.foot(to_p3(p), None);
+        surface.project(*p, S::from_f64(u), S::from_f64(v), 30)
     }
 }
 
@@ -2629,7 +2628,7 @@ impl<S: Scalar> Grid<S> {
 fn fit_loop<S: Scalar>(
     lp: &[Use],
     surface: &NurbSurface3D<S>,
-    grid: &Grid<S>,
+    grid: &Grid,
     patch: &Patch<S>,
     edges: &[Edge<S>],
     vertices: &mut [Vertex<S>],
@@ -2808,68 +2807,44 @@ fn fit_loop<S: Scalar>(
 }
 
 /// The nearest point of `surface` to `p`, and the surface's unit normal
-/// there — none at an apex, where it has no single one.
-fn foot<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    grid: &Grid<S>,
-    p: P3,
-) -> GeopResult<(P3, Option<P3>)> {
-    let (u, v) = sharp_inside(surface, grid.project(surface, &s3(p))?);
-    Ok((
-        to_p3(&surface.evaluate(u, v)?),
-        surface.normal(u, v).ok().map(|n| to_p3(&n)),
-    ))
-}
-
-/// A point of the enclosure `(u, v)` of a foot point on `surface`, sharp:
-/// which is a free choice — one in the domain, which its midpoint may not
-/// be by a rounding at its end.
-fn sharp_inside<S: Scalar>(surface: &NurbSurface3D<S>, (u, v): (S, S)) -> (S, S) {
-    let inside = |t: S, (lo, hi): (S, S)| {
-        let t = t.sharpen();
-        if t.to_f64() < lo.to_f64() {
-            lo
-        } else if t.to_f64() > hi.to_f64() {
-            hi
-        } else {
-            t
-        }
+/// there — none at an apex, where it has no single one. Measured on its
+/// midpoints, where the derivatives there span a plane; at a pole, where
+/// they do not, the surface's own limit normal.
+fn foot<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid, p: P3) -> GeopResult<(P3, Option<P3>)> {
+    let (u, v) = grid.foot(p, None);
+    let (at, su, sv) = grid.surface.partials(u, v);
+    let normal = match normalize(cross(su, sv)) {
+        Some(n) => Some(n),
+        None => surface
+            .normal(S::from_f64(u), S::from_f64(v))
+            .ok()
+            .map(|n| to_p3(&n)),
     };
-    (inside(u, surface.domain_u()), inside(v, surface.domain_v()))
+    Ok((at, normal))
 }
 
 /// How far `p` lies from `surface`.
-fn off<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid<S>, p: P3) -> GeopResult<f64> {
+fn off<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid, p: P3) -> GeopResult<f64> {
     Ok(distance(foot(surface, grid, p)?.0, p))
 }
 
 /// Samples along an edge telling whether it strays from its faces.
 const STRAY_SAMPLES: usize = 16;
 
-/// How far `curve` strays from `surface`, sampled: the first sample's foot
-/// point found from the grid, each next one's by Newton from the one before
-/// — a walk along the curve, as `fit_pcurve` takes.
-fn strays<S: Scalar>(
-    curve: &Midpoints,
-    surface: &NurbSurface3D<S>,
-    grid: &Grid<S>,
-) -> GeopResult<f64> {
+/// How far `curve` strays from the surface `grid` is of, sampled: each
+/// sample's foot point found from the grid and, a walk along the curve as
+/// `fit_pcurve` takes, from the one before.
+fn strays(curve: &CurveMidpoints, grid: &Grid) -> f64 {
     let (lo, hi) = curve.domain();
-    let mut seed: Option<(S, S)> = None;
+    let mut seed: Option<(f64, f64)> = None;
     let mut most = 0.0f64;
     for k in 0..=STRAY_SAMPLES {
         let p = curve.point(lo + (hi - lo) * k as f64 / STRAY_SAMPLES as f64);
-        let (u, v) = sharp_inside(
-            surface,
-            match seed {
-                None => grid.project(surface, &s3(p))?,
-                Some((u, v)) => surface.project(s3(p), u, v, 30)?,
-            },
-        );
+        let (u, v) = grid.foot(p, seed);
         seed = Some((u, v));
-        most = most.max(distance(to_p3(&surface.evaluate(u, v)?), p));
+        most = most.max(distance(grid.surface.point(u, v), p));
     }
-    Ok(most)
+    most
 }
 
 /// Newton steps taken towards where surfaces meet.
@@ -2888,7 +2863,7 @@ const MEET_DAMPING: f64 = 1e-6;
 /// the point as little as satisfies them. Whether it got there is for the
 /// caller to check ([`off`]): surfaces that do not meet leave it where they
 /// come nearest to each other.
-fn meet<S: Scalar>(start: P3, surfaces: &[(&NurbSurface3D<S>, &Grid<S>)]) -> GeopResult<P3> {
+fn meet<S: Scalar>(start: P3, surfaces: &[(&NurbSurface3D<S>, &Grid)]) -> GeopResult<P3> {
     let mut x = start;
     for _ in 0..MEET_ITERATIONS {
         // (Σ n nᵀ + μ I) dx = -Σ n (n · (x - f)).
@@ -2958,7 +2933,7 @@ const MOST_REBUILT_SAMPLES: usize = 256;
 /// longer the same vertex or edge.
 fn heal<S: Scalar>(
     faces: &[Face],
-    built: &[(Patch<S>, NurbSurface3D<S>, Grid<S>)],
+    built: &[(Patch<S>, NurbSurface3D<S>, Grid)],
     edges: &mut [Edge<S>],
     vertices: &mut [Vertex<S>],
     scope: &Scope,
@@ -2980,7 +2955,7 @@ fn heal<S: Scalar>(
             }
         }
     }
-    let surfaces = |fs: &[usize]| -> Vec<(&NurbSurface3D<S>, &Grid<S>)> {
+    let surfaces = |fs: &[usize]| -> Vec<(&NurbSurface3D<S>, &Grid)> {
         fs.iter().map(|&f| (&built[f].1, &built[f].2)).collect()
     };
     let names = |fs: &[usize]| -> String {
@@ -3012,7 +2987,7 @@ fn heal<S: Scalar>(
         for lp in &face.loops {
             let mut points = Vec::new();
             for &(e, forward) in lp {
-                let curve = Midpoints::of(&edges[e].curve);
+                let curve = CurveMidpoints::of(&edges[e].curve);
                 let (lo, hi) = curve.domain();
                 for i in 0..LOOP_SAMPLES {
                     let f = i as f64 / LOOP_SAMPLES as f64;
@@ -3162,10 +3137,10 @@ fn heal<S: Scalar>(
             let apart = match &edge_apart[e] {
                 Some((measured, apart)) if *measured == fs => *apart,
                 _ => {
-                    let midpoints = Midpoints::of(&old);
+                    let midpoints = CurveMidpoints::of(&old);
                     let mut apart = 0.0f64;
-                    for (surface, grid) in surfaces(&fs) {
-                        apart = apart.max(strays(&midpoints, surface, grid).map_err(&ectx)?);
+                    for (_, grid) in surfaces(&fs) {
+                        apart = apart.max(strays(&midpoints, grid));
                     }
                     apart
                 }
@@ -3428,7 +3403,7 @@ fn edge_gap<S: Scalar>(
     // Each sample's nearest curve point: the nearest of a table of the
     // curve's points, polished by Newton.
     let (c0f, c1f) = (c0.to_f64(), c1.to_f64());
-    let midpoints = Midpoints::of(curve);
+    let midpoints = CurveMidpoints::of(curve);
     let rows = 8 * curve.control_points.len() + 32;
     let table: Vec<(f64, P3)> = (0..=rows)
         .map(|k| {

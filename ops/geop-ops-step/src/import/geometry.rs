@@ -1546,68 +1546,6 @@ fn quasi_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
     knots
 }
 
-/// A curve's midpoints in `f64`: its control points, weights and knots each
-/// at the middle of its enclosure. For searches whose answer is a free
-/// choice — which parameter to measure a gap at, where to sample — many
-/// times cheaper than evaluating the enclosure, and off it only by
-/// roundings.
-pub struct Midpoints {
-    degree: usize,
-    knots: Vec<f64>,
-    /// Homogeneous: `(w x, w y, w z, w)`.
-    points: Vec<[f64; 4]>,
-}
-
-impl Midpoints {
-    pub fn of<S: Scalar>(curve: &NurbCurve3D<S>) -> Self {
-        Self {
-            degree: curve.degree,
-            knots: curve.knot_vector.iter().map(|k| k.to_f64()).collect(),
-            points: curve
-                .control_points
-                .iter()
-                .map(|p| std::array::from_fn(|c| p[c].to_f64()))
-                .collect(),
-        }
-    }
-
-    pub fn domain(&self) -> (f64, f64) {
-        (self.knots[self.degree], self.knots[self.points.len()])
-    }
-
-    /// The point at `t`, clamped into the domain: de Boor's algorithm.
-    pub fn point(&self, t: f64) -> P3 {
-        let p = self.degree;
-        let (lo, hi) = self.domain();
-        let t = t.clamp(lo, hi);
-        // The span `k` with `knots[k] <= t < knots[k + 1]`, the last one at
-        // the domain's end.
-        let n = self.points.len();
-        let k = (p..n)
-            .rev()
-            .find(|&k| self.knots[k] <= t && self.knots[k] < self.knots[k + 1])
-            .unwrap_or(p);
-        let mut d: Vec<[f64; 4]> = (0..=p).map(|j| self.points[j + k - p]).collect();
-        for r in 1..=p {
-            for j in (r..=p).rev() {
-                let i = j + k - p;
-                let span = self.knots[i + p + 1 - r] - self.knots[i];
-                let a = if span == 0.0 {
-                    0.0
-                } else {
-                    (t - self.knots[i]) / span
-                };
-                let before = d[j - 1];
-                for (x, y) in d[j].iter_mut().zip(before) {
-                    *x = (1.0 - a) * y + a * *x;
-                }
-            }
-        }
-        let h = d[p];
-        [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
-    }
-}
-
 /// The point of `curve` at the parameter `t`, chosen in `f64`: at a domain
 /// end, the end itself, which `t` may miss by rounding.
 pub fn point_at<S: Scalar>(curve: &NurbCurve3D<S>, t: f64) -> GeopResult<P3> {

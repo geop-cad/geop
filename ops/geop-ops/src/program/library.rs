@@ -53,6 +53,45 @@ pub trait Library<S: Scalar> {
     /// step reads as data, as an import reads a STEP file: its path, as
     /// the library names files (see [`Component::files`]), and its text.
     fn read(&self, file: &str) -> GeopResult<(String, String)>;
+
+    /// Where a step keeps what is costly to work out from data it read,
+    /// under a key naming that data — an import's bodies, by the STEP
+    /// file's text — so building it again, here or in another process,
+    /// takes it from there. None keeps nothing.
+    fn cache(&self) -> Option<&dyn Cache> {
+        None
+    }
+}
+
+/// What steps keep what is costly to work out in, by key (see
+/// [`Library::cache`]): in memory, or on disk where a host gives one —
+/// `geop serve` keeps a `.geop-cache` folder in the workspace.
+///
+/// A key names everything the value was worked out from, so a value kept
+/// is right for as long as the key is the same; nothing is ever forgotten
+/// for being stale.
+pub trait Cache {
+    /// The bytes kept under `key`, if any.
+    fn load(&self, key: &str) -> Option<Vec<u8>>;
+    /// Keeps `bytes` under `key`. Failing to keep them is no error: they
+    /// are worked out again.
+    fn store(&self, key: &str, bytes: &[u8]);
+}
+
+/// A [`Cache`] in memory: for as long as the process lives.
+#[derive(Default)]
+pub struct MemoryCache(RefCell<BTreeMap<String, Arc<Vec<u8>>>>);
+
+impl Cache for MemoryCache {
+    fn load(&self, key: &str) -> Option<Vec<u8>> {
+        self.0.borrow().get(key).map(|bytes| bytes.as_ref().clone())
+    }
+
+    fn store(&self, key: &str, bytes: &[u8]) {
+        self.0
+            .borrow_mut()
+            .insert(key.to_string(), Arc::new(bytes.to_vec()));
+    }
 }
 
 /// Whether the file `path` is a program, which a part can be placed from:
@@ -147,6 +186,9 @@ pub struct Workspace<O, S: Scalar, F = BTreeMap<String, String>> {
     variants: RefCell<BTreeMap<String, Variant<S>>>,
     /// Per file: the runner building it with state overridden.
     runners: RefCell<BTreeMap<String, ProgramRunner<S, O>>>,
+    /// Where the steps of its programs keep what is costly (see
+    /// [`Library::cache`]): in memory unless a host gives another.
+    cache: Box<dyn Cache>,
 }
 
 impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
@@ -156,7 +198,14 @@ impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
             built: RefCell::new(BTreeMap::new()),
             variants: RefCell::new(BTreeMap::new()),
             runners: RefCell::new(BTreeMap::new()),
+            cache: Box::new(MemoryCache::default()),
         }
+    }
+
+    /// Keeps what steps work out in `cache` from now on — on disk, say,
+    /// where it outlives the process (see [`Cache`]).
+    pub fn set_cache(&mut self, cache: Box<dyn Cache>) {
+        self.cache = cache;
     }
 
     pub fn files(&self) -> &F {
@@ -365,6 +414,10 @@ impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
         let path = resolve(&self.file, file);
         let text = self.workspace.files.read(&path)?;
         Ok((path, text))
+    }
+
+    fn cache(&self) -> Option<&dyn Cache> {
+        Some(self.workspace.cache.as_ref())
     }
 }
 

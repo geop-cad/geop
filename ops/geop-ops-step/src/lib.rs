@@ -7,6 +7,7 @@
 //! - [`export`]: a part's bodies as a file.
 //! - [`ImportStep`]: the operation adding a file's bodies to a part.
 
+pub mod cache;
 pub mod export;
 pub mod import;
 pub mod part21;

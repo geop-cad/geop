@@ -216,7 +216,23 @@ impl Operation for ImportStep {
         }
         let namer = Namer::new("import", operation_id).with_context(ctx)?;
         let (_, text) = library.read(&args.file).with_context(ctx)?;
-        let bodies = read_step::<S>(&text).with_context(ctx)?;
+        // Read once: kept by the file's text, read again only when it
+        // changes — or the reader does (see `crate::cache`).
+        let key = crate::cache::key::<S>(&text);
+        let kept = library
+            .cache()
+            .and_then(|cache| cache.load(&key))
+            .and_then(|bytes| crate::cache::decode::<S>(&bytes).ok());
+        let bodies = match kept {
+            Some(bodies) => bodies,
+            None => {
+                let bodies = read_step::<S>(&text).with_context(ctx)?;
+                if let (Some(cache), Ok(bytes)) = (library.cache(), crate::cache::encode(&bodies)) {
+                    cache.store(&key, &bytes);
+                }
+                bodies
+            }
+        };
         if bodies.is_empty() {
             return Err(GeopError::new(format!(
                 "{} has no solids or sheets",

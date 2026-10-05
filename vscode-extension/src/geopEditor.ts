@@ -123,6 +123,7 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
         this.executable(),
         (text) => this.log.append(text),
         async () => restoreCommands(await allFiles(), document.getText(), pathOf(document.uri)),
+        folder.scheme === "file" ? vscode.Uri.joinPath(folder, ".geop-cache").fsPath : null,
       );
     } catch (e) {
       panel.webview.html = failure(String(e));

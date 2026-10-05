@@ -71,6 +71,9 @@ geop-ops-surface = { path = "ops/geop-ops-surface" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"
+# A compact binary form for what steps keep between builds (see
+# `geop_ops::Cache`).
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 geop-ops-pattern = { path = "ops/geop-ops-pattern" }
 geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }

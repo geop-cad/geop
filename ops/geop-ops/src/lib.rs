@@ -116,8 +116,8 @@ pub use operation::{
     Context, EntityRef, Operation, OperationGroup, OperationInfo, OperationTier, Operations,
 };
 pub use program::{
-    Files, FilesMut, Library, NoFiles, Program, ProgramRunner, Step, StepResult, Workspace,
-    is_program,
+    Cache, Files, FilesMut, Library, MemoryCache, NoFiles, Program, ProgramRunner, Step,
+    StepResult, Workspace, is_program,
 };
 
 #[doc(hidden)]

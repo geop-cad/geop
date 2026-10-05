@@ -933,3 +933,53 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     // The pegs reach z = 2 (a), 3 (in the subassembly) and x = 11 (b).
     assert_bounds(model, [0.0, 0.0, -1.0], [11.0, 10.0, 3.0]);
 }
+
+/// The bodies an import keeps read back as they were kept: a cylinder
+/// (rational arcs, a seam cut into sectors) and a sphere, kept and read
+/// back, build the same model, every scalar the same enclosure; and the
+/// key changes with the file's text.
+#[test]
+fn kept_bodies_read_back_as_they_were() {
+    let mut cylinder = Part::new();
+    revolved_cylinder(
+        &mut cylinder,
+        "c",
+        v(1.0, 2.0, 0.0),
+        S::from_f64(0.5),
+        S::from_f64(2.0),
+    )
+    .unwrap();
+    let mut sphere = Part::new();
+    sphere_solid(&mut sphere, "s", v(0.0, 0.0, 1.0), S::from_f64(1.5)).unwrap();
+    for (name, text) in [
+        ("cylinder", write_step(&cylinder, "cylinder").unwrap()),
+        ("sphere", write_step(&sphere, "sphere").unwrap()),
+    ] {
+        let bodies = read_step::<S>(&text).unwrap();
+        let kept = crate::cache::encode(&bodies).unwrap();
+        let back = crate::cache::decode::<S>(&kept).unwrap();
+        assert_eq!(back.len(), bodies.len(), "{name}");
+        for (a, b) in bodies.iter().zip(&back) {
+            assert_eq!(a.label, b.label);
+            assert_eq!(a.face_names, b.face_names);
+            assert_eq!(a.spec.vertices, b.spec.vertices, "{name}");
+            for (fa, fb) in a.spec.faces.iter().zip(&b.spec.faces) {
+                assert_eq!(
+                    fa.surface.control_points, fb.surface.control_points,
+                    "{name}"
+                );
+                assert_eq!(fa.surface.knot_vector_u, fb.surface.knot_vector_u, "{name}");
+            }
+            for (ea, eb) in a.spec.edges.iter().zip(&b.spec.edges) {
+                assert_eq!(ea.curve.control_points, eb.curve.control_points, "{name}");
+            }
+        }
+        let mut part = Part::<S>::new();
+        add_bodies(&mut part, &Namer::new("import", "i").unwrap(), back).unwrap();
+        assert_valid(part.topology());
+        assert_ne!(
+            crate::cache::key::<S>(&text),
+            crate::cache::key::<S>(&text.replace("cylinder", "kreis").replace("sphere", "kugel"))
+        );
+    }
+}

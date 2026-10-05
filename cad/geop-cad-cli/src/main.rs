@@ -30,7 +30,7 @@ use geop_core_math::{
     primitives::TriangleFace,
     scalars::scal_in_f64::ScalInF64,
 };
-use geop_ops::{Files, Part};
+use geop_ops::{Cache, Files, Part};
 use geop_ops_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
 
 type S = ScalInF64;
@@ -70,7 +70,16 @@ enum Command {
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
-    Serve,
+    Serve(ServeArgs),
+}
+
+#[derive(clap::Args)]
+struct ServeArgs {
+    /// Where to keep what is costly to build — the bodies imports read —
+    /// for the next process and the next session, e.g. the workspace's
+    /// `.geop-cache`. Kept in memory only, if not given.
+    #[arg(long, value_name = "DIR")]
+    cache_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -89,6 +98,10 @@ struct CompileArgs {
     /// Write ASCII STL instead of binary.
     #[arg(long)]
     ascii: bool,
+    /// Where to keep what is costly to build — the bodies imports read —
+    /// so the next compile takes it from there, e.g. `.geop-cache`.
+    #[arg(long, value_name = "DIR")]
+    cache_dir: Option<PathBuf>,
     /// How finely curved faces are meshed: higher is smoother, and bigger.
     /// Flat faces are meshed exactly whatever this is.
     #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
@@ -375,10 +388,13 @@ impl Files for Disk {
 /// the mates the program's state did not hold. A stale state — a file it
 /// places changed since it was saved — is solved for here, not in the
 /// file: that is the editor's to write.
-fn build(path: &Path) -> GeopResult<(Program, Part<S>, Vec<String>)> {
+fn build(path: &Path, cache_dir: Option<&Path>) -> GeopResult<(Program, Part<S>, Vec<String>)> {
     let path = path.to_string_lossy();
     // A standard part — `std:iso4032_hex_nut.geop` — builds too.
-    let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
+    let mut workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
+    if let Some(dir) = cache_dir {
+        workspace.set_cache(Box::new(DiskCache::new(dir.to_path_buf())));
+    }
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
     let library = workspace.scope(&path);
     let mut part = program.build(&library)?;
@@ -394,7 +410,7 @@ fn build(path: &Path) -> GeopResult<(Program, Part<S>, Vec<String>)> {
 /// Writes the robot `args` ask for; returns where, and how many links and
 /// joints it has.
 fn urdf(args: &UrdfArgs) -> GeopResult<(PathBuf, usize, usize)> {
-    let (_, part, _) = build(&args.program)?;
+    let (_, part, _) = build(&args.program, None)?;
     let name = args
         .program
         .file_stem()
@@ -428,7 +444,7 @@ fn urdf(args: &UrdfArgs) -> GeopResult<(PathBuf, usize, usize)> {
 /// The bill of materials `args` ask for: written as CSV where they say,
 /// and returned.
 fn bom(args: &BomArgs) -> GeopResult<geop_ops_bom::Bom> {
-    let (_, part, _) = build(&args.program)?;
+    let (_, part, _) = build(&args.program, None)?;
     let structure = match args.indented {
         true => geop_ops_bom::Structure::Indented,
         false => geop_ops_bom::Structure::Flat,
@@ -452,7 +468,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         let path = path.display().to_string();
         move |e: std::io::Error| GeopError::new(format!("{what} {path}: {e}"))
     };
-    let (program, part, solved_for) = build(&args.program)?;
+    let (program, part, solved_for) = build(&args.program, args.cache_dir.as_deref())?;
 
     let output = args
         .output
@@ -557,6 +573,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
             solids: Vec::new(),
             ascii: args.ascii,
             quality: args.quality,
+            cache_dir: None,
         })
     };
     let mut compiled = Vec::new();
@@ -593,7 +610,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
 /// is then in an unknown state. The front end starts another with the
 /// program it holds (`vscode-extension/src/server.ts`), rather than waiting
 /// for an answer that never comes.
-fn serve() -> GeopResult<()> {
+fn serve(args: &ServeArgs) -> GeopResult<()> {
     let io_err = |e: std::io::Error| GeopError::new(format!("serving: {e}"));
     // What panicked and where, as the default hook prints it to stderr.
     let panicked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -606,6 +623,9 @@ fn serve() -> GeopResult<()> {
         default_hook(info);
     }));
     let mut editor = Editor::<S>::new();
+    if let Some(dir) = &args.cache_dir {
+        editor.set_cache(Box::new(DiskCache::new(dir.clone())));
+    }
     let stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lines() {
@@ -636,7 +656,7 @@ fn serve() -> GeopResult<()> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Serve => serve(),
+        Command::Serve(args) => serve(&args),
         Command::Compile(args) => compile(&args).map(|c| {
             if !c.solved_for.is_empty() {
                 eprintln!(
@@ -710,6 +730,7 @@ mod tests {
             solids: Vec::new(),
             ascii: false,
             quality: DEFAULT_QUALITY,
+            cache_dir: None,
         }
     }
 
@@ -1049,5 +1070,70 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("extrude(hole)"), "{err}");
+    }
+}
+
+/// A [`Cache`] on disk: a file per key in a folder — kept across processes
+/// and sessions — read into memory once. The folder ignores itself, so it
+/// is never committed with the workspace it is in.
+struct DiskCache {
+    dir: PathBuf,
+    memory: geop_ops::MemoryCache,
+}
+
+impl DiskCache {
+    fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            memory: geop_ops::MemoryCache::default(),
+        }
+    }
+
+    /// The file `key` is kept in. Keys are file names already (see
+    /// `geop_ops_step::cache::key`); anything else is replaced, to be sure.
+    fn file(&self, key: &str) -> PathBuf {
+        let name: String = key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.dir.join(format!("{name}.bin"))
+    }
+}
+
+impl Cache for DiskCache {
+    fn load(&self, key: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.memory.load(key) {
+            return Some(bytes);
+        }
+        let bytes = std::fs::read(self.file(key)).ok()?;
+        self.memory.store(key, &bytes);
+        Some(bytes)
+    }
+
+    fn store(&self, key: &str, bytes: &[u8]) {
+        self.memory.store(key, bytes);
+        // Not kept on disk, then: it is worked out again next time.
+        let _ = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&self.dir)?;
+            let ignore = self.dir.join(".gitignore");
+            if !ignore.exists() {
+                std::fs::write(
+                    ignore,
+                    "# geop's cache: worked out again whenever it is missing.\n*\n",
+                )?;
+            }
+            // Written whole, then moved into place: another process never
+            // reads half a file.
+            let file = self.file(key);
+            let partial = file.with_extension(format!("{}.part", std::process::id()));
+            std::fs::write(&partial, bytes)?;
+            std::fs::rename(partial, file)
+        })();
     }
 }

@@ -610,6 +610,13 @@ impl<S: Scalar> Editor<S> {
         serde_json::to_string(&self.handle(command)).map_err(|e| format!("writing update: {e}"))
     }
 
+    /// Keeps what steps work out — the bodies imports read — in `cache`
+    /// from now on: on disk, say, where the next process finds them (see
+    /// [`geop_ops::Cache`]).
+    pub fn set_cache(&mut self, cache: Box<dyn geop_ops::Cache>) {
+        self.workspace.set_cache(cache);
+    }
+
     /// How the solve of the drag tool's last drag went: whether the mates
     /// hold, and how hard it was to get there.
     pub fn dragged(&self) -> Option<&geop_ops::assembly::MateReport> {

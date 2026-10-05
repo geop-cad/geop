@@ -9,6 +9,7 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops.workspace = true
 serde.workspace = true
+postcard.workspace = true
 
 [dev-dependencies]
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }
