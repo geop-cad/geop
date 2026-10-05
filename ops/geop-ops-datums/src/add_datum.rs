@@ -808,6 +808,7 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
     #[serde(tag = "operation", content = "args", rename_all = "snake_case")]
     enum Ops {
+        #[operation(group = Sketch)]
         AddDatum(AddDatumArgs),
     }
 

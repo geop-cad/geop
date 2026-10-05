@@ -29,8 +29,8 @@ interface Props {
   onUndo: () => void;
   canRedo: boolean;
   onRedo: () => void;
-  /** The operation-buttons row, rendered once in App and placed here (desktop) and in MobileBottom. */
-  operationButtons: ReactNode;
+  /** The operations, as a ribbon: shown on desktop only — MobileBottom has its own tab of them. */
+  operationRibbon: ReactNode;
   /** What the editor is in the middle of, when it is working in a plane. */
   badge: string | null;
   /** Why the last command was refused, if it was. */
@@ -75,7 +75,7 @@ export function Toolbar({
   onUndo,
   canRedo,
   onRedo,
-  operationButtons,
+  operationRibbon,
   badge,
   error,
   program,
@@ -175,20 +175,17 @@ export function Toolbar({
         </button>
       </div>
       <div className="toolbar-divider desktop-only" />
-      {/* More operations than fit: they scroll sideways — the wheel too — and the rest of the bar stays. */}
-      <div
-        className="desktop-only operation-strip"
-        onWheel={(e) => {
-          if (e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY;
-        }}
-      >
-        {operationButtons}
-      </div>
-      <div className="toolbar-spacer" />
+      {operationRibbon}
+      <div className="toolbar-spacer mobile-only" />
       {badge && <span className="mode-badge">{badge}</span>}
       {!busy && (
         <span className="stats" title="Steps in the program, and triangles drawn">
-          {stepCount} step{stepCount === 1 ? "" : "s"} · {triangleCount} tris
+          <span>
+            {stepCount} step{stepCount === 1 ? "" : "s"}
+          </span>
+          {/* Two lines in the bar; one in what is read of it. */}
+          <span className="stats-separator"> · </span>
+          <span>{triangleCount} tris</span>
         </span>
       )}
       {help.length > 0 && (

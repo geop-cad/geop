@@ -274,6 +274,7 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Operations)]
 #[serde(tag = "operation", content = "args", rename_all = "snake_case")]
 enum Ops {
+    #[operation(group = Assembly)]
     AddPart(AddPartArgs),
 }
 

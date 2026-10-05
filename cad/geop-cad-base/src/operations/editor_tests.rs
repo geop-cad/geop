@@ -3333,3 +3333,40 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
     );
     assert!(editor.part().check_mates(|_| true).unwrap().converged);
 }
+
+/// The toolbar's sections are the editor's: it sends the operations group
+/// by group, in the groups' order, every operation in one, with the few
+/// used most marked to be shown big.
+#[test]
+fn operations_are_offered_by_group() {
+    use geop_ops::{OperationGroup, Operations};
+    let (_, update) = editor();
+    let operations = update.program.expect("the program is sent").operations;
+    assert_eq!(operations.len(), PartOperation::infos().len());
+    let groups: Vec<OperationGroup> = operations.iter().map(|o| o.group).collect();
+    assert!(
+        groups.is_sorted(),
+        "the groups are not one after another: {groups:?}"
+    );
+    let primary: Vec<&str> = operations
+        .iter()
+        .filter(|o| o.primary)
+        .map(|o| o.kind)
+        .collect();
+    assert_eq!(
+        primary,
+        [
+            "add_sketch",
+            "extrude",
+            "revolve",
+            "hole",
+            "fillet",
+            "boolean",
+            "add_part"
+        ]
+    );
+    let json = serde_json::to_value(&operations[0]).unwrap();
+    assert_eq!(json["group"], "Sketch");
+    let sheet = operations.iter().find(|o| o.kind == "hem").unwrap();
+    assert_eq!(serde_json::to_value(sheet).unwrap()["group"], "Sheet metal");
+}

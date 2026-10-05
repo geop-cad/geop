@@ -72,8 +72,10 @@ below is what was missing then, and where each item stands now.
 
 ### Editor and front ends
 - Web app and VS Code extension: every operation, inspect and BOM panels,
-  joint values, every export; camera framing; a scrolling toolbar; the
-  kernel restarted with the program after a crash.
+  joint values, every export; camera framing; a ribbon of the operations
+  by group that fits the window without scrolling; text selected only
+  inside a dialog or panel; the kernel restarted with the program after a
+  crash.
 - A 3-D transform gizmo for every drag in space: arrows, plane squares and a
   free ball to move, rings to turn, cubes to scale along an axis or evenly;
   world or local axes, constant size on screen, snapping to round grid

@@ -297,7 +297,9 @@ pub struct ProgramState {
     /// parameters whose formulas do, which fail if it goes (see
     /// [`geop_ops::Program::parameter_uses`]).
     pub parameter_uses: BTreeMap<String, Vec<String>>,
-    /// Every operation a step can be.
+    /// Every operation a step can be, as the toolbar offers them: group by
+    /// group, in [`geop_ops::OperationGroup`]'s order, and within a group
+    /// in [`PartOperation`]'s.
     pub operations: Vec<OperationInfo>,
     /// The names of the example programs [`Command::LoadExample`] loads.
     pub examples: Vec<&'static str>,
@@ -1667,6 +1669,8 @@ impl<S: Scalar> Editor<S> {
                 }
             })
             .collect();
+        let mut operations = PartOperation::infos();
+        operations.sort_by_key(|info| info.group);
         ProgramState {
             program: self.program.clone(),
             path: self.path.clone(),
@@ -1691,7 +1695,7 @@ impl<S: Scalar> Editor<S> {
                 .collect(),
             parameters: self.program.parameters.resolve(&self.program.state),
             parameter_uses: self.program.parameter_uses(),
-            operations: PartOperation::infos(),
+            operations,
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),
             joints: self.runner.part().joints().unwrap_or_default(),

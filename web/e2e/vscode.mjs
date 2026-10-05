@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startBridge } from "./bridge.mjs";
-import { Checks, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
+import { Checks, clickOperation, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 run("cargo", ["build", "--release", "-p", "geop-cad-cli"], ROOT);
@@ -119,7 +119,7 @@ await check("exports reach VS Code to be saved", async () => {
   const bytes = Buffer.from(stl.bytes ?? "", "base64");
   expect(bytes.length > 84 && bytes.readUInt32LE(80) * 50 + 84 === bytes.length, `pin.stl is no binary STL (${bytes.length} bytes)`);
   // A drawing, from its own dialog.
-  await page.locator(".desktop-only .operation-tools button.op-button", { hasText: /^Drawing$/ }).click();
+  await clickOperation(page, "Drawing");
   await settle(page);
   const popup = page.locator(".desktop-only .popup");
   const svg = await exported("Download SVG", popup.locator("button", { hasText: "Download SVG" }));
@@ -174,7 +174,7 @@ await check("a kernel that crashes is restarted with the document", async () => 
   // The standard parts are placed again — the files came back too — and it still edits.
   const placed = await page.locator(".structure-panel .structure-name").allInnerTexts();
   expect(placed.includes("screw"), `the standard parts are gone: ${placed.join(", ")}`);
-  await page.locator(".desktop-only .operation-tools button.op-button", { hasText: /^Sketch$/ }).click();
+  await clickOperation(page, "Sketch");
   await settle(page);
   expect((await page.locator(".desktop-only .popup").count()) === 1, "Sketch did not open after the crash");
   return after;

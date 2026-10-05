@@ -635,6 +635,14 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M2.5 10 L17.5 10 M10 2.5 L10 17.5" strokeWidth="1" strokeDasharray="3 1 1 1" />
     </>
   ),
+  // More of what there is no room for: three dots.
+  more: (
+    <>
+      {dot(4.5, 10)}
+      {dot(10, 10)}
+      {dot(15.5, 10)}
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */
