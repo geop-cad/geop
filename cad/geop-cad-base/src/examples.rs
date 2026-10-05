@@ -2127,13 +2127,14 @@ pub fn motor_flange() -> Program {
 }
 
 /// A doubly curved panel, a saddle: a UV surface (`panel`) through three
-/// ribs along `x` and three spines along `y`, each a spline of a 3-D
+/// ribs along `x` and three spines along `z`, each a spline of a 3-D
 /// sketch through points of the saddle — the ribs' and the spines' meeting
-/// where they cross; and a block under it (`block`) split along it
-/// (`shaped`) into a piece with the saddle for its top and one with it for
-/// its bottom.
+/// where they cross; and a block under it (`block`, up along `y`) split
+/// along it (`shaped`) into a piece with the saddle for its top and one
+/// with it for its bottom. Drawn in tens of millimetres: the panel is 40 by
+/// 30.
 pub fn curved_panel() -> Program {
-    let height = |x: f64, y: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (y - 1.5).powi(2);
+    let height = |x: f64, z: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (z - 1.5).powi(2);
     let mut program = Program::new();
     let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<EntityRef> {
         let mut sketch = Sketch3d::new();
@@ -2141,7 +2142,10 @@ pub fn curved_panel() -> Program {
         for line in lines {
             let points = line
                 .iter()
-                .map(|&[x, y]| sketch.add_point(Vector3::from_array([x, y, height(x, y)].map(n))))
+                .map(|&[x, z]| {
+                    let at = [x, height(x, z), z].map(|c| n(10.0 * c));
+                    sketch.add_point(Vector3::from_array(at))
+                })
                 .collect();
             let curve = sketch.add_spline(points);
             curves.push(EntityRef::Edge {
@@ -2179,13 +2183,14 @@ pub fn curved_panel() -> Program {
         },
     );
     let mut outline = Sketch::new();
-    rectangle(&mut outline, [0.5, 0.5], 3.0, 2.0);
+    // Sketch `y` runs along world `-z`.
+    rectangle(&mut outline, [5.0, -25.0], 30.0, 20.0);
     program.push(
         "block_sketch",
         AddSketchArgs {
             plane: Some(EntityRef::datum_component(
                 ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
+                DatumComponent::Plane(FrameAxis::Y),
             )),
             sketch: solved(outline),
             ..Default::default()
@@ -2195,7 +2200,7 @@ pub fn curved_panel() -> Program {
         "block",
         ExtrudeArgs {
             sketch: "block_sketch".into(),
-            extent: Extents::blind(1.5),
+            extent: Extents::blind(15.0),
             face: false,
             combine: Combine::NewBody,
         },
@@ -2644,8 +2649,8 @@ mod tests {
             description.solids.keys()
         );
         for (p, expected) in [
-            ([2.0, 1.5, 1.0], [true, false]),
-            ([2.0, 1.5, 0.2], [false, true]),
+            ([20.0, 10.0, 15.0], [true, false]),
+            ([20.0, 2.0, 15.0], [false, true]),
         ] {
             let inside = ["split(shaped,0)", "split(shaped,1)"]
                 .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
@@ -2656,7 +2661,7 @@ mod tests {
         }
         let face = part.face_id("network(panel)").unwrap();
         let surface = &part.topology().get_face(face).unwrap().surface;
-        let middle = Vector3::from_array([2.0, 1.5, 0.6].map(S::from_f64));
+        let middle = Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
         assert!(
             geop_core_geometry::contains::surface::surface_could_contain(
                 surface,

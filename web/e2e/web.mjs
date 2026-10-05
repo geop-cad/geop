@@ -484,7 +484,7 @@ await check("a UV surface's rib is taken out, and picked again by a click on it"
   await fileMenu(page, "Curved panel");
   await builtCleanly();
   expect((await page.locator(".structure-panel").innerText()).includes("network(panel)"), "no sheet network(panel)");
-  await page.locator(".timeline .step-box").last().click();
+  await page.locator(".timeline .step-box", { has: page.locator(".step-name", { hasText: /^panel$/ }) }).click();
   await settle(page);
   const field = (label) => popup.locator(".reference", { has: page.locator("button", { hasText: `${label}:` }) });
   const items = (label) => field(label).locator(".item-label").allInnerTexts();
