@@ -2,6 +2,7 @@ mod closest;
 mod curvature;
 mod evaluate;
 mod fit_pcurve;
+mod gordon;
 mod normal;
 mod offset;
 mod patch;
