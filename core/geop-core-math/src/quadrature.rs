@@ -25,6 +25,12 @@
 //! [`Quadrature`]'s tolerance and panel budget only decide how hard the
 //! search tries: a tighter tolerance gives a narrower result, and a budget
 //! run out gives a wider one, never a different answer.
+//!
+//! [`integrate_polynomial`] is for an integrand known to be a polynomial
+//! of bounded degree on every panel. There the Gauss–Legendre rule of
+//! enough points is exact, so there is no truncation error to estimate,
+//! no halving, and the enclosure is the rule's value alone — proven, and
+//! from a fifth of the evaluations a 15-point panel takes.
 
 use crate::{
     geop_error::{GeopError, GeopResult},
@@ -72,6 +78,137 @@ const WG: [f64; 4] = [
     0.417_959_183_673_469_387_755_102_040_816_327,
 ];
 
+/// The Gauss–Legendre rules of 1 to 10 points: each node in `[0, 1]`,
+/// largest first, with its weight on `[-1, 1]` — the nodes of the `n`-point
+/// rule are these and their negatives, `0` once if `n` is odd. The `n`-point
+/// rule integrates polynomials of degree `2n - 1` exactly.
+// Computed to 50 digits (mpmath), printed to 36: `around` encloses the real
+// numbers they name.
+#[allow(clippy::excessive_precision)]
+const GAUSS_LEGENDRE: [&[(f64, f64)]; 10] = [
+    &[(0.0, 2.0)],
+    &[(0.577_350_269_189_625_764_509_148_780_501_957_456, 1.0)],
+    &[
+        (
+            0.774_596_669_241_483_377_035_853_079_956_479_922,
+            0.555_555_555_555_555_555_555_555_555_555_555_556,
+        ),
+        (0.0, 0.888_888_888_888_888_888_888_888_888_888_888_889),
+    ],
+    &[
+        (
+            0.861_136_311_594_052_575_223_946_488_892_809_505,
+            0.347_854_845_137_453_857_373_063_949_221_999_407,
+        ),
+        (
+            0.339_981_043_584_856_264_802_665_759_103_244_687,
+            0.652_145_154_862_546_142_626_936_050_778_000_593,
+        ),
+    ],
+    &[
+        (
+            0.906_179_845_938_663_992_797_626_878_299_392_965,
+            0.236_926_885_056_189_087_514_264_040_719_917_363,
+        ),
+        (
+            0.538_469_310_105_683_091_036_314_420_700_208_805,
+            0.478_628_670_499_366_468_041_291_514_835_638_193,
+        ),
+        (0.0, 0.568_888_888_888_888_888_888_888_888_888_888_889),
+    ],
+    &[
+        (
+            0.932_469_514_203_152_027_812_301_554_493_994_609,
+            0.171_324_492_379_170_345_040_296_142_172_732_894,
+        ),
+        (
+            0.661_209_386_466_264_513_661_399_595_019_905_347,
+            0.360_761_573_048_138_607_569_833_513_837_716_112,
+        ),
+        (
+            0.238_619_186_083_196_908_630_501_721_680_711_935,
+            0.467_913_934_572_691_047_389_870_343_989_550_995,
+        ),
+    ],
+    &[
+        (
+            0.949_107_912_342_758_524_526_189_684_047_851_262,
+            0.129_484_966_168_869_693_270_611_432_679_082_018,
+        ),
+        (
+            0.741_531_185_599_394_439_863_864_773_280_788_407,
+            0.279_705_391_489_276_667_901_467_771_423_779_582,
+        ),
+        (
+            0.405_845_151_377_397_166_906_606_412_076_961_463,
+            0.381_830_050_505_118_944_950_369_775_488_975_134,
+        ),
+        (0.0, 0.417_959_183_673_469_387_755_102_040_816_326_531),
+    ],
+    &[
+        (
+            0.960_289_856_497_536_231_683_560_868_569_472_99,
+            0.101_228_536_290_376_259_152_531_354_309_962_19,
+        ),
+        (
+            0.796_666_477_413_626_739_591_553_936_475_830_437,
+            0.222_381_034_453_374_470_544_355_994_426_240_884,
+        ),
+        (
+            0.525_532_409_916_328_985_817_739_049_189_246_349,
+            0.313_706_645_877_887_287_337_962_201_986_601_313,
+        ),
+        (
+            0.183_434_642_495_649_804_939_476_142_360_183_981,
+            0.362_683_783_378_361_982_965_150_449_277_195_612,
+        ),
+    ],
+    &[
+        (
+            0.968_160_239_507_626_089_835_576_202_903_672_87,
+            0.081_274_388_361_574_411_971_892_158_110_523_650_7,
+        ),
+        (
+            0.836_031_107_326_635_794_299_429_788_069_734_877,
+            0.180_648_160_694_857_404_058_472_031_242_912_81,
+        ),
+        (
+            0.613_371_432_700_590_397_308_702_039_341_474_185,
+            0.260_610_696_402_935_462_318_742_869_418_632_85,
+        ),
+        (
+            0.324_253_423_403_808_929_038_538_014_643_336_609,
+            0.312_347_077_040_002_840_068_630_406_584_443_666,
+        ),
+        (0.0, 0.330_239_355_001_259_763_164_525_069_286_974_049),
+    ],
+    &[
+        (
+            0.973_906_528_517_171_720_077_964_012_084_452_053,
+            0.066_671_344_308_688_137_593_568_809_893_331_792_9,
+        ),
+        (
+            0.865_063_366_688_984_510_732_096_688_423_493_049,
+            0.149_451_349_150_580_593_145_776_339_657_697_332,
+        ),
+        (
+            0.679_409_568_299_024_406_234_327_365_114_873_576,
+            0.219_086_362_515_982_043_995_534_934_228_163_192,
+        ),
+        (
+            0.433_395_394_129_247_190_799_265_943_165_784_162,
+            0.269_266_719_309_996_355_091_226_921_569_469_353,
+        ),
+        (
+            0.148_874_338_981_631_210_884_826_001_129_719_985,
+            0.295_524_224_714_752_870_173_892_994_651_338_329,
+        ),
+    ],
+];
+
+/// The highest degree of a polynomial [`integrate_polynomial`] integrates.
+pub const MAX_POLYNOMIAL_DEGREE: usize = 2 * GAUSS_LEGENDRE.len() - 1;
+
 /// The interval between the two `f64`s around `x` — `x` itself, if it is
 /// zero, which is exact: an enclosure of the real number `x` was rounded
 /// from.
@@ -114,6 +251,8 @@ pub struct Integral<S: Scalar> {
     /// within the panel budget. When not, `value` is still widened by the
     /// estimate, only wider than asked.
     pub converged: bool,
+    /// How many times the integrand was evaluated: the work it took.
+    pub evaluations: usize,
 }
 
 /// One panel of the adaptive search: its ends, the Kronrod value, its
@@ -203,10 +342,16 @@ pub fn integrate<S: Scalar>(
     components: usize,
     quadrature: &Quadrature,
 ) -> GeopResult<Integral<S>> {
+    let mut evaluations = 0;
+    let mut f = |x: S| {
+        evaluations += 1;
+        f(x)
+    };
     if breaks.len() < 2 {
         return Ok(Integral {
             value: vec![S::ZERO; components],
             converged: true,
+            evaluations: 0,
         });
     }
     let mut panels = breaks
@@ -266,7 +411,70 @@ pub fn integrate<S: Scalar>(
             sum.add(S::from_f64(-error[c]).union(S::from_f64(error[c])))
         })
         .collect();
-    Ok(Integral { value, converged })
+    Ok(Integral {
+        value,
+        converged,
+        evaluations,
+    })
+}
+
+/// The integral of the `components`-valued `f` from `breaks[0]` to the last
+/// of `breaks`, where `f` is a polynomial of degree at most `degree` between
+/// every two consecutive breaks — a spline, say, split at its knots.
+///
+/// The Gauss–Legendre rule of `degree / 2 + 1` points is exact for such an
+/// `f`, so the result is the rule's value, enclosed in interval arithmetic,
+/// and nothing else: no truncation error, always converged. Whether `f` is
+/// such a polynomial is the caller's claim to make, from what `f` is; a
+/// degree above [`MAX_POLYNOMIAL_DEGREE`] is an error.
+pub fn integrate_polynomial<S: Scalar>(
+    mut f: impl FnMut(S) -> GeopResult<Vec<S>>,
+    breaks: &[S],
+    components: usize,
+    degree: usize,
+) -> GeopResult<Integral<S>> {
+    let Some(rule) = GAUSS_LEGENDRE.get(degree / 2) else {
+        return Err(GeopError::new(format!(
+            "integrate_polynomial: no rule for degree {degree}, at most \
+             {MAX_POLYNOMIAL_DEGREE}"
+        )));
+    };
+    let mut value = vec![S::ZERO; components];
+    let mut evaluations = 0;
+    for w in breaks.windows(2) {
+        let half = w[1].sub(w[0]).div(S::TWO)?;
+        let center = w[0].add(half);
+        let mut add = |x: S, weight: f64| -> GeopResult<()> {
+            let values = f(x)?;
+            evaluations += 1;
+            if values.len() != components {
+                return Err(GeopError::new(format!(
+                    "integrate_polynomial: the integrand gave {} components, {components} \
+                     expected",
+                    values.len()
+                )));
+            }
+            let weight = around::<S>(weight).mul(half);
+            for (sum, v) in value.iter_mut().zip(values) {
+                *sum = sum.add(weight.mul(v));
+            }
+            Ok(())
+        };
+        for &(node, weight) in rule.iter() {
+            if node == 0.0 {
+                add(center, weight)?;
+                continue;
+            }
+            let offset = half.mul(around(node));
+            add(center.sub(offset), weight)?;
+            add(center.add(offset), weight)?;
+        }
+    }
+    Ok(Integral {
+        value,
+        converged: true,
+        evaluations,
+    })
 }
 
 #[cfg(test)]
@@ -364,6 +572,47 @@ mod tests {
             "{:?}",
             integral.value[0]
         );
+    }
+
+    /// Every rule integrates every power up to its degree exactly — each
+    /// table entry checked — over panels of a split range, with `n` points
+    /// a panel.
+    fn check_gauss_legendre_is_exact<S: Scalar>() {
+        for degree in 0..=MAX_POLYNOMIAL_DEGREE {
+            let f = |x: S| {
+                Ok((0..=degree)
+                    .map(|k| (0..k).fold(S::ONE, |p, _| p.mul(x)))
+                    .collect())
+            };
+            let breaks = [S::from_f64(-1.0), S::from_f64(0.25), S::ONE];
+            let integral = integrate_polynomial(f, &breaks, degree + 1, degree).unwrap();
+            assert!(integral.converged);
+            assert_eq!(integral.evaluations, 2 * (degree / 2 + 1));
+            for (k, value) in integral.value.iter().enumerate() {
+                // ∫ x^k from -1 to 1: 2 / (k + 1) for even k, 0 for odd.
+                let exact = if k % 2 == 0 {
+                    S::from_ratio(2, k as i64 + 1).unwrap()
+                } else {
+                    S::ZERO
+                };
+                assert!(
+                    value.could_be_equal(exact),
+                    "x^{k}, degree {degree}: {value:?}"
+                );
+                assert!(value.width().to_f64() < 1e-6, "x^{k}: {value:?}");
+            }
+        }
+        let too_high = integrate_polynomial(
+            |_: S| Ok(vec![S::ONE]),
+            &[S::ZERO, S::ONE],
+            1,
+            MAX_POLYNOMIAL_DEGREE + 1,
+        );
+        assert!(too_high.is_err());
+    }
+    #[test]
+    fn gauss_legendre_is_exact() {
+        for_all_scalars!(check_gauss_legendre_is_exact);
     }
 
     /// A budget too small leaves the result wider, and says so.

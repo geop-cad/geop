@@ -201,17 +201,25 @@ pub(crate) fn cast_ray<S: Scalar>(
         // exhausted) is no answer; both ask the caller to retry. Every
         // crossing is needed for the parity count, so the cap is `max_nodes`
         // — the most crossings a search of that budget could ever report.
-        let hits = match curve_surface_intersect(&ray, surface, max_nodes, max_nodes, epsilon) {
-            Ok(hits) => hits,
-            Err(e) => {
-                return Ok(Err(format!(
-                    "its search against face {face_id} failed: {e}"
-                )));
-            }
+        // But a ray lying in the surface is rejected whatever its points, and
+        // asked for `max_nodes` of them it gets that many samples of the
+        // overlap: so it is asked for one first, and for every crossing only
+        // if it found one and lies in no surface.
+        let search = |max_solutions: usize| {
+            curve_surface_intersect(&ray, surface, max_solutions, max_nodes, epsilon)
+                .map_err(|e| format!("its search against face {face_id} failed: {e}"))
         };
-        if hits.is_coincident() {
-            return Ok(Err(format!("it lies in face {face_id}'s surface")));
-        }
+        let hits = match search(1) {
+            Ok(hits) if hits.is_coincident() => {
+                return Ok(Err(format!("it lies in face {face_id}'s surface")));
+            }
+            Ok(hits) if hits.len() == 1 => search(max_nodes),
+            other => other,
+        };
+        let hits = match hits {
+            Ok(hits) => hits,
+            Err(why) => return Ok(Err(why)),
+        };
         for (t_hit, uv) in hits.into_vec() {
             // As in `face::loops_contain`: a crossing next to the query point
             // is still a crossing, so one the search cannot place beyond it
@@ -226,6 +234,16 @@ pub(crate) fn cast_ray<S: Scalar>(
             // arbitrarily narrowed midpoint.
             let (u, v) = (uv[0].midpoint(), uv[1].midpoint());
             let face_seed = seed ^ face_id.0;
+            // A crossing that could be at the ray's far end could be on
+            // either side of it. A ray cast past the shell never meets one
+            // there; one ending at a point already classified (see
+            // `shell_contains_from`) meets one only if that point is all but
+            // on the boundary.
+            if !t_hit.definitely_less(S::ONE) {
+                return Ok(Err(format!(
+                    "its hit on face {face_id} at t={t_hit:?} could be at its far end"
+                )));
+            }
             match face_contains(model, face_id, u, v, max_nodes, epsilon, face_seed) {
                 Ok(FaceClassification::Inside) if t_hit.definitely_greater(S::ZERO) => count += 1,
                 // A hit inside the trim that still cannot be told from the
@@ -283,6 +301,55 @@ pub fn shell_contains<S: Scalar>(
     epsilon: S,
     seed: u64,
 ) -> GeopResult<PointClassification> {
+    classify(model, shell_id, point, None, max_nodes, epsilon, seed)
+}
+
+/// Like [`shell_contains`], from `from`: a point already classified against
+/// `shell_id`, strictly inside it (`from_inside`) or strictly outside.
+///
+/// The first path tried ends there, and `point` is then on the same side
+/// as `from` exactly when that path crosses the boundary an even number of
+/// times — the same parity argument as a ray cast past the whole shell,
+/// with the answer at the far end known instead of "outside". A point near
+/// `from` — another point of the same face, say — makes that path short,
+/// and a short path rules out nearly every face of the shell before any
+/// search runs (see `curve_could_meet_aabb`), where a ray cast past the
+/// shell is tested against all of them. A degenerate one (grazing a vertex
+/// or an edge, hitting a face at its trim or at an end of the path) falls
+/// back to the rays of [`shell_contains`].
+#[allow(clippy::too_many_arguments)]
+pub fn shell_contains_from<S: Scalar>(
+    model: &Model<S>,
+    shell_id: ShellId,
+    point: Vector3<S>,
+    from: Vector3<S>,
+    from_inside: bool,
+    max_nodes: usize,
+    epsilon: S,
+    seed: u64,
+) -> GeopResult<PointClassification> {
+    classify(
+        model,
+        shell_id,
+        point,
+        Some((from, from_inside)),
+        max_nodes,
+        epsilon,
+        seed,
+    )
+}
+
+/// [`shell_contains`] and [`shell_contains_from`]: the coincidence checks,
+/// then the ray to `from` if there is one, then random rays.
+fn classify<S: Scalar>(
+    model: &Model<S>,
+    shell_id: ShellId,
+    point: Vector3<S>,
+    from: Option<(Vector3<S>, bool)>,
+    max_nodes: usize,
+    epsilon: S,
+    seed: u64,
+) -> GeopResult<PointClassification> {
     let shell = &model.shells[&shell_id];
     let (vertex_ids, edge_ids) = shell_vertices_and_edges(model, shell_id);
 
@@ -323,10 +390,81 @@ pub fn shell_contains<S: Scalar>(
         }
     }
 
+    let mut last_rejection = String::new();
+    if let Some((from, from_inside)) = from {
+        // `point` is inside if it is on `from`'s side and `from` is, or on
+        // the other side and `from` is not.
+        let inside = |other_side: bool| match other_side != from_inside {
+            true => PointClassification::Inside,
+            false => PointClassification::Outside,
+        };
+        // Two boxes that overlap, neither touching the boundary, are one
+        // connected region clear of it: the same side.
+        if point.could_be_equal(&from) {
+            return Ok(inside(false));
+        }
+        // Not straight to `from`, but by way of a point `via` off to a
+        // random side, as far from the middle as the two are apart: a
+        // straight segment between two points of one face lies in that
+        // face's plane, and in any face of the shell flush with it; and
+        // points that structured, the corners of a symmetric face, say, can
+        // as well graze a cylinder, a crossing that counts once and is
+        // none. A random detour is as clear of these as a random ray is.
+        let mut rng = Rng::new(seed);
+        let gap = from.sub(&point).norm().div(S::TWO)?;
+        let via = point
+            .add(&from)
+            .prod_scalar(S::ONE.div(S::TWO)?)
+            .add(&rng.next_direction3::<S>().prod_scalar(gap))
+            .sharpen();
+        let leg = |start: Vector3<S>| {
+            cast_ray(
+                model,
+                shell_id,
+                start,
+                via.sub(&start),
+                &vertex_ids,
+                &edge_ids,
+                S::ONE,
+                max_nodes,
+                epsilon,
+                seed,
+            )
+        };
+        // The leg from `point` may find it on the boundary; the one from
+        // `from`, already classified clear of it, finding it there is
+        // ambiguous.
+        match (leg(point)?, leg(from)?) {
+            (
+                Ok(
+                    on @ (PointClassification::OnFace
+                    | PointClassification::OnEdge
+                    | PointClassification::OnVertex),
+                ),
+                _,
+            ) => {
+                return Ok(on);
+            }
+            (
+                Ok(first),
+                Ok(second @ (PointClassification::Inside | PointClassification::Outside)),
+            ) => {
+                let odd = |c: PointClassification| c == PointClassification::Inside;
+                return Ok(inside(odd(first) != odd(second)));
+            }
+            (Err(reason), _) | (_, Err(reason)) => {
+                last_rejection = format!("the detour to {from:?} was rejected: {reason}");
+            }
+            (_, Ok(on)) => {
+                last_rejection =
+                    format!("the detour to {from:?} found that point {on:?}, though classified");
+            }
+        }
+    }
+
     let ray_length = ray_length_for(model, &vertex_ids, &point)?;
 
     let mut rng = Rng::new(seed);
-    let mut last_rejection = String::new();
     for attempt in 0..MAX_RAY_ATTEMPTS {
         let direction = rng.next_direction3::<S>();
         let attempt_seed = seed ^ (attempt as u64).wrapping_mul(0x9E3779B97F4A7C15);
@@ -384,7 +522,7 @@ pub fn solid_contains<S: Scalar>(
 
 #[cfg(test)]
 mod tests {
-    use super::{PointClassification, shell_contains};
+    use super::{PointClassification, shell_contains, shell_contains_from};
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, FaceId, Model, Sense, Shell, ShellId,
         Vertex, VertexId, boundary::BoundaryType,
@@ -635,5 +773,52 @@ mod tests {
     #[test]
     fn vertex_point_is_on_vertex() {
         for_all_scalars!(check_vertex_point_is_on_vertex);
+    }
+
+    /// Classified from a point already classified, inside or out, every
+    /// point gets what `shell_contains` gives it — points in the cube's
+    /// plane of symmetry and on its faces' planes among them, whose
+    /// straight segments to each other lie in a face's plane or run
+    /// through an edge.
+    fn check_classified_from_a_known_point<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        let shell_id = unit_cube(&mut model);
+        let p = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(S::from_f64));
+        let points = [
+            p(0.5, 0.5, 0.5),
+            p(0.25, 0.5, 0.5),
+            p(-0.5, 0.5, 0.5),
+            p(1.5, 0.5, 0.5),
+            p(-0.5, -0.5, 0.5),
+            p(0.5, 0.5, 2.0),
+            p(-0.5, 0.0, 0.0),
+            p(0.0, -0.5, 0.0),
+            p(0.0, 0.0, 0.0),
+            p(0.0, 0.5, 0.5),
+        ];
+        let eps = S::from_f64(EPS);
+        for from in &points[..6] {
+            let from_class = shell_contains(&model, shell_id, *from, MAX, eps, SEED).unwrap();
+            let from_inside = from_class == PointClassification::Inside;
+            for (k, point) in points.iter().enumerate() {
+                let want = shell_contains(&model, shell_id, *point, MAX, eps, SEED).unwrap();
+                let got = shell_contains_from(
+                    &model,
+                    shell_id,
+                    *point,
+                    *from,
+                    from_inside,
+                    MAX,
+                    eps,
+                    SEED ^ k as u64,
+                )
+                .unwrap();
+                assert_eq!(got, want, "{point:?} from {from:?}");
+            }
+        }
+    }
+    #[test]
+    fn classified_from_a_known_point() {
+        for_all_scalars!(check_classified_from_a_known_point);
     }
 }

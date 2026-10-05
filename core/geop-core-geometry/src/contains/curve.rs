@@ -16,7 +16,7 @@
 use std::collections::VecDeque;
 
 use crate::{
-    aabb::aabb_could_contain,
+    aabb::{aabb_could_contain, curve_could_meet_aabb},
     fat_line::{
         Stalled, carried_width, extent, fat_line_zeros, greville_abscissae, restriction, stalled,
     },
@@ -97,6 +97,13 @@ where
         D,
         "point dimension must match the curve's Cartesian dimension"
     );
+    // A straight segment is tested as itself, not its box, before anything
+    // is cloned (see `curve_could_meet_aabb`).
+    let mut point_box = [S::ENTIRE; 3];
+    point_box[..C].copy_from_slice(&point.to_array());
+    if !curve_could_meet_aabb(curve, &point_box, C) {
+        return Ok(None);
+    }
     let mut queue: VecDeque<NurbCurve<S, D>> = VecDeque::new();
     queue.push_back(curve.clone());
 

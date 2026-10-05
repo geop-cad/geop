@@ -21,7 +21,7 @@ use super::{
 };
 use crate::nurb_surface::clamp;
 use crate::{
-    aabb::aabb_could_overlap,
+    aabb::{aabb_could_overlap, curve_could_meet_aabb},
     contains::surface::{
         boundary_curve, collapsed_boundary, surface_could_contain, surface_extents,
     },
@@ -335,8 +335,9 @@ pub fn curve_surface_intersect<S: Scalar>(
     min_subdivision_size: S,
 ) -> GeopResult<Intersections<(S, Vector2<S>)>> {
     // Disjoint bounding boxes rule out crossings and overlaps alike, before
-    // any candidate probe runs.
-    if max_solutions == 0 || !aabb_could_overlap(&curve.aabb, &surface.aabb, 3) {
+    // any candidate probe runs — a straight segment's own extent, not its
+    // box (see `curve_could_meet_aabb`).
+    if max_solutions == 0 || !curve_could_meet_aabb(curve, &surface.aabb, 3) {
         return Ok(Intersections::Found(vec![]));
     }
     let ctx = |e: GeopError| {

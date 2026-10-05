@@ -25,7 +25,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// `domain_v()` before the next iteration. Runs `iterations` times with no
     /// convergence tolerance — interval scalars can't judge "close enough" —
     /// but stops early, with the identical result, once the sharpened
-    /// iterate reaches an exact fixed point (see the loop).
+    /// iterate repeats one before it exactly — a fixed point, or a cycle in
+    /// the last bit (see the loop).
     ///
     /// `J` is singular exactly where the surface's own parametrization is —
     /// a coordinate-singular pole (e.g. the apex of a `revolve`d disk cap,
@@ -48,6 +49,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let (v_lo, v_hi) = self.domain_v();
         let mut u = clamp(u0, u_lo, u_hi);
         let mut v = clamp(v0, v_lo, v_hi);
+        // Every iteration's seed and its unsharpened step, in order.
+        let mut taken: Vec<((S, S), (S, S))> = Vec::with_capacity(iterations);
 
         for iteration in 0..iterations {
             let p = self.evaluate(u, v)?;
@@ -117,16 +120,25 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 clamp(next_u.sharpen(), u_lo, u_hi),
                 clamp(next_v.sharpen(), v_lo, v_hi),
             );
-            // A fixed point of the sharpened iteration: every remaining
-            // iterate would reproduce `(u, v)` exactly (each is a
-            // deterministic function of the same sharp seed), and so would
-            // the final unsharpened step, which starts from it too. Taking
-            // that final step now returns the identical result sooner — not
-            // a convergence tolerance, since nothing is judged "close
-            // enough": the iterate is bit-for-bit unchanged.
+            // A seed the sharpened iteration has started from before: each
+            // iterate is a deterministic function of the sharp seed before
+            // it, so from there on the seeds repeat with that period —
+            // a fixed point, or rounding in the last bit cycling between
+            // two or three. The last iteration's seed is then known, and its
+            // unsharpened step is one already taken: taking it now returns
+            // the identical result sooner. Not a convergence tolerance —
+            // nothing is judged "close enough", the seed is bit-for-bit one
+            // seen before. (Most projections from a nearby seed ended in
+            // such a cycle and ran out all their iterations.)
             let same = |a: S, b: S| a.is_subset_of(b) && b.is_subset_of(a);
-            if same(sharp_u, u) && same(sharp_v, v) {
-                return Ok((clamp(next_u, u_lo, u_hi), clamp(next_v, v_lo, v_hi)));
+            taken.push(((u, v), (next_u, next_v)));
+            if let Some(k) = taken
+                .iter()
+                .position(|&((su, sv), _)| same(su, sharp_u) && same(sv, sharp_v))
+            {
+                let period = taken.len() - k;
+                let (_, (last_u, last_v)) = taken[k + (iterations - 1 - k) % period];
+                return Ok((clamp(last_u, u_lo, u_hi), clamp(last_v, v_lo, v_hi)));
             }
             u = sharp_u;
             v = sharp_v;

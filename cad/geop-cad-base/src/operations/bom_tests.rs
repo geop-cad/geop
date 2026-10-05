@@ -226,3 +226,40 @@ fn repeated_standard_parts_are_grouped() {
     );
     assert!((flat_total - indented_total).abs() < 1e-12);
 }
+
+/// Weighing the bolted plate's plate, screw and nut takes a bounded number
+/// of surface points — counted, not timed (see AGENTS.md). Their faces are
+/// planes and cylinders, trimmed by curves the booleans fitted through 48
+/// points each: the inner integral runs along a direction in which every
+/// one of these surfaces is a polynomial, and is exact in three points.
+/// Along the circle direction it took fifteen and more, and the three
+/// bodies 745 000 points.
+#[test]
+fn the_bolted_plate_is_weighed_in_bounded_work() {
+    let (_, files) = examples::workspaces()
+        .into_iter()
+        .find(|(name, _)| *name == "bolted_plate")
+        .unwrap();
+    let files = files();
+    let program = files[0].1.clone();
+    let files = files
+        .into_iter()
+        .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
+        .collect();
+    let part = build(files, "bolted_plate.geop", &program);
+    let mut parts = vec![&part];
+    parts.extend(part.instances().map(|(_, i)| i.part()));
+    let mut evaluations = Vec::new();
+    for p in parts {
+        for name in p.solid_names() {
+            let mass = p
+                .topology()
+                .mass_properties(p.solid_id(&name).unwrap())
+                .unwrap();
+            assert!(mass.converged, "{name}: {mass:?}");
+            evaluations.push((name, mass.evaluations));
+        }
+    }
+    let total: usize = evaluations.iter().map(|(_, n)| n).sum();
+    assert!(total < 170_000, "{evaluations:?}");
+}

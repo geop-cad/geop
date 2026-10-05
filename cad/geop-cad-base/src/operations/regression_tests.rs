@@ -737,9 +737,23 @@ fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool) {
     }
 }
 
-/// Stopped all round after a half turn: the piece up to there.
+/// Stopped all round after a half turn: the piece up to there, cut from
+/// the bracket.
 #[test]
 fn torus_up_to_next_stopped_all_round() {
+    let target = "extrude(extrude2)".to_string();
+    assert_builds_valid(&torus_turned_up_to_next(
+        &FULLY_STOPPED,
+        false,
+        false,
+        Combine::Difference { target },
+    ));
+}
+
+/// [`torus_up_to_next_stopped_all_round`] either way, combined every way.
+#[test]
+#[ignore = "slow: eight booleans with a torus (10 s) — run with `cargo test -- --ignored`"]
+fn torus_up_to_next_stopped_all_round_every_way() {
     torus_up_to_next(&FULLY_STOPPED, false);
 }
 
@@ -757,6 +771,20 @@ fn torus_up_to_next_stopped_all_round() {
 /// that is already there.
 #[test]
 fn torus_up_to_next_partly_stopped() {
+    let target = "extrude(extrude2)".to_string();
+    assert_builds_valid(&torus_turned_up_to_next(
+        &PARTLY_STOPPED,
+        true,
+        true,
+        Combine::Difference { target },
+    ));
+}
+
+/// [`torus_up_to_next_partly_stopped`] around either axis, either way,
+/// combined every way.
+#[test]
+#[ignore = "slow: sixteen booleans with a torus (30 s) — run with `cargo test -- --ignored`"]
+fn torus_up_to_next_partly_stopped_every_way() {
     torus_up_to_next(&PARTLY_STOPPED, false);
     torus_up_to_next(&PARTLY_STOPPED, true);
 }
