@@ -18,7 +18,7 @@ mod grid;
 pub mod polygon_triangulate;
 pub mod stl;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -51,13 +51,13 @@ pub fn face_triangles_uv<S: Scalar>(
 /// not repeating code: it guarantees a pick can never disagree with what
 /// the viewer actually drew, because both read the same triangles.
 pub struct RasterizedModel<S: Scalar> {
-    pub vertices: HashMap<VertexId, Vector3<S>>,
+    pub vertices: BTreeMap<VertexId, Vector3<S>>,
     /// Each edge's curve sampled into an `n`-point polyline.
-    pub edges: HashMap<EdgeId, Vec<Vector3<S>>>,
+    pub edges: BTreeMap<EdgeId, Vec<Vector3<S>>>,
     /// Each face's trimmed region, triangulated (see [`face_triangles_uv`])
     /// and mapped through `surface.evaluate` — one face generally maps to
     /// several triangles.
-    pub faces: HashMap<FaceId, Vec<TriangleFace<S>>>,
+    pub faces: BTreeMap<FaceId, Vec<TriangleFace<S>>>,
 }
 
 /// A curve is first sampled this finely, and refined from there.
@@ -146,12 +146,12 @@ pub fn rasterize<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<Rasterized
         .map(|(&id, vertex)| (id, vertex.point))
         .collect();
 
-    let mut edges = HashMap::with_capacity(model.edges.len());
+    let mut edges = BTreeMap::new();
     for (&id, edge) in model.edges.iter() {
         edges.insert(id, sample_curve(&edge.curve, n)?);
     }
 
-    let mut faces = HashMap::with_capacity(model.faces.len());
+    let mut faces = BTreeMap::new();
     for (&id, face) in model.faces.iter() {
         let mut tris = Vec::new();
         // Grid corners are shared by up to six triangles, and a normal costs

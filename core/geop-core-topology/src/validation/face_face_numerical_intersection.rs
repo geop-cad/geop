@@ -105,14 +105,15 @@ fn check_faces_of_body<S: Scalar>(
 ) {
     for i in 0..face_ids.len() {
         for j in (i + 1)..face_ids.len() {
-            let face_a_id = face_ids[i];
-            let face_b_id = face_ids[j];
-            let normalized = if face_a_id.0 <= face_b_id.0 {
-                (face_a_id, face_b_id)
+            // The pair in order of id, whichever order the faces are listed
+            // in: which face is `a` decides the seed and which surface is
+            // projected onto which, and with it whether a crossing is found.
+            let (face_a_id, face_b_id) = if face_ids[i] <= face_ids[j] {
+                (face_ids[i], face_ids[j])
             } else {
-                (face_b_id, face_a_id)
+                (face_ids[j], face_ids[i])
             };
-            if adjacent.contains(&normalized) {
+            if adjacent.contains(&(face_a_id, face_b_id)) {
                 continue;
             }
             let face_a = &model.faces[&face_a_id];
@@ -409,5 +410,34 @@ mod tests {
     #[test]
     fn coincident_planes_with_disjoint_trims_pass() {
         for_all_scalars!(check_coincident_planes_with_disjoint_trims_pass);
+    }
+
+    /// Whichever order a body's faces are listed in, a pair is checked the
+    /// same way and reports the same. The order used to come out of a
+    /// `HashMap`, the first of a pair seeded the samples and was projected
+    /// onto, and a failure could appear and disappear between runs.
+    fn check_a_pair_is_checked_alike_in_either_order<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        let a = quarter_face(&mut model, (0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5));
+        let b = quarter_face(&mut model, (0.1, 0.1), (0.6, 0.1), (0.6, 0.6), (0.1, 0.6));
+        let adjacent = super::adjacent_face_pairs(&model);
+        let report = |faces: &[FaceId]| {
+            let mut errors = Vec::new();
+            super::check_faces_of_body(
+                &ValidationParameters::default(),
+                &mut errors,
+                &model,
+                faces,
+                &adjacent,
+            );
+            errors.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>()
+        };
+        let forward = report(&[a, b]);
+        assert!(!forward.is_empty());
+        assert_eq!(forward, report(&[b, a]));
+    }
+    #[test]
+    fn a_pair_is_checked_alike_in_either_order() {
+        for_all_scalars!(check_a_pair_is_checked_alike_in_either_order);
     }
 }

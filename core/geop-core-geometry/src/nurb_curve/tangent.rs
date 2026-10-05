@@ -5,13 +5,19 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
-use crate::spline::{find_span, homogeneous_derivatives, rational_derivatives};
+use crate::spline::{centered, find_span, homogeneous_derivatives, rational_derivatives};
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// The Cartesian point and its derivatives up to order `n` at `t`:
     /// `[C(t), C'(t), …, C⁽ⁿ⁾(t)]`, with `C = D − 1`. Evaluated directly,
     /// without building any derivative curve ([`homogeneous_derivatives`],
     /// then the quotient rule [`rational_derivatives`]).
+    ///
+    /// The derivatives are taken twice and intersected, as
+    /// [`NurbCurve::evaluate`] is: from the control points as they are, and
+    /// relative to one of them ([`centered`]). They do not depend on where
+    /// the curve lies; the first's width does, far from the origin, and the
+    /// second costs a rounding that near it is the wider one.
     fn cartesian_derivatives<const C: usize>(
         &self,
         t: S,
@@ -20,14 +26,24 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let p = self.degree;
         let span = find_span(p, &self.knot_vector, self.control_points.len() - 1, t)?;
         let local = &self.control_points[span - p..=span];
-        rational_derivatives(&homogeneous_derivatives(
-            p,
-            &self.knot_vector,
-            local,
-            span,
-            t,
-            n,
-        ))
+        let at = |points: &[Vector<S, D>]| {
+            rational_derivatives::<S, D, C>(&homogeneous_derivatives(
+                p,
+                &self.knot_vector,
+                points,
+                span,
+                t,
+                n,
+            ))
+        };
+        let mut out = at(local)?;
+        let relative = at(&centered(local).0)?;
+        for (d, r) in out.iter_mut().zip(&relative).skip(1) {
+            for c in 0..C {
+                d[c] = d[c].intersect(r[c]);
+            }
+        }
+        Ok(out)
     }
 }
 

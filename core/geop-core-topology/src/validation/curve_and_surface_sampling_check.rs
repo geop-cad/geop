@@ -130,7 +130,7 @@ pub fn check_curve_and_surface_sampling<S: Scalar>(
                                 .collect();
                             errors.push(GeopError::new(format!(
                                 "coedge {}'s pcurve sample {} (t={}) maps through its face's surface to a point that is not on edge {}'s curve at all \
-                                 (coedge on face {}, (u, v) {uv:?}, point {point:?}, edge from {:?} to {:?}; edge curve samples off this face's surface: {off_surface:?} of {}; the edge's other coedges: {}; pcurve {:?})",
+                                 (coedge on face {}, (u, v) {uv:?}, point {point:?}, edge from {:?} to {:?}; edge curve samples off this face's surface: {off_surface:?} of {}; the edge's other coedges: {}; pcurve {:?}; edge curve {:?})",
                                 coedge_id.0,
                                 i,
                                 t,
@@ -140,7 +140,8 @@ pub fn check_curve_and_surface_sampling<S: Scalar>(
                                 ends.1,
                                 params.sample_count,
                                 partners.join(", "),
-                                coedge.pcurve
+                                coedge.pcurve,
+                                edge.curve
                             )));
                             break;
                         }

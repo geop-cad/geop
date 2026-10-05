@@ -39,7 +39,10 @@ pub mod tree;
 mod xml;
 pub mod zip;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -506,8 +509,9 @@ fn mimics<S: Scalar>(
 ) -> GeopResult<()> {
     let couplings = &mechanism.assembly.couplings;
     // Per driven joint (by index in the mechanism), its driver, the
-    // factor, and the coupling.
-    let mut drives: HashMap<usize, (usize, f64, usize)> = HashMap::new();
+    // factor, and the coupling — by index, so that a circle of couplings is
+    // reported from the same joint on every run.
+    let mut drives: BTreeMap<usize, (usize, f64, usize)> = BTreeMap::new();
     for (i, coupling) in couplings.iter().enumerate() {
         let [ma, mb] = coupling.kind.motions();
         let unit = |m: Motion| match m {
