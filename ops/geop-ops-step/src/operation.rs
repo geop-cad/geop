@@ -32,6 +32,11 @@ use crate::import::{Healing, ImportedBody, read_step};
 /// `fN,mK,v`, and a strip turning more than once into pieces `fN,qM` along
 /// meridians `fN,mM`; an edge split where a cut crosses it, or because it
 /// closes on itself, into pieces `eN,pM` at the vertices `eN,cM`.
+///
+/// Where the file disagrees with itself further than the kernel can carry
+/// as one point or curve, what is rebuilt from its surfaces — and how far
+/// it moved — is recorded on the solid ([`Healed`]) and shown in the
+/// dialog.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportStep;
 
