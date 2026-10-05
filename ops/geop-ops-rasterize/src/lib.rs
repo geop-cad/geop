@@ -18,7 +18,7 @@ mod grid;
 pub mod polygon_triangulate;
 pub mod stl;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -38,7 +38,11 @@ pub fn face_triangles_uv<S: Scalar>(
     face: &Face<S>,
     n: usize,
 ) -> GeopResult<Vec<(Vector2<S>, Vector2<S>, Vector2<S>)>> {
-    grid::triangulate_face(model, face, n)
+    let mut samples = grid::Samples::new(face);
+    Ok(grid::triangulate_face(model, face, n, &mut samples)?
+        .into_iter()
+        .map(|[a, b, c]| (samples.uv(a), samples.uv(b), samples.uv(c)))
+        .collect())
 }
 
 /// A [`Model`] rasterized once, with every sampled point/polyline/triangle
@@ -154,34 +158,22 @@ pub fn rasterize<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<Rasterized
     let mut faces = BTreeMap::new();
     for (&id, face) in model.faces.iter() {
         let mut tris = Vec::new();
-        // Grid corners are shared by up to six triangles, and a normal costs
-        // two derivative evaluations, so each `(u, v)` is evaluated once.
-        let mut normals: HashMap<[u64; 2], Option<Vector3<S>>> = HashMap::new();
-        for (uv_a, uv_b, uv_c) in face_triangles_uv(model, face, n)? {
-            let a = face.surface.evaluate(uv_a[0], uv_a[1])?;
-            let b = face.surface.evaluate(uv_b[0], uv_b[1])?;
-            let c = face.surface.evaluate(uv_c[0], uv_c[1])?;
-            let Ok(t) = TriangleFace::try_new(a, b, c) else {
+        let mut samples = grid::Samples::new(face);
+        for [a, b, c] in grid::triangulate_face(model, face, n, &mut samples)? {
+            let Ok(t) =
+                TriangleFace::try_new(samples.point(a)?, samples.point(b)?, samples.point(c)?)
+            else {
                 continue;
             };
             // The surface's own normal at each corner, for smooth shading.
-            // A corner where it does not exist (a pole, where the two
-            // derivatives are parallel) leaves the whole triangle flat.
-            let corner = |uv: Vector2<S>, cache: &mut HashMap<[u64; 2], Option<Vector3<S>>>| {
-                let key = [uv[0].to_f64().to_bits(), uv[1].to_f64().to_bits()];
-                *cache
-                    .entry(key)
-                    .or_insert_with(|| face.surface.normal(uv[0], uv[1]).ok())
-            };
-            let (na, nb, nc) = (
-                corner(uv_a, &mut normals),
-                corner(uv_b, &mut normals),
-                corner(uv_c, &mut normals),
+            // A corner where it does not exist leaves the whole triangle
+            // flat.
+            tris.push(
+                match (samples.normal(a), samples.normal(b), samples.normal(c)) {
+                    (Some(na), Some(nb), Some(nc)) => t.with_vertex_normals([na, nb, nc]),
+                    _ => t,
+                },
             );
-            tris.push(match (na, nb, nc) {
-                (Some(na), Some(nb), Some(nc)) => t.with_vertex_normals([na, nb, nc]),
-                _ => t,
-            });
         }
         faces.insert(id, tris);
     }

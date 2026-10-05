@@ -14,7 +14,7 @@ use crate::{
 impl<S: Scalar> NurbSurface<S, 4> {
     /// The homogeneous partial derivatives at `(u, v)`: the pure ones up to
     /// order `n`, `([A, A_u, A_uu, …], [A, A_v, A_vv, …])`, and the mixed
-    /// `A_uv`. A pure partial only differentiates along its own direction, so
+    /// `A_uv` where that order takes it in (`n >= 2`). A pure partial only differentiates along its own direction, so
     /// each is the curve case ([`homogeneous_derivatives`]) run across the
     /// local rows (columns), each first evaluated at `v` (`u`); the mixed one
     /// differentiates the rows once along `v`, then once across them along
@@ -26,7 +26,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         u: S,
         v: S,
         n: usize,
-    ) -> GeopResult<(Vec<Vector<S, 4>>, Vec<Vector<S, 4>>, Vector<S, 4>)> {
+    ) -> GeopResult<(Vec<Vector<S, 4>>, Vec<Vector<S, 4>>, Option<Vector<S, 4>>)> {
         let (p, q) = (self.degree_u, self.degree_v);
         let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
         let nv = self.num_v;
@@ -41,11 +41,13 @@ impl<S: Scalar> NurbSurface<S, 4> {
             .collect();
         let (cp, _) = centered(&local);
         let at = |i: usize, j: usize| cp[i * (q + 1) + j];
+        let mixed = n >= 2;
+        // Each row at `v`, and along `v` where the mixed partial is asked.
         let (rows, rows_v): (Vec<Vector<S, 4>>, Vec<Vector<S, 4>>) = (0..=p)
             .map(|i| {
                 let local: Vec<_> = (0..=q).map(|j| at(i, j)).collect();
-                let d = homogeneous_derivatives(q, kv, &local, span_v, v, 1);
-                (d[0], d[1])
+                let d = homogeneous_derivatives(q, kv, &local, span_v, v, usize::from(mixed));
+                (d[0], d.get(1).copied().unwrap_or_else(Vector::zero))
             })
             .unzip();
         let cols: Vec<Vector<S, 4>> = (0..=q)
@@ -57,7 +59,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         Ok((
             homogeneous_derivatives(p, ku, &rows, span_u, u, n),
             homogeneous_derivatives(q, kv, &cols, span_v, v, n),
-            homogeneous_derivatives(p, ku, &rows_v, span_u, u, 1)[1],
+            mixed.then(|| homogeneous_derivatives(p, ku, &rows_v, span_u, u, 1)[1]),
         ))
     }
 
@@ -74,6 +76,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// S_uv`.
     pub fn second_derivatives(&self, u: S, v: S) -> GeopResult<[Vector3<S>; 3]> {
         let (du, dv, a_uv) = self.homogeneous_partials(u, v, 2)?;
+        let a_uv = a_uv.expect("the second order takes in the mixed partial");
         let (cu, cv) = (rational_derivatives(&du)?, rational_derivatives(&dv)?);
         let (w, w_u, w_v, w_uv) = (du[0][3], du[1][3], dv[1][3], a_uv[3]);
         let mut s_uv = Vector3::zero();

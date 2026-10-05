@@ -56,7 +56,13 @@
 //! that's the right call for a rendering-only algorithm even in an
 //! otherwise interval-exact kernel.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
+use std::collections::HashMap;
+
+use geop_core_math::{
+    geop_error::GeopResult,
+    scalars::Scalar,
+    vector::{Vector2, Vector3},
+};
 use geop_core_topology::{
     Face, Model, boundary::BoundaryType, loop_sampling::sample_loop_to_polygon,
 };
@@ -114,7 +120,7 @@ fn dist_point_to_segment2(p: Point, a: Point, b: Point) -> f64 {
 }
 
 /// A face's `(u, v)` domain, in plain `f64`, and a clamp into it — see
-/// `evaluate_f64`'s call sites: plain-`f64` grid/midpoint arithmetic on a
+/// [`Samples`]: plain-`f64` grid/midpoint arithmetic on a
 /// value already at a domain edge can legitimately land a ULP or two
 /// outside it, which a real `Scalar` interval never does (its width
 /// already encloses the true value) but a degenerate zero-width interval
@@ -143,12 +149,68 @@ impl Domain {
     }
 }
 
-fn evaluate_f64<S: Scalar>(face: &Face<S>, domain: Domain, uv: Point) -> GeopResult<[f64; 3]> {
-    let uv = domain.clamp(uv);
-    let p = face
-        .surface
-        .evaluate(S::from_f64(uv[0]), S::from_f64(uv[1]))?;
-    Ok([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
+/// A face's surface at the `(u, v)` its mesh samples, each evaluated once:
+/// a grid corner is shared by up to six triangles, and by every finer grid
+/// the refinement measures, whose cell edges' midpoints are the next grid's
+/// corners.
+pub(crate) struct Samples<'a, S: Scalar> {
+    face: &'a Face<S>,
+    domain: Domain,
+    points: HashMap<[u64; 2], Vector3<S>>,
+    normals: HashMap<[u64; 2], Option<Vector3<S>>>,
+}
+
+impl<'a, S: Scalar> Samples<'a, S> {
+    pub(crate) fn new(face: &'a Face<S>) -> Self {
+        Self {
+            face,
+            domain: Domain::of(face),
+            points: HashMap::new(),
+            normals: HashMap::new(),
+        }
+    }
+
+    /// `uv` in the domain, and the key it is kept under.
+    fn at(&self, uv: Point) -> (Point, [u64; 2]) {
+        let uv = self.domain.clamp(uv);
+        (uv, [uv[0].to_bits(), uv[1].to_bits()])
+    }
+
+    /// `uv` in the domain, as the surface's parameters.
+    pub(crate) fn uv(&self, uv: Point) -> Vector2<S> {
+        let (uv, _) = self.at(uv);
+        Vector2::from_array([S::from_f64(uv[0]), S::from_f64(uv[1])])
+    }
+
+    /// The surface's point at `uv`.
+    pub(crate) fn point(&mut self, uv: Point) -> GeopResult<Vector3<S>> {
+        let (uv, key) = self.at(uv);
+        if let Some(p) = self.points.get(&key) {
+            return Ok(*p);
+        }
+        let p = self
+            .face
+            .surface
+            .evaluate(S::from_f64(uv[0]), S::from_f64(uv[1]))?;
+        self.points.insert(key, p);
+        Ok(p)
+    }
+
+    fn point_f64(&mut self, uv: Point) -> GeopResult<[f64; 3]> {
+        let p = self.point(uv)?;
+        Ok([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
+    }
+
+    /// The surface's normal at `uv`: none where it has none (a pole, where
+    /// the two derivatives are parallel).
+    pub(crate) fn normal(&mut self, uv: Point) -> Option<Vector3<S>> {
+        let (uv, key) = self.at(uv);
+        let surface = &self.face.surface;
+        *self
+            .normals
+            .entry(key)
+            .or_insert_with(|| surface.normal(S::from_f64(uv[0]), S::from_f64(uv[1])).ok())
+    }
 }
 
 /// Drop every polygon vertex that's collinear (within a tolerance relative
@@ -188,63 +250,46 @@ fn simplify_polygon<S: Scalar>(poly: &[Vector2<S>]) -> Vec<Vector2<S>> {
 /// face can curve in one and be straight in the other (a cylinder wall,
 /// an extruded profile), and then only that direction needs refining.
 fn worst_grid_deviation<S: Scalar>(
-    face: &Face<S>,
-    domain: Domain,
+    samples: &mut Samples<S>,
     min: Point,
     max: Point,
     nu: usize,
     nv: usize,
 ) -> GeopResult<[f64; 2]> {
-    let corner = |i: usize, j: usize| -> Point {
+    // The point `i / nu` and `j / nv` of the way across, as
+    // `triangulate_region` places its cells: the midpoints of a cell's edges
+    // are then exactly the corners of the grid twice as fine.
+    let at = |i: usize, nu: usize, j: usize, nv: usize| -> Point {
         [
             min[0] + (max[0] - min[0]) * i as f64 / nu as f64,
             min[1] + (max[1] - min[1]) * j as f64 / nv as f64,
         ]
     };
-    // Cache one row of evaluated corners at a time to avoid re-evaluating
-    // shared corners (each interior corner is shared by up to 4 cells).
-    let mut prev_row: Vec<[f64; 3]> = (0..=nu)
-        .map(|i| evaluate_f64(face, domain, corner(i, 0)))
-        .collect::<GeopResult<_>>()?;
     let mut worst = [0.0f64; 2];
     for j in 0..nv {
-        let cur_row: Vec<[f64; 3]> = (0..=nu)
-            .map(|i| evaluate_f64(face, domain, corner(i, j + 1)))
-            .collect::<GeopResult<_>>()?;
         for i in 0..nu {
-            let (p00, p10, p01) = (prev_row[i], prev_row[i + 1], cur_row[i]);
-            let mid_u = evaluate_f64(
-                face,
-                domain,
-                [
-                    (corner(i, j)[0] + corner(i + 1, j)[0]) / 2.0,
-                    corner(i, j)[1],
-                ],
-            )?;
-            let mid_v = evaluate_f64(
-                face,
-                domain,
-                [
-                    corner(i, j)[0],
-                    (corner(i, j)[1] + corner(i, j + 1)[1]) / 2.0,
-                ],
-            )?;
+            let p00 = samples.point_f64(at(i, nu, j, nv))?;
+            let p10 = samples.point_f64(at(i + 1, nu, j, nv))?;
+            let p01 = samples.point_f64(at(i, nu, j + 1, nv))?;
+            let mid_u = samples.point_f64(at(2 * i + 1, 2 * nu, j, nv))?;
+            let mid_v = samples.point_f64(at(i, nu, 2 * j + 1, 2 * nv))?;
             worst[0] = worst[0].max(dist_point_to_segment(mid_u, p00, p10));
             worst[1] = worst[1].max(dist_point_to_segment(mid_v, p00, p01));
         }
-        prev_row = cur_row;
     }
     Ok(worst)
 }
 
 /// Triangulate `face`'s trimmed `(u, v)` region: a uniform grid (its
 /// resolution chosen from the face's own curvature — see the module doc
-/// comment), each cell clipped exactly against the trim boundary.
+/// comment), each cell clipped exactly against the trim boundary. The
+/// triangles' corners are in `(u, v)`, as `samples` takes them.
 pub(crate) fn triangulate_face<S: Scalar>(
     model: &Model<S>,
     face: &Face<S>,
     n: usize,
-) -> GeopResult<Vec<(Vector2<S>, Vector2<S>, Vector2<S>)>> {
+    samples: &mut Samples<S>,
+) -> GeopResult<Vec<[Point; 3]>> {
     let BoundaryType::Loop(outer_anchor) = face.outer else {
         return Ok(Vec::new());
     };
@@ -287,8 +332,6 @@ pub(crate) fn triangulate_face<S: Scalar>(
         return Ok(Vec::new());
     }
 
-    let domain = Domain::of(face);
-
     // Curvature tolerance derived from the face's own evaluated size, so
     // `n` means a quality rather than one absolute size that would over- or
     // under-tessellate depending on scale. It shrinks with `n²` because the
@@ -299,7 +342,7 @@ pub(crate) fn triangulate_face<S: Scalar>(
     let mut bbox_min = [f64::INFINITY; 3];
     let mut bbox_max = [f64::NEG_INFINITY; 3];
     for &p in &outer_f64 {
-        let e = evaluate_f64(face, domain, p)?;
+        let e = samples.point_f64(p)?;
         for i in 0..3 {
             bbox_min[i] = bbox_min[i].min(e[i]);
             bbox_max[i] = bbox_max[i].max(e[i]);
@@ -314,7 +357,7 @@ pub(crate) fn triangulate_face<S: Scalar>(
     // its straight direction as along its round one.
     let mut cells = [MIN_GRID_N; 2];
     for _ in 0..MAX_DOUBLINGS {
-        let worst = worst_grid_deviation(face, domain, min, max, cells[0], cells[1])?;
+        let worst = worst_grid_deviation(samples, min, max, cells[0], cells[1])?;
         let mut refined = false;
         for k in 0..2 {
             if worst[k] > max_sagitta && cells[k] < MAX_GRID_N {
@@ -328,14 +371,7 @@ pub(crate) fn triangulate_face<S: Scalar>(
     }
     let (nu, nv) = (cells[0], cells[1]);
 
-    let to_uv = |p: Point| {
-        let p = domain.clamp(p);
-        Vector2::from_array([S::from_f64(p[0]), S::from_f64(p[1])])
-    };
-    Ok(triangulate_region(&outer_f64, &holes_f64, min, max, nu, nv)
-        .into_iter()
-        .map(|[a, b, c]| (to_uv(a), to_uv(b), to_uv(c)))
-        .collect())
+    Ok(triangulate_region(&outer_f64, &holes_f64, min, max, nu, nv))
 }
 
 /// The region inside `outer` and outside every one of `holes`, cut along a
@@ -704,7 +740,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = triangulate_face(&model, face, 32).unwrap();
+        let tris = crate::face_triangles_uv(&model, face, 32).unwrap();
         // Zero curvature never triggers a resolution doubling, so the grid
         // stays at the minimum whatever quality was asked for: a flat face
         // is approximated exactly by any grid, and its trim is clipped
@@ -726,7 +762,7 @@ mod tests {
         sphere_solid(&mut part, "t3", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = triangulate_face(&model, face, 8).unwrap();
+        let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
         assert!(
             tris.len() > 8,
             "a sphere quadrant should be refined well past a trivial fan, got {}",
@@ -743,8 +779,8 @@ mod tests {
         sphere_solid(&mut part, "t4", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = triangulate_face(&model, face, 24).unwrap();
-        let domain = Domain::of(face);
+        let tris = crate::face_triangles_uv(&model, face, 24).unwrap();
+        let mut samples = Samples::new(face);
         let mut worst: f64 = 0.0;
         for (a, b, c) in &tris {
             let mid = [
@@ -755,7 +791,7 @@ mod tests {
             // should be lying on.
             let corners: Vec<[f64; 3]> = [a, b, c]
                 .iter()
-                .map(|uv| evaluate_f64(face, domain, [uv[0].to_f64(), uv[1].to_f64()]).unwrap())
+                .map(|uv| samples.point_f64([uv[0].to_f64(), uv[1].to_f64()]).unwrap())
                 .collect();
             let centroid = [0, 1, 2].map(|k| corners.iter().map(|p| p[k]).sum::<f64>() / 3.0);
             let _ = mid;
@@ -785,7 +821,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = triangulate_face(&model, face, 8).unwrap();
+        let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
         let total: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
         assert!(
             (total - 1.0).abs() < 1e-6,
@@ -849,7 +885,7 @@ mod tests {
             .collect();
         assert_eq!(capped.len(), 2);
         for face in capped {
-            let tris = triangulate_face(&model, face, 8).unwrap();
+            let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
             let area: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
             // The cap's uv square spans the 4x4 footprint, so the hole is
             // π / 16 of it.
@@ -893,7 +929,7 @@ mod tests {
         let model = part.topology();
         let mut total_triangles = 0;
         for face in model.faces.values() {
-            let tris = triangulate_face(&model, face, 8).unwrap();
+            let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
             for (a, b, c) in &tris {
                 for v in [a, b, c] {
                     assert!(
