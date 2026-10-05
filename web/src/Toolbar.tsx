@@ -173,7 +173,7 @@ export function Toolbar({
         ref={fileInput}
         type="file"
         hidden
-        accept=".geop,.json,application/json"
+        accept=".geop,.json,application/json,.step,.stp"
         onChange={(e) => {
           const chosen = e.target.files?.[0];
           e.target.value = "";

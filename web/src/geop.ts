@@ -318,6 +318,13 @@ export type Control =
     }
   /** Found by typing, if `searchable`. */
   | { type: "select"; label: string; value: string; options: Choice[]; searchable: boolean }
+  /**
+   * A file the program reads, by its path relative to the program: one of
+   * `options`, the files of the kinds `accept` (extensions without the dot)
+   * next to it, or one chosen from disk — stored next to the program, its
+   * path sent as `choice`.
+   */
+  | { type: "file"; label: string; value: string; options: Choice[]; accept: string[] }
   /** A colour, `#rrggbb`, sent back as `text`. */
   | { type: "color"; label: string; value: string }
   /**

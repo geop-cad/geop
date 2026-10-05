@@ -12,7 +12,7 @@ use geop_core_topology::{
 use geop_ops::{
     BodyNames, Context, Library, Namer, Part,
     operation::Operation,
-    ui::{Choice, Form, Tone},
+    ui::Form,
 };
 use serde::{Deserialize, Serialize};
 
@@ -41,10 +41,15 @@ pub struct ImportStepArgs {
     pub file: String,
 }
 
+/// The extensions of a STEP file.
+pub const STEP_EXTENSIONS: [&str; 2] = ["step", "stp"];
+
 /// Whether `path` names a STEP file.
 pub fn is_step_file(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
-    lower.ends_with(".step") || lower.ends_with(".stp")
+    STEP_EXTENSIONS
+        .iter()
+        .any(|e| lower.ends_with(&format!(".{e}")))
 }
 
 /// Adds the bodies `bodies` to `part`, named by `namer` as [`ImportStep`]
@@ -118,7 +123,8 @@ impl Operation for ImportStep {
         ImportStepArgs::default()
     }
 
-    /// The file, chosen from the STEP files next to the program.
+    /// The file: one of the STEP files next to the program, or one the
+    /// user chooses from elsewhere, which the front end stores next to it.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -137,26 +143,12 @@ impl Operation for ImportStep {
         if !args.file.is_empty() && !files.contains(&args.file) {
             files.push(args.file.clone());
         }
-        if files.is_empty() {
-            f.text(
-                "no_files",
-                "There are no STEP files (.step, .stp) next to this program: add one first.",
-                Tone::Hint,
-            );
-        }
-        let options = std::iter::once(Choice::new("", "Choose a file…"))
-            .chain(
-                files
-                    .iter()
-                    .map(|file| Choice::new(file.clone(), file.clone())),
-            )
-            .collect();
-        f.select(
+        f.file(
             "file",
             "file",
             args.file.clone(),
-            options,
-            true,
+            files,
+            &STEP_EXTENSIONS,
             |args, file| args.file = file.to_string(),
         );
         f

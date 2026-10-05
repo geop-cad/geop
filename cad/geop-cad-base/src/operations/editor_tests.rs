@@ -1848,9 +1848,11 @@ fn an_assembly_is_exported_as_urdf() {
     );
 }
 
-/// "Download STEP" writes the part shown; dropped next to a new program,
-/// the file is offered by a new "Import STEP" step, which brings its solid
-/// back, named after the step.
+/// "Download STEP" writes the part shown; stored next to a new program in a
+/// folder — as the front end stores a file the user chooses in the file
+/// field — the file is offered by a new "Import STEP" step by its path
+/// relative to the program, and brings its solid back, named after the
+/// step.
 #[test]
 fn a_part_exported_as_step_is_imported_back() {
     let (mut editor, _) = editor();
@@ -1861,13 +1863,13 @@ fn a_part_exported_as_step_is_imported_back() {
     assert!(export.text().unwrap().contains("MANIFOLD_SOLID_BREP"));
 
     let files = std::collections::BTreeMap::from([(
-        "box.step".to_string(),
+        "parts/box.step".to_string(),
         Some(export.text().unwrap().to_string()),
     )]);
     assert!(editor.handle(Command::Files { files }).error.is_none());
     let update = editor.handle(Command::Load {
         program: Program::new(),
-        path: Some("imported.geop".into()),
+        path: Some("parts/imported.geop".into()),
     });
     assert!(update.error.is_none(), "{:?}", update.error);
     let update = editor.handle(Command::New {
@@ -1875,10 +1877,14 @@ fn a_part_exported_as_step_is_imported_back() {
     });
     let step = update.step.expect("a step is edited");
     assert_eq!(step.label, "Import STEP");
-    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
-        panic!("the file is chosen from a list");
+    let Some(Control::File {
+        options, accept, ..
+    }) = step.presentation.dialog.get("file")
+    else {
+        panic!("the file is a file field");
     };
     assert!(options.iter().any(|o| o.value == "box.step"), "{options:?}");
+    assert_eq!(accept, &["step", "stp"]);
     let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
     assert!(update.step.unwrap().error.is_none());
     let update = editor.handle(Command::Commit);

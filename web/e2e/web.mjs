@@ -12,7 +12,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { Checks, fileMenu, WEB, expect, launch, pixelAt, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
+import { Checks, fileMenu, OUT, WEB, expect, launch, pixelAt, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
@@ -314,6 +314,43 @@ for (const [example, entry, name, valid] of exports) {
     return `${file.name}, ${file.size} bytes`;
   });
 }
+
+// ── a STEP file imported ────────────────────────────────────────────────
+
+await check("a STEP file is chosen from disk in Import STEP, and imported", async () => {
+  // A small STEP file of geop's own: the box with its drill hole, downloaded.
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  const [download] = await Promise.all([page.waitForEvent("download"), fileMenu(page, "Download STEP")]);
+  const step = path.join(OUT, "box with hole.step");
+  fs.mkdirSync(OUT, { recursive: true });
+  await download.saveAs(step);
+
+  // A new part, with no STEP file next to it: the dialog's file button picks one from disk.
+  await fresh();
+  await operation("Import STEP").click();
+  await settle(page);
+  expect((await popup.count()) === 1, "Import STEP did not open");
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser", { timeout: 10000 }),
+    popup.getByRole("button", { name: /Choose a file/ }).click(),
+  ]);
+  const accepted = await chooser.element().getAttribute("accept");
+  expect(/\.step/.test(accepted ?? "") && /\.stp/.test(accepted ?? ""), `the file chooser accepts ${accepted}, not STEP files`);
+  await chooser.setFiles(step);
+  await settle(page);
+  expect((await popup.innerText()).includes("box with hole.step"), `the dialog does not show the file:\n${await popup.innerText()}`);
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  const structure = await page.locator(".structure-panel").innerText();
+  expect(structure.includes("import("), `no imported solid in the structure:\n${structure}`);
+  // The file is kept next to the program: the explorer lists it, and its upload takes STEP files too.
+  expect((await page.locator(".explorer-tree").innerText()).includes("box with hole.step"), "the STEP file is not in the explorer");
+  const upload = await page.locator(".explorer input[type=file]").getAttribute("accept");
+  expect(/\.step/.test(upload ?? ""), `the explorer's upload accepts ${upload}, not STEP files`);
+  return stats;
+});
 
 await check("the bill of materials is saved as CSV", async () => {
   await fresh();

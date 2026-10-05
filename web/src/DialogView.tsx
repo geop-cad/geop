@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { ColorInput, Dropdown, SearchSelect, SliderNumber } from "./controls";
 import { Icon } from "./icons";
 import { entityLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
@@ -7,6 +8,11 @@ interface Props {
   step: StepState;
   /** A field was used; settled once the step is updated. */
   onDialog: (key: string, value: Value) => Promise<unknown> | void;
+  /**
+   * Store `file`, chosen from disk for a file field, next to the program:
+   * its path relative to the program, or `null` if it could not be.
+   */
+  onChooseFile: (file: File) => Promise<string | null>;
   setPreview: (v: boolean) => void;
   /** Why the last command was refused, if it was. */
   error: string | null;
@@ -135,12 +141,52 @@ function referenced(c: Extract<Control, { type: "reference" }>): string {
 }
 
 /**
+ * A file field: the files of its kinds next to the program, and a button
+ * choosing one from disk, which is stored next to the program first.
+ */
+function FileField({
+  c,
+  send,
+  onChooseFile,
+}: {
+  c: Extract<Control, { type: "file" }>;
+  send: (value: Value) => void;
+  onChooseFile: (file: File) => Promise<string | null>;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const none = { value: "", label: c.options.length > 0 ? "none chosen" : "none next to this program" };
+  return (
+    <div className="file-field">
+      <Dropdown
+        label={c.label}
+        value={c.value}
+        options={[none, ...c.options]}
+        onChange={(value) => send({ type: "choice", value })}
+      />
+      <button onClick={() => input.current?.click()}>Choose a file…</button>
+      <input
+        ref={input}
+        type="file"
+        hidden
+        accept={c.accept.map((e) => `.${e}`).join(",")}
+        onChange={(e) => {
+          const chosen = e.target.files?.[0];
+          e.target.value = "";
+          if (!chosen) return;
+          void onChooseFile(chosen).then((path) => path != null && send({ type: "choice", value: path }));
+        }}
+      />
+    </div>
+  );
+}
+
+/**
  * The dialog of the step being edited: every field the operation shows,
  * rendered from its primitives alone — so any operation the kernel offers
  * gets its dialog without this knowing about it — and the controls every
  * step has: preview, OK, Cancel.
  */
-export function DialogView({ step, onDialog, setPreview, error, onCommit, onCancel }: Props) {
+export function DialogView({ step, onDialog, onChooseFile, setPreview, error, onCommit, onCancel }: Props) {
   function control(key: string, c: Control) {
     const send = (value: Value) => onDialog(key, value);
     switch (c.type) {
@@ -272,6 +318,8 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
             onChange={(value) => send({ type: "choice", value })}
           />
         );
+      case "file":
+        return <FileField c={c} send={send} onChooseFile={onChooseFile} />;
       case "color":
         return (
           <label className="row">

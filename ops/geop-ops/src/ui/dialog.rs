@@ -84,7 +84,7 @@ impl Action {
     }
 }
 
-/// One option of a [`Control::Select`].
+/// One option of a [`Control::Select`] or a [`Control::File`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Choice {
     /// What choosing it sends back.
@@ -328,6 +328,17 @@ pub enum Control<S: Scalar> {
         options: Vec<Choice>,
         searchable: bool,
     },
+    /// A file the program reads, by its path relative to the program:
+    /// one of `options`, the files of the kinds `accept` (extensions,
+    /// without the dot) next to it, or one from elsewhere — the front end
+    /// stores a file the user chooses next to the program and sends its
+    /// path, as [`super::Value::Choice`] like an option's.
+    File {
+        label: String,
+        value: String,
+        options: Vec<Choice>,
+        accept: Vec<String>,
+    },
     /// A colour, `#rrggbb`, sent back as [`super::Value::Text`].
     Color {
         label: String,
@@ -435,6 +446,12 @@ impl<S: Scalar> Dialog<S> {
                     ),
                     Control::Color { label, value } => (label, value.clone()),
                     Control::Select {
+                        label,
+                        value,
+                        options,
+                        ..
+                    }
+                    | Control::File {
                         label,
                         value,
                         options,

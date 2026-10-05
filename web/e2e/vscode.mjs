@@ -119,6 +119,42 @@ await check("exports reach VS Code to be saved", async () => {
   return `${step.name} ${step.text.length} bytes, ${stl.name} ${bytes.length} bytes`;
 });
 
+await check("a STEP file chosen from disk in Import STEP is stored next to the document and imported", async () => {
+  const doc = "hole_plate.geop";
+  await open(doc);
+  // A STEP file elsewhere on disk: the pin, written by geop's exporter.
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "geop-e2e-step-"));
+  const step = path.join(elsewhere, "pin part.step");
+  run(exe, ["compile", path.join(folder, "pin.geop"), "--output", step]);
+  const before = bridge.written[doc]?.length ?? 0;
+  await page.locator(".desktop-only .operation-tools button.op-button", { hasText: /^Import STEP$/ }).click();
+  await settle(page);
+  const popup = page.locator(".desktop-only .popup");
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser", { timeout: 10000 }),
+    popup.getByRole("button", { name: /Choose a file/ }).click(),
+  ]);
+  await chooser.setFiles(step);
+  await settle(page);
+  expect(fs.existsSync(path.join(folder, "pin part.step")), "the STEP file was not stored next to the document");
+  expect((await popup.innerText()).includes("pin part.step"), `the dialog does not show the file:\n${await popup.innerText()}`);
+  await popup.locator(".button-row button.primary").click();
+  await settle(page);
+  const deadline = Date.now() + 30000;
+  let imported = null;
+  while (imported?.operation !== "import_step" || imported.args.file !== "pin part.step") {
+    expect(Date.now() < deadline, `the import was not written back: ${JSON.stringify(imported)}`);
+    await page.waitForTimeout(100);
+    imported = (bridge.written[doc]?.slice(before).at(-1)?.steps ?? []).at(-1) ?? null;
+  }
+  const shown = await shownErrors(page);
+  expect(shown.length === 0, `errors shown: ${shown.join(" | ")}`);
+  const structure = await page.locator(".structure-panel").innerText();
+  expect(structure.includes(`import(${imported.id},s0)`), `no imported solid:\n${structure}`);
+  fs.rmSync(elsewhere, { recursive: true, force: true });
+  return `${imported.id}: ${imported.args.file}`;
+});
+
 await check("an assembly with standard parts opens", async () => {
   const stats = await open("bolted_plate/bolted_plate.geop");
   // The plate from its own file, the screw and the nut from the standard library (`std:`).
