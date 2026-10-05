@@ -1901,6 +1901,67 @@ fn a_part_exported_as_step_is_imported_back() {
     assert_eq!(solids, vec![format!("import({id},s0)")]);
 }
 
+/// A STEP file whose corner lies 3e-4 above where its three faces meet —
+/// further than the kernel can carry as one point — imports with the corner
+/// put back where they meet, and the dialog says what was rebuilt, and how
+/// far it moved.
+#[test]
+fn an_import_that_heals_the_file_says_what_it_rebuilt() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::ExportStep);
+    let text = update
+        .export
+        .expect("a file is written")
+        .text()
+        .unwrap()
+        .to_string();
+    // The first vertex's point, raised.
+    let at = text.find("=VERTEX_POINT(").expect("a vertex");
+    let id = &text[at..];
+    let id = &id[id.find("',#").unwrap() + 3..id.find(");").unwrap()];
+    let line = format!("#{id}=CARTESIAN_POINT('',(");
+    let start = text.find(&line).expect("its point") + line.len();
+    let end = start + text[start..].find("))").unwrap();
+    let mut xyz: Vec<f64> = text[start..end]
+        .split(',')
+        .map(|c| c.parse().unwrap())
+        .collect();
+    xyz[2] += 3e-4;
+    let raised = format!(
+        "{}{:?},{:?},{:?}{}",
+        &text[..start],
+        xyz[0],
+        xyz[1],
+        xyz[2],
+        &text[end..]
+    );
+
+    let files = std::collections::BTreeMap::from([("box.step".to_string(), Some(raised))]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("imported.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::New {
+        kind: "import_step".into(),
+    });
+    let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
+    let step = update.step.expect("a step is edited");
+    assert!(step.error.is_none(), "{:?}", step.error);
+    let Some(Control::Text { text, .. }) = step.presentation.dialog.get("healed_0") else {
+        panic!(
+            "the dialog does not say what was rebuilt: {:?}",
+            step.presentation.dialog
+        );
+    };
+    assert!(
+        text.contains("1 vertices put where their faces meet, moved up to 3.0e-4 mm"),
+        "{text}"
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
+}
+
 /// "Download STL" writes every solid of the part shown as a binary STL
 /// mesh, named after the program's file — the placed parts' solids too, so
 /// the pin in the plate adds to the plate's triangles.

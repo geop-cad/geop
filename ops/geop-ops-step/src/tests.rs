@@ -665,10 +665,55 @@ fn faces_that_do_not_meet_at_a_vertex_are_refused_by_name() {
         .err()
         .expect("refused")
         .to_string();
+    // The triangles have three edges: neither can be rebuilt instead.
     assert!(
-        error.contains("at [3.0, 2.0, 1.0]") && error.contains("do not meet near it"),
+        error.contains("do not meet near [3.0, 2.0, 1.0]")
+            && error.contains("no choice of the faces"),
         "{error}"
     );
+}
+
+/// The box's top in two faces, the smaller of which the file puts on a
+/// plane 3e-4 above the rest of the box — a step no edge can lie on both
+/// sides of. Where the two planes of its edge do not meet, the smaller
+/// face is rebuilt from its edges, which the file has where the box's
+/// other faces are: level with the rest of the top.
+#[test]
+fn a_face_whose_surface_contradicts_its_neighbours_is_rebuilt_from_its_edges() {
+    let mut p = BOX.to_vec();
+    p.extend([[2.0, 0.0, 1.0], [2.0, 2.0, 1.0]]);
+    let faces: [&[usize]; 7] = [
+        &[0, 3, 2, 1],
+        &[4, 8, 9, 7],
+        &[8, 5, 6, 9],
+        &[0, 1, 5, 8, 4],
+        &[1, 2, 6, 5],
+        &[2, 3, 7, 9, 6],
+        &[3, 0, 4, 7],
+    ];
+    // The second top face's plane, through its first corner (vertex 8,
+    // the point `#117`), raised by 3e-4.
+    let text = polyhedron(&p, &faces);
+    let placement = "AXIS2_PLACEMENT_3D('',#117,";
+    assert_eq!(text.matches(placement).count(), 1, "{text}");
+    let text = format!(
+        "#998=CARTESIAN_POINT('',(2.0,0.0,1.0003));\n{}",
+        text.replace(placement, "AXIS2_PLACEMENT_3D('',#998,")
+    );
+    let text = file(".MILLI.,.METRE.", &text);
+    let bodies = read_step::<S>(&text).unwrap();
+    assert!(
+        bodies[0]
+            .healed
+            .iter()
+            .any(|l| l.contains("1 faces rebuilt from their edges")),
+        "{:?}",
+        bodies[0].healed
+    );
+    let part = import(&text);
+    let model = part.topology();
+    assert_eq!(counts(model), (7, 15, 10));
+    assert_bounds(model, [0.0; 3], [3.0, 2.0, 1.0]);
 }
 
 /// A quarter of a cylinder as a rational B-spline surface, standing on its

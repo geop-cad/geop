@@ -9,7 +9,11 @@ use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate_fast},
 };
-use geop_ops::{BodyNames, Context, Library, Namer, Part, operation::Operation, ui::Form};
+use geop_ops::{
+    BodyNames, Context, Library, Namer, Part,
+    operation::Operation,
+    ui::{Form, Tone},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::import::{ImportedBody, read_step};
@@ -106,9 +110,32 @@ pub fn add_bodies<S: Scalar>(
             faces: body.face_names.iter().map(|n| named(n)).collect(),
             solid: body.spec.solid.then(|| namer.name(&[&solid])),
         };
+        let solid = names.solid.clone();
         part.build_body(body.spec, names)?;
+        if let Some(solid) = solid
+            && !body.healed.is_empty()
+        {
+            part.set_body_data(
+                &solid,
+                Healed {
+                    label: body.label,
+                    lines: body.healed,
+                },
+            )?;
+        }
     }
     Ok(())
+}
+
+/// What the import rebuilt of a solid where the file disagrees with itself
+/// further than the kernel can carry (see `import::body`), recorded on it
+/// for the step's dialog to show.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Healed {
+    /// What the file calls the solid.
+    pub label: String,
+    /// One line per kind of entity rebuilt.
+    pub lines: Vec<String>,
 }
 
 impl Operation for ImportStep {
@@ -147,6 +174,28 @@ impl Operation for ImportStep {
             &STEP_EXTENSIONS,
             |args, file| args.file = file.to_string(),
         );
+        // What was rebuilt where the file disagrees with itself, solid by
+        // solid, as the step last built them.
+        if let (Some(built), Ok(namer)) = (context.built, Namer::new("import", context.id)) {
+            for k in 0.. {
+                let solid = namer.name(&[&format!("s{k}")]);
+                if built.solid_id(&solid).is_err() {
+                    break;
+                }
+                if let Some(healed) = built.body_data::<Healed>(&solid) {
+                    f.text(
+                        &format!("healed_{k}"),
+                        format!(
+                            "{} ({}) disagrees with itself further than the kernel can carry, and was rebuilt where its surfaces meet: {}.",
+                            healed.label,
+                            solid,
+                            healed.lines.join("; ")
+                        ),
+                        Tone::Hint,
+                    );
+                }
+            }
+        }
         f
     }
 
