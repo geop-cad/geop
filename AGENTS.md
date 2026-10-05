@@ -665,3 +665,32 @@ that order, and the ball's patch began at a different contact on every
 build; the example's round trip (build, save, load, build again) caught it.
 Wherever an order reaches the result — which loop corner comes first, which
 face is "first" — sort by the ids, which are given in creation order.
+
+## Many booleans on one body: what grows with every cut
+
+A spur gear is a disc with a gap cut per tooth, twenty to a hundred
+booleans on one body. Four things that are harmless once grew with every
+cut, and each only showed up past some count of teeth:
+
+- **Names.** A piece of a split edge is named after the edge and the
+  vertex it starts at, and that vertex after the edge again, so the name
+  doubled per cut: twenty cuts made names of tens of megabytes. A name's
+  argument longer than `LONGEST_ARGUMENT` is now spelled by its digest.
+- **Rescans.** The piercing search started over from every edge × face
+  pair after each split. A pair once found clean stays clean (a piece of a
+  curve crosses nothing the whole did not), so it is not asked again.
+- **Width along a split edge.** An edge split again and again grows wider
+  with each split, and its next crossing comes out wider still. A rim of
+  four quarter arcs failed once a quarter was crossed by about fifteen
+  gaps; drawn in twelve arcs it is not. Where an operation will cut one
+  edge many times, draw it in pieces, ending where no cut will land.
+- **Traced fits.** An involute's curvature changes tenfold along the
+  flank, so the cubic through the march's points drifted a hundred times
+  the usual; the legs are now split finer while the drift is what makes
+  the curve wide.
+
+The sketch solver is the other trap: a sketch whose arcs' sweeps must be
+solved for, with points far from where they were drawn, can be sent off
+to infinity. A sketch every point of which a formula places — lines,
+Béziers, arcs whose sweep does not change — is placed in one step for any
+size.
