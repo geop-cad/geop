@@ -299,7 +299,8 @@ pub struct ProgramState {
     pub parameter_uses: BTreeMap<String, Vec<String>>,
     /// Every operation a step can be, as the toolbar offers them: group by
     /// group, in [`geop_ops::OperationGroup`]'s order, and within a group
-    /// in [`PartOperation`]'s.
+    /// by [`geop_ops::OperationTier`], the most used first, then in
+    /// [`PartOperation`]'s order.
     pub operations: Vec<OperationInfo>,
     /// The names of the example programs [`Command::LoadExample`] loads.
     pub examples: Vec<&'static str>,
@@ -1670,7 +1671,7 @@ impl<S: Scalar> Editor<S> {
             })
             .collect();
         let mut operations = PartOperation::infos();
-        operations.sort_by_key(|info| info.group);
+        operations.sort_by_key(|info| (info.group, info.tier));
         ProgramState {
             program: self.program.clone(),
             path: self.path.clone(),

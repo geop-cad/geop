@@ -615,7 +615,7 @@ function App() {
       label: "Drag",
       doc: "Drag placed parts as far as their mates let them",
       group: "Assembly",
-      primary: false,
+      tier: "Small",
       active: dragTool,
       disabled: !wasmReady || step != null,
       onSelect: () => void dispatch({ command: "drag_tool", on: !dragTool }),
@@ -781,6 +781,12 @@ function App() {
             {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
             {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
             {error && !step && <p className="error">{error}</p>}
+            {infos.some((info) => info.tier === undefined) && (
+              <p className="error">
+                The kernel is older than this page: its operations do not say how the toolbar shows them. Rebuild it
+                (npm run build:wasm, or the VS Code extension's npm run build) and reload.
+              </p>
+            )}
             {wasmReady && scene && (
               <SceneViewer
                 part={scene.part}

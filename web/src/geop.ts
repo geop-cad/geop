@@ -138,9 +138,15 @@ export interface OperationInfo {
   doc: string;
   /** The section of the toolbar it is in: `Features` (see `geop_ops::OperationGroup`). */
   group: string;
-  /** Whether it is one of the few used most, shown big. */
-  primary: boolean;
+  /** How prominently its section offers it (see `geop_ops::OperationTier`). */
+  tier: OperationTier;
 }
+
+/**
+ * How prominently the toolbar offers an operation: a big button, a small
+ * one, or only in its section's menu.
+ */
+export type OperationTier = "Big" | "Small" | "Menu";
 
 /** A step of a program: an operation with its arguments, and its id. */
 export interface Step {

@@ -1085,7 +1085,7 @@ button.inline {
   gap: 0.35rem;
   min-height: 44px;
   box-sizing: border-box;
-  padding: 3px 0.6rem;
+  padding: 2px 0.6rem;
   background: #141414;
   border-bottom: 1px solid #2c2c2c;
   flex-shrink: 0;
@@ -1100,12 +1100,6 @@ button.inline {
 .toolbar-group {
   display: flex;
   gap: 2px;
-}
-.toolbar-divider {
-  width: 1px;
-  align-self: stretch;
-  margin: 8px 0.35rem;
-  background: #2f2f2f;
 }
 .toolbar-spacer {
   flex: 1;
@@ -1146,7 +1140,9 @@ button.inline {
 
 /* The operations, as a ribbon (see OperationRibbon.tsx): it takes the
    width the rest of the bar leaves, and the groups are shown at the levels
-   that fit it — nothing scrolls. */
+   that fit it — nothing scrolls. A group is a block of buttons over its
+   caption, divided from the next by a line; a big button is as high as
+   three rows of small ones. */
 .operation-strip {
   flex: 1 1 0;
   min-width: 0;
@@ -1162,73 +1158,112 @@ button.inline {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 0 3px;
-  border-left: 1px solid #2a2a2a;
-}
-.ribbon-group:first-child {
-  border-left-color: transparent;
+  gap: 2px;
+  padding: 0 4px;
+  border-left: 1px solid #2e2e2e;
 }
 .ribbon-buttons {
+  flex: 1;
   display: flex;
-  gap: 2px;
-  height: 66px;
+  justify-content: center;
+  gap: 1px;
+  height: 60px;
 }
 .ribbon-column {
   display: flex;
   flex-direction: column;
-  gap: 1px;
 }
-.toolbar .op-button.big,
-.toolbar .dropdown-trigger.big {
+.toolbar .op-button.big {
   flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  height: auto;
-  min-width: 50px;
-  padding: 4px 5px;
-  font-size: 0.72rem;
-  white-space: nowrap;
+  justify-content: flex-start;
+  gap: 3px;
+  height: 60px;
+  min-width: 46px;
+  max-width: 68px;
+  padding: 7px 4px 0;
+  font-size: 0.7rem;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
 }
-.toolbar .op-button.big > .icon,
-.toolbar .dropdown-trigger.big > .icon:first-child {
+.toolbar .op-button.big > .icon {
   width: 24px;
   height: 24px;
 }
-.toolbar .dropdown-trigger.big {
-  flex: 1;
-  gap: 2px;
+/* A label of two words takes two lines, as narrow as its longer word. */
+.toolbar .op-button.big > span {
+  width: min-content;
 }
 .toolbar .op-button.small {
-  height: 21px;
-  gap: 5px;
-  padding: 0 5px 0 3px;
-  font-size: 0.72rem;
+  height: 20px;
+  gap: 4px;
+  padding: 0 6px 0 4px;
+  font-size: 0.7rem;
   white-space: nowrap;
 }
 .toolbar .op-button.small > .icon {
   width: 15px;
   height: 15px;
 }
-/* A group's name, under its buttons: the menu of all of them. */
+.toolbar .op-button:disabled,
+.toolbar .ribbon-menu .dropdown-trigger:disabled {
+  opacity: 0.4;
+}
+/* A group's caption, under its buttons: the menu of all of it. */
 .ribbon-menu {
   display: flex;
 }
-.toolbar .dropdown-trigger.ribbon-label {
+.toolbar .dropdown-trigger.ribbon-caption,
+.toolbar .dropdown-trigger.ribbon-collapsed {
+  font-size: 0.68rem;
+  color: #8c8c8c;
+}
+.toolbar .dropdown-trigger.ribbon-caption {
   flex: 1;
   justify-content: center;
   gap: 1px;
-  height: 15px;
+  height: 16px;
   padding: 0 4px;
-  font-size: 0.6rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #8a8a8a;
+  border-radius: 3px;
   white-space: nowrap;
 }
-.toolbar .dropdown-trigger.ribbon-label > .icon:last-child {
+.toolbar .dropdown-trigger.ribbon-caption:hover:not(:disabled),
+.toolbar .dropdown-trigger.ribbon-collapsed:hover:not(:disabled) {
+  color: #e0e0e0;
+}
+.toolbar .ribbon-menu .dropdown-arrow > .icon {
   width: 11px;
   height: 11px;
+}
+/* A group collapsed to its menu: its first tool's icon over its name. */
+.ribbon-group.collapsed .ribbon-menu {
+  flex: 1;
+}
+.toolbar .dropdown-trigger.ribbon-collapsed {
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0;
+  height: 78px;
+  min-width: 46px;
+  padding: 7px 4px 0;
+  white-space: nowrap;
+}
+.ribbon-collapsed .ribbon-caption-text {
+  height: 16px;
+  line-height: 16px;
+}
+.ribbon-collapsed .dropdown-arrow {
+  vertical-align: -1px;
+  margin-left: 1px;
+}
+.toolbar .dropdown-trigger.ribbon-collapsed > .icon {
+  width: 24px;
+  height: 24px;
+  color: #ddd;
+}
+.toolbar .dropdown-trigger.ribbon-collapsed.active > .icon {
+  color: inherit;
 }
 /* The hidden copy each group's widths are measured in. */
 .ribbon-measure {
@@ -1297,10 +1332,14 @@ button,
   background: #262626;
   border-color: #333;
 }
-.dropdown-trigger > .icon:last-child {
+/* The arrow that says a button drops down a menu. */
+.dropdown-arrow {
+  display: inline-flex;
+  opacity: 0.7;
+}
+.dropdown-arrow > .icon {
   width: 14px;
   height: 14px;
-  opacity: 0.7;
 }
 .dropdown-menu {
   position: absolute;

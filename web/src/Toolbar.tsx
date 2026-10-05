@@ -174,7 +174,6 @@ export function Toolbar({
           <Icon name="redo" />
         </button>
       </div>
-      <div className="toolbar-divider desktop-only" />
       {operationRibbon}
       <div className="toolbar-spacer mobile-only" />
       {badge && <span className="mode-badge">{badge}</span>}
@@ -189,7 +188,7 @@ export function Toolbar({
         </span>
       )}
       {help.length > 0 && (
-        <Menu label={<Icon name="help" />} title="Help" entries={help} align="right" className="help-menu" />
+        <Menu label={<Icon name="help" />} title="Help" entries={help} align="right" className="help-menu" arrow={false} />
       )}
       {!hosted && (
         <>

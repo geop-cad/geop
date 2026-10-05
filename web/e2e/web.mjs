@@ -123,7 +123,7 @@ async function toolbarReach() {
   return { labels: new Set(labels), problems, menus };
 }
 
-for (const width of [1400, 1100, 900]) {
+for (const width of [1625, 1400, 1100, 900]) {
   await check(`every operation is reachable in the toolbar at ${width} px, nothing scrolled`, async () => {
     await page.setViewportSize({ width, height: 900 });
     await fresh();
@@ -137,19 +137,41 @@ for (const width of [1400, 1100, 900]) {
     return `${all.length} operations, ${buttons} as buttons, the rest in ${menus} menus`;
   });
 }
-await page.setViewportSize({ width: 1400, height: 900 });
 
-await check("the primary operations are big buttons at 1400 px", async () => {
+await check("at 1625 px the big operations are big, the small ones small, and every group's caption shows whole", async () => {
+  await page.setViewportSize({ width: 1625, height: 900 });
   await fresh();
-  const big = (await page.locator(".operation-ribbon button.op-button.big").allInnerTexts()).map((l) => l.trim());
-  const missing = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Part"].filter((l) => !big.includes(l));
-  expect(missing.length === 0, `not big: ${missing.join(", ")} (big: ${big.join(", ")})`);
-  return `big: ${big.join(", ")}`;
+  const operations = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.operations);
+  const tier = (t) => operations.filter((o) => o.tier === t).map((o) => o.label);
+  const labels = async (selector) => (await page.locator(selector).allInnerTexts()).map((l) => l.replace(/\s+/g, " ").trim());
+  const big = await labels(".operation-ribbon button.op-button.big");
+  const small = await labels(".operation-ribbon button.op-button.small");
+  const wantBig = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Linear pattern", "Boundary surface", "Base flange", "Part", "Drawing"];
+  expect(JSON.stringify(tier("Big")) === JSON.stringify(wantBig), `the editor's big operations: ${tier("Big").join(", ")}`);
+  expect(JSON.stringify(big) === JSON.stringify(wantBig), `big: ${big.join(", ")}`);
+  const wantSmall = [...tier("Small"), "Drag"];
+  const notSmall = wantSmall.filter((l) => !small.includes(l));
+  expect(notSmall.length === 0, `not shown small: ${notSmall.join(", ")}`);
+  const shownMenu = tier("Menu").filter((l) => big.includes(l) || small.includes(l));
+  expect(shownMenu.length === 0, `shown as buttons, though only in their menus: ${shownMenu.join(", ")}`);
+  const captions = await page.evaluate(() => {
+    const bar = document.querySelector(".toolbar").getBoundingClientRect();
+    return [...document.querySelectorAll(".operation-ribbon .ribbon-caption")].map((c) => {
+      const r = c.getBoundingClientRect();
+      return { text: c.innerText.trim(), whole: c.scrollWidth <= c.clientWidth && r.top >= bar.top && r.bottom <= bar.bottom };
+    });
+  });
+  const clipped = captions.filter((c) => !c.whole).map((c) => c.text);
+  expect(captions.length === 8, `${captions.length} captions: ${captions.map((c) => c.text).join(", ")}`);
+  expect(clipped.length === 0, `clipped captions: ${clipped.join(", ")}`);
+  const height = await page.locator(".toolbar").evaluate((el) => el.getBoundingClientRect().height);
+  expect(height >= 76 && height <= 84, `the bar is ${height} px high`);
+  return `big: ${big.join(", ")}; small: ${small.join(", ")}`;
 });
 
-await check("the toolbar at 1400, 1100 and 800 px", async () => {
+await check("the toolbar at 1625, 1400, 1100, 900 and 800 px", async () => {
   fs.mkdirSync(path.join(WEB, "e2e", "out"), { recursive: true });
-  for (const width of [1400, 1100, 800]) {
+  for (const width of [1625, 1400, 1100, 900, 800]) {
     await page.setViewportSize({ width, height: 900 });
     await fresh();
     await page.screenshot({ path: path.join(WEB, "e2e", "out", `toolbar-${width}.png`) });

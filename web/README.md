@@ -21,10 +21,14 @@ crate can build a solid, rasterize it, and hand the mesh to JS end-to-end.
 - `src/App.tsx` — the editor: the program, the step being edited, and
   sending what the user does to `edit_step`.
 - `src/OperationRibbon.tsx` — the operations as a ribbon of the groups the
-  editor sends them in (`#[operation(group = ..., primary)]` on
-  `PartOperation`): big buttons for the primary ones, small stacked ones
-  for the rest, giving way to menus where the window is narrow; a section
-  per group on a phone. A new operation needs no change here.
+  editor sends them in (`#[operation(group = ..., tier = ...)]` on
+  `PartOperation`): per group, its `Big` operations as buttons as high as
+  the bar, its `Small` ones stacked three to a column beside them, and a
+  caption under them that drops down the whole group, the `Menu` ones only
+  there. Where the window is narrow, groups give way from the last: their
+  small buttons fold into the menu, then the big ones shrink to rows, then
+  each group collapses to its menu, then into "More". A section per group
+  on a phone. A new operation needs no change here.
 - `src/selection.ts` — a drag selects text only inside the dialog or panel
   it starts in; the app's chrome is never selectable.
 - `src/DialogView.tsx` — renders a step's dialog from its primitives.
@@ -46,6 +50,13 @@ npm run dev         # rebuilds the wasm pkg, then starts the Vite dev server
 npm run build        # rebuilds the wasm pkg, then produces a production build in dist/
 ```
 
+The dev server reloads the page's TypeScript as it changes, but builds the
+wasm kernel only when it starts: after a change to the Rust code, run
+`npm run build:wasm` (or restart `npm run dev`). A page newer than its
+kernel misreads what the kernel sends — the toolbar once showed every
+operation small and in one group that way — so the page says so when the
+operations it is sent lack the tier they are shown at.
+
 ## End-to-end checks
 
 `web/e2e/` drives the real app in a headless Chrome through
@@ -64,8 +75,10 @@ npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
 - `npm run e2e` rebuilds `dist/` if any source is newer (`npm run build`),
   serves it with `vite preview` on a free port, and checks that every
   operation is in reach of the toolbar — a button, or an entry of a menu of
-  it — at 1400, 1100 and 900 px wide, with nothing scrolled (screenshots
-  of the bar at 1400, 1100 and 800 px land in `e2e/out/toolbar-*.png`);
+  it — at 1625, 1400, 1100 and 900 px wide, with nothing scrolled; that at
+  1625 px the big operations are big, the small ones small, and no
+  group's caption is clipped (screenshots of the bar at 1625, 1400, 1100,
+  900 and 800 px land in `e2e/out/toolbar-*.png`);
   that a drag over the 3-D view selects no text, and one in a dialog or
   the program panel selects only there; that every
   example of the File menu builds without an error shown or a failed step;
