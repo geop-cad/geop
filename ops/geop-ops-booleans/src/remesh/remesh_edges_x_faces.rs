@@ -97,6 +97,17 @@ const FACE_CONTAINS_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 /// whether it holds.
 const MIN_TRACED_LEGS: usize = 8;
 
+/// How wide a traced curve's enclosure may come out before its legs are
+/// split finer and it is fitted again (see `trace_one_side`): ten times
+/// what the usual branch leaves. Like `MIN_TRACED_LEGS` it bounds effort
+/// and decides how wide the enclosure is, not whether it holds.
+const TRACE_DRIFT: f64 = 1e-5;
+
+/// The most legs a traced curve's fit is refined to: the budget
+/// `TRACE_DRIFT` is pursued with, each leg a corrector and a row of the
+/// interpolation's system.
+const MAX_REFINED_LEGS: usize = 256;
+
 /// How many marching steps to spend on a full revolution of the tighter of
 /// the two surfaces' curvature. A step has to be short compared to how fast
 /// the curve is turning, or the straight-line predictor leaves the surface
@@ -303,9 +314,18 @@ fn find_vertex_at_point<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> Opti
 /// coincident (see [`find_coincident_pair`] instead), or only touches at an
 /// edge endpoint that's already a vertex (a normal shared corner, not an
 /// interior piercing).
+///
+/// `settled` are the pairs already found to have no piercing, which are
+/// not asked again, and every pair found so is added to it. That stays
+/// true while the search goes on: splitting an edge at a piercing keeps
+/// its id for the first piece, and a piece of a curve crosses nothing the
+/// whole did not — so the search is not started over from every pair
+/// after every split, which made a boolean of many crossings, a gear's
+/// teeth or a pulley's grooves, quadratic in them.
 #[allow(clippy::type_complexity)]
 fn find_piercing_crossing<S: Scalar>(
     model: &Model<S>,
+    settled: &mut std::collections::HashSet<(EdgeId, FaceId)>,
     edge_solid: Body,
     face_solid: Body,
     max_solutions: usize,
@@ -320,7 +340,9 @@ fn find_piercing_crossing<S: Scalar>(
 
     for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         for face_id in model.body_faces(face_solid).with_context(&ctx)? {
-            if edge_is_boundary_of_face(model, edge_id, face_id) {
+            if settled.contains(&(edge_id, face_id))
+                || edge_is_boundary_of_face(model, edge_id, face_id)
+            {
                 continue;
             }
 
@@ -416,6 +438,7 @@ fn find_piercing_crossing<S: Scalar>(
                 let vertex = find_vertex_at_point(model, &point);
                 return Ok(Some((edge_id, t, vertex, point, face_id)));
             }
+            settled.insert((edge_id, face_id));
         }
     }
     Ok(None)
@@ -436,8 +459,10 @@ fn split_piercing_crossings<S: Scalar>(
         ))
     };
 
+    let mut settled = std::collections::HashSet::new();
     while let Some((edge_id, t, vertex, point, face_id)) = find_piercing_crossing(
         part.topology(),
+        &mut settled,
         edge_solid,
         face_solid,
         max_solutions,
@@ -1673,39 +1698,73 @@ fn trace_one_side<S: Scalar>(
             // the curve onto a surface tilted against them inherits it as an
             // offset its own width does not cover. So every branch gets at
             // least `MIN_TRACED_LEGS` legs.
+            //
+            // The stride follows how sharply the surfaces curve, not how fast
+            // that curvature changes, and a branch whose curvature runs from
+            // gentle to tight along it — the involute flank of a gear tooth
+            // crossing a plane, its curvature radius growing tenfold from
+            // root to tip — leaves the cubic drifting a hundred times the
+            // usual. So the legs are split finer, each time in two, while the
+            // drift enclosed is more than `TRACE_DRIFT`.
             let strides = points.len() - 1;
-            let pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
-            let mut dense = vec![points[0]];
-            let mut dense_params = vec![params[0]];
-            for i in 0..strides {
-                for k in 1..pieces {
-                    let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
-                    let (p, p_params) =
-                        on_branch(points[i], params[i], points[i + 1], frac).with_context(&ctx)?;
-                    dense.push(p);
-                    dense_params.push(p_params);
+            let mut pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
+            let marched = (&points, &params);
+            let mut best: Option<(NurbCurve<S, 4>, S)> = None;
+            let curve = loop {
+                let (points, params) = marched;
+                let mut dense = vec![points[0]];
+                let mut dense_params = vec![params[0]];
+                for i in 0..strides {
+                    for k in 1..pieces {
+                        let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                        let (p, p_params) = on_branch(points[i], params[i], points[i + 1], frac)
+                            .with_context(&ctx)?;
+                        dense.push(p);
+                        dense_params.push(p_params);
+                    }
+                    dense.push(points[i + 1]);
+                    dense_params.push(params[i + 1]);
                 }
-                dense.push(points[i + 1]);
-                dense_params.push(params[i + 1]);
-            }
-            let (points, params) = (dense, dense_params);
-            // Then the branch inside each of the new legs, which
-            // `interpolate_enclosing` widens the curve to hold.
-            let legs = points.len() - 1;
-            let mut between = Vec::with_capacity(legs);
-            for i in 0..legs {
-                let fractions = true_point_fractions(i, legs);
-                let mut inside = Vec::with_capacity(fractions.len());
-                for &(a, b) in fractions {
-                    let frac = S::from_ratio(a, b).with_context(&ctx)?;
-                    let (p, _) =
-                        on_branch(points[i], params[i], points[i + 1], frac).with_context(&ctx)?;
-                    inside.push(p);
+                let (points, params) = (dense, dense_params);
+                // Then the branch inside each of the new legs, which
+                // `interpolate_enclosing` widens the curve to hold.
+                let legs = points.len() - 1;
+                let mut between = Vec::with_capacity(legs);
+                for i in 0..legs {
+                    let fractions = true_point_fractions(i, legs);
+                    let mut inside = Vec::with_capacity(fractions.len());
+                    for &(a, b) in fractions {
+                        let frac = S::from_ratio(a, b).with_context(&ctx)?;
+                        let (p, _) = on_branch(points[i], params[i], points[i + 1], frac)
+                            .with_context(&ctx)?;
+                        inside.push(p);
+                    }
+                    between.push(inside);
                 }
-                between.push(inside);
-            }
-            let curve = NurbCurve::<S, 4>::interpolate_enclosing(&points, &between, 3)
-                .with_context(&ctx)?;
+                let curve = NurbCurve::<S, 4>::interpolate_enclosing(&points, &between, 3)
+                    .with_context(&ctx)?;
+                let width = curve
+                    .control_points
+                    .iter()
+                    .flat_map(|p| (0..3).map(move |k| p[k].width()))
+                    .fold(S::ZERO, |a, w| if w.definitely_greater(a) { w } else { a });
+                // Finer legs only help while the drift is what makes the
+                // curve wide: once halving them no longer halves the width,
+                // the width is the points' own, and the coarser fit is kept.
+                let halved = best
+                    .as_ref()
+                    .is_none_or(|(_, before)| before.definitely_greater(width.mul(S::TWO)));
+                if !halved {
+                    break best.expect("a fit to compare with").0;
+                }
+                if 2 * legs > MAX_REFINED_LEGS
+                    || !width.definitely_greater(S::from_f64(TRACE_DRIFT))
+                {
+                    break curve;
+                }
+                best = Some((curve, width));
+                pieces *= 2;
+            };
             let edge = part
                 .insert_edge(
                     Edge {

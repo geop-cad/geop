@@ -12,9 +12,14 @@
 //! Every part turns around, or runs along, the `z` axis, and carries named
 //! datums to mate it by: `axis`, and a plane through the origin for the
 //! face it sits on — `seat` under a screw's head, `top` of a countersunk
-//! screw, `base` of a nut, washer, pin or standoff, `side` of a bearing,
-//! `end` of an extrusion, `face` of a motor. A concentric mate on `axis`
-//! and a coincident one on that plane place it.
+//! screw, `base` of a nut, washer, pin or standoff, `side` of a bearing or
+//! a gear, `end` of an extrusion, pulley or coupling, `face` of a motor,
+//! `mount` of a servo; a part running along `z` sits on a plane beside it,
+//! `back` of a rack, `base` of a rail, `top` of a carriage. A concentric
+//! mate on `axis` and a coincident one on that plane place it. The `axis`
+//! is a joint's connector too: a gear or a pulley turns about it, a
+//! carriage slides along its rail's, a servo's horn turns about it — and a
+//! gear coupling ties two gears, or two pulleys on a belt (see [`drive`]).
 //!
 //! Threads are not modelled: a screw's shank and a nut's bore are their
 //! nominal diameter, and [`StandardPart::threaded`] names the faces a
@@ -26,7 +31,9 @@
 
 mod components;
 pub mod drawing;
+pub mod drive;
 mod fasteners;
+pub mod involute;
 pub mod steps;
 pub mod tables;
 
@@ -85,7 +92,7 @@ type Family = fn(&'static str) -> GeopResult<StandardPart>;
 /// Every family: the file it is placed from, and what builds it. Listing
 /// the files builds nothing; each family is built the first time it is
 /// read (see [`entry`]).
-const FAMILIES: [(&str, Family); 14] = [
+const FAMILIES: [(&str, Family); 25] = [
     ("std:iso4762_socket_head_cap_screw.geop", fasteners::iso4762),
     ("std:iso7380_button_head_screw.geop", fasteners::iso7380),
     ("std:iso10642_countersunk_screw.geop", fasteners::iso10642),
@@ -100,6 +107,17 @@ const FAMILIES: [(&str, Family); 14] = [
     ("std:tslot_2020.geop", components::tslot_2020),
     ("std:tslot_2040.geop", components::tslot_2040),
     ("std:nema17_stepper.geop", components::nema17),
+    ("std:spur_gear.geop", drive::spur_gear),
+    ("std:gt2_pulley_16t.geop", drive::gt2_pulley_16),
+    ("std:gt2_pulley_20t.geop", drive::gt2_pulley_20),
+    ("std:gt2_pulley_36t.geop", drive::gt2_pulley_36),
+    ("std:shaft_collar.geop", drive::shaft_collar),
+    ("std:flange_coupling.geop", drive::flange_coupling),
+    ("std:gear_rack.geop", drive::rack),
+    ("std:linear_rail.geop", components::linear_rail),
+    ("std:linear_carriage.geop", components::linear_carriage),
+    ("std:servo_sg90.geop", components::servo_sg90),
+    ("std:servo_mg996r.geop", components::servo_mg996r),
 ];
 
 /// The family placed from `file`, built once, the first time it is asked

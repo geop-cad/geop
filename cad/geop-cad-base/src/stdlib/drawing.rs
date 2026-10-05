@@ -7,7 +7,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_sketch::{ConstraintId, CurveId, PointId};
+use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
 use geop_ops::{
     Design, EntityRef,
     parameters::{Parameters, evaluate, is_formula, number},
@@ -91,6 +91,23 @@ impl Drawing {
         self.sketch.add_line(a, b)
     }
 
+    /// The Bézier curve of the control points `control`, of degree one
+    /// less than there are: a spline on one span, through its first and
+    /// last point.
+    pub fn bezier(&mut self, control: Vec<PointId>) -> CurveId {
+        let n = control.len();
+        let mut knots = vec![Design::ZERO; n];
+        knots.extend(vec![Design::ONE; n]);
+        self.sketch.add_curve(CurveKind::Spline {
+            control_points: control,
+            shape: Some(SplineShape {
+                degree: n - 1,
+                knots,
+                weights: vec![Design::ONE; n],
+            }),
+        })
+    }
+
     /// A closed polygon through `corners`, each `[x, y]` formulas: its
     /// lines, the first from the first corner to the second.
     pub fn polygon(&mut self, corners: &[[String; 2]]) -> GeopResult<Vec<CurveId>> {
@@ -159,14 +176,11 @@ impl Drawing {
         self.origin
     }
 
-    /// The sketch, on `plane`, solved.
-    pub fn on(mut self, plane: EntityRef) -> GeopResult<AddSketchArgs> {
-        let report = self.sketch.solve()?;
-        if !report.converged {
-            return Err(GeopError::new(format!(
-                "a standard part's sketch does not solve: {report:?}"
-            )));
-        }
+    /// The sketch, on `plane`: drawn where its dimensions put it, so it
+    /// needs no solving — and a build with the parameters as defined then
+    /// solves none (see `AddSketch`), which is what keeps a large profile, a
+    /// rack's teeth, cheap to place.
+    pub fn on(self, plane: EntityRef) -> GeopResult<AddSketchArgs> {
         Ok(AddSketchArgs {
             plane: Some(plane),
             sketch: self.sketch,

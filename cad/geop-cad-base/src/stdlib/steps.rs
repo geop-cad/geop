@@ -221,12 +221,19 @@ pub fn axis_datum(program: &mut Program) {
 /// up it: through the origin, the face a part sits on, put there — what a
 /// coincident mate picks — or a plane to draw an outline on.
 pub fn plane_datum(program: &mut Program, id: &str, height: &str) {
+    offset_datum(program, id, outline_plane(), height);
+}
+
+/// The datum plane `id` parallel to the plane `plane`, `distance` — a
+/// formula of the size — along its normal: for a part that runs along `z`,
+/// a face it sits on beside the axis.
+pub fn offset_datum(program: &mut Program, id: &str, plane: EntityRef, distance: &str) {
     program.push(
         id,
         AddDatumArgs {
-            selection: vec![outline_plane()],
+            selection: vec![plane],
             construction: Construction::Offset {
-                distance: height.into(),
+                distance: distance.into(),
             },
         },
     );

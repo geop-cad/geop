@@ -486,6 +486,132 @@ pub fn nema17() -> Table {
     )
 }
 
+/// Gear modules, from ISO 54's first and second choice: module `m`.
+pub fn gear_modules() -> Table {
+    Table::of(
+        &["m"],
+        &[
+            ("m0.5", [0.5]),
+            ("m0.8", [0.8]),
+            ("m1", [1.0]),
+            ("m1.25", [1.25]),
+            ("m1.5", [1.5]),
+            ("m2", [2.0]),
+            ("m2.5", [2.5]),
+            ("m3", [3.0]),
+        ],
+        "m1",
+    )
+}
+
+/// Gear racks, as they are sold: module `m`, face width `b`, and height
+/// `h` from the back to the pitch line — the rack `b` square overall.
+pub fn racks() -> Table {
+    Table::of(
+        &["m", "b", "h"],
+        &[
+            ("m0.5", [0.5, 5.0, 4.5]),
+            ("m0.8", [0.8, 8.0, 7.2]),
+            ("m1", [1.0, 10.0, 9.0]),
+            ("m1.25", [1.25, 12.0, 10.75]),
+            ("m1.5", [1.5, 15.0, 13.5]),
+            ("m2", [2.0, 20.0, 18.0]),
+            ("m2.5", [2.5, 25.0, 22.5]),
+            ("m3", [3.0, 30.0, 27.0]),
+        ],
+        "m1",
+    )
+}
+
+/// GT2 timing pulleys of `z` teeth, by bore: bore `d`, hub diameter `dh`
+/// and length `lh` — rows `20T-5`, a 20-tooth pulley bored 5.
+pub fn gt2_pulleys(z: usize) -> Table {
+    let (rows, selected): (&[(&str, [f64; 3])], _) = match z {
+        16 => (&[("16T-5", [5.0, 12.0, 6.0])], "16T-5"),
+        20 => (
+            &[
+                ("20T-5", [5.0, 15.0, 7.0]),
+                ("20T-6.35", [6.35, 15.0, 7.0]),
+                ("20T-8", [8.0, 15.0, 7.0]),
+            ],
+            "20T-5",
+        ),
+        36 => (
+            &[("36T-6.35", [6.35, 18.0, 7.0]), ("36T-8", [8.0, 18.0, 7.0])],
+            "36T-8",
+        ),
+        _ => (&[], ""),
+    };
+    Table::of(&["d", "dh", "lh"], rows, selected)
+}
+
+/// Shaft collars after DIN 705 A: bore `d`, outside `D`, width `b`, set
+/// screw thread `ds`.
+pub fn shaft_collars() -> Table {
+    Table::of(
+        &["d", "D", "b", "ds"],
+        &[
+            ("3", [3.0, 7.0, 5.0, 3.0]),
+            ("4", [4.0, 8.0, 6.0, 3.0]),
+            ("5", [5.0, 10.0, 6.0, 3.0]),
+            ("6", [6.0, 12.0, 8.0, 4.0]),
+            ("8", [8.0, 16.0, 8.0, 4.0]),
+            ("10", [10.0, 20.0, 10.0, 5.0]),
+            ("12", [12.0, 22.0, 12.0, 6.0]),
+        ],
+        "5",
+    )
+}
+
+/// Rigid flange couplings, `d1` to a larger `d2`: hub diameter `D`, flange
+/// diameter `F`, length `L` and flanges' thickness together `f`.
+pub fn flange_couplings() -> Table {
+    Table::of(
+        &["d1", "d2", "D", "F", "L", "f"],
+        &[
+            ("5x6", [5.0, 6.0, 14.0, 25.0, 25.0, 8.0]),
+            ("5x8", [5.0, 8.0, 16.0, 28.0, 25.0, 8.0]),
+            ("6x8", [6.0, 8.0, 16.0, 28.0, 25.0, 8.0]),
+            ("6.35x8", [6.35, 8.0, 16.0, 28.0, 25.0, 8.0]),
+            ("8x10", [8.0, 10.0, 20.0, 32.0, 30.0, 10.0]),
+            ("8x12", [8.0, 12.0, 22.0, 35.0, 30.0, 10.0]),
+        ],
+        "5x8",
+    )
+}
+
+/// Miniature linear guide rails, MGN series: width `W` and height `H`.
+pub fn linear_rails() -> Table {
+    Table::of(
+        &["W", "H"],
+        &[("MGN9", [9.0, 6.5]), ("MGN12", [12.0, 8.0])],
+        "MGN12",
+    )
+}
+
+/// Miniature linear guide carriages, MGN series, `C` the standard block and
+/// `H` the long one: block width `W`, length `L`, height `H` and clearance
+/// `H1` over the rail's bottom, the rail's width `WR` and height `HR`, the
+/// mounting holes `B` apart across and `C` along, thread `M`.
+pub fn linear_carriages() -> Table {
+    Table::of(
+        &["W", "L", "H", "H1", "WR", "HR", "B", "C", "M"],
+        &[
+            ("MGN9C", [20.0, 28.9, 10.0, 2.0, 9.0, 6.5, 15.0, 10.0, 2.0]),
+            ("MGN9H", [20.0, 39.9, 10.0, 2.0, 9.0, 6.5, 15.0, 16.0, 2.0]),
+            (
+                "MGN12C",
+                [27.0, 34.7, 13.0, 3.0, 12.0, 8.0, 20.0, 15.0, 3.0],
+            ),
+            (
+                "MGN12H",
+                [27.0, 45.4, 13.0, 3.0, 12.0, 8.0, 20.0, 20.0, 3.0],
+            ),
+        ],
+        "MGN12C",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
