@@ -414,3 +414,26 @@ fn random_networks_are_valid() {
         }
     }
 }
+
+/// Two `v` curves crossing each other between the `u` curves cross them in
+/// different orders: no grid, refused naming them.
+#[test]
+fn network_refuses_curves_of_one_direction_that_meet() {
+    let mut part = Part::new();
+    let line = |a: [f64; 2], b: [f64; 2]| {
+        polynomial([&[a[0], b[0] - a[0]], &[a[1], b[1] - a[1]], &[0.]], 1)
+    };
+    let u = vec![
+        wire(&mut part, "u0", line([-1., 0.], [2., 0.])),
+        wire(&mut part, "u1", line([-1., 1.], [2., 1.])),
+    ];
+    let v = vec![
+        wire(&mut part, "v0", line([0., -0.5], [1., 1.5])),
+        wire(&mut part, "v1", line([1., -0.5], [0., 1.5])),
+    ];
+    let error = refused(span(part, u, v));
+    assert!(
+        error.contains("v curve v0 and v curve v1 meet between the curves they cross"),
+        "{error}"
+    );
+}

@@ -314,6 +314,37 @@ await check("a pattern picks a hole as a feature by a click on its wall", async 
   return `picked ${picked}; ${stats}`;
 });
 
+await check("a UV surface's rib is taken out, and picked again by a click on it", async () => {
+  await fresh();
+  await fileMenu(page, "Curved panel");
+  await builtCleanly();
+  expect((await page.locator(".structure-panel").innerText()).includes("network(panel)"), "no sheet network(panel)");
+  await page.locator(".timeline .step-box").last().click();
+  await settle(page);
+  const field = (label) => popup.locator(".reference", { has: page.locator("button", { hasText: `${label}:` }) });
+  const items = (label) => field(label).locator(".item-label").allInnerTexts();
+  const [u, v] = [await items("u curves"), await items("v curves")];
+  expect(u.length === 3 && v.length === 3, `u curves: ${u.join(", ")}; v curves: ${v.join(", ")}`);
+  // The middle rib taken out: the panel spans the outer two.
+  const middle = u[1];
+  await field("u curves").locator(".item-remove").nth(1).click();
+  await settle(page);
+  expect((await shownErrors(page)).length === 0, `errors shown: ${(await shownErrors(page)).join(" | ")}`);
+  // And picked again: clicked up and down a column left of the view's
+  // centre, between the spines, until it is in the list.
+  await field("u curves").locator("button", { hasText: "u curves:" }).click();
+  await settle(page);
+  let picked = await items("u curves");
+  for (let k = 1; k < 120 && picked.length < 3; k++) {
+    await clickView(-120, (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * 5);
+    picked = await items("u curves");
+  }
+  expect(picked.length === 3 && picked[2] === middle, `picked: ${picked.join(", ")}, not ${middle}`);
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  return `picked ${middle}; ${stats}`;
+});
+
 await check("a parameter renamed is renamed where it is read, and removing one read warns", async () => {
   await fresh();
   await fileMenu(page, "Parametric plate");

@@ -14,7 +14,9 @@
 //! sharing an end — an edge's vertex, a sketch's point — are declared to
 //! meet there, and are taken to, without a search. A pair that does not
 //! cross, crosses more than once, or runs along each other is refused,
-//! naming both curves, and a pair that misses says by how much.
+//! naming both curves, and a pair that misses says by how much. So are two
+//! curves of one direction that meet within the network: they make no
+//! grid.
 //!
 //! The network's outer curves bound the face: each curve is cut to the
 //! stretch between its first and last crossing, so curves may run on past
@@ -337,6 +339,35 @@ pub fn network_surface<S: Scalar>(
     let (u, on_u): (Vec<Strand<S>>, Vec<Vec<S>>) = pick(&u, &on_u, &u_order);
     let (v, on_v): (Vec<Strand<S>>, Vec<Vec<S>>) = pick(&v, &on_v, &v_order);
 
+    // Within the network, curves of one direction must not meet: two that
+    // cross each other between the curves they both cross make no grid,
+    // whichever way round they are taken.
+    let cut = |s: &Strand<S>, params: &[S]| s.curve.sub_curve(params[0], params[params.len() - 1]);
+    for (strands, params) in [(&u, &on_u), (&v, &on_v)] {
+        let pieces = strands
+            .iter()
+            .zip(params.iter())
+            .map(|(s, p)| cut(s, p))
+            .collect::<GeopResult<Vec<_>>>()?;
+        for a in 0..pieces.len() {
+            for b in a + 1..pieces.len() {
+                let met = curve_curve_intersect(
+                    &pieces[a],
+                    &pieces[b],
+                    1,
+                    MAX_NODES,
+                    min_subdivision_size(),
+                )?;
+                if !met.as_slice().is_empty() {
+                    return Err(GeopError::new(format!(
+                        "{} and {} meet between the curves they cross: the curves of one direction must not meet, so that they make a grid with the others",
+                        strands[a].label, strands[b].label
+                    )));
+                }
+            }
+        }
+    }
+
     let curves = |s: &[Strand<S>]| s.iter().map(|s| s.curve.clone()).collect::<Vec<_>>();
     let surface = NurbSurface3D::gordon(&curves(&u), &curves(&v), &on_u, &on_v)?;
 
@@ -351,7 +382,6 @@ pub fn network_surface<S: Scalar>(
             Ok(a.union(&b))
         })
         .collect::<GeopResult<Vec<_>>>()?;
-    let cut = |s: &Strand<S>, params: &[S]| s.curve.sub_curve(params[0], params[params.len() - 1]);
     let edges = vec![
         EdgeSpec {
             curve: cut(&u[0], &on_u[0])?,
