@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Geop VS Code Extension",
+      "detail": "The web app, the geop server and the extension, so a launch runs what is checked out",
+      "type": "npm",
+      "script": "build",
+      "path": "vscode-extension",
+      "problemMatcher": ["$tsc"]
+    }
+  ]
+}
