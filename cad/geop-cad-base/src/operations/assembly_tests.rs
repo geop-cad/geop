@@ -463,6 +463,7 @@ fn an_example_of_several_files_adds_its_files() {
     assert_eq!(
         program.workspace_examples,
         [
+            "press",
             "pin_in_plate",
             "chain",
             "parametric_plates",

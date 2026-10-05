@@ -1,0 +1,646 @@
+{
+  "steps": [
+    {
+      "id": "sketch4",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": 33.14284318962953,
+              "y": 18.796896117137372
+            },
+            "6": {
+              "x": 56.975163183893564,
+              "y": -17.23476177238582
+            },
+            "7": {
+              "x": 56.97516318389357,
+              "y": 18.796896117137376
+            },
+            "8": {
+              "x": 33.14284318962953,
+              "y": -17.234761772385816
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "9": {
+              "type": "Line",
+              "start": 5,
+              "end": 7,
+              "construction": false
+            },
+            "10": {
+              "type": "Line",
+              "start": 7,
+              "end": 6,
+              "construction": false
+            },
+            "11": {
+              "type": "Line",
+              "start": 6,
+              "end": 8,
+              "construction": false
+            },
+            "12": {
+              "type": "Line",
+              "start": 8,
+              "end": 5,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "13": {
+              "type": "Horizontal",
+              "line": 9
+            },
+            "14": {
+              "type": "Vertical",
+              "line": 10
+            },
+            "15": {
+              "type": "Horizontal",
+              "line": 11
+            },
+            "16": {
+              "type": "Vertical",
+              "line": 12
+            }
+          },
+          "next_id": 21
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "revolve1",
+      "operation": "revolve",
+      "args": {
+        "sketch": "sketch4",
+        "axis": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "axis": "y"
+          }
+        },
+        "extent": {
+          "side1": {
+            "blind": 360
+          },
+          "symmetric": false,
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "new_body"
+        }
+      }
+    },
+    {
+      "id": "reference1",
+      "operation": "add_datum",
+      "args": {
+        "selection": [
+          {
+            "type": "Datum",
+            "name": "origin",
+            "component": {
+              "plane": "x"
+            }
+          }
+        ],
+        "construction": {
+          "method": "offset",
+          "distance": 42.56
+        }
+      }
+    },
+    {
+      "id": "reference2",
+      "operation": "add_datum",
+      "args": {
+        "selection": [
+          {
+            "type": "Datum",
+            "name": "reference1"
+          }
+        ],
+        "construction": {
+          "method": "offset",
+          "distance": 70.72
+        }
+      }
+    },
+    {
+      "id": "reference3",
+      "operation": "add_datum",
+      "args": {
+        "selection": [
+          {
+            "type": "Datum",
+            "name": "reference2"
+          }
+        ],
+        "construction": {
+          "method": "offset",
+          "distance": 182.03
+        }
+      }
+    },
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "reference1"
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": -10.081120016911738,
+              "y": -15.933659635924858
+            },
+            "6": {
+              "x": 10.081120016911736,
+              "y": 15.933659635924858
+            },
+            "8": {
+              "x": 17.27560200577403,
+              "y": 11.381758939759338
+            },
+            "10": {
+              "x": 2.8866380280494304,
+              "y": 20.48556033209038
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "7": {
+              "type": "Line",
+              "start": 5,
+              "end": 6,
+              "construction": true
+            },
+            "9": {
+              "type": "Spline",
+              "control_points": [
+                5,
+                8,
+                6
+              ],
+              "construction": false
+            },
+            "11": {
+              "type": "Spline",
+              "control_points": [
+                6,
+                10,
+                5
+              ],
+              "construction": false
+            },
+            "12": {
+              "type": "Line",
+              "start": 10,
+              "end": 6,
+              "construction": true
+            },
+            "13": {
+              "type": "Line",
+              "start": 6,
+              "end": 8,
+              "construction": true
+            }
+          },
+          "constraints": {
+            "14": {
+              "type": "Collinear",
+              "a": 13,
+              "b": 12
+            },
+            "15": {
+              "type": "Equal",
+              "a": 12,
+              "b": 13
+            },
+            "16": {
+              "type": "Perpendicular",
+              "a": 7,
+              "b": 12
+            },
+            "17": {
+              "type": "Midpoint",
+              "point": 0,
+              "curve": 7
+            }
+          },
+          "next_id": 18
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "reference2"
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": -12.365328418957485,
+              "y": -27.56834805441249
+            },
+            "6": {
+              "x": 12.365328418957485,
+              "y": 27.568348054412485
+            },
+            "8": {
+              "x": 24.511252902208778,
+              "y": 22.12049369292418
+            },
+            "10": {
+              "x": 0.21940393570619132,
+              "y": 33.016202415900786
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "7": {
+              "type": "Line",
+              "start": 5,
+              "end": 6,
+              "construction": true
+            },
+            "9": {
+              "type": "Spline",
+              "control_points": [
+                5,
+                8,
+                6
+              ],
+              "construction": false
+            },
+            "11": {
+              "type": "Spline",
+              "control_points": [
+                6,
+                10,
+                5
+              ],
+              "construction": false
+            },
+            "12": {
+              "type": "Line",
+              "start": 10,
+              "end": 6,
+              "construction": true
+            },
+            "13": {
+              "type": "Line",
+              "start": 6,
+              "end": 8,
+              "construction": true
+            }
+          },
+          "constraints": {
+            "14": {
+              "type": "Collinear",
+              "a": 13,
+              "b": 12
+            },
+            "15": {
+              "type": "Equal",
+              "a": 12,
+              "b": 13
+            },
+            "16": {
+              "type": "Perpendicular",
+              "a": 7,
+              "b": 12
+            },
+            "17": {
+              "type": "Midpoint",
+              "point": 0,
+              "curve": 7
+            }
+          },
+          "next_id": 18
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch3",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "reference3"
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": -3.52116066303088,
+              "y": -12.283149932966918
+            },
+            "6": {
+              "x": 3.521160663030881,
+              "y": 12.283149932966914
+            },
+            "8": {
+              "x": 11.654990155399323,
+              "y": 9.951458094584359
+            },
+            "10": {
+              "x": -4.612668829337559,
+              "y": 14.614841771349472
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "7": {
+              "type": "Line",
+              "start": 5,
+              "end": 6,
+              "construction": true
+            },
+            "9": {
+              "type": "Spline",
+              "control_points": [
+                5,
+                8,
+                6
+              ],
+              "construction": false
+            },
+            "11": {
+              "type": "Spline",
+              "control_points": [
+                6,
+                10,
+                5
+              ],
+              "construction": false
+            },
+            "12": {
+              "type": "Line",
+              "start": 10,
+              "end": 6,
+              "construction": true
+            },
+            "13": {
+              "type": "Line",
+              "start": 6,
+              "end": 8,
+              "construction": true
+            }
+          },
+          "constraints": {
+            "14": {
+              "type": "Collinear",
+              "a": 13,
+              "b": 12
+            },
+            "15": {
+              "type": "Equal",
+              "a": 12,
+              "b": 13
+            },
+            "16": {
+              "type": "Perpendicular",
+              "a": 7,
+              "b": 12
+            },
+            "17": {
+              "type": "Midpoint",
+              "point": 0,
+              "curve": 7
+            }
+          },
+          "next_id": 18
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "loft1",
+      "operation": "loft",
+      "args": {
+        "profiles": [
+          "sketch1",
+          "sketch2",
+          "sketch3"
+        ],
+        "face": false,
+        "combine": {
+          "mode": "new_body"
+        }
+      }
+    },
+    {
+      "id": "circular_pattern1",
+      "operation": "circular_pattern",
+      "args": {
+        "bodies": [
+          {
+            "type": "Solid",
+            "name": "loft(loft1)"
+          }
+        ],
+        "axis": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "axis": "y"
+          }
+        },
+        "reversed": false,
+        "count": 6,
+        "angle": {
+          "extent": 360
+        },
+        "combine": {
+          "mode": "union",
+          "target": "revolve(revolve1)"
+        }
+      }
+    }
+  ]
+}

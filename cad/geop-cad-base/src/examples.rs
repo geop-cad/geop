@@ -1440,6 +1440,14 @@ pub fn bolted_plate() -> Program {
     program
 }
 
+/// An example drawn in the editor, kept as the program it saved (in
+/// `src/drawn/`): its sketches as they were drawn, which no code here says
+/// better. Its tests build it like every other example, so a change to the
+/// format that breaks it is found there: save it again from the editor.
+fn drawn(text: &str) -> Program {
+    Program::from_json(text).expect("a drawn example is a program")
+}
+
 /// The files of an example made of several: each file's path and program,
 /// the one to open first first.
 pub type ExampleFiles = Vec<(&'static str, Program)>;
@@ -1452,6 +1460,15 @@ pub type Example<T> = (&'static str, fn() -> T);
 /// files: listing them builds nothing (see [`all`]).
 pub fn workspaces() -> Vec<Example<ExampleFiles>> {
     vec![
+        ("press", || {
+            vec![
+                ("asm.geop", drawn(include_str!("drawn/press/asm.geop"))),
+                ("base.geop", drawn(include_str!("drawn/press/base.geop"))),
+                ("handle.geop", drawn(include_str!("drawn/press/handle.geop"))),
+                ("slider.geop", drawn(include_str!("drawn/press/slider.geop"))),
+                ("link.geop", drawn(include_str!("drawn/press/link.geop"))),
+            ]
+        }),
         ("pin_in_plate", || {
             vec![
                 ("assembly.geop", pin_in_plate_assembly()),
@@ -2220,6 +2237,9 @@ pub fn curved_panel() -> Program {
 /// may solve sketches, or build a part to name its faces.
 pub fn all() -> Vec<Example<Program>> {
     vec![
+        ("turbine_blade", || drawn(include_str!("drawn/turbine_blade.geop"))),
+        ("cool_flange", || drawn(include_str!("drawn/cool_flange.geop"))),
+        ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
         ("box_with_drill_hole", box_with_drill_hole),
         ("bracket", bracket),
         ("cross_drilled_shaft", cross_drilled_shaft),
@@ -2392,6 +2412,16 @@ mod tests {
             ([4.0, 4.0, 4.2], PointClassification::Outside),
         ] {
             assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
+        }
+    }
+
+    /// The examples drawn in the editor build valid parts and round-trip,
+    /// as the ones written here do.
+    #[test]
+    fn drawn_examples_round_trip() {
+        let drawn = ["turbine_blade", "cool_flange", "edge_part"];
+        for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
+            build_and_round_trip(name, &program());
         }
     }
 

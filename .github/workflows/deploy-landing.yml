@@ -34,10 +34,10 @@ jobs:
       - name: Export example STLs
         run: |
           cargo run -p geop-cad-cli --release -- examples --out-dir homepage/examples \
-            --only cross_drilled_shaft \
-            --only handle_with_hole \
-            --only luggage_tag \
-            --only four_bar \
+            --only turbine_blade \
+            --only cool_flange \
+            --only press \
+            --only edge_part \
             --only bracket
 
       # three.js is served from the site itself rather than a CDN, so a

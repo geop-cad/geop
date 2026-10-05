@@ -1,0 +1,375 @@
+{
+  "steps": [
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "5": {
+              "type": "Circle",
+              "center": 0,
+              "radius": 5.95,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "6": {
+              "type": "Diameter",
+              "curve": 5,
+              "value": 11.9
+            }
+          },
+          "next_id": 7
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ],
+        "labels": {
+          "6": [
+            14.38226670885038,
+            15.774544716691713
+          ]
+        }
+      }
+    },
+    {
+      "id": "extrude1",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch1",
+        "extent": {
+          "side1": {
+            "blind": 45
+          },
+          "symmetric": true,
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "new_body"
+        }
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": 225.08966947805445,
+              "y": 8.960990855918872
+            },
+            "6": {
+              "x": 225.08966947805445,
+              "y": 0
+            },
+            "7": {
+              "x": -10.69070358856111,
+              "y": 8.960990855918872
+            },
+            "16": {
+              "x": -10.69070358856111,
+              "y": 1.3877787807814457e-17
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "9": {
+              "type": "Line",
+              "start": 6,
+              "end": 5,
+              "construction": false
+            },
+            "10": {
+              "type": "Line",
+              "start": 5,
+              "end": 7,
+              "construction": false
+            },
+            "18": {
+              "type": "Line",
+              "start": 7,
+              "end": 16,
+              "construction": false
+            },
+            "22": {
+              "type": "Line",
+              "start": 16,
+              "end": 6,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "13": {
+              "type": "Vertical",
+              "line": 9
+            },
+            "14": {
+              "type": "Horizontal",
+              "line": 10
+            },
+            "17": {
+              "type": "PointOnCurve",
+              "point": 16,
+              "curve": 3
+            },
+            "19": {
+              "type": "Vertical",
+              "line": 18
+            },
+            "23": {
+              "type": "Horizontal",
+              "line": 22
+            }
+          },
+          "next_id": 24
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "revolve1",
+      "operation": "revolve",
+      "args": {
+        "sketch": "sketch2",
+        "axis": {
+          "type": "SketchCurve",
+          "sketch": "sketch2",
+          "curve": 22
+        },
+        "extent": {
+          "side1": {
+            "blind": 360
+          },
+          "symmetric": false,
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "union",
+          "target": "extrude(extrude1)"
+        }
+      }
+    },
+    {
+      "id": "sketch3",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "7": {
+              "x": 62.785028947928446,
+              "y": 0
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "9": {
+              "type": "Circle",
+              "center": 7,
+              "radius": 4.95,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "8": {
+              "type": "PointOnCurve",
+              "point": 7,
+              "curve": 3
+            },
+            "10": {
+              "type": "Diameter",
+              "curve": 9,
+              "value": 9.9
+            }
+          },
+          "next_id": 11
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ],
+        "labels": {
+          "10": [
+            2.1960112600386736,
+            13.94130932745657
+          ]
+        }
+      }
+    },
+    {
+      "id": "extrude2",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch3",
+        "extent": {
+          "side1": {
+            "blind": 46.050000000000004
+          },
+          "symmetric": true,
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "union",
+          "target": "revolve(revolve1)"
+        }
+      }
+    },
+    {
+      "id": "fillet1",
+      "operation": "fillet",
+      "args": {
+        "edges": [
+          "revolve(revolve1,sketch2,p5,q3)",
+          "revolve(revolve1,sketch2,p7,q3)"
+        ],
+        "radius": 3
+      }
+    }
+  ]
+}
