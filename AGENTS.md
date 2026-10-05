@@ -626,6 +626,40 @@ code is split into codegen units), and other jobs on the machine slow
 everything. Compare CPU time, run the old and new binaries interleaved,
 and build both the same way. `perf` is not allowed here: profile by
 interrupting a capped run under gdb at intervals and counting stacks.
+`ptrace_scope` only lets gdb into a process it started: run the test under
+`gdb -batch`, send the inferior `SIGUSR2` (handled `stop print nopass`)
+and print the backtraces. To count, set breakpoints that only count —
+on a line, or on a function with its caller checked — never prints.
+
+The second round found the cost each time in work that was not needed,
+not in slow arithmetic:
+
+- **Where the representation says polynomial, integrate exactly.** Mass
+  properties ran an adaptive 15-point rule inside another along every
+  trim curve. Along a direction with equal weights a surface is a
+  polynomial, its moments one of known degree, and a Gauss–Legendre rule
+  of a few points has no truncation error at all: five times fewer
+  surface points, and a proven inner integral instead of an estimated
+  one (`mass.rs`).
+- **A deterministic iteration that repeats a seed is done.** Newton with
+  sharpened seeds rarely hits an exact fixed point; it cycles in the last
+  bit and ran out its iterations. Once a seed repeats, the rest is
+  periodic and the result known: the identical answer, in less than half
+  the iterations (`NurbSurface::project`).
+- **Ask the cheap question first.** A boolean cast a ray across the whole
+  other solid for every interior point it classified; a point near one
+  already classified is classified along a short path from it, which a
+  box test rules out of nearly every face (`shell_contains_from`). A path
+  between structured points is not generic, though: a straight segment
+  between two points of one face lies in its plane, and two corners of a
+  symmetric face can graze a cylinder. Go by a random point, as a ray
+  takes a random direction.
+- **An interval argument is no licence to extrapolate.** A spline
+  evaluated over a parameter interval reaching past one knot span used
+  that span's polynomial for all of it: 25 times too wide over a fitted
+  curve, which a search then subdivided away at great cost. Curves now
+  unite their spans' parts (`find_spans`); surfaces still extrapolate, and
+  the tangent-branch search on blends pays for it.
 
 ## Working in parallel worktrees
 
