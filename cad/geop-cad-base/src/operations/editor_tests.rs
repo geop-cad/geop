@@ -2833,10 +2833,7 @@ fn a_3d_sketch_point_and_line_are_picked() {
     assert!(highlights.contains(&corner), "{highlights:?}");
     editor.handle(click_at(from_above(3.004, 1.0)));
     editor.handle(click_at(from_above(2.0, 1.005)));
-    editor.handle(dialog(
-        "construction",
-        Value::Choice("parallel".into()),
-    ));
+    editor.handle(dialog("construction", Value::Choice("parallel".into())));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let PartOperation::AddDatum(datum) = &editor.program().steps.last().unwrap().operation else {
@@ -2979,8 +2976,16 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
         }
     };
     for dir in [
-        [-0.5570860145310995, -0.3713906763541206, -0.7427813527082412],
-        [-0.4499813577124772, -0.2893350678973743, -0.8448680347817981],
+        [
+            -0.5570860145310995,
+            -0.3713906763541206,
+            -0.7427813527082412,
+        ],
+        [
+            -0.4499813577124772,
+            -0.2893350678973743,
+            -0.8448680347817981,
+        ],
     ] {
         let hover = editor.handle(Command::Event {
             event: StepEditEvent::Hover {

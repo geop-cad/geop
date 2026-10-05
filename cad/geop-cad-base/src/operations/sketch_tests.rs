@@ -1195,7 +1195,10 @@ fn sketch_curves_are_projected() {
     );
     let mut route = geop_ops_sketch3d::Sketch3d::new();
     let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(examples::n));
-    let (a, b) = (route.add_point(at([3.0, 0.0, 1.0])), route.add_point(at([4.0, 2.0, 3.0])));
+    let (a, b) = (
+        route.add_point(at([3.0, 0.0, 1.0])),
+        route.add_point(at([4.0, 2.0, 3.0])),
+    );
     route.add_line(a, b);
     program.push(
         "route",
@@ -1213,7 +1216,12 @@ fn sketch_curves_are_projected() {
     };
     let (sketch, reference) = projected(&part, &above, curve);
     assert_eq!(kinds(&sketch), ["circle"]);
-    assert!(reference.curves.keys().all(|k| k == &format!("floor,{circle}")));
+    assert!(
+        reference
+            .curves
+            .keys()
+            .all(|k| k == &format!("floor,{circle}"))
+    );
 
     let edge = EntityRef::Edge {
         name: "sketch3d(route,c2)".into(),

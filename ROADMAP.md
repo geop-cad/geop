@@ -17,8 +17,12 @@ below is what was missing then, and where each item stands now.
   offset, mirror, linear and circular patterns tied to their source by
   constraints; auto-tangent; redundant but consistent constraints proven,
   conflicting ones named.
-- 3-D sketches: points, lines, 3-point arcs, splines; snapping to the model;
-  usable as sweep paths and rails.
+- 3-D sketches: points, lines, 3-point arcs, splines; snapping to the model,
+  along x, y and z and onto points; built as wires (edges and vertices
+  without faces), so every tool that picks curves or points takes their
+  lines and points, as it takes a planar sketch's: sweep paths and rails,
+  loft guides, boundary surfaces, datums, pattern directions, harness
+  routes, measuring, projecting.
 - Helices (exact on their cylinder) as thread and sweep paths.
 
 ### Part features

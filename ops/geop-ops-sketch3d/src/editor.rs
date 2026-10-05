@@ -243,7 +243,11 @@ fn locate<S: Scalar>(
                 .find(|p| p.to_string() == hit.visual.key)?;
             return Some(Located::Point(*id));
         }
-        let pick = |roles: &[Role]| context.view.and_then(|view| view.pick(pointer, roles, None));
+        let pick = |roles: &[Role]| {
+            context
+                .view
+                .and_then(|view| view.pick(pointer, roles, None))
+        };
         if let Some(hit) = pick(&[Role::Point]) {
             let at = Aspects::of(&hit.entity, context.before).ok()?.point?;
             return Some(Located::Fixed(hit.entity, design(&at)));
@@ -901,7 +905,11 @@ fn visuals<S: Scalar>(
             Located::Free(_) => Style::Draft,
             _ => Style::Snap,
         };
-        out.push(Visual::new("snap", Shape::Point { at: cast(&hover) }, style));
+        out.push(Visual::new(
+            "snap",
+            Shape::Point { at: cast(&hover) },
+            style,
+        ));
     }
     // The directions a line snaps to, from where it starts — or, before
     // that, from where the next point goes.
