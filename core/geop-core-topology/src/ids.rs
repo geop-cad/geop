@@ -19,4 +19,4 @@ macro_rules! define_ids {
     };
 }
 
-define_ids!(VertexId, EdgeId, CoedgeId, FaceId, ShellId, SolidId,);
+define_ids!(VertexId, EdgeId, CoedgeId, FaceId, ShellId, SolidId, WireId,);

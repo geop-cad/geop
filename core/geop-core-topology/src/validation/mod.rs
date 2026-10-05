@@ -40,9 +40,10 @@ pub(crate) struct BodyGroup {
 /// The model's entities, grouped by the body they belong to — what must not
 /// overlap, or cross without sharing a vertex, is the entities of one body:
 /// separate bodies may touch, or overlap, as they please (the two halves of
-/// a split, a new body extruded into another). An entity of no body — of a
-/// face whose shell is not there, as in a model still being put together —
-/// is in a group of its own with all others like it.
+/// a split, a new body extruded into another). A wire is a group of its own
+/// too. An entity of no body — of a face whose shell is not there, as in a
+/// model still being put together — is in a group of its own with all
+/// others like it.
 pub(crate) fn body_groups<S: Scalar>(model: &Model<S>) -> Vec<BodyGroup> {
     let body_of_face = |face: FaceId| model.body_of_face(face).ok();
     let body_of_coedge = |c: &crate::Coedge<S>| body_of_face(c.face);
@@ -70,14 +71,26 @@ pub(crate) fn body_groups<S: Scalar>(model: &Model<S>) -> Vec<BodyGroup> {
         Some(Body::Solid(s)) => (1, s.0),
         Some(Body::Sheet(s)) => (2, s.0),
     };
+    let mut vertex_wire = HashMap::new();
+    let mut edge_wire = HashMap::new();
+    for (&id, wire) in &model.wires {
+        vertex_wire.extend(wire.vertices.iter().map(|&v| (v, (3, id.0))));
+        edge_wire.extend(wire.edges.iter().map(|&e| (e, (3, id.0))));
+    }
     let mut groups: BTreeMap<(u8, u64), BodyGroup> = BTreeMap::new();
     for &id in model.vertices.keys() {
-        let body = vertex_body.get(&id).copied().flatten();
-        groups.entry(key(body)).or_default().vertices.push(id);
+        let group = vertex_wire
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| key(vertex_body.get(&id).copied().flatten()));
+        groups.entry(group).or_default().vertices.push(id);
     }
     for &id in model.edges.keys() {
-        let body = edge_body.get(&id).copied().flatten();
-        groups.entry(key(body)).or_default().edges.push(id);
+        let group = edge_wire
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| key(edge_body.get(&id).copied().flatten()));
+        groups.entry(group).or_default().edges.push(id);
     }
     for &id in model.faces.keys() {
         groups

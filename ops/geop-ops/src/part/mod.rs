@@ -11,10 +11,9 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_sketch::space::Sketch3d;
 use geop_core_topology::Model;
 
-use crate::{Design, assembly::Mate};
+use crate::assembly::Mate;
 
 mod cable;
 mod datum;
@@ -65,7 +64,7 @@ pub struct Part<S: Scalar> {
     pub(crate) topology: Model<S>,
     pub(crate) names: NameRegistry,
     pub(crate) sketches: BTreeMap<SketchId, PlacedSketch<S>>,
-    pub(crate) sketches3d: BTreeMap<Sketch3dId, Sketch3d<Design>>,
+    pub(crate) sketches3d: BTreeMap<Sketch3dId, sketch3d::PartSketch3d>,
     /// What the operation family that built a solid recorded on it, by the
     /// solid's name (see [`Part::body_data`]).
     body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,

@@ -17,10 +17,16 @@ use crate::{
 /// mean both adjoining faces treat the edge as running the same direction —
 /// a torn (rather than shared) seam, not a genuinely closed manifold edge.
 ///
-/// The one exception is a sheet's border: a sheet bounds nothing, so an
-/// edge only one of its faces uses is simply where it ends.
+/// The exceptions bound no volume: a sheet's border, where an edge only one
+/// of its faces uses is simply where it ends, and a wire's edges, which no
+/// face uses.
 fn check_every_edge_has_two_coedges<S: Scalar>(errors: &mut Vec<GeopError>, model: &Model<S>) {
-    for &edge_id in model.edges.keys() {
+    let wire_edges: std::collections::HashSet<crate::EdgeId> = model
+        .wires
+        .values()
+        .flat_map(|w| w.edges.iter().copied())
+        .collect();
+    for &edge_id in model.edges.keys().filter(|e| !wire_edges.contains(e)) {
         let coedge_ids = model.coedges_of_edge(edge_id);
         let n = coedge_ids.len();
         let on_sheet = |coedge: &crate::CoedgeId| {

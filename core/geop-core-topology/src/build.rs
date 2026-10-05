@@ -8,7 +8,8 @@
 //! its own sequence of euler steps. A sweep is far simpler said whole: these
 //! vertices, these edges between them, these faces, each bounded by these
 //! coedges. [`Model::build_body`] takes exactly that, checks it is
-//! topologically consistent, and only then inserts it.
+//! topologically consistent, and only then inserts it. A description
+//! without faces is a [`Wire`]: edges and vertices standing on their own.
 
 use std::collections::HashMap;
 
@@ -22,11 +23,11 @@ use geop_core_math::{
 
 use crate::{
     Coedge, CoedgeGeometry, CoedgeId, Curve2, Curve3, Edge, EdgeId, Face, FaceId, Model, Sense,
-    Shell, ShellId, Solid, SolidId, Vertex, VertexId, boundary::BoundaryType,
+    Shell, ShellId, Solid, SolidId, Vertex, VertexId, Wire, WireId, boundary::BoundaryType,
 };
 
 /// A body to build, its entities referring to each other by their index in
-/// the lists here.
+/// the lists here: a solid, a sheet, or — with no faces — a wire.
 #[derive(Clone, Debug)]
 pub struct BodySpec<S: Scalar> {
     pub vertices: Vec<Vector3<S>>,
@@ -80,6 +81,8 @@ pub struct BuiltBody {
     pub faces: Vec<FaceId>,
     pub shells: Vec<ShellId>,
     pub solid: Option<SolidId>,
+    /// The wire, for a description without faces.
+    pub wire: Option<WireId>,
 }
 
 /// Where each entity of a [`BodySpec`] made by [`Model::body_spec`] came
@@ -168,17 +171,30 @@ impl<S: Scalar> BodySpec<S> {
         }
     }
 
+    /// Whether it describes a wire: vertices, but no faces.
+    pub fn is_wire(&self) -> bool {
+        self.faces.is_empty() && !self.vertices.is_empty()
+    }
+
     /// Checks that the description is a consistent body: every index
     /// names something, every loop closes up — each coedge ends where the
     /// next one starts — every face is in exactly one shell, every edge and
     /// vertex is used, and an edge is used at most twice, then in opposite
-    /// senses — and, for a solid, exactly twice.
+    /// senses — and, for a solid, exactly twice. A wire's edges are used by
+    /// no face, and its vertices need not be used at all: a point on its
+    /// own is a vertex of the wire.
     pub fn check(&self) -> GeopResult<()> {
         let fail = |what: String| Err(GeopError::new(format!("BodySpec: {what}")));
         for (e, edge) in self.edges.iter().enumerate() {
             if edge.start >= self.vertices.len() || edge.end >= self.vertices.len() {
                 return fail(format!("edge {e} runs between vertices that do not exist"));
             }
+        }
+        if self.is_wire() {
+            if self.solid || !self.shells.is_empty() {
+                return fail("a solid or a shell without faces".to_string());
+            }
+            return Ok(());
         }
         let mut edge_uses: Vec<Vec<Sense>> = vec![Vec::new(); self.edges.len()];
         let mut vertex_used = vec![false; self.vertices.len()];
@@ -251,7 +267,8 @@ impl<S: Scalar> BodySpec<S> {
 
 impl<S: Scalar> Model<S> {
     /// Adds the body `spec` describes, once [`BodySpec::check`] has found
-    /// it consistent — nothing is added otherwise.
+    /// it consistent — nothing is added otherwise. One without faces is
+    /// added as a [`Wire`].
     pub fn build_body(&mut self, spec: BodySpec<S>) -> GeopResult<BuiltBody> {
         spec.check()?;
         let BodySpec {
@@ -350,12 +367,19 @@ impl<S: Scalar> Model<S> {
         for &shell in &shell_ids {
             self.get_shell_mut(shell)?.solid = solid;
         }
+        let wire = (face_ids.is_empty() && !vertices.is_empty()).then(|| {
+            self.insert_wire(Wire {
+                vertices: vertices.clone(),
+                edges: edges.clone(),
+            })
+        });
         Ok(BuiltBody {
             vertices,
             edges,
             faces: face_ids,
             shells: shell_ids,
             solid,
+            wire,
         })
     }
 
@@ -440,5 +464,142 @@ impl<S: Scalar> Model<S> {
             });
         }
         Ok((spec, sources))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use geop_core_geometry::nurb_curve::NurbCurve;
+    use geop_core_math::{
+        for_all_scalars,
+        scalars::Scalar,
+        vector::{Vector3, Vector4},
+    };
+
+    use super::{BodySpec, EdgeSpec};
+    use crate::{
+        Body, CoedgeGeometry, Model,
+        test_fixtures::test_cube_solid,
+        validation::{ValidationParameters, validate, validate_manifold},
+    };
+
+    fn point<S: Scalar>(p: [f64; 3]) -> Vector3<S> {
+        Vector3::from_array(p.map(S::from_f64))
+    }
+
+    fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> crate::Curve3<S> {
+        let h = |p: [f64; 3]| Vector4::from_array([p[0], p[1], p[2], 1.0].map(S::from_f64));
+        NurbCurve::try_new(
+            1,
+            vec![h(a), h(b)],
+            [0.0, 0.0, 1.0, 1.0].map(S::from_f64).to_vec(),
+        )
+        .unwrap()
+    }
+
+    /// Two lines from one corner, and a point on its own, beside the unit
+    /// cube.
+    fn wire_spec<S: Scalar>() -> BodySpec<S> {
+        let corners = [[2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [2.0, 1.0, 0.0]];
+        BodySpec {
+            vertices: corners
+                .iter()
+                .map(|&p| point(p))
+                .chain([point([2.0, 0.0, 1.0])])
+                .collect(),
+            edges: vec![
+                EdgeSpec {
+                    curve: line(corners[0], corners[1]),
+                    start: 0,
+                    end: 1,
+                },
+                EdgeSpec {
+                    curve: line(corners[0], corners[2]),
+                    start: 0,
+                    end: 2,
+                },
+            ],
+            faces: Vec::new(),
+            shells: Vec::new(),
+            solid: false,
+        }
+    }
+
+    /// A description without faces builds a wire: its edges used by no
+    /// face, a point on its own among its vertices — valid beside a solid,
+    /// whose manifold check it leaves alone.
+    fn check_a_spec_without_faces_builds_a_wire<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        test_cube_solid(&mut model);
+        let built = model.build_body(wire_spec()).unwrap();
+        let wire = built.wire.expect("a wire");
+        assert_eq!(built.solid, None);
+        assert_eq!(model.get_wire(wire).unwrap().vertices.len(), 4);
+        assert_eq!(model.get_wire(wire).unwrap().edges.len(), 2);
+        assert_eq!(model.wire_of_edge(built.edges[1]), Some(wire));
+        assert_eq!(model.wire_of_vertex(built.vertices[3]), Some(wire));
+        let params = ValidationParameters::default();
+        validate(&params, &model).unwrap();
+        validate_manifold(&params, &model).unwrap();
+    }
+    #[test]
+    fn a_spec_without_faces_builds_a_wire() {
+        for_all_scalars!(check_a_spec_without_faces_builds_a_wire);
+    }
+
+    /// Deleting a solid deletes what only its faces reached, and leaves a
+    /// wire as it is.
+    fn check_a_wire_outlives_a_deleted_solid<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        let solid = test_cube_solid(&mut model);
+        model.build_body(wire_spec()).unwrap();
+        model.assemble_solid(&[Body::Solid(solid)], &[]).unwrap();
+        assert_eq!(model.vertices.len(), 4);
+        assert_eq!(model.edges.len(), 2);
+        validate(&ValidationParameters::default(), &model).unwrap();
+    }
+    #[test]
+    fn a_wire_outlives_a_deleted_solid() {
+        for_all_scalars!(check_a_wire_outlives_a_deleted_solid);
+    }
+
+    /// A face using an edge of a wire makes it no wire's: invalid.
+    fn check_a_face_on_a_wire_edge_is_invalid<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        test_cube_solid(&mut model);
+        let built = model.build_body(wire_spec()).unwrap();
+        let coedge = model.coedges.values_mut().next().unwrap();
+        coedge.geometry = CoedgeGeometry::Edge(built.edges[0]);
+        let errors = validate(&ValidationParameters::default(), &model).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| format!("{e:?}").contains("which bounds no face")),
+            "{errors:?}"
+        );
+    }
+    #[test]
+    fn a_face_on_a_wire_edge_is_invalid() {
+        for_all_scalars!(check_a_face_on_a_wire_edge_is_invalid);
+    }
+
+    /// Two edges of a wire that cross without a vertex there are invalid,
+    /// as two edges of a solid would be.
+    fn check_crossing_wire_edges_are_invalid<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        let mut spec = wire_spec::<S>();
+        spec.vertices.push(point([2.5, -1.0, 0.0]));
+        spec.vertices.push(point([2.5, 1.0, 0.0]));
+        spec.edges.push(EdgeSpec {
+            curve: line([2.5, -1.0, 0.0], [2.5, 1.0, 0.0]),
+            start: 4,
+            end: 5,
+        });
+        model.build_body(spec).unwrap();
+        assert!(validate(&ValidationParameters::default(), &model).is_err());
+    }
+    #[test]
+    fn crossing_wire_edges_are_invalid() {
+        for_all_scalars!(check_crossing_wire_edges_are_invalid);
     }
 }

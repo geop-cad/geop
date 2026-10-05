@@ -19,13 +19,15 @@ pub mod solid;
 pub(crate) mod test_fixtures;
 pub mod validation;
 pub mod vertex;
+pub mod wire;
 
 pub use body::Body;
 pub use coedge::{Coedge, CoedgeGeometry, Sense};
 pub use edge::Edge;
 pub use face::Face;
-pub use ids::{CoedgeId, EdgeId, FaceId, ShellId, SolidId, VertexId};
+pub use ids::{CoedgeId, EdgeId, FaceId, ShellId, SolidId, VertexId, WireId};
 pub use model::{Curve2, Curve3, Model};
 pub use shell::Shell;
 pub use solid::Solid;
 pub use vertex::Vertex;
+pub use wire::Wire;

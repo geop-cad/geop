@@ -123,6 +123,25 @@ pub fn check_pointers<S: Scalar>(
             }
         }
     }
+
+    for (id, wire) in &model.wires {
+        for &vertex_id in &wire.vertices {
+            if !model.vertices.contains_key(&vertex_id) {
+                errors.push(GeopError::new(format!(
+                    "{id} references vertex {} which does not exist",
+                    vertex_id.0
+                )));
+            }
+        }
+        for &edge_id in &wire.edges {
+            if !model.edges.contains_key(&edge_id) {
+                errors.push(GeopError::new(format!(
+                    "{id} references edge {} which does not exist",
+                    edge_id.0
+                )));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

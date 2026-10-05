@@ -5,6 +5,7 @@ use geop_core_math::scalars::Scalar;
 
 use super::{
     Coedge, CoedgeId, Edge, EdgeId, Face, FaceId, Shell, ShellId, Solid, SolidId, Vertex, VertexId,
+    Wire, WireId,
 };
 
 mod create;
@@ -37,7 +38,9 @@ pub type Curve3<S> = NurbCurve<S, 4>;
 /// Hierarchy (each arrow means "references one or more"):
 /// ```text
 /// Solid ──▶ Shell(s) ──▶ Face(s) [+Surface] ──▶ Coedge(s) [+Curve2] ──▶ Edge [+Curve3] ──▶ Vertex
+/// Wire ──▶ Edge(s) [+Curve3], Vertex(es)
 /// ```
+/// A [`Wire`] holds edges and vertices that bound no face: curves in space.
 /// V - E + F - L = 2 * (S - G), E = 2C for a single-shell solid with genus G,
 /// where V = #vertices, E = #edges, F = #faces, L = #hole loops (i.e.
 /// `Σ (face.boundaries.len() - 1)`, not counting each face's mandatory outer loop),
@@ -63,6 +66,8 @@ pub struct Model<S: Scalar> {
     pub faces: BTreeMap<FaceId, Face<S>>,        // F
     pub shells: BTreeMap<ShellId, Shell>,        // S
     pub solids: BTreeMap<SolidId, Solid>,
+    /// Edges and vertices bounding no face (see [`Wire`]).
+    pub wires: BTreeMap<WireId, Wire>,
 
     next_id: u64,
 }
@@ -76,6 +81,7 @@ impl<S: Scalar> Model<S> {
             faces: BTreeMap::new(),
             shells: BTreeMap::new(),
             solids: BTreeMap::new(),
+            wires: BTreeMap::new(),
             next_id: 1,
         }
     }
