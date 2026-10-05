@@ -1719,52 +1719,265 @@ fn measure_tool_measures_what_is_clicked() {
     assert_eq!(*editor.program(), before);
 }
 
-/// A drawing step, the way the front end makes one: started, its views
-/// chosen, a distance dimensioned by clicking two corners of the box, the
-/// title block's name typed, committed — then exported as SVG and DXF.
+/// Where the vertices of the drawing being edited are on its sheet, in the
+/// view `view`, as the front end shows them: by name.
+fn sheet_vertices(
+    editor: &Editor<S>,
+    view: geop_ops_drawing::DrawnView,
+) -> Vec<(String, [f64; 2])> {
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing is edited");
+    };
+    let layout = geop_ops_drawing::layout(editor.part(), args, "", &[]).unwrap();
+    layout
+        .candidates
+        .into_iter()
+        .filter(|c| c.view == view)
+        .filter_map(|c| match c.what {
+            geop_ops_drawing::Pickable::Point {
+                target: geop_ops_drawing::Target::Vertex { name },
+                at,
+            } => Some((name, at)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The drilled hole's diameter dimensioned on the drawing's sheet by
+/// clicking its rim from above, and a centre mark put on it; the diameter,
+/// selected in the list, removed with Delete.
 #[test]
-fn a_drawing_is_made_and_exported() {
+fn a_hole_is_dimensioned_on_a_drawing_and_a_dimension_removed() {
+    use geop_ops_drawing::{Annotation, DrawnView, EdgeShape, Pickable, ViewKind};
     let (mut editor, _) = editor();
-    let started = editor.handle(Command::New {
+    editor.handle(Command::New {
         kind: "drawing".into(),
     });
-    assert!(started.error.is_none(), "{:?}", started.error);
-    editor.handle(dialog("view:iso", Value::Bool(false)));
-    editor.handle(dialog("title:name", Value::Text("Drilled box".into())));
-    // The box's two top right corners, from above.
-    editor.handle(dialog("distance", Value::Press));
-    let above = |x: f64, y: f64| pointer([x, y, 10.0], [0.0, 0.0, -1.0]);
-    let click = |pointer| Command::Event {
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing is edited");
+    };
+    let layout = geop_ops_drawing::layout(editor.part(), args, "", &[]).unwrap();
+    let rim = layout
+        .candidates
+        .iter()
+        .filter(|c| c.view == DrawnView::View(ViewKind::Top))
+        .find_map(|c| match &c.what {
+            Pickable::Edge {
+                points,
+                shape: EdgeShape::Circle { .. },
+                ..
+            } => Some(points[points.len() / 2]),
+            _ => None,
+        })
+        .expect("the hole's rim, seen round from above");
+    let click = |p: [f64; 2]| Command::Event {
         event: StepEditEvent::Click {
-            pointer,
+            pointer: pointer([p[0], p[1], 10.0], [0.0, 0.0, -1.0]),
             button: Button::Primary,
             double: false,
             shift: false,
         },
     };
-    let first = editor.handle(click(above(2.0, 2.0))).step.unwrap();
-    let Some(Control::Reference(picked)) = first.presentation.dialog.get("distance") else {
-        panic!("the distance field");
+    let key = |key: &str| Command::Event {
+        event: StepEditEvent::Key { key: key.into() },
     };
-    assert_eq!(picked.value.len(), 1, "{picked:?}");
-    let update = editor.handle(click(above(2.0, 0.0)));
-    let step = update.step.unwrap();
-    let Some(Control::List { items, .. }) = step.presentation.dialog.get("dimensions") else {
-        panic!("the dimensions are listed");
+    editor.handle(dialog("tools", Value::Choice("diameter".into())));
+    editor.handle(click(rim));
+    let placed = editor.handle(click([rim[0] + 15.0, rim[1] + 15.0]));
+    let step = placed.step.unwrap();
+    let Some(Control::List { items, .. }) = step.presentation.dialog.get("annotations") else {
+        panic!("the annotations are listed");
     };
-    assert_eq!(items.len(), 1, "{items:?}");
-    assert!(items[0].label.starts_with("Distance"), "{}", items[0].label);
-    let committed = editor.handle(Command::Commit);
-    assert!(committed.error.is_none(), "{:?}", committed.error);
-    let PartOperation::Drawing(args) = &editor.program().steps.last().unwrap().operation else {
-        panic!("a drawing step");
+    let detail = items[0].detail.clone().unwrap_or_default();
+    assert!(
+        detail.starts_with('⌀') && detail.ends_with("top"),
+        "{items:?}"
+    );
+    editor.handle(dialog("tools", Value::Choice("center_mark".into())));
+    editor.handle(click(rim));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
     };
-    assert_eq!(args.views.len(), 3);
-    assert_eq!(args.name, "Drilled box");
+    assert!(matches!(
+        args.annotations.as_slice(),
+        [
+            Annotation::Radius { diameter: true, .. },
+            Annotation::CenterMark { .. }
+        ]
+    ));
 
+    editor.handle(key("Escape"));
+    editor.handle(dialog("annotation:0", Value::Press));
+    let update = editor.handle(key("Delete"));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    assert!(
+        matches!(args.annotations.as_slice(), [Annotation::CenterMark { .. }]),
+        "{:?}",
+        args.annotations
+    );
+}
+
+/// A drawing step, the way the front end makes one: started — its sheet
+/// shown head on, no part drawn — its views chosen and the title block's
+/// name typed; a diagonal of the box's top dimensioned by clicking two of
+/// its corners in the top view and then where the value goes, the value
+/// dragged further out, a note added pointing at a corner; then
+/// downloaded from the dialog as SVG and DXF, and committed.
+#[test]
+fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
+    use geop_ops_drawing::{Annotation, DrawnView, Format, ViewKind};
+    let (mut editor, _) = editor();
+    let started = editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    assert!(started.error.is_none(), "{:?}", started.error);
+    let step = started.step.unwrap();
+    // The sheet, in the world's xy plane, and nothing of the part.
+    let sheet = step.presentation.sheet.expect("the sheet is shown");
+    assert!(step.presentation.focus.is_some());
+    assert!(sheet.size.to_f64() > 400.0, "an A3 sheet");
+    let scene = started.scene.expect("a scene");
+    assert!(scene.part.faces.is_empty() && scene.part.datums.is_empty());
+    assert!(matches!(
+        step.presentation.dialog.get("download"),
+        Some(Control::Download { formats }) if formats.len() == 2
+    ));
+    editor.handle(dialog("view:iso", Value::Bool(false)));
+    editor.handle(dialog("title:name", Value::Text("Drilled box".into())));
+
+    // Two opposite corners of the box's top, seen from above.
+    let top = DrawnView::View(ViewKind::Top);
+    let corners = sheet_vertices(&editor, top);
+    let (low, high) = {
+        let by = |f: fn(f64, f64) -> bool| {
+            corners
+                .iter()
+                .cloned()
+                .reduce(|a, b| {
+                    if f(b.1[0] + b.1[1], a.1[0] + a.1[1]) {
+                        b
+                    } else {
+                        a
+                    }
+                })
+                .unwrap()
+        };
+        (by(|a, b| a < b), by(|a, b| a > b))
+    };
+    let at = |p: [f64; 2]| pointer([p[0], p[1], 10.0], [0.0, 0.0, -1.0]);
+    let event = |event| Command::Event { event };
+    let click = |p: [f64; 2]| {
+        event(StepEditEvent::Click {
+            pointer: at(p),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        })
+    };
+    let hover = |p: [f64; 2]| {
+        event(StepEditEvent::Hover {
+            pointer: at(p),
+            shift: false,
+        })
+    };
+    editor.handle(dialog("tools", Value::Choice("distance".into())));
+    let hovered = editor.handle(hover(low.1)).step.unwrap();
+    assert!(
+        hovered
+            .presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "hover"),
+        "the corner under the pointer is lit"
+    );
+    editor.handle(click(low.1));
+    editor.handle(click(high.1));
+    // The dimension follows the pointer, and goes down where clicked.
+    let middle = [(low.1[0] + high.1[0]) / 2.0, (low.1[1] + high.1[1]) / 2.0];
+    let out = [middle[0] - 10.0, middle[1] + 10.0];
+    let placing = editor.handle(hover(out)).step.unwrap();
+    assert!(
+        placing
+            .presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "placing"),
+        "the dimension being placed is shown"
+    );
+    editor.handle(click(out));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    let [
+        Annotation::Distance {
+            from, to, label, ..
+        },
+    ] = args.annotations.as_slice()
+    else {
+        panic!("one distance: {:?}", args.annotations);
+    };
+    assert_eq!(
+        (from.to_string(), to.to_string()),
+        (low.0.clone(), high.0.clone())
+    );
+    assert!(
+        (label[0] + 10.0).abs() < 1e-9 && (label[1] - 10.0).abs() < 1e-9,
+        "{label:?}"
+    );
+
+    // Put down, the tool lets its value be dragged.
+    editor.handle(event(StepEditEvent::Key {
+        key: "Escape".into(),
+    }));
+    let update = editor.handle(event(StepEditEvent::Key {
+        key: "Escape".into(),
+    }));
+    let step = update.step.unwrap();
+    let Some(Control::List { items, .. }) = step.presentation.dialog.get("annotations") else {
+        panic!("the annotations are listed");
+    };
+    assert_eq!(items[0].detail.as_deref(), Some("2.83 · top"), "{items:?}");
+    editor.handle(hover(out));
+    let dragged = editor.handle(event(StepEditEvent::Drag {
+        from: at(out),
+        to: at([out[0] - 5.0, out[1] + 5.0]),
+        done: true,
+        shift: false,
+    }));
+    assert!(dragged.error.is_none(), "{:?}", dragged.error);
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    let label = match &args.annotations[0] {
+        Annotation::Distance { label, .. } => *label,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        (label[0] + 15.0).abs() < 1e-9 && (label[1] - 15.0).abs() < 1e-9,
+        "{label:?}"
+    );
+
+    // A note, pointing at a corner.
+    editor.handle(dialog("tools", Value::Choice("note".into())));
+    editor.handle(dialog("note_text", Value::Text("DEBURR".into())));
+    editor.handle(click(low.1));
+    editor.handle(click([low.1[0] - 20.0, low.1[1] - 20.0]));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    assert!(
+        matches!(&args.annotations[1], Annotation::Note { text, leader: Some(_), .. } if text == "DEBURR"),
+        "{:?}",
+        args.annotations
+    );
+
+    // Downloaded from the dialog, as it now is.
     let exported = editor.handle(Command::ExportDrawing {
         id: None,
-        format: geop_ops_drawing::Format::Svg,
+        format: Format::Svg,
         date: "2026-10-04".into(),
     });
     assert!(exported.error.is_none(), "{:?}", exported.error);
@@ -1772,18 +1985,29 @@ fn a_drawing_is_made_and_exported() {
     assert_eq!(file.name, "drawing.svg");
     let svg = file.text().unwrap();
     assert!(svg.starts_with("<svg"));
-    assert!(svg.contains("Drilled box") && svg.contains(">2<"));
+    for text in ["Drilled box", ">2.83<", ">DEBURR<"] {
+        assert!(svg.contains(text), "{text} is not on the sheet");
+    }
     // The blind hole, seen from the front, is hidden.
-    assert!(svg.contains(r#"<g class="HIDDEN""#));
     let hidden = &svg[svg.find(r#"<g class="HIDDEN""#).unwrap()..];
     assert!(hidden[..hidden.find("</g>").unwrap()].contains("<line"));
-
     let dxf = editor.handle(Command::ExportDrawing {
-        id: Some("drawing1".into()),
-        format: geop_ops_drawing::Format::Dxf,
+        id: None,
+        format: Format::Dxf,
         date: String::new(),
     });
-    assert!(dxf.export.unwrap().text().unwrap().ends_with("EOF\n"));
+    let dxf = dxf.export.unwrap();
+    assert!(dxf.text().unwrap().ends_with("EOF\n") && dxf.text().unwrap().contains("DEBURR"));
+
+    let committed = editor.handle(Command::Commit);
+    assert!(committed.error.is_none(), "{:?}", committed.error);
+    // Back to the part: the scene draws its faces again.
+    assert!(!committed.scene.expect("a scene").part.faces.is_empty());
+    let PartOperation::Drawing(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a drawing step");
+    };
+    assert_eq!((args.views.len(), args.annotations.len()), (3, 2));
+    assert_eq!(args.name, "Drilled box");
 }
 
 /// The arm, exported as a URDF robot the way the front end asks — the
@@ -2563,7 +2787,26 @@ fn an_assembly_drawing_lists_its_parts() {
         step.presentation.dialog.get("bom"),
         Some(Control::Checkbox { value: false, .. })
     ));
-    editor.handle(dialog("bom", Value::Bool(true)));
+    let ticked = editor.handle(dialog("bom", Value::Bool(true)));
+    // The sheet shown is the one downloaded: its parts list, given by the
+    // editor, and the balloons pointing at the parts.
+    let shown: Vec<String> = ticked
+        .step
+        .expect("a drawing is edited")
+        .presentation
+        .visuals
+        .into_iter()
+        .filter_map(|v| match v.shape {
+            geop_ops::ui::Shape::Label { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    for text in ["ITEM", "ISO 4762 M4x12", "ISO 4032 M4"] {
+        assert!(
+            shown.iter().any(|t| t == text),
+            "{text} is not shown: {shown:?}"
+        );
+    }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
 

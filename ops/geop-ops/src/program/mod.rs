@@ -244,11 +244,12 @@ fn run_step<S: Scalar, O: Operations>(
     library: &dyn Library<S>,
 ) -> GeopResult<Part<S>> {
     let ctx = with_context!("program step {index} ({:?})", step.id);
-    let part = step
+    let mut part = step
         .operation
         .apply(part, &step.id, library)
         .with_context(ctx)?;
     part.check_names().with_context(ctx)?;
+    part.renew_revision();
     Ok(part)
 }
 

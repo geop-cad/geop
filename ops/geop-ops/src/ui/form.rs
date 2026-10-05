@@ -12,8 +12,8 @@
 use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar};
 
 use super::{
-    Action, Choice, Control, Dialog, Gizmo, ListItem, Number, Picked, Prompt, Reference, Tone,
-    Value, Visual,
+    Action, Choice, Control, Dialog, Extent, Gizmo, ListItem, Number, Picked, Prompt, Reference,
+    Tone, Value, Visual,
 };
 use crate::{
     assembly::Drag,
@@ -61,6 +61,10 @@ pub struct Form<'a, S: Scalar, A = (), T = ()> {
     /// stops orbiting, and draws a grid on it. Draggable visuals are
     /// dragged in it.
     pub focus: Option<CoordinateSystem<S>>,
+    /// A sheet of its own the step is edited on — a drawing's paper, laid
+    /// in `focus` — and how far it reaches: the viewer shows the step's
+    /// visuals alone, without the part, framed to it.
+    pub sheet: Option<Extent<S>>,
     /// What the operation has in hand: clicks — and, for a tool that
     /// strokes, drags — go to it rather than select.
     pub tool: InHand,
@@ -85,6 +89,7 @@ impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
             dialog: Dialog::new(),
             visuals: Vec::new(),
             focus: None,
+            sheet: None,
             tool: InHand::Nothing,
             drags: Vec::new(),
             holds: Vec::new(),
@@ -115,6 +120,7 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
             dialog: self.dialog,
             visuals: self.visuals,
             focus: self.focus,
+            sheet: self.sheet,
             tool: self.tool,
             drags: self.drags,
             holds: self.holds,
@@ -168,6 +174,13 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
                 empty: empty.into(),
             },
         );
+        self
+    }
+
+    /// Files the step can be saved as, one button per format in `formats`
+    /// (see [`Control::Download`]).
+    pub fn download(&mut self, key: &str, formats: Vec<Choice>) -> &mut Self {
+        self.dialog.push(key, Control::Download { formats });
         self
     }
 

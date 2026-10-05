@@ -10,12 +10,14 @@
 //! - [`copies`] and [`offset`]: geometry made from geometry, tied to it by
 //!   constraints — mirrored, patterned, offset.
 //! - [`plain`]: plane geometry in plain numbers, where tools place what
-//!   they build before it is solved.
+//!   they build before it is solved; [`dimension`], how a dimension is
+//!   drawn in a plane — a sketch's and a drawing's alike.
 //! - [`space`]: 3-D sketches — points, lines, arcs and splines in space,
 //!   solved the same way, joined into chains of NURBS curves: paths and
 //!   rails.
 
 pub mod copies;
+pub mod dimension;
 pub mod geometry;
 pub mod offset;
 pub mod plain;

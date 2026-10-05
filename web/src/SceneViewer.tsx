@@ -68,6 +68,8 @@ interface Props {
    * Facing it is the caller's, through [[Props.focus]].
    */
   plane?: Frame | null;
+  /** Whether a grid is drawn on the [[Props.plane]]: not on a sheet of paper. */
+  grid?: boolean;
   /** A value asked for in place: an input drawn where its point is. */
   prompt?: Prompt | null;
   /** The value typed into the [[Props.prompt]]: Enter gives it, Escape gives up. */
@@ -154,6 +156,7 @@ export function SceneViewer({
   pickable,
   hidden,
   plane,
+  grid,
   grab,
   onPointer,
   prompt,
@@ -195,6 +198,8 @@ export function SceneViewer({
   hiddenRef.current = hidden ?? [];
   const planeRef = useRef(plane ?? null);
   planeRef.current = plane ?? null;
+  const gridRef = useRef(grid ?? true);
+  gridRef.current = grid ?? true;
   const grabRef = useRef(grab ?? false);
   grabRef.current = grab ?? false;
   const onPointerRef = useRef(onPointer);
@@ -634,7 +639,7 @@ export function SceneViewer({
       visualLayer.update(camera, height, controls.target);
       gizmoLayer.sync(gizmoRef.current);
       gizmoLayer.update(camera, height);
-      grid.sync(planeRef.current);
+      grid.sync(gridRef.current ? planeRef.current : null);
       grid.update(camera, height, controls.target);
 
       // The prompt's input, where its point is on screen.

@@ -383,6 +383,15 @@ button.small {
   background: #5a2020;
   border-color: #ff5d5d;
 }
+/* Printed on a drawing's sheet: plain text, small, under what is edited. */
+.visual-label.paper {
+  font-size: 9px;
+  color: #bbb;
+  background: none;
+  border: none;
+  padding: 0;
+  pointer-events: none;
+}
 
 button.inline {
   margin-left: 0.4rem;

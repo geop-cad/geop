@@ -11,8 +11,6 @@ interface Props {
   hosted: boolean;
   hasSteps: boolean;
   onSave: () => void;
-  /** Export a drawing of the part (see the drawing step) as SVG or DXF. */
-  onExportDrawing: (format: "svg" | "dxf") => void;
   /** Export the assembly as a URDF robot, for simulators. */
   onExportUrdf: () => void;
   /** Write the part shown as a STEP file and save it. */
@@ -64,7 +62,6 @@ export function Toolbar({
   hosted,
   hasSteps,
   onSave,
-  onExportDrawing,
   onExportUrdf,
   onExportStep,
   onExportFlatPattern,
@@ -101,23 +98,6 @@ export function Toolbar({
         ] as MenuEntry[])),
     { kind: "item", label: "Download STEP", icon: "save", hint: "for other CAD", disabled: !hasSteps, onSelect: onExportStep },
     { kind: "item", label: "Download STL", icon: "save", hint: "mesh, for 3-D printing", disabled: !hasSteps, onSelect: onExportStl },
-    { kind: "separator" },
-    { kind: "heading", label: "Drawing" },
-    {
-      kind: "item",
-      label: "Export drawing as SVG",
-      icon: "drawing",
-      hint: "views, hidden lines",
-      disabled: !hasSteps,
-      onSelect: () => onExportDrawing("svg"),
-    },
-    {
-      kind: "item",
-      label: "Export drawing as DXF",
-      icon: "drawing",
-      disabled: !hasSteps,
-      onSelect: () => onExportDrawing("dxf"),
-    },
     { kind: "separator" },
     { kind: "heading", label: "Sheet metal" },
     {

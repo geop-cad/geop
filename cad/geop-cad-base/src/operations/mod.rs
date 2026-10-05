@@ -235,7 +235,8 @@ pub enum PartOperation {
     /// connector, its bends checked and every wire's cut length reported.
     Route(RouteArgs),
     /// Describe a 2-D drawing of the part — views with hidden lines, a
-    /// section, dimensions and a title block — to export as SVG or DXF.
+    /// section and a title block — annotated on its sheet with dimensions,
+    /// notes and centre marks, and downloaded as SVG or DXF.
     Drawing(DrawingArgs),
     /// Add the solids and sheets of a STEP file next to the program.
     #[operation(label = "Import STEP")]

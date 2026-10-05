@@ -7,7 +7,8 @@
 // and drives a real `geop serve` as the extension does: single parts, an
 // assembly of several files with standard parts, and a jointed one. An edit
 // in the page must be written back to the document, an undo too, and an
-// export must reach VS Code to be saved.
+// export — a drawing's, from its dialog, too — must reach VS Code to be
+// saved.
 //
 // Flags: `--build` rebuilds the page even if it looks current; `--only
 // <text>` runs only the checks whose name contains the text; `--shots`
@@ -96,10 +97,11 @@ await check("an edit is written back, and its undo", async () => {
 await check("exports reach VS Code to be saved", async () => {
   const doc = "pin.geop";
   await open(doc);
-  /** The file the File menu's `entry` sends to be saved. */
-  const exported = async (entry) => {
+  /** The file the File menu's `entry` — or pressing `button` — sends to be saved. */
+  const exported = async (entry, button = null) => {
     const before = bridge.saved[doc]?.length ?? 0;
-    await fileMenu(page, entry);
+    if (button) await button.click();
+    else await fileMenu(page, entry);
     await settle(page);
     const deadline = Date.now() + 30000;
     while ((bridge.saved[doc]?.length ?? 0) <= before) {
@@ -116,7 +118,16 @@ await check("exports reach VS Code to be saved", async () => {
   expect(stl.name === "pin.stl", `saved as ${stl.name}`);
   const bytes = Buffer.from(stl.bytes ?? "", "base64");
   expect(bytes.length > 84 && bytes.readUInt32LE(80) * 50 + 84 === bytes.length, `pin.stl is no binary STL (${bytes.length} bytes)`);
-  return `${step.name} ${step.text.length} bytes, ${stl.name} ${bytes.length} bytes`;
+  // A drawing, from its own dialog.
+  await page.locator(".desktop-only .operation-tools button.op-button", { hasText: /^Drawing$/ }).click();
+  await settle(page);
+  const popup = page.locator(".desktop-only .popup");
+  const svg = await exported("Download SVG", popup.locator("button", { hasText: "Download SVG" }));
+  expect(svg.name === "pin.svg", `saved as ${svg.name}`);
+  expect(svg.text?.startsWith("<svg"), "the drawing is no SVG");
+  await popup.locator(".button-row button", { hasText: "Cancel" }).click();
+  await settle(page);
+  return `${step.name} ${step.text.length} bytes, ${stl.name} ${bytes.length} bytes, ${svg.name} ${svg.text.length} bytes`;
 });
 
 await check("an assembly with standard parts opens", async () => {

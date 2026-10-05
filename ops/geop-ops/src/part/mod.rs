@@ -3,7 +3,14 @@
 //! ([`NameRegistry`], [`Namer`]) — changed only through `Part`'s own
 //! methods, so no entity is ever without a name.
 
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{
+    any::Any,
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -91,7 +98,12 @@ pub struct Part<S: Scalar> {
     /// The next sketch, 3-D sketch, datum or instance id: ids count up in the order
     /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,
+    /// Which build it is (see [`Part::revision`]).
+    revision: u64,
 }
+
+/// The revision the next part built gets (see [`Part::revision`]).
+static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// The name of the frame datum every part starts with: the world's origin
 /// and axes, and the three planes between them (see
@@ -117,7 +129,9 @@ impl<S: Scalar> Part<S> {
             parameters: crate::parameters::Parameters::default(),
             body_data: BTreeMap::new(),
             next_id: 1,
+            revision: 0,
         };
+        part.renew_revision();
         let origin = Datum {
             kind: DatumKind::Frame,
             frame: CoordinateSystem::world_at(Vector3::zero()),
@@ -125,6 +139,20 @@ impl<S: Scalar> Part<S> {
         part.add_datum(origin, ORIGIN)
             .expect("a new part has no names taken");
         part
+    }
+
+    /// Which build of a part it is: a new part, and each part a program's
+    /// step builds (see [`crate::program::ProgramRunner`]), has a revision
+    /// no other has, and a copy keeps it. What is worked out from a part —
+    /// a drawing's views — can be kept for as long as its revision is the
+    /// same.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Gives it a revision of its own: it was built anew.
+    pub(crate) fn renew_revision(&mut self) {
+        self.revision = NEXT_REVISION.fetch_add(1, Ordering::Relaxed);
     }
 
     /// The part's topology, to query. Changing it goes through `Part`'s own

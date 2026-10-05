@@ -360,12 +360,14 @@ version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
+ "geop-core-sketch",
  "geop-core-topology",
  "geop-ops",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",
  "geop-ops-inspect",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

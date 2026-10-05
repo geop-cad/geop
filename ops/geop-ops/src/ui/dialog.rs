@@ -320,6 +320,13 @@ pub enum Control<S: Scalar> {
         label: String,
         value: bool,
     },
+    /// Files the step can be saved as, one button per format: pressing
+    /// one asks the editor for the file, written as the step now is — for
+    /// a drawing, `geop_cad_base`'s `ExportDrawing` in that format — and
+    /// saves it. It sets nothing.
+    Download {
+        formats: Vec<Choice>,
+    },
     Number(Number<S>),
     /// One of `options`, by value — found by typing, if `searchable`.
     Select {
