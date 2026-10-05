@@ -420,7 +420,7 @@ impl<S: Scalar> GizmoGrab<S> {
 
     /// What the drag from `from` to `to` did — snapped unless `free` — and
     /// what to say of it. `None` where the pointer cannot be followed:
-    /// looking along an arrow, or along a ring's or a square's plane.
+    /// looking along an arrow, or along a square's plane.
     pub fn drag(
         &mut self,
         from: &Pointer<S>,
@@ -475,17 +475,41 @@ impl<S: Scalar> GizmoGrab<S> {
             }
             GizmoPart::Turn(i) => {
                 let a = &axes[i];
-                let v0 = in_plane(from, a)?.sub(&c);
-                let v1 = in_plane(to, a)?.sub(&c);
-                let sin = v0.prod_cross(&v1).prod_dot(a).to_f64();
-                let cos = v0.prod_dot(&v1).to_f64();
-                if sin == 0.0 && cos == 0.0 {
-                    return None;
+                if a.prod_dot(from.ray.dir()).abs().to_f64() >= size::FACING {
+                    // Round the centre, where the pointer is in the ring's
+                    // plane — followed past half a turn: the angle nearest
+                    // the last.
+                    let v0 = in_plane(from, a)?.sub(&c);
+                    let v1 = in_plane(to, a)?.sub(&c);
+                    let sin = v0.prod_cross(&v1).prod_dot(a).to_f64();
+                    let cos = v0.prod_dot(&v1).to_f64();
+                    if sin == 0.0 && cos == 0.0 {
+                        return None;
+                    }
+                    let angle = sin.atan2(cos).to_degrees();
+                    let turns = ((self.turned - angle) / 360.0).round();
+                    self.turned = angle + 360.0 * turns;
+                } else {
+                    // Seen nearly edge on, the ring is a line on screen,
+                    // and the pointer runs along it: as far along the
+                    // ring's tangent where it was grabbed — its side
+                    // towards the eye — as the ring's radius turns.
+                    let r = self.reach;
+                    let grabbed = view
+                        .ring(i, r)
+                        .into_iter()
+                        .filter_map(|p| {
+                            let (dist, t) = from.ray.distance_to_point(&p);
+                            (!dist.definitely_greater(r.mul(S::from_f64(size::NEAR))))
+                                .then_some((t, p))
+                        })
+                        .min_by(|x, y| nearer(x.0, y.0))?
+                        .1;
+                    let tangent = a.prod_cross(&grabbed.sub(&c)).normalize().ok()?;
+                    let s = |p: &Pointer<S>| p.ray.line_parameter(&grabbed, &tangent);
+                    let along = s(to)?.sub(s(from)?).to_f64();
+                    self.turned = (along / (size::RING * r.to_f64())).to_degrees();
                 }
-                // Followed past half a turn: the angle nearest the last.
-                let angle = sin.atan2(cos).to_degrees();
-                let turns = ((self.turned - angle) / 360.0).round();
-                self.turned = angle + 360.0 * turns;
                 let degrees = snapped(self.turned, ANGLE_SNAP);
                 let text = format!(
                     "{} {}°",
@@ -657,6 +681,23 @@ mod tests {
             turned[0].abs() < 1e-12 && (turned[1] - 1.0).abs() < 1e-12,
             "{turned:?}"
         );
+    }
+
+    /// Seen edge on, a ring turns as far as the pointer runs along it: a
+    /// quarter of its circumference, a quarter turn.
+    #[test]
+    fn rings_seen_edge_on_follow_the_pointer_along_them() {
+        let gizmo = every();
+        // Looking along `y`, the ring about `z` is a line along `x`; its
+        // side towards the eye runs along `x`.
+        let side = |x: f64| pointer([x, -10.0, 0.0], [0.0, 1.0, 0.0]);
+        let mut grab = GizmoGrab::new(gizmo, GizmoPart::Turn(2), &side(0.0));
+        let quarter = std::f64::consts::FRAC_PI_2 * 0.7;
+        let (drag, _) = grab.drag(&side(0.0), &side(quarter), false).unwrap();
+        let Change::Rotate { degrees, .. } = drag.change else {
+            panic!("{drag:?}")
+        };
+        assert_eq!(degrees, 90.0);
     }
 
     /// A cube pulled out to twice as far scales by two along its axis;
