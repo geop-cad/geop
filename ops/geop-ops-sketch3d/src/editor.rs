@@ -15,7 +15,10 @@
 //! Enter — and goes on smoothly from a curve it starts at, or into one it
 //! ends at (see [`geop_core_sketch::space::Sketch3d::adopts`]).
 
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    scalars::{Field, Scalar},
+    vector::Vector3,
+};
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
@@ -24,8 +27,8 @@ use geop_ops::{
     Context, Design, Part,
     operation::{Aspects, EntityRef, Role},
     ui::{
-        Action, Button, CanvasEvent, Edit, Form, InHand, ListItem, Number, Pointer, Shape, Style,
-        Tone, Unit, Value, Visual, hit::hit_visuals,
+        Action, Button, CanvasEvent, Edit, Form, Gizmo, InHand, ListItem, Number, Pointer, Shape,
+        Style, Tone, Unit, Value, Visual, hit::hit_visuals,
     },
 };
 
@@ -95,6 +98,19 @@ impl Sketch3dSession {
 struct Picks {
     points: Vec<PointId>,
     curves: Vec<CurveId>,
+}
+
+/// The points the gizmo moves: those selected and those of the curves
+/// selected, each once — but none fixed, which do not move.
+fn moved(args: &AddSketch3dArgs, picks: &Picks) -> Vec<PointId> {
+    let sketch = &args.sketch;
+    let mut points: Vec<PointId> = picks.points.clone();
+    for c in &picks.curves {
+        points.extend(sketch.curves[c].points());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    points.retain(|p| seen.insert(*p) && !sketch.points[p].fixed);
+    points
 }
 
 fn picked(args: &AddSketch3dArgs, selection: &[String]) -> Picks {
@@ -460,6 +476,19 @@ pub(crate) fn event<S: Scalar>(
                 solve(before, args, &[(p, to.map(|c| c.cast()))]);
             }
         }
+        // The selection moved by the gizmo, from where it was when the drag
+        // started: what the arguments are again for each event of it.
+        CanvasEvent::Gizmo { drag, .. } => {
+            let points = moved(args, &picked(args, selection));
+            let drags: Vec<(PointId, V3)> = points
+                .into_iter()
+                .map(|p| {
+                    let at = args.sketch.points[&p].at.map(|c| c.cast::<S>());
+                    (p, drag.apply(&at).map(|c| c.cast()))
+                })
+                .collect();
+            solve(before, args, &drags);
+        }
         CanvasEvent::Key { key } => match key.as_str() {
             "Escape" if !s.placed.is_empty() => finish(before, args, s),
             "Escape" => take_up(before, args, s, Tool::Select),
@@ -480,7 +509,9 @@ pub(crate) fn event<S: Scalar>(
 /// What the tool in hand asks for next.
 fn hint(tool: Tool, placed: usize) -> &'static str {
     match (tool, placed) {
-        (Tool::Select, _) => "Select points and curves to constrain them, or drag points",
+        (Tool::Select, _) => {
+            "Select points and curves to constrain them or move them with the gizmo, or drag points"
+        }
         (Tool::Point, _) => "Click to place a point: on the part, or in space",
         (Tool::Line, 0) => "Click where the line starts",
         (Tool::Line, _) => "Click the next point · Esc ends the chain",
@@ -1015,5 +1046,18 @@ pub(crate) fn form<'a, S: Scalar>(
         });
     }
     f.visuals = visuals(args, s, checked.as_ref().ok().map(|(_, r)| r));
+    // What is selected is moved by a gizmo at its middle: along an axis,
+    // in a plane, or freely.
+    let moving = moved(args, &picks);
+    if tool == Tool::Select && !moving.is_empty() {
+        let sum = moving
+            .iter()
+            .fold(V3::zero(), |sum, p| sum.add(&args.sketch.points[p].at));
+        let n = Design::from_f64(moving.len() as f64);
+        if let Ok(inverse) = Design::ONE.div(n) {
+            let middle = sum.prod_scalar(inverse);
+            f.gizmo = Some(Gizmo::new(middle.map(|c| c.cast())).translate());
+        }
+    }
     f
 }

@@ -299,6 +299,30 @@ impl Cage {
         self.tidy();
     }
 
+    /// The orientation of the faces `faces`, for moving them along it: `z`
+    /// along their normals together, `x` along the first one's first edge,
+    /// both unit and square to each other. `None` for no faces, or faces
+    /// whose normals cancel out.
+    pub fn frame(&self, faces: &BTreeSet<u32>) -> Option<[[f64; 3]; 3]> {
+        let unit = |v: [f64; 3]| {
+            let n = v.iter().map(|c| c * c).sum::<f64>().sqrt();
+            (n > 0.0 && n.is_finite()).then(|| v.map(|c| c / n))
+        };
+        let mut normal = [0.0; 3];
+        for &f in faces {
+            let n = self.normal(self.face(f).ok()?).ok()?;
+            (0..3).for_each(|i| normal[i] += n[i]);
+        }
+        let w = unit(normal)?;
+        let first = self.face(*faces.first()?).ok()?;
+        let a = self.vertex(*first.vertices.first()?).ok()?.at;
+        let b = self.vertex(*first.vertices.get(1)?).ok()?.at;
+        let edge = [0, 1, 2].map(|i| b[i] - a[i]);
+        let along = edge.iter().zip(&w).map(|(e, n)| e * n).sum::<f64>();
+        let u = unit([0, 1, 2].map(|i| edge[i] - along * w[i]))?;
+        Some([u, cross(w, u), w])
+    }
+
     /// The outward normal of face `face`, by Newell's method: as long as
     /// its area.
     fn normal(&self, face: &CageFace) -> GeopResult<[f64; 3]> {

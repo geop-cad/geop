@@ -5,10 +5,12 @@
 //! The step holds the cage itself, not a history of edits: edits are made
 //! in the editor and leave the cage they made behind. Its vertices, edges
 //! and faces are drawn, and picked by clicking them; what is selected is
-//! dragged, moved by its centre's coordinates — with a handle for each —
-//! scaled and turned about its centre, and edited with the actions:
-//! extruding faces, inserting an edge loop across an edge, creasing edges
-//! or smoothing them, deleting faces.
+//! moved, turned and scaled about its centre with the gizmo there — along
+//! the world's axes, or, for faces, their own — or by typing its centre's
+//! coordinates, a scale and turns; and edited with the actions: extruding
+//! faces, inserting an edge loop across an edge, creasing edges or
+//! smoothing them, deleting faces. An element not selected is dragged on
+//! its own, in the plane facing the eye.
 
 use std::collections::BTreeSet;
 
@@ -22,8 +24,8 @@ use geop_ops::{
     Context, Library, Namer, Part,
     operation::Operation,
     ui::{
-        Action, CanvasEvent, Choice, Control, DRAG_SNAP, Edit, Form, Number, Shape, Style, Tone,
-        Track, Unit, Visual,
+        Action, CanvasEvent, Choice, Control, DRAG_SNAP, Edit, Form, Gizmo, Number, Shape, Style,
+        Tone, Unit, Visual,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -204,20 +206,6 @@ fn cage_visuals<S: Scalar>(args: &SubdArgs) -> Vec<Visual<S>> {
     visuals
 }
 
-/// How big the cage is: the length of its bounding box's diagonal.
-fn extent(cage: &Cage) -> f64 {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for v in &cage.vertices {
-        for c in 0..3 {
-            lo[c] = lo[c].min(v.at[c]);
-            hi[c] = hi[c].max(v.at[c]);
-        }
-    }
-    let d: f64 = (0..3).map(|c| (hi[c] - lo[c]).powi(2)).sum::<f64>().sqrt();
-    if d.is_finite() && d > 0.0 { d } else { 1.0 }
-}
-
 impl Relative {
     /// The scale and turn the session holds for `selection` on `cage`, or
     /// a fresh one from the cage as it is.
@@ -369,7 +357,7 @@ impl Operation for Subd {
         if parts.is_empty() {
             f.text(
                 "selection",
-                "Click vertices, edges and faces of the cage to select them; drag them to move them.",
+                "Click vertices, edges and faces of the cage to select them, then move, turn or scale them with the gizmo; drag one to move it alone.",
                 Tone::Hint,
             );
         } else {
@@ -384,16 +372,13 @@ impl Operation for Subd {
         }
 
         if let Some(centre) = args.cage.centre(&vertices) {
-            let reach = 0.15 * extent(&args.cage);
+            let mut gizmo = Gizmo::new(vector(centre)).translate().rotate().scale();
+            if let Some(axes) = args.cage.frame(&faces) {
+                gizmo = gizmo.local(axes.map(vector));
+            }
+            f.gizmo = Some(gizmo);
             for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
-                let mut direction = [0.0; 3];
-                direction[axis] = 1.0;
-                let mut at = centre;
-                at[axis] += reach;
-                let number = Number::new(key, centre[axis], Unit::Length).handle(Some(Track {
-                    at: vector(at),
-                    direction: vector(direction),
-                }));
+                let number = Number::new(key, centre[axis], Unit::Length);
                 f.dialog.push(key, Control::Number(number));
                 f.on(key, move |edit, value| {
                     let geop_ops::ui::Value::Number(to) = value else {
@@ -417,11 +402,7 @@ impl Operation for Subd {
                 .as_ref()
                 .filter(|r| r.selection == selection);
             let scale = relative.map_or(1.0, |r| r.scale);
-            let diagonal = reach / 3f64.sqrt();
-            let scale_number = Number::new("scale", scale, Unit::Fraction).handle(Some(Track {
-                at: vector([0, 1, 2].map(|c| centre[c] + diagonal * scale)),
-                direction: vector([diagonal; 3]),
-            }));
+            let scale_number = Number::new("scale", scale, Unit::Fraction);
             f.dialog.push("scale", Control::Number(scale_number));
             f.on("scale", |edit, value| {
                 let geop_ops::ui::Value::Number(scale) = value else {
@@ -556,8 +537,9 @@ impl Operation for Subd {
 
     /// A cage element dragged: what is selected, if it is, else it alone,
     /// moved as far as the pointer, snapped to [`DRAG_SNAP`] unless shift
-    /// is held. Escape clears the selection; Delete deletes the faces
-    /// selected.
+    /// is held. The gizmo dragged: what is selected moved, turned or
+    /// scaled as the drag did. Escape clears the selection; Delete deletes
+    /// the faces selected.
     fn event<S: Scalar>(
         &self,
         _: Context<'_, S>,
@@ -606,6 +588,12 @@ impl Operation for Subd {
                 if *done {
                     session.drag = None;
                 }
+            }
+            CanvasEvent::Gizmo { drag, .. } => {
+                let vertices = args.cage.vertices_of(selection);
+                args.cage
+                    .transform(&vertices, args.mirror, |p| drag.apply_f64(p));
+                session.relative = None;
             }
             CanvasEvent::Key { key } if key == "Delete" || key == "Backspace" => {
                 let (_, faces) = selected(selection);
