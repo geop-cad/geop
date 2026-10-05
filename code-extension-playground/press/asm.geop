@@ -1,0 +1,204 @@
+{
+  "steps": [
+    {
+      "id": "part1",
+      "operation": "add_part",
+      "args": {
+        "file": "base.geop",
+        "fixed": true,
+        "flexible": false,
+        "mates": {}
+      }
+    },
+    {
+      "id": "part2",
+      "operation": "add_part",
+      "args": {
+        "file": "handle.geop",
+        "fixed": false,
+        "flexible": false,
+        "mates": {
+          "m1": {
+            "type": "concentric",
+            "entities": [
+              {
+                "type": "Face",
+                "name": "part1/combine(extrude3,extrude(extrude3,sketch3,c7#2),#8bd081c9b1406b0ed6790e3dc2425477)"
+              },
+              {
+                "type": "Face",
+                "name": "part2/extrude(extrude1,sketch1,c5)"
+              }
+            ]
+          },
+          "m2": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Datum",
+                "name": "part1/origin",
+                "component": {
+                  "plane": "z"
+                }
+              },
+              {
+                "type": "Datum",
+                "name": "part2/origin",
+                "component": {
+                  "plane": "z"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "part3",
+      "operation": "add_part",
+      "args": {
+        "file": "slider.geop",
+        "fixed": false,
+        "flexible": false,
+        "mates": {
+          "m1": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Face",
+                "name": "part1/extrude(extrude1,sketch1,c10)"
+              },
+              {
+                "type": "Face",
+                "name": "part3/extrude(extrude1,sketch1,c10)"
+              }
+            ]
+          },
+          "m2": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Face",
+                "name": "part1/extrude(extrude1,sketch1,c12)"
+              },
+              {
+                "type": "Face",
+                "name": "part3/extrude(extrude1,end)"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "part4",
+      "operation": "add_part",
+      "args": {
+        "file": "link.geop",
+        "fixed": false,
+        "flexible": false,
+        "mates": {
+          "m1": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Face",
+                "name": "part2/extrude(extrude2,sketch3,c9)"
+              },
+              {
+                "type": "Face",
+                "name": "part4/extrude(extrude1,sketch1,c26#2)"
+              }
+            ]
+          },
+          "m2": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Face",
+                "name": "part3/combine(extrude4,extrude(extrude4,sketch4,c7),#01277c18a2965eb65d5abf4ea93534dc)"
+              },
+              {
+                "type": "Face",
+                "name": "part4/combine(extrude2,extrude(extrude1,sketch1,c27#2),#a5a60d89de57ff595e49ac8ff7e5bb22)"
+              }
+            ]
+          },
+          "m3": {
+            "type": "coincident",
+            "entities": [
+              {
+                "type": "Datum",
+                "name": "part3/origin",
+                "component": {
+                  "plane": "z"
+                }
+              },
+              {
+                "type": "Datum",
+                "name": "part4/origin",
+                "component": {
+                  "plane": "z"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "state": {
+    "part1.pose": {
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    "part2.pose": {
+      "position": [
+        7.035794169496512e-11,
+        117.05105584398018,
+        4.805363950442673e-24
+      ],
+      "rotation": [
+        0.9997869406188549,
+        -1.219615493036608e-18,
+        -9.744800381686672e-21,
+        -0.020641544709409744
+      ]
+    },
+    "part3.pose": {
+      "position": [
+        -4.440892098500643e-16,
+        0.4531032140053094,
+        1.4210854715202042e-14
+      ],
+      "rotation": [
+        1,
+        -4.124011287105624e-17,
+        5.015356614808861e-17,
+        2.0235017546044727e-17
+      ]
+    },
+    "part4.pose": {
+      "position": [
+        34.18709401747256,
+        57.45637566759528,
+        6.0800018696416606e-15
+      ],
+      "rotation": [
+        0.9731799692082093,
+        -5.0881367925436403e-17,
+        3.9594582959131906e-17,
+        -0.23004509890869057
+      ]
+    }
+  }
+}

@@ -1,0 +1,555 @@
+{
+  "steps": [
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "y"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": 19.99999999999999,
+              "y": 17.5
+            },
+            "6": {
+              "x": -10,
+              "y": 17.499999999999993
+            },
+            "9": {
+              "x": -10,
+              "y": -17.50000000000001
+            },
+            "11": {
+              "x": 19.99999999999999,
+              "y": -17.500000000000004
+            },
+            "14": {
+              "x": 19.99999999999999,
+              "y": -22.5
+            },
+            "16": {
+              "x": -17.5951323618173,
+              "y": -22.5
+            },
+            "19": {
+              "x": -17.5951323618173,
+              "y": 22.499999999999996
+            },
+            "22": {
+              "x": 19.99999999999999,
+              "y": 22.5
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "7": {
+              "type": "Line",
+              "start": 5,
+              "end": 6,
+              "construction": false
+            },
+            "10": {
+              "type": "Line",
+              "start": 6,
+              "end": 9,
+              "construction": false
+            },
+            "12": {
+              "type": "Line",
+              "start": 9,
+              "end": 11,
+              "construction": false
+            },
+            "15": {
+              "type": "Line",
+              "start": 11,
+              "end": 14,
+              "construction": false
+            },
+            "17": {
+              "type": "Line",
+              "start": 14,
+              "end": 16,
+              "construction": false
+            },
+            "20": {
+              "type": "Line",
+              "start": 16,
+              "end": 19,
+              "construction": false
+            },
+            "23": {
+              "type": "Line",
+              "start": 19,
+              "end": 22,
+              "construction": false
+            },
+            "25": {
+              "type": "Line",
+              "start": 22,
+              "end": 5,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "8": {
+              "type": "Horizontal",
+              "line": 7
+            },
+            "13": {
+              "type": "Horizontal",
+              "line": 12
+            },
+            "18": {
+              "type": "Horizontal",
+              "line": 17
+            },
+            "21": {
+              "type": "Vertical",
+              "line": 20
+            },
+            "24": {
+              "type": "Horizontal",
+              "line": 23
+            },
+            "26": {
+              "type": "Vertical",
+              "line": 25
+            },
+            "27": {
+              "type": "Vertical",
+              "line": 10
+            },
+            "28": {
+              "type": "Vertical",
+              "line": 15
+            },
+            "29": {
+              "type": "Symmetric",
+              "a": 5,
+              "b": 11,
+              "line": 3
+            },
+            "30": {
+              "type": "Symmetric",
+              "a": 22,
+              "b": 14,
+              "line": 3
+            },
+            "31": {
+              "type": "Length",
+              "curve": 10,
+              "value": 35
+            },
+            "32": {
+              "type": "Length",
+              "curve": 7,
+              "value": 30
+            },
+            "33": {
+              "type": "Length",
+              "curve": 20,
+              "value": 45
+            },
+            "34": {
+              "type": "PointLineDistance",
+              "point": 0,
+              "line": 10,
+              "value": 10
+            }
+          },
+          "next_id": 35
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ],
+        "labels": {
+          "31": [
+            9.266610055422465,
+            4.012051459578146
+          ],
+          "32": [
+            -3.9001019984205723,
+            -5.682205372900832
+          ],
+          "33": [
+            -7.436191173107908,
+            -5.070119209022719
+          ],
+          "34": [
+            -3.678807106830246,
+            -3.5847526900891387
+          ]
+        }
+      }
+    },
+    {
+      "id": "extrude1",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch1",
+        "extent": {
+          "side1": {
+            "blind": 150
+          },
+          "symmetric": false,
+          "side2": {
+            "blind": 80
+          },
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "new_body"
+        }
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "7": {
+              "x": 0,
+              "y": 67.16906962411794
+            },
+            "9": {
+              "x": 0,
+              "y": -69.35872923350735
+            },
+            "12": {
+              "x": -6,
+              "y": 67.16906962411794
+            },
+            "13": {
+              "x": -5.999999999999994,
+              "y": -69.35872923350735
+            },
+            "14": {
+              "x": 5.999999999999994,
+              "y": -69.35872923350735
+            },
+            "15": {
+              "x": 6.000000000000001,
+              "y": 67.16906962411794
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "11": {
+              "type": "Line",
+              "start": 7,
+              "end": 9,
+              "construction": true
+            },
+            "16": {
+              "type": "Line",
+              "start": 12,
+              "end": 13,
+              "construction": false
+            },
+            "17": {
+              "type": "Arc",
+              "start": 13,
+              "end": 14,
+              "sweep": 3.1415926535897913,
+              "construction": false
+            },
+            "18": {
+              "type": "Line",
+              "start": 14,
+              "end": 15,
+              "construction": false
+            },
+            "19": {
+              "type": "Arc",
+              "start": 15,
+              "end": 12,
+              "sweep": 3.1415926535897896,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "8": {
+              "type": "PointOnCurve",
+              "point": 7,
+              "curve": 4
+            },
+            "10": {
+              "type": "PointOnCurve",
+              "point": 9,
+              "curve": 4
+            },
+            "20": {
+              "type": "Tangent",
+              "a": 16,
+              "b": 17
+            },
+            "21": {
+              "type": "Tangent",
+              "a": 17,
+              "b": 18
+            },
+            "22": {
+              "type": "Tangent",
+              "a": 18,
+              "b": 19
+            },
+            "23": {
+              "type": "Tangent",
+              "a": 19,
+              "b": 16
+            },
+            "24": {
+              "type": "Center",
+              "point": 9,
+              "curve": 17
+            },
+            "25": {
+              "type": "Center",
+              "point": 7,
+              "curve": 19
+            },
+            "26": {
+              "type": "Equal",
+              "a": 19,
+              "b": 17
+            },
+            "31": {
+              "type": "Diameter",
+              "curve": 19,
+              "value": 12
+            }
+          },
+          "next_id": 32
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ],
+        "labels": {
+          "31": [
+            -37.62882162424703,
+            8.589494222174629
+          ]
+        }
+      }
+    },
+    {
+      "id": "extrude2",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch2",
+        "extent": {
+          "side1": "through_all",
+          "symmetric": true,
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "difference",
+          "target": "extrude(extrude1)"
+        }
+      }
+    },
+    {
+      "id": "sketch3",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "type": "Datum",
+          "name": "origin",
+          "component": {
+            "plane": "z"
+          }
+        },
+        "sketch": {
+          "points": {
+            "0": {
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            "1": {
+              "x": 1,
+              "y": 0,
+              "fixed": true
+            },
+            "2": {
+              "x": 0,
+              "y": 1,
+              "fixed": true
+            },
+            "5": {
+              "x": 0,
+              "y": 117.05105584395852
+            }
+          },
+          "curves": {
+            "3": {
+              "type": "Line",
+              "start": 0,
+              "end": 1,
+              "construction": true,
+              "fixed": true
+            },
+            "4": {
+              "type": "Line",
+              "start": 0,
+              "end": 2,
+              "construction": true,
+              "fixed": true
+            },
+            "7": {
+              "type": "Circle",
+              "center": 5,
+              "radius": 6,
+              "construction": false
+            }
+          },
+          "constraints": {
+            "6": {
+              "type": "PointOnCurve",
+              "point": 5,
+              "curve": 4
+            },
+            "70": {
+              "type": "Diameter",
+              "curve": 7,
+              "value": 12
+            }
+          },
+          "next_id": 71
+        },
+        "references": [
+          {
+            "type": "frame",
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "curves": {
+              "x": 3,
+              "y": 4
+            }
+          }
+        ],
+        "labels": {
+          "70": [
+            -27.5378113377307,
+            12.51852551617219
+          ]
+        }
+      }
+    },
+    {
+      "id": "extrude3",
+      "operation": "extrude",
+      "args": {
+        "sketch": "sketch3",
+        "extent": {
+          "side1": "through_all",
+          "symmetric": true,
+          "reversed": false
+        },
+        "face": false,
+        "combine": {
+          "mode": "difference",
+          "target": "extrude(extrude2)"
+        }
+      }
+    }
+  ]
+}
