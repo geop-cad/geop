@@ -214,67 +214,190 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     }
 
     /// The chain `curves`, each starting where the one before ends, as one
-    /// curve on `[0, 1]`, the `i`-th of `n` curves on `[i / n, (i + 1) / n]`:
-    /// each brought onto its own unit domain with its ends weighted one (see
+    /// curve on `[0, 1]`, the `i`-th of `n` curves on `[i / n, (i + 1) / n]`
+    /// (see [`Self::join_at`]).
+    pub fn join(curves: &[Self]) -> GeopResult<Self> {
+        let n = curves.len();
+        if n == 1 {
+            return curves[0].with_unit_domain()?.with_unit_end_weights();
+        }
+        let count = S::from_f64(n as f64);
+        join_placed(
+            curves,
+            (S::ZERO, S::ONE),
+            |i, k| k.add(S::from_f64(i as f64)).div(count),
+            |i| S::from_ratio((i + 1) as i64, n as i64),
+        )
+    }
+
+    /// The chain `curves`, each starting where the one before ends, as one
+    /// curve, the `i`-th on `[breaks[i], breaks[i + 1]]`: each brought onto
+    /// its own unit domain with its ends weighted one (see
     /// [`Self::with_unit_end_weights`]) and raised to the highest degree
     /// among them, their knot vectors laid end to end, every joint a knot
     /// of full multiplicity. A joint's control point is the union of the end
     /// of the curve before it and the start of the next — two enclosures of
     /// the one point — and an error if they could not be equal. Every curve
     /// stays the curve it was, on its new piece of the domain.
-    pub fn join(curves: &[Self]) -> GeopResult<Self> {
+    pub fn join_at(curves: &[Self], breaks: &[S]) -> GeopResult<Self> {
         let n = curves.len();
-        if n == 0 {
-            return Err(GeopError::new("join: no curves to join"));
+        if breaks.len() != n + 1 || !breaks.windows(2).all(|w| w[0].definitely_less(w[1])) {
+            return Err(GeopError::new(format!(
+                "join_at: {n} curves need {} strictly increasing breaks, not {breaks:?}",
+                n + 1
+            )));
         }
-        let mut pieces = curves
-            .iter()
-            .map(|c| c.with_unit_domain()?.with_unit_end_weights())
-            .collect::<GeopResult<Vec<_>>>()?;
-        let degree = pieces.iter().map(|c| c.degree).max().unwrap_or(0);
-        for piece in &mut pieces {
-            while piece.degree < degree {
-                *piece = piece.elevate_degree()?;
-            }
-        }
-        if n == 1 {
-            return Ok(pieces.remove(0));
-        }
-        let count = S::from_f64(n as f64);
-        let mut points: Vec<Vector<S, D>> = Vec::new();
-        let mut knots = vec![S::ZERO; degree + 1];
-        for (i, piece) in pieces.iter().enumerate() {
-            let len = piece.control_points.len();
-            if let Some(end) = points.last_mut() {
-                let start = &piece.control_points[0];
-                if !end.could_be_equal(start) {
-                    return Err(GeopError::new(format!(
-                        "join: curve {i} starts at {start:?}, not where the one before ends, {end:?}"
-                    )));
-                }
-                *end = end.union(start);
-                points.extend_from_slice(&piece.control_points[1..]);
-            } else {
-                points.extend_from_slice(&piece.control_points);
-            }
-            for &k in &piece.knot_vector[degree + 1..len] {
-                knots.push(k.add(S::from_f64(i as f64)).div(count)?);
-            }
-            if i + 1 < n {
-                let joint = S::from_ratio((i + 1) as i64, n as i64)?;
-                knots.extend(std::iter::repeat_n(joint, degree));
-            }
-        }
-        knots.extend(std::iter::repeat_n(S::ONE, degree + 1));
-        NurbCurve::try_new(degree, points, knots)
+        join_placed(
+            curves,
+            (breaks[0], breaks[n]),
+            |i, k| Ok(breaks[i].add(k.mul(breaks[i + 1].sub(breaks[i])))),
+            |i| Ok(breaks[i + 1]),
+        )
     }
+
+    /// The same curve between the parameters `from[0]` and `from[n - 1]`,
+    /// reparametrized piece by piece: the stretch between `from[i]` and
+    /// `from[i + 1]` onto `[to[i], to[i + 1]]`, linearly, so that the curve
+    /// is at `to[i]` where it was at `from[i]`. What lies outside `from` is
+    /// cut off. Both are strictly increasing; a `from` that could be an end
+    /// of the domain is that end.
+    ///
+    /// Every `from[i]` becomes a joint of full multiplicity (see
+    /// [`Self::join_at`]). A rational curve is cut at its knots as well, so
+    /// that each piece can be weighted one at its ends: its weight is then
+    /// one at every joint, and so at every `to[i]`, as a polynomial curve's
+    /// is everywhere. Where a piece's own knots land between `to[i]` and
+    /// `to[i + 1]` is a free choice, so they are sharpened.
+    ///
+    /// The `from` are used as given: like [`Self::split`]'s, they must be
+    /// narrow, refined rather than sharpened.
+    pub fn reparametrized(&self, from: &[S], to: &[S]) -> GeopResult<Self> {
+        let n = from.len();
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "NurbCurve::reparametrized(from={from:?}, to={to:?}): domain={:?}",
+                self.domain()
+            ))
+        };
+        if n < 2 || to.len() != n {
+            return Err(ctx(GeopError::new(format!(
+                "{n} parameters to map onto {} others",
+                to.len()
+            ))));
+        }
+        let (t0, t1) = self.domain();
+        let mut from = from.to_vec();
+        if from[0].could_be_equal(t0) {
+            from[0] = t0;
+        }
+        if from[n - 1].could_be_equal(t1) {
+            from[n - 1] = t1;
+        }
+        let increasing = |x: &[S]| x.windows(2).all(|w| w[0].definitely_less(w[1]));
+        if !increasing(&from) || !increasing(to) {
+            return Err(ctx(GeopError::new(
+                "the parameters must be strictly increasing",
+            )));
+        }
+        let mut rest = self.sub_curve(from[0], from[n - 1]).map_err(ctx)?;
+        let mut pieces = Vec::with_capacity(n - 1);
+        for &t in &from[1..n - 1] {
+            let (left, right) = rest.split(t).map_err(ctx)?;
+            pieces.push(left);
+            rest = right;
+        }
+        pieces.push(rest);
+        let exactly_one = |w: S| w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w);
+        let rational = self.control_points.iter().any(|p| !exactly_one(p[D - 1]));
+        let mut curves = Vec::new();
+        let mut breaks = vec![to[0]];
+        for (i, mut piece) in pieces.into_iter().enumerate() {
+            let parts = if rational {
+                piece.bezier_pieces().map_err(ctx)?
+            } else {
+                // Every weight is one, and so is every blend of them: the
+                // knot insertion cutting the pieces would only round it.
+                for cp in &mut piece.control_points {
+                    cp[D - 1] = S::ONE;
+                }
+                vec![piece]
+            };
+            let scale = to[i + 1]
+                .sub(to[i])
+                .div(from[i + 1].sub(from[i]))
+                .map_err(ctx)?;
+            let last = parts.len() - 1;
+            for (k, part) in parts.into_iter().enumerate() {
+                breaks.push(if k == last {
+                    to[i + 1]
+                } else {
+                    to[i].add(part.domain().1.sub(from[i]).mul(scale)).sharpen()
+                });
+                curves.push(part);
+            }
+        }
+        NurbCurve::join_at(&curves, &breaks).map_err(ctx)
+    }
+}
+
+/// The chain `curves` as one curve on `ends` (see [`NurbCurve::join_at`]):
+/// the `i`-th curve's interior knot `k`, on its unit domain, at
+/// `place(i, k)`, its end at `joint(i)`.
+fn join_placed<S: Scalar, const D: usize>(
+    curves: &[NurbCurve<S, D>],
+    (start, end): (S, S),
+    place: impl Fn(usize, S) -> GeopResult<S>,
+    joint: impl Fn(usize) -> GeopResult<S>,
+) -> GeopResult<NurbCurve<S, D>> {
+    let n = curves.len();
+    if n == 0 {
+        return Err(GeopError::new("join: no curves to join"));
+    }
+    let mut pieces = curves
+        .iter()
+        .map(|c| c.with_unit_domain()?.with_unit_end_weights())
+        .collect::<GeopResult<Vec<_>>>()?;
+    let degree = pieces.iter().map(|c| c.degree).max().unwrap_or(0);
+    for piece in &mut pieces {
+        while piece.degree < degree {
+            *piece = piece.elevate_degree()?;
+        }
+    }
+    let mut points: Vec<Vector<S, D>> = Vec::new();
+    let mut knots = vec![start; degree + 1];
+    for (i, piece) in pieces.iter().enumerate() {
+        let len = piece.control_points.len();
+        if let Some(end) = points.last_mut() {
+            let start = &piece.control_points[0];
+            if !end.could_be_equal(start) {
+                return Err(GeopError::new(format!(
+                    "join: curve {i} starts at {start:?}, not where the one before ends, {end:?}"
+                )));
+            }
+            *end = end.union(start);
+            points.extend_from_slice(&piece.control_points[1..]);
+        } else {
+            points.extend_from_slice(&piece.control_points);
+        }
+        for &k in &piece.knot_vector[degree + 1..len] {
+            knots.push(place(i, k)?);
+        }
+        if i + 1 < n {
+            knots.extend(std::iter::repeat_n(joint(i)?, degree));
+        }
+    }
+    knots.extend(std::iter::repeat_n(end, degree + 1));
+    NurbCurve::try_new(degree, points, knots)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::nurb_curve::{NurbCurve, NurbCurve3D};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
+    use geop_core_math::{
+        scalars::Scalar,
+        vector::{Vector3, Vector4},
+    };
 
     fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
         Vector4::from_array([
@@ -449,5 +572,43 @@ mod tests {
     #[test]
     fn join_lays_curves_end_to_end() {
         for_all_scalars!(check_join_lays_curves_end_to_end);
+    }
+
+    /// A quarter arc and a spline reparametrized piece by piece, cut short
+    /// at the start: where they were at `from[i]` they are at `to[i]`,
+    /// still on the curve they were, the arc weighing one there.
+    fn check_reparametrized_maps_pieces<S: Scalar>() {
+        let f = S::from_f64;
+        let from = [f(0.1), f(0.3), f(1.0)];
+        let to = [f(0.0), f(0.6), f(1.0)];
+        for curve in [quarter_arc::<S>(), cubic_spline()] {
+            let mapped = curve.reparametrized(&from, &to).unwrap();
+            let (t0, t1) = mapped.domain();
+            assert!(t0.could_be_equal(S::ZERO) && t1.could_be_equal(S::ONE));
+            for (a, b) in from.iter().zip(&to) {
+                let (p, q) = (curve.evaluate(*a).unwrap(), mapped.evaluate(*b).unwrap());
+                assert!(p.could_be_equal(&q), "{p:?} vs {q:?}");
+            }
+            let joint = mapped
+                .control_points
+                .iter()
+                .find(|cp| {
+                    Vector3::from_array([cp[0], cp[1], cp[2]])
+                        .prod_scalar(S::ONE.div(cp[3]).unwrap())
+                        .could_be_equal(&curve.evaluate(from[1]).unwrap())
+                })
+                .expect("a control point at the joint");
+            assert!(joint[3].could_be_equal(S::ONE), "{joint:?}");
+            if curve.degree == 2 {
+                for i in 0..=8 {
+                    let p = mapped.evaluate(S::from_ratio(i, 8).unwrap()).unwrap();
+                    assert!(p.norm_sq().could_be_equal(S::ONE), "{p:?}");
+                }
+            }
+        }
+    }
+    #[test]
+    fn reparametrized_maps_pieces() {
+        for_all_scalars!(check_reparametrized_maps_pieces);
     }
 }

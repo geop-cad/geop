@@ -47,6 +47,7 @@ use geop_ops_surface::{
     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
 };
+use geop_ops_surface::{NetworkSurface, NetworkSurfaceArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -262,6 +263,10 @@ pub enum PartOperation {
     /// Add the solids and sheets of a STEP file next to the program.
     #[operation(label = "Import STEP", group = Bodies)]
     ImportStep(ImportStepArgs),
+    /// Span a face standing on its own through a network of curves — u
+    /// curves crossing v curves — running along every one of them.
+    #[operation(label = "UV surface", group = Surfaces)]
+    NetworkSurface(NetworkSurfaceArgs),
 }
 
 /// A program of the editor's operations.

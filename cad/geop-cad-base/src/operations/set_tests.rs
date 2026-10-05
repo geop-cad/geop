@@ -56,7 +56,8 @@ fn every_operation_is_offered() {
             "part_pattern",
             "route",
             "drawing",
-            "import_step"
+            "import_step",
+            "network_surface"
         ]
     );
     assert_eq!(infos[0].label, "Sketch");

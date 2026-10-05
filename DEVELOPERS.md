@@ -21,7 +21,8 @@ core/geop-core-math          scalars, interval arithmetic, linear algebra,
                               poses (dual quaternions), constrained least
                               squares and dual numbers for the solvers
 core/geop-core-geometry       NURBS curves/surfaces, helices, compatible
-                               curves for lofts, containment, intersection
+                               curves for lofts, Coons and Gordon patches,
+                               containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation;
                                wires: edges and vertices bounding no face
 core/geop-core-solve          the constraint solver every system shares:
@@ -86,8 +87,10 @@ ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
 ops/geop-ops-plastic          housings: ribs grown up to the walls, lips and
                                grooves along a rim, drafts on planar faces
 ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
-                               surfaces, offset, thicken, knit, trim and
-                               extend of faces standing on their own
+                               and UV (Gordon, through a network of
+                               curves) surfaces, offset, thicken, knit,
+                               trim and extend of faces standing on their
+                               own
 ops/geop-ops-drawing          2-D drawings: projected views with hidden
                                lines and silhouettes, sections, title block,
                                bill of materials, SVG and DXF; dimensions,

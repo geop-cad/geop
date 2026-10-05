@@ -620,6 +620,14 @@ const ICONS: Record<string, ReactElement> = {
       {dot(10, 14, 1.2)}
     </>
   ),
+  // A sheet through a grid of curves, two each way.
+  network_surface: (
+    <>
+      <path d="M3 15 C6 13 10 16 13 14 L17 6 C14 7 10 4 7 6 Z" />
+      <path d="M5 10.5 C8 9 11 11.5 15 10" strokeWidth="1" />
+      <path d="M8 14.6 L10 5" strokeWidth="1" />
+    </>
+  ),
   // A drawing's note: lines of text, a leader down to what it points at.
   note: (
     <>

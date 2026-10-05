@@ -210,7 +210,7 @@ fn square_side<S: Scalar>(k: usize) -> GeopResult<NurbCurve2D<S>> {
 
 /// A face on a patch over the unit square, bounded by `sides` — an edge
 /// and the sense it is run in — counter-clockwise from `(0, 0)`.
-fn patch_face<S: Scalar>(
+pub(crate) fn patch_face<S: Scalar>(
     surface: NurbSurface3D<S>,
     sides: [(usize, Sense); 4],
 ) -> GeopResult<FaceSpec<S>> {
