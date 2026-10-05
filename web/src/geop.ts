@@ -31,7 +31,7 @@ export type DatumComponent = { axis: FrameAxis } | { plane: FrameAxis };
  * behind the placing step's id: `bolt/extrude(head,end)`.
  */
 export type EntityRef =
-  | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch" | "Sketch3d"; name: string }
+  | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch" | "Sketch3d" | "Feature"; name: string }
   | { type: "Datum"; name: string; component?: DatumComponent }
   | { type: "SketchCurve"; sketch: string; curve: number }
   | { type: "SketchPoint"; sketch: string; point: number };
@@ -103,7 +103,14 @@ export interface PartView {
   vertices: { name: string; solid: string | null; faces: string[]; sketch: string | null; at: Vec3 }[];
   edges: { name: string; solid: string | null; faces: string[]; sketch: string | null; polyline: Vec3[] }[];
   /** Triangulated, with the kernel's surface normal at each corner. */
-  faces: { name: string; solid: string | null; triangles: [Vec3, Vec3, Vec3][]; normals: [Vec3, Vec3, Vec3][] }[];
+  faces: {
+    name: string;
+    solid: string | null;
+    /** The step whose feature made it — a cut, a boss, a hole — if one did: what picking it as a feature picks. */
+    feature?: string;
+    triangles: [Vec3, Vec3, Vec3][];
+    normals: [Vec3, Vec3, Vec3][];
+  }[];
   /** Curves in their plane's `u`/`v` coordinates. */
   sketches: {
     name: string;

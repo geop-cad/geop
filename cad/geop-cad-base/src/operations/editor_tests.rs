@@ -2625,6 +2625,88 @@ fn an_assembly_drawing_lists_its_parts() {
     assert!(text.contains("PRODUCT('plate'"), "the plate's product");
 }
 
+/// A new linear pattern picks the hole cut through a plate as a feature by
+/// a click on the hole's wall, through the hole's mouth from above: the
+/// dialog lists the feature and no body any more, hovering lights the
+/// hole, and committed with four instances two apart, the scene holds the
+/// plate alone, drilled four times.
+#[test]
+fn new_linear_pattern_picks_a_feature_by_its_wall() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program: super::feature_pattern_tests::plate_with_hole(),
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::New {
+        kind: "linear_pattern".into(),
+    });
+    editor.handle(dialog("features", Value::Press));
+    // From above the hole's middle down onto its wall at 45°, 0.1 above
+    // the plate's bottom — clear of the rim and of the wall's seams.
+    let r = 0.3 * std::f64::consts::FRAC_1_SQRT_2;
+    let wall = pointer([1.0, 1.0, 3.0], [r, r, 0.1 - 3.0]);
+    let hole = EntityRef::Feature {
+        name: "hole".into(),
+    };
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: wall.clone(),
+            shift: false,
+        },
+    });
+    let step = update.step.expect("the pattern is edited");
+    assert!(
+        step.presentation.highlights.contains(&hole),
+        "{:?}",
+        step.presentation.highlights
+    );
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Click {
+            pointer: wall,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the pattern is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    let picked = |key: &str| match step.presentation.dialog.get(key) {
+        Some(Control::Reference(r)) => r.entities().cloned().collect::<Vec<_>>(),
+        other => panic!("{key}: {other:?}"),
+    };
+    assert_eq!(picked("features"), [hole.clone()]);
+    assert!(picked("bodies").is_empty());
+    // A feature combines as it did: there is no combining to choose.
+    assert!(step.presentation.dialog.get("combine").is_none());
+
+    editor.handle(dialog("count", Value::Number(4.0)));
+    editor.handle(dialog("spacing", Value::Number(2.0)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::LinearPattern(args) => {
+            assert_eq!(args.features, [hole]);
+            assert!(args.bodies.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    let scene = editor
+        .handle(Command::Seek { marker: None })
+        .scene
+        .expect("the scene is sent");
+    let id = editor.program().steps.last().unwrap().id.clone();
+    assert_eq!(scene.part.solids, [format!("linear_pattern({id})")]);
+    let copied = scene
+        .part
+        .faces
+        .iter()
+        .filter(|f| f.feature.as_deref() == Some(id.as_str()))
+        .count();
+    assert!(copied >= 3, "the copies' faces are the pattern's: {copied}");
+}
+
 /// A click of the primary button with `pointer`.
 fn click_at(pointer: Pointer<S>) -> Command<S> {
     Command::Event {

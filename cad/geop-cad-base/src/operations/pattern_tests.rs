@@ -22,7 +22,7 @@ use geop_ops_sketch::{AddSketchArgs, Sketch};
 use crate::Program;
 use crate::examples::n;
 
-fn assert_valid(part: &Part<S>) {
+pub(super) fn assert_valid(part: &Part<S>) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate(&params, part.topology()) {
         let messages: Vec<String> = errors.iter().map(|e| format!("{e:?}")).collect();
@@ -39,7 +39,7 @@ fn assert_valid(part: &Part<S>) {
 }
 
 /// The volume the solid named `solid` encloses, from its mesh as drawn.
-fn volume(part: &Part<S>, solid: &str) -> f64 {
+pub(super) fn volume(part: &Part<S>, solid: &str) -> f64 {
     let id = part.solid_id(solid).unwrap();
     let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
     let raster = rasterize(part.topology(), 64).unwrap();
@@ -54,11 +54,11 @@ fn volume(part: &Part<S>, solid: &str) -> f64 {
         .sum()
 }
 
-fn z_plane() -> EntityRef {
+pub(super) fn z_plane() -> EntityRef {
     EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z))
 }
 
-fn polygon(corners: &[[f64; 2]]) -> Sketch {
+pub(super) fn polygon(corners: &[[f64; 2]]) -> Sketch {
     let mut s = Sketch::new();
     let p: Vec<_> = corners
         .iter()
@@ -70,7 +70,7 @@ fn polygon(corners: &[[f64; 2]]) -> Sketch {
     s
 }
 
-fn circle(center: [f64; 2], radius: f64) -> Sketch {
+pub(super) fn circle(center: [f64; 2], radius: f64) -> Sketch {
     let mut s = Sketch::new();
     let c = s.add_point(n(center[0]), n(center[1]));
     s.add_circle(c, n(radius));
@@ -79,7 +79,7 @@ fn circle(center: [f64; 2], radius: f64) -> Sketch {
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.
-fn extruded(program: &mut Program, name: &str, sketch: Sketch, extent: Extents) {
+pub(super) fn extruded(program: &mut Program, name: &str, sketch: Sketch, extent: Extents) {
     let sketch_name = format!("{name}_sketch");
     program.push(
         &sketch_name,
@@ -104,7 +104,7 @@ fn solid(name: &str) -> Vec<EntityRef> {
     vec![EntityRef::Solid { name: name.into() }]
 }
 
-fn axis(a: FrameAxis) -> Option<EntityRef> {
+pub(super) fn axis(a: FrameAxis) -> Option<EntityRef> {
     Some(EntityRef::datum_component(ORIGIN, DatumComponent::Axis(a)))
 }
 
@@ -126,7 +126,7 @@ fn plate_and_pin() -> Program {
 
 /// Builds `program`, with every step read back from its JSON first: what
 /// a program file holds builds the same part.
-fn build(program: &Program) -> Part<S> {
+pub(super) fn build(program: &Program) -> Part<S> {
     let json = serde_json::to_string(program).unwrap();
     let read: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
@@ -141,6 +141,7 @@ fn row_of_holes_cut_by_a_patterned_tool() {
     program.push(
         "holes",
         LinearPatternArgs {
+            features: Vec::new(),
             bodies: solid("extrude(pin)"),
             first: Direction {
                 along: axis(FrameAxis::X),
@@ -186,6 +187,7 @@ fn bolt_circle_cut_by_a_patterned_tool() {
     program.push(
         "bolts",
         CircularPatternArgs {
+            features: Vec::new(),
             bodies: solid("extrude(pin)"),
             axis: axis(FrameAxis::Z),
             reversed: false,
@@ -220,6 +222,7 @@ fn half_mirrored_and_joined() {
     program.push(
         "m",
         MirrorArgs {
+            features: Vec::new(),
             bodies: solid("extrude(half)"),
             plane: Some(EntityRef::datum_component(
                 ORIGIN,
@@ -255,6 +258,7 @@ fn asymmetric_body_mirrored() {
     program.push(
         "m",
         MirrorArgs {
+            features: Vec::new(),
             bodies: solid("extrude(l)"),
             plane: Some(EntityRef::datum_component(
                 ORIGIN,
@@ -333,6 +337,7 @@ fn circular_patterns_sweep() {
         program.push(
             "r",
             CircularPatternArgs {
+                features: Vec::new(),
                 bodies: solid("extrude(b)"),
                 axis: axis(FrameAxis::Z),
                 reversed: false,
@@ -495,6 +500,7 @@ fn turned_copy_joined_stays_tight() {
     program.push(
         "r",
         CircularPatternArgs {
+            features: Vec::new(),
             bodies: solid("extrude(b)"),
             axis: axis(FrameAxis::Z),
             reversed: false,
@@ -531,6 +537,7 @@ fn linear_patterns_and_moves_sweep() {
         program.push(
             "holes",
             LinearPatternArgs {
+                features: Vec::new(),
                 bodies: solid("extrude(pin)"),
                 first: Direction {
                     along: axis(FrameAxis::X),
@@ -618,6 +625,7 @@ fn holes_patterned_along_sketch_lines() {
         "holes",
         LinearPatternArgs {
             bodies: solid("extrude(pin)"),
+            features: Vec::new(),
             first: Direction {
                 along: Some(EntityRef::Edge {
                     name: "sketch3d(rail,c2)".into(),

@@ -38,7 +38,7 @@ export interface Scene {
   triangles: [Vec3, Vec3, Vec3, number][];
   normals: [Vec3, Vec3, Vec3][];
   triangle_faces: number[];
-  faces: { name: string; solid: string | null }[];
+  faces: { name: string; solid: string | null; feature?: string }[];
 }
 
 /** The point `(x, y)` of `plane`. */
@@ -101,7 +101,7 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
   part.faces.forEach((f) => {
     if (!shown(f.solid) || (f.solid == null && hidden.includes(f.name))) return;
     const index = scene.faces.length;
-    scene.faces.push({ name: f.name, solid: f.solid });
+    scene.faces.push({ name: f.name, solid: f.solid, feature: f.feature });
     f.triangles.forEach(([a, b, c], i) => {
       scene.triangles.push([a, b, c, faceColor]);
       scene.normals.push(f.normals[i]);
@@ -289,8 +289,8 @@ export function tint(colors: Float32Array, k: number) {
 export function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[], hidden: string[]) {
   const named = (type: EntityRef["type"]) =>
     new Set(highlights.flatMap((h) => (h.type === type && "name" in h ? [h.name] : [])));
-  const [faces, solids, planar, edges, vertices, spatial] = (
-    ["Face", "Solid", "Sketch", "Edge", "Vertex", "Sketch3d"] as const
+  const [faces, solids, planar, edges, vertices, spatial, features] = (
+    ["Face", "Solid", "Sketch", "Edge", "Vertex", "Sketch3d", "Feature"] as const
   ).map(named);
   const sketches = new Set([...planar, ...spatial]);
   /** A curve's or a point's key: its sketch and its id there. */
@@ -306,7 +306,12 @@ export function applyHighlight(group: THREE.Group, scene: Scene, highlights: Ent
     colors.set(tags.base);
     tags.triangleFaces.forEach((f, i) => {
       const face = tags.faces[f];
-      if (!face || !(faces.has(face.name) || (face.solid != null && solids.has(face.solid)))) return;
+      if (!face) return;
+      const lit =
+        faces.has(face.name) ||
+        (face.solid != null && solids.has(face.solid)) ||
+        (face.feature != null && features.has(face.feature));
+      if (!lit) return;
       for (let k = i * 9; k < i * 9 + 9; k += 3) tint(colors, k);
     });
     attribute.needsUpdate = true;

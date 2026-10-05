@@ -9,7 +9,7 @@ use geop_core_math::{
 };
 use geop_core_topology::{Body, SolidId};
 use geop_ops::{
-    Context, Library, Namer, Part,
+    Context, FeatureTool, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
     ui::{Choice, Form},
 };
@@ -329,6 +329,11 @@ impl Combine {
     /// A new body is the tools as built — a tool going up to the next face
     /// of whichever other solid it meets first (see [`piece_up_to_next`]),
     /// those solids left as they are — joined into one.
+    ///
+    /// Combined with a target, each tool is recorded, as built, as the
+    /// feature of the step (see [`geop_ops::Feature`]): what a pattern of
+    /// the feature copies and combines the same way. A new body is no
+    /// feature: it is a body, patterned as one.
     pub fn apply<S: Scalar>(
         &self,
         part: &mut Part<S>,
@@ -344,6 +349,19 @@ impl Combine {
         };
         let ctx = with_context!("combining with {target:?} ({op:?})");
         let mut target = part.solid_id(target).with_context(ctx)?;
+        for tool in tools {
+            let (spec, names) = part.body_record(tool.solid.into()).with_context(ctx)?;
+            part.record_feature_tool(
+                operation_id,
+                FeatureTool {
+                    spec,
+                    names,
+                    op,
+                    up_to_next: tool.up_to_next.clone(),
+                    scope: tool.scope.clone(),
+                },
+            );
+        }
         for (k, tool) in tools.iter().enumerate() {
             let mut combine = Namer::new("combine", operation_id)?;
             if let Some(scope) = &tool.scope {

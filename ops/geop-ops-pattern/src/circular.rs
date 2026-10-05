@@ -15,13 +15,10 @@ use geop_ops::{
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{
-    Spacing, axis, bodies_field, combine_instances, copy_seeds, count_field, newest_solid,
-    seed_instances, seeds, whole_count,
-};
+use crate::common::{Seeds, Spacing, axis, count_field, newest_solid, seed_fields, whole_count};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
-/// turned around an axis: `count` instances, the bodies themselves the
+/// or does the features `features` again, turned around an axis: `count` instances, the bodies themselves the
 /// first, each `Spacing::Step` degrees from the last, or spread evenly over
 /// `Spacing::Extent` degrees — over a full turn of 360°, the last a step
 /// short of coming round onto the first again. Turning goes
@@ -31,7 +28,8 @@ use crate::common::{
 /// The axis is a line — a straight edge, an axis, a sketch line — or what
 /// a round entity turns around: a circular edge, a cylindrical face.
 ///
-/// Kept, combined and named as [`crate::LinearPattern`] does, as
+/// Kept, combined — a feature as it combined — and named as
+/// [`crate::LinearPattern`] does, as
 /// `circular_pattern(P)` and `circular_pattern(P,i,X)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CircularPattern;
@@ -40,6 +38,9 @@ pub struct CircularPattern;
 pub struct CircularPatternArgs {
     /// The bodies to copy: solids, or a face of each sheet.
     pub bodies: Vec<EntityRef>,
+    /// Or the features to do again (see [`EntityRef::Feature`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<EntityRef>,
     /// What to turn around; none, for a step that has not picked it.
     pub axis: Option<EntityRef>,
     /// Turn the other way.
@@ -50,12 +51,22 @@ pub struct CircularPatternArgs {
     pub count: Formula,
     /// How far apart they are, in degrees.
     pub angle: Spacing,
-    /// Keep the copies as new bodies, or combine them with a solid.
+    /// Keep the copies of bodies as new bodies, or combine them with a
+    /// solid.
     #[serde(default)]
     pub combine: Combine,
 }
 
 impl CircularPatternArgs {
+    /// What it repeats.
+    fn seeds(&self) -> Seeds<'_> {
+        Seeds {
+            bodies: &self.bodies,
+            features: &self.features,
+            combine: &self.combine,
+        }
+    }
+
     /// How many instances there are, and how far the instance `k` is
     /// turned, in degrees, as `value * k / divisor`: `(count, value,
     /// divisor)`, with `value` giving the count's and the angle's values.
@@ -105,6 +116,7 @@ impl Operation for CircularPattern {
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> CircularPatternArgs {
         CircularPatternArgs {
             bodies: newest_solid(before),
+            features: Vec::new(),
             axis: Some(EntityRef::datum_component(
                 ORIGIN,
                 DatumComponent::Axis(FrameAxis::Z),
@@ -116,8 +128,8 @@ impl Operation for CircularPattern {
         }
     }
 
-    /// The bodies and the axis, picked; the count and the angles; and how
-    /// to combine.
+    /// The bodies or the features, and the axis, picked; the count and the
+    /// angles; and how to combine copies of bodies.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -127,7 +139,9 @@ impl Operation for CircularPattern {
     ) -> Form<'a, S, CircularPatternArgs> {
         let before = context.before;
         let mut f = Form::<S, CircularPatternArgs>::new();
-        bodies_field(&mut f, &args.bodies, |args| &mut args.bodies);
+        seed_fields(&mut f, &args.bodies, &args.features, |args| {
+            (&mut args.bodies, &mut args.features)
+        });
         f.reference(
             "axis",
             "axis",
@@ -151,7 +165,9 @@ impl Operation for CircularPattern {
             |label, value| Number::formula(label, value, inputs, Unit::Angle).range(-360.0, 360.0),
             |args| &mut args.angle,
         );
-        args.combine.show(&mut f, before, |args| &mut args.combine);
+        if args.features.is_empty() {
+            args.combine.show(&mut f, before, |args| &mut args.combine);
+        }
         f
     }
 
@@ -164,7 +180,6 @@ impl Operation for CircularPattern {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("circular_pattern({operation_id}, {args:?})");
         let namer = Namer::new("circular_pattern", operation_id)?;
-        let seeds = seeds(&part, &args.bodies).with_context(ctx)?;
         let Some(axis_ref) = &args.axis else {
             return Err(GeopError::new("pick an axis to turn around")).with_context(ctx);
         };
@@ -175,7 +190,7 @@ impl Operation for CircularPattern {
             axis.direction
         };
         let (count, degrees, divisor) = args.angles(|f| f.evaluate(&mut part)).with_context(ctx)?;
-        let mut instances = seed_instances(&seeds, "0");
+        let mut placements = Vec::new();
         for k in 1..count {
             // `degrees * k / divisor` in radians, enclosed in one go rather
             // than accumulated step by step.
@@ -187,15 +202,17 @@ impl Operation for CircularPattern {
             let motion = Pose::rotation_about(&axis.point, &direction, radians)
                 .with_context(ctx)?
                 .motion();
-            let label = k.to_string();
-            instances.extend(
-                copy_seeds(&mut part, &seeds, &motion, &label, |name| {
-                    namer.name(&[&label, name])
-                })
-                .with_context(ctx)?,
-            );
+            placements.push((k.to_string(), motion));
         }
-        combine_instances(&mut part, &namer, operation_id, &args.combine, &instances)
+        args.seeds()
+            .repeat(
+                &mut part,
+                &namer,
+                operation_id,
+                "0",
+                &placements,
+                |label, name| namer.name(&[label, name]),
+            )
             .with_context(ctx)?;
         Ok(part)
     }

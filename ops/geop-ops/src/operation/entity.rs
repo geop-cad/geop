@@ -71,6 +71,12 @@ pub enum EntityRef {
         sketch: String,
         point: PointId,
     },
+    /// What a step did by combining tools with a solid — a cut, a boss, a
+    /// hole — by the step's id (see [`crate::part::Feature`]): picked by a
+    /// face it made.
+    Feature {
+        name: String,
+    },
 }
 
 impl EntityRef {
@@ -105,7 +111,8 @@ impl EntityRef {
             | EntityRef::Datum { name, .. }
             | EntityRef::Solid { name }
             | EntityRef::Sketch { name }
-            | EntityRef::Sketch3d { name } => name.clone(),
+            | EntityRef::Sketch3d { name }
+            | EntityRef::Feature { name } => name.clone(),
         }
     }
 }
@@ -120,7 +127,8 @@ impl EntityRef {
             | EntityRef::Datum { name, .. }
             | EntityRef::Solid { name }
             | EntityRef::Sketch { name }
-            | EntityRef::Sketch3d { name } => name,
+            | EntityRef::Sketch3d { name }
+            | EntityRef::Feature { name } => name,
             EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. } => sketch,
         }
     }
@@ -180,6 +188,7 @@ impl std::fmt::Display for EntityRef {
             EntityRef::Solid { name } => write!(f, "solid {name:?}"),
             EntityRef::Sketch { name } => write!(f, "sketch {name:?}"),
             EntityRef::Sketch3d { name } => write!(f, "3-D sketch {name:?}"),
+            EntityRef::Feature { name } => write!(f, "feature {name:?}"),
             EntityRef::SketchCurve { sketch, curve } => {
                 write!(f, "curve {curve} of sketch {sketch:?}")
             }

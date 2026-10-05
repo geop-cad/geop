@@ -222,6 +222,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
     program.push(
         "teeth",
         CircularPatternArgs {
+            features: Vec::new(),
             bodies: vec![EntityRef::Solid {
                 name: "extrude(gap)".into(),
             }],
