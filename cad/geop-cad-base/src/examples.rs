@@ -1715,6 +1715,7 @@ pub fn patterned_plate() -> Program {
     program.push(
         "holes",
         LinearPatternArgs {
+            features: Vec::new(),
             bodies: vec![EntityRef::Solid {
                 name: "extrude(pin)".into(),
             }],

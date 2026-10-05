@@ -107,7 +107,7 @@ pub mod program;
 pub mod ui;
 
 pub use part::{
-    BodyNames, Component, CosmeticThread, DatumId, EdgeDescription, FaceDescription, Instance,
+    BodyNames, BooleanOp, Feature, FeatureTool, Component, CosmeticThread, DatumId, EdgeDescription, FaceDescription, Instance,
     InstanceId, NameRegistry, Namer, ORIGIN, Part, PartDescription, PlacedSketch, RefId,
     Sketch3dId, SketchId, validate_operation_id,
 };

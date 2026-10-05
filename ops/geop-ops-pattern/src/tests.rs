@@ -107,6 +107,7 @@ fn along(a: FrameAxis, count: usize, spacing: Spacing) -> Direction {
 #[test]
 fn row_of_new_bodies() {
     let args = LinearPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         first: along(FrameAxis::X, 3, Spacing::step(2.0)),
         second: None,
@@ -138,6 +139,7 @@ fn row_over_a_total_reversed() {
     let mut first = along(FrameAxis::Y, 4, Spacing::extent(6.0));
     first.reversed = true;
     let args = LinearPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         first,
         second: None,
@@ -158,6 +160,7 @@ fn row_over_a_total_reversed() {
 #[test]
 fn overlapping_copies_joined_to_the_seed() {
     let args = LinearPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         first: along(FrameAxis::X, 3, Spacing::step(0.5)),
         second: None,
@@ -177,6 +180,7 @@ fn overlapping_copies_joined_to_the_seed() {
 #[test]
 fn grid_of_new_bodies() {
     let args = LinearPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         first: along(FrameAxis::X, 2, Spacing::step(2.0)),
         second: Some(along(FrameAxis::Y, 3, Spacing::step(1.5))),
@@ -201,6 +205,7 @@ fn grid_of_new_bodies() {
 #[test]
 fn parallel_grid_is_refused() {
     let args = LinearPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         first: along(FrameAxis::X, 2, Spacing::step(2.0)),
         second: Some(along(FrameAxis::X, 2, Spacing::step(3.0))),
@@ -218,6 +223,7 @@ fn parallel_grid_is_refused() {
 #[test]
 fn full_turn_around_an_axis() {
     let args = CircularPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         axis: axis(FrameAxis::Z),
         reversed: false,
@@ -242,6 +248,7 @@ fn full_turn_around_an_axis() {
 #[test]
 fn coming_round_again_is_refused() {
     let args = CircularPatternArgs {
+        features: Vec::new(),
         bodies: cube(),
         axis: axis(FrameAxis::Z),
         reversed: false,
@@ -261,6 +268,7 @@ fn coming_round_again_is_refused() {
 #[test]
 fn mirrored_cube_faces_out() {
     let args = MirrorArgs {
+        features: Vec::new(),
         bodies: cube(),
         plane: Some(EntityRef::datum_component(
             ORIGIN,
@@ -343,6 +351,7 @@ fn sheets_are_copied_not_combined() {
         name: "x(cube(c,end))".into(),
     }];
     let mut args = LinearPatternArgs {
+        features: Vec::new(),
         bodies: sheet,
         first: along(FrameAxis::Z, 2, Spacing::step(2.0)),
         second: None,

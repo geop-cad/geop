@@ -166,6 +166,114 @@ pub(crate) fn bodies_field<'a, S: Scalar, A: 'a>(
     );
 }
 
+/// The fields picking what a pattern repeats, `seeds` giving its bodies
+/// and its features: the bodies (see [`bodies_field`]), or the features,
+/// keyed `features`, each by a face it made — a hole by its wall. A step
+/// repeats one or the other, so picking either empties the other.
+pub(crate) fn seed_fields<'a, S: Scalar, A: 'a>(
+    form: &mut Form<'a, S, A>,
+    bodies: &[EntityRef],
+    features: &[EntityRef],
+    seeds: fn(&mut A) -> (&mut Vec<EntityRef>, &mut Vec<EntityRef>),
+) {
+    form.reference(
+        "bodies",
+        "bodies",
+        bodies.to_vec(),
+        &[Role::Solid, Role::Sheet],
+        None,
+        true,
+        move |edit, picked| {
+            let (bodies, features) = seeds(edit.args);
+            if !picked.is_empty() {
+                features.clear();
+            }
+            *bodies = picked;
+        },
+    );
+    form.reference(
+        "features",
+        "features",
+        features.to_vec(),
+        &[Role::Feature],
+        None,
+        true,
+        move |edit, picked| {
+            let (bodies, features) = seeds(edit.args);
+            if !picked.is_empty() {
+                bodies.clear();
+            }
+            *features = picked;
+        },
+    );
+}
+
+/// What a pattern repeats, as its arguments pick it: `bodies` — kept as
+/// new bodies, or combined as `combine` says — or `features`, each copy
+/// combined as its feature was (see [`crate::features`]).
+pub(crate) struct Seeds<'a> {
+    pub bodies: &'a [EntityRef],
+    pub features: &'a [EntityRef],
+    pub combine: &'a Combine,
+}
+
+impl Seeds<'_> {
+    /// Copies what it picks to every placement — a label and the motion
+    /// from where the seeds are — as the step `operation_id`, whose names
+    /// `namer` builds: the copy of each entity named `X` named
+    /// `rename(label, X)`. Bodies are then kept, or combined as
+    /// [`combine_instances`] does, the bodies themselves labelled
+    /// `seed_label`; features are done again (see
+    /// [`crate::features::repeat_features`]).
+    ///
+    /// Bodies and features both, or neither, are refused.
+    pub(crate) fn repeat<S: Scalar>(
+        &self,
+        part: &mut Part<S>,
+        namer: &Namer,
+        operation_id: &str,
+        seed_label: &str,
+        placements: &[(String, Motion<S>)],
+        rename: impl Fn(&str, &str) -> String,
+    ) -> GeopResult<()> {
+        match (self.bodies.is_empty(), self.features.is_empty()) {
+            (false, false) => Err(GeopError::new(
+                "both bodies and features are picked: a step patterns one or the other",
+            )),
+            (true, true) => Err(GeopError::new("pick the bodies or the features first")),
+            (true, false) => crate::features::repeat_features(
+                part,
+                namer,
+                operation_id,
+                self.features,
+                placements,
+                rename,
+            ),
+            (false, true) => {
+                let seeds = seeds(part, self.bodies)?;
+                let mut instances = seed_instances(&seeds, seed_label);
+                for (label, motion) in placements {
+                    instances.extend(copy_seeds(part, &seeds, motion, label, |name| {
+                        rename(label, name)
+                    })?);
+                }
+                combine_instances(part, namer, operation_id, self.combine, &instances)
+            }
+        }
+    }
+
+    /// Where the handles of a step repeating it sit: the middle of the
+    /// corners of the bodies, or of the tools of the features. None, if
+    /// it picks none.
+    pub(crate) fn center<S: Scalar>(&self, part: &Part<S>) -> Option<Vector3<S>> {
+        if self.features.is_empty() {
+            center(part, self.bodies)
+        } else {
+            crate::features::features_center(part, self.features)
+        }
+    }
+}
+
 /// The newest solid of `before`, as a body field starts out holding it:
 /// none, if there is none.
 pub(crate) fn newest_solid<S: Scalar>(before: &Part<S>) -> Vec<EntityRef> {

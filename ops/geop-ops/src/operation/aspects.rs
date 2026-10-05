@@ -52,6 +52,8 @@ pub struct Aspects<S: Scalar> {
     pub sketch: bool,
     /// Curves to run along: a planar or a 3-D sketch's.
     pub path: bool,
+    /// A feature: what a step did by combining tools with a solid.
+    pub feature: bool,
 }
 
 impl<S: Scalar> Aspects<S> {
@@ -120,6 +122,10 @@ impl<S: Scalar> Aspects<S> {
                 part.sketch3d_id(name).with_context(ctx)?;
                 g.path = true;
             }
+            EntityRef::Feature { name } => {
+                part.feature(name).with_context(ctx)?;
+                g.feature = true;
+            }
             EntityRef::SketchPoint { sketch, point } => {
                 let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
                 placed.sketch.point(*point).with_context(ctx)?;
@@ -178,6 +184,7 @@ impl<S: Scalar> Aspects<S> {
             sheet: self.sheet,
             sketch: self.sketch,
             path: self.path,
+            feature: self.feature,
         })
     }
 
@@ -218,10 +225,13 @@ pub enum Role {
     Sketch,
     /// Curves to run along: a planar or a 3-D sketch, as a whole.
     Path,
+    /// What a step did by combining tools with a solid, picked by a face
+    /// it made.
+    Feature,
 }
 
 impl Role {
-    pub const ALL: [Role; 11] = [
+    pub const ALL: [Role; 12] = [
         Role::Point,
         Role::Line,
         Role::Plane,
@@ -233,6 +243,7 @@ impl Role {
         Role::Sheet,
         Role::Sketch,
         Role::Path,
+        Role::Feature,
     ];
 
     pub fn fits<S: Scalar>(self, aspects: &Aspects<S>) -> bool {
@@ -248,6 +259,7 @@ impl Role {
             Role::Sheet => aspects.sheet,
             Role::Sketch => aspects.sketch,
             Role::Path => aspects.path,
+            Role::Feature => aspects.feature,
         }
     }
 
@@ -265,6 +277,7 @@ impl Role {
             Role::Sheet => "a face on its own",
             Role::Sketch => "a sketch",
             Role::Path => "a sketch or a 3-D sketch",
+            Role::Feature => "a feature, by a face it made",
         }
     }
 
@@ -282,6 +295,7 @@ impl Role {
             Role::Sheet => "sheet",
             Role::Sketch => "sketch",
             Role::Path => "path",
+            Role::Feature => "feature",
         }
     }
 }

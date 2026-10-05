@@ -27,6 +27,7 @@
 
 mod circular;
 mod common;
+mod features;
 mod linear;
 mod mirror;
 mod move_body;

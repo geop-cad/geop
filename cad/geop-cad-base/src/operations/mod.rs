@@ -105,6 +105,8 @@ mod tests;
 mod urdf_tests;
 #[cfg(test)]
 mod view_tests;
+#[cfg(test)]
+mod feature_pattern_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

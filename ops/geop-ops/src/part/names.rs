@@ -121,6 +121,14 @@ pub fn validate_operation_id(id: &str) -> GeopResult<()> {
     }
 }
 
+/// The id of the step that named the entity `name` (see [`Namer`]): `E`
+/// for `extrude(E,end)`. None for a name no step built.
+pub fn operation_of(name: &str) -> Option<&str> {
+    let (_, rest) = name.split_once('(')?;
+    let end = rest.find([',', ')'])?;
+    Some(&rest[..end])
+}
+
 /// Builds the names one run of one operation gives to what it creates:
 /// `kind(operation,arg,...)`, see the crate docs.
 #[derive(Clone, Debug)]

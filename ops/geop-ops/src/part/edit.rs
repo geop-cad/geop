@@ -212,17 +212,29 @@ impl<S: Scalar> Part<S> {
         body: Body,
         rename: impl Fn(&str) -> String,
     ) -> GeopResult<BuiltBody> {
+        let (spec, names) = self.body_record(body)?;
+        self.build_body(spec, names.renamed(rename))
+    }
+
+    /// The whole of `body` — a solid, its shells kept apart, or a sheet —
+    /// as a body to build again (see [`Part::build_body`]), with the names
+    /// of its entities: what [`Part::copy_body`] builds, kept to build
+    /// later.
+    pub fn body_record(&self, body: Body) -> GeopResult<(BodySpec<S>, BodyNames)> {
         let faces = self.topology.body_faces(body)?;
-        let solid =
-            match body {
-                Body::Solid(solid) => Some(rename(self.names.name_of(solid).ok_or_else(|| {
-                    GeopError::new(format!("Part::copy_body: {solid} has no name"))
-                })?)),
-                Body::Sheet(_) => None,
-            };
+        let name = |id: super::RefId| -> GeopResult<String> {
+            self.names
+                .name_of(id)
+                .map(str::to_string)
+                .ok_or_else(|| GeopError::new(format!("Part::body_record: {id} has no name")))
+        };
+        let solid = match body {
+            Body::Solid(solid) => Some(name(solid.into())?),
+            Body::Sheet(_) => None,
+        };
         let (mut spec, sources) = self.topology.body_spec(&faces, solid.is_some())?;
         // `body_spec` puts every face into one shell; a solid with a void
-        // has more, which the copy keeps.
+        // has more, which the record keeps.
         let mut shells: Vec<(ShellId, Vec<usize>)> = Vec::new();
         for (index, &face) in sources.faces.iter().enumerate() {
             let shell = self.topology.get_face(face)?.shell;
@@ -232,23 +244,25 @@ impl<S: Scalar> Part<S> {
             }
         }
         spec.shells = shells.into_iter().map(|(_, members)| members).collect();
-        let copied = |ids: Vec<super::RefId>| -> GeopResult<Vec<String>> {
-            ids.into_iter()
-                .map(|id| {
-                    let name = self.names.name_of(id).ok_or_else(|| {
-                        GeopError::new(format!("Part::copy_body: {id} has no name"))
-                    })?;
-                    Ok(rename(name))
-                })
-                .collect()
-        };
         let names = BodyNames {
-            vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
-            edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
-            faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
+            vertices: sources
+                .vertices
+                .iter()
+                .map(|&v| name(v.into()))
+                .collect::<GeopResult<_>>()?,
+            edges: sources
+                .edges
+                .iter()
+                .map(|&e| name(e.into()))
+                .collect::<GeopResult<_>>()?,
+            faces: sources
+                .faces
+                .iter()
+                .map(|&f| name(f.into()))
+                .collect::<GeopResult<_>>()?,
             solid,
         };
-        self.build_body(spec, names)
+        Ok((spec, names))
     }
 
     /// Forwards to [`geop_core_topology::Model::transform_body`]. Creates
@@ -304,4 +318,17 @@ pub struct BodyNames {
     pub edges: Vec<String>,
     pub faces: Vec<String>,
     pub solid: Option<String>,
+}
+
+impl BodyNames {
+    /// The same names, each `X` as `rename(X)`.
+    pub fn renamed(&self, rename: impl Fn(&str) -> String) -> BodyNames {
+        let all = |names: &[String]| names.iter().map(|n| rename(n)).collect();
+        BodyNames {
+            vertices: all(&self.vertices),
+            edges: all(&self.edges),
+            faces: all(&self.faces),
+            solid: self.solid.as_deref().map(&rename),
+        }
+    }
 }
