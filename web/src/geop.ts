@@ -457,6 +457,10 @@ export type Command =
   | { command: "preview"; preview: boolean }
   | { command: "remove"; id: string }
   | { command: "move"; id: string; index: number }
+  /** The step `id` as text to paste, in the update's `export`. */
+  | { command: "copy"; id: string }
+  /** Insert the steps of `text` — what `copy` gave — where new steps go. */
+  | { command: "paste"; text: string }
   | { command: "seek"; marker: number | null }
   /** `path`: the file the program is in, which the files it places are named relative to. */
   | { command: "load"; program: Program; path?: string }

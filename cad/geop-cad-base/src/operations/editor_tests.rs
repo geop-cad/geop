@@ -3962,3 +3962,52 @@ fn a_file_opened_again_is_not_built_again() {
     load(&mut editor, &deeper, "part.geop");
     assert_eq!(editor.runner.steps_built() - before, 1);
 }
+
+/// A sketch is copied as the front end copies it — the update's export —
+/// and pasted where the program runs to, under a fresh id, building as the
+/// original does; pasted into a program without one of its id, it keeps
+/// its own.
+#[test]
+fn a_sketch_is_copied_and_pasted() {
+    let (mut editor, _) = editor();
+    let sketch = editor
+        .program()
+        .steps
+        .iter()
+        .find(|s| geop_ops::Operations::kind(&s.operation) == "add_sketch")
+        .expect("the example has a sketch")
+        .clone();
+
+    let copied = editor.handle(Command::Copy {
+        id: sketch.id.clone(),
+    });
+    assert!(copied.error.is_none(), "{:?}", copied.error);
+    let text = copied.export.unwrap().text().unwrap().to_string();
+
+    editor.handle(Command::Seek { marker: Some(1) });
+    let update = editor.handle(Command::Paste { text: text.clone() });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let state = update.program.unwrap();
+    assert_eq!(state.marker, 2, "the program runs to the pasted step");
+    let pasted = &editor.program().steps[1];
+    assert_ne!(pasted.id, sketch.id);
+    assert_eq!(pasted.operation, sketch.operation);
+    editor.handle(Command::Seek { marker: None });
+    let update = editor.handle(Command::Show);
+    let steps = update.program.unwrap().steps;
+    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+
+    // Another file: its own id is free there.
+    editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("other.geop".into()),
+    });
+    let update = editor.handle(Command::Paste { text });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(editor.program().steps[0].id, sketch.id);
+
+    let refused = editor.handle(Command::Paste {
+        text: "not steps".into(),
+    });
+    assert!(refused.error.unwrap().contains("pasting"));
+}

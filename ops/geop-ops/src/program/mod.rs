@@ -200,6 +200,70 @@ impl<O: Operations> Program<O> {
         Ok(())
     }
 
+    /// The step `id` as a program of its own, as a copy of it is kept: the
+    /// step, and the state stored under its id — where a placed part is.
+    /// Not the parameters: pasted into another program, the step reads
+    /// those of that program.
+    pub fn excerpt(&self, id: &str) -> GeopResult<Self>
+    where
+        O: Clone,
+    {
+        let step = self.steps[self.index_of(id)?].clone();
+        let prefix = format!("{id}.");
+        let state = self
+            .state
+            .iter()
+            .filter(|(name, _)| name.starts_with(&prefix))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        Ok(Self {
+            parameters: Parameters::default(),
+            steps: vec![step],
+            state,
+        })
+    }
+
+    /// Inserts the steps of `pasted` at `index`, in order, with the state
+    /// stored under their ids: each under its own id where no step has it
+    /// yet, else under a fresh one. The ids they got, in order.
+    ///
+    /// A step names what it builds on by the ids of the steps that built
+    /// it, so a step pasted under a fresh id is not renamed in the steps
+    /// pasted with it: they still build on the steps they were copied
+    /// with.
+    pub fn paste(&mut self, pasted: Self, index: usize) -> GeopResult<Vec<String>> {
+        pasted.validate()?;
+        if index > self.steps.len() {
+            return Err(GeopError::new(format!(
+                "cannot paste at {index}: the program has {} steps",
+                self.steps.len()
+            )));
+        }
+        let mut ids = Vec::with_capacity(pasted.steps.len());
+        for (k, step) in pasted.steps.into_iter().enumerate() {
+            let id = if self.steps.iter().any(|s| s.id == step.id) {
+                self.fresh_id(&step.operation)
+            } else {
+                step.id.clone()
+            };
+            let prefix = format!("{}.", step.id);
+            for (name, value) in &pasted.state {
+                if let Some(rest) = name.strip_prefix(&prefix) {
+                    self.state.insert(format!("{id}.{rest}"), value.clone());
+                }
+            }
+            self.steps.insert(
+                index + k,
+                Step {
+                    id: id.clone(),
+                    operation: step.operation,
+                },
+            );
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
     /// Runs every step in order, starting from an empty part, and returns
     /// the part the whole program builds — or the first error any step
     /// raises, at which point the steps after it never run. A program

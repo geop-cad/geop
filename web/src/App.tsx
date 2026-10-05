@@ -59,7 +59,7 @@ function typing(e: KeyboardEvent): boolean {
 }
 
 /** The commands that change the program, for statistics. */
-const EDITS: Command["command"][] = ["commit", "remove", "move", "load", "load_example", "undo", "redo"];
+const EDITS: Command["command"][] = ["commit", "remove", "move", "paste", "load", "load_example", "undo", "redo"];
 
 /** Download `data` as the file `name`, of the media type `type`. */
 function download(name: string, data: string | Uint8Array<ArrayBuffer>, type = "application/json") {
@@ -314,6 +314,55 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Copy the step `id` to the clipboard, as text a paste inserts. */
+  async function copyStep(id: string) {
+    const text = (await dispatch({ command: "copy", id }))?.export?.text;
+    if (text == null) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // Where the page may not write the clipboard itself (some webviews),
+      // the browser's own copy of a selection still can.
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.append(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      if (!copied) setError(`copying the step ${id}: the clipboard cannot be written (${String(e)})`);
+    }
+  }
+
+  // Ctrl+C copies the step being edited, unless text is selected or typed
+  // into a field; Ctrl+V pastes steps copied — here, or in another file —
+  // where new steps go.
+  const copyable = step?.id ?? null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e) || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "c") return;
+      if (copyable == null || !(window.getSelection()?.isCollapsed ?? true)) return;
+      e.preventDefault();
+      void copyStep(copyable);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target;
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      void dispatch({ command: "paste", text });
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("paste", onPaste);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copyable]);
 
   // ── editing a step ─────────────────────────────────────────────────────
 
@@ -671,6 +720,7 @@ function App() {
         enabled={wasmReady && step == null}
         onEdit={(i) => void open({ command: "open", id: steps[i].id })}
         onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
+        onCopy={(i) => void copyStep(steps[i].id)}
         onMove={(i, to) => dispatch({ command: "move", id: steps[i].id, index: to })}
         onSeek={(slot) => dispatch({ command: "seek", marker: slot >= stepCount ? null : slot })}
       />

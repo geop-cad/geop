@@ -453,6 +453,7 @@ button.inline {
   opacity: 0.35;
 }
 
+.timeline .step-copy,
 .timeline .step-remove {
   flex-shrink: 0;
   padding: 0 6px;
@@ -465,6 +466,19 @@ button.inline {
 }
 .timeline .step-remove:hover:not(:disabled) {
   color: #ff8080;
+}
+/* Shown on the box under the pointer only, where there is one: a list of
+   them is noise. */
+@media (hover: hover) {
+  .timeline .step-copy {
+    visibility: hidden;
+  }
+  .timeline li.step-box:hover .step-copy {
+    visibility: visible;
+  }
+}
+.timeline .step-copy:hover:not(:disabled) {
+  color: #7ec9ff;
 }
 
 /* Where a dragged step would land. Takes no room, so the boxes stay put. */

@@ -1,6 +1,7 @@
 // The program as a list of step boxes, with the seeker: the line after
 // which nothing runs. Everything is done by pointer: click a box to edit its
-// step, drag it to move the step, drag the seeker to go back in time.
+// step, drag it to move the step, drag the seeker to go back in time, copy
+// it to paste elsewhere.
 //
 // Both drags work the same way: what is being dragged, and the *slot* the
 // pointer is over — a position between steps, 0 (before the first) to
@@ -29,6 +30,8 @@ interface Props {
   enabled: boolean;
   onEdit: (index: number) => void;
   onRemove: (index: number) => void;
+  /** Copy step `index` to the clipboard, to paste with Ctrl+V. */
+  onCopy: (index: number) => void;
   /** Move step `index` to `to` among the other steps. */
   onMove: (index: number, to: number) => void;
   onSeek: (slot: number) => void;
@@ -47,7 +50,7 @@ interface Press {
   moved: boolean;
 }
 
-export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onMove, onSeek }: Props) {
+export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onCopy, onMove, onSeek }: Props) {
   const listRef = useRef<HTMLOListElement>(null);
   const pressRef = useRef<Press | null>(null);
   /** The drag being drawn, and the slot it would drop into. */
@@ -143,6 +146,16 @@ export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onMove, onS
         onPointerDown={(e) => onPointerDown(e, { what: "step", index: i })}
       >
         <span className="step-name">{step.id}</span>
+        <button
+          className="step-copy"
+          disabled={!enabled}
+          title="Copy this step — paste it with Ctrl+V, here or in another file"
+          aria-label="Copy this step"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onCopy(i)}
+        >
+          ⧉
+        </button>
         <button
           className="step-remove"
           disabled={!enabled}

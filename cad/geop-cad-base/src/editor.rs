@@ -80,6 +80,17 @@ pub enum Command<S: Scalar> {
         id: String,
         index: usize,
     },
+    /// The step `id` as text to paste ([`Program::excerpt`]), in the
+    /// update's export.
+    Copy {
+        id: String,
+    },
+    /// Insert the steps of the program `text` — what [`Command::Copy`]
+    /// gave, in this program or another — where new steps go
+    /// ([`Program::paste`]).
+    Paste {
+        text: String,
+    },
     /// Run only the first `marker` steps — all of them, if `None` — and put
     /// new steps there.
     Seek {
@@ -1024,6 +1035,25 @@ impl<S: Scalar> Editor<S> {
                 }
                 let step = self.program.steps.remove(from);
                 self.program.steps.insert(index, step);
+                Changed::Program
+            }
+            Command::Copy { id } => {
+                self.exported = Some(Export {
+                    name: format!("{id}.geop"),
+                    content: Content::Text(self.program.excerpt(&id)?.to_json()?),
+                });
+                Changed::Nothing
+            }
+            Command::Paste { text } => {
+                idle(self)?;
+                let pasted = Program::from_json(&text).map_err(|e| {
+                    e.with_context("pasting: what is pasted is not steps copied from geop")
+                })?;
+                let index = self.marker.unwrap_or(self.program.steps.len());
+                let ids = self.program.paste(pasted, index)?;
+                if let Some(marker) = &mut self.marker {
+                    *marker += ids.len();
+                }
                 Changed::Program
             }
             Command::Seek { marker } => {

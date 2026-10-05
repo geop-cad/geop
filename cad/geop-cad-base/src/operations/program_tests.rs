@@ -229,3 +229,30 @@ fn formula_errors_name_the_step_and_the_formula() {
         assert!(error.contains(said), "{said} is not said in {error}");
     }
 }
+
+/// A step copied takes the state stored under its id along (where a placed
+/// part is), and pasted under a fresh id stores it under that one; state
+/// merely named like it stays behind.
+#[test]
+fn a_pasted_step_takes_its_state_along() {
+    use geop_ops::part::{ParamValue, pose_parameter};
+    let mut program = box_with_drill_hole();
+    let id = program.steps[0].id.clone();
+    let pose = ParamValue::Pose(crate::examples::pose([1.0, 2.0, 3.0], [0.0; 3]));
+    program.state.insert(pose_parameter(&id), pose.clone());
+    program.state.insert(
+        format!("{id}_width"),
+        ParamValue::Number(geop_ops::Design::from_f64(2.0)),
+    );
+
+    let copied = program.excerpt(&id).unwrap();
+    assert_eq!(copied.state.len(), 1);
+    let at = program.steps.len();
+    let ids = program.paste(copied, at).unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_ne!(ids[0], id);
+    assert_eq!(program.steps[at].id, ids[0]);
+    assert_eq!(program.state.get(&pose_parameter(&ids[0])), Some(&pose));
+    assert!(!program.state.contains_key(&format!("{}_width", ids[0])));
+    program.validate().unwrap();
+}

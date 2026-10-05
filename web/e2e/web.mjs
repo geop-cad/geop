@@ -836,6 +836,31 @@ await check("the bill of materials is saved as CSV", async () => {
   return `${lines} lines, ${file.name}`;
 });
 
+await check("a step is copied and pasted", async () => {
+  await fresh();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: server.url });
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  const boxes = page.locator(".timeline .step-box");
+  const before = await boxes.count();
+  const first = boxes.first();
+  await first.hover();
+  await first.locator(".step-copy").click();
+  await settle(page);
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  expect(text.includes('"steps"'), `the clipboard holds ${text.slice(0, 80)}`);
+  // Ctrl+V as the page receives it: a paste event outside any field.
+  await page.evaluate((text) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", text);
+    document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
+  }, text);
+  const stats = await builtCleanly();
+  const after = await boxes.count();
+  expect(after === before + 1, `${before} steps before the paste, ${after} after`);
+  return `${await boxes.last().locator(".step-name").innerText()} pasted; ${stats}`;
+});
+
 checks.report();
 await browser.close();
 server.stop();
