@@ -1,43 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-interface SliderNumberProps {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  min: number;
-  max: number;
-  step: number;
-}
-
-/** A range slider paired with a number input for the same value — either can be dragged or typed into. */
-export function SliderNumber({ label, value, onChange, min, max, step }: SliderNumberProps) {
-  return (
-    <label className="slider-number">
-      <span className="slider-number-label">{label}</span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-      <input
-        type="number"
-        className="slider-number-input"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          if (!Number.isNaN(v)) onChange(v);
-        }}
-      />
-    </label>
-  );
-}
-
 interface DropdownProps<T extends string> {
   label: string;
   value: T;

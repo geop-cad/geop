@@ -135,6 +135,9 @@ pub struct OperationInfo {
     pub doc: &'static str,
     pub group: OperationGroup,
     pub tier: OperationTier,
+    /// Not yet robust enough to offer by default (`#[operation(experimental)]`):
+    /// an editor's reduced mode leaves it out.
+    pub experimental: bool,
 }
 
 /// What an operation works on, as an editor groups its operations: the

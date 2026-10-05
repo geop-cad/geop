@@ -16,9 +16,7 @@ use geop_ops::{
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{
-    Seeds, Spacing, count_field, direction, newest_solid, seed_fields, track, whole_count,
-};
+use crate::common::{Seeds, Spacing, count_field, direction, seed_fields, track, whole_count};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or the features `features` in a row along a direction, or in a grid
@@ -230,9 +228,11 @@ impl Operation for LinearPattern {
 
     /// The newest solid, three times a unit apart along the origin's `x`
     /// axis, kept as new bodies.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> LinearPatternArgs {
+    fn new_args<S: Scalar>(&self, _: &Part<S>) -> LinearPatternArgs {
         LinearPatternArgs {
-            bodies: newest_solid(before),
+            // Nothing picked: what is patterned is the user's choice, a body
+            // or a feature, never guessed.
+            bodies: Vec::new(),
             features: Vec::new(),
             first: Direction::along(FrameAxis::X),
             second: None,

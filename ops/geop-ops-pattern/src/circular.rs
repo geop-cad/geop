@@ -15,7 +15,7 @@ use geop_ops::{
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Seeds, Spacing, axis, count_field, newest_solid, seed_fields, whole_count};
+use crate::common::{Seeds, Spacing, axis, count_field, seed_fields, whole_count};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again, turned around an axis: `count` instances, the bodies themselves the
@@ -113,9 +113,11 @@ impl Operation for CircularPattern {
 
     /// The newest solid, four times around the origin's `z` axis, kept as
     /// new bodies.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> CircularPatternArgs {
+    fn new_args<S: Scalar>(&self, _: &Part<S>) -> CircularPatternArgs {
         CircularPatternArgs {
-            bodies: newest_solid(before),
+            // Nothing picked: what is patterned is the user's choice, a body
+            // or a feature, never guessed.
+            bodies: Vec::new(),
             features: Vec::new(),
             axis: Some(EntityRef::datum_component(
                 ORIGIN,

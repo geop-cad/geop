@@ -45,6 +45,9 @@ interface Props {
   /** Where the bug-report form goes instead of floating over the viewport — the mobile "Bug" tab, when on mobile. */
   bugReportHost: HTMLElement | null;
   onBugReportOpen: () => void;
+  /** Whether only the operations that are robust today are offered. */
+  reducedMode: boolean;
+  onReducedMode: (on: boolean) => void;
   onBugReportClose: () => void;
 }
 
@@ -87,6 +90,8 @@ export function Toolbar({
   bugReportOpen,
   bugReportHost,
   onBugReportOpen,
+  reducedMode,
+  onReducedMode,
   onBugReportClose,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -142,12 +147,23 @@ export function Toolbar({
         ]
       : []),
   ];
-  const help: MenuEntry[] = hosted
-    ? []
-    : [
-        { kind: "item", label: "Report a bug…", icon: "bug", onSelect: onBugReportOpen },
-        { kind: "item", label: "Privacy", icon: "privacy", onSelect: () => setPrivacyOpen(true) },
-      ];
+  const help: MenuEntry[] = [
+    {
+      kind: "item",
+      label: reducedMode ? "Show all operations" : "Show only robust operations",
+      hint: reducedMode ? "reduced mode is on" : "reduced mode is off",
+      title: "Reduced mode offers only the operations that are robust today; the others are experimental",
+      icon: "more",
+      onSelect: () => onReducedMode(!reducedMode),
+    },
+    ...(hosted
+      ? []
+      : ([
+          { kind: "separator" },
+          { kind: "item", label: "Report a bug…", icon: "bug", onSelect: onBugReportOpen },
+          { kind: "item", label: "Privacy", icon: "privacy", onSelect: () => setPrivacyOpen(true) },
+        ] as MenuEntry[])),
+  ];
 
   return (
     <header className="toolbar">

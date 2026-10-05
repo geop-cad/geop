@@ -140,6 +140,8 @@ export interface OperationInfo {
   group: string;
   /** How prominently its section offers it (see `geop_ops::OperationTier`). */
   tier: OperationTier;
+  /** Not yet robust enough to offer by default: reduced mode leaves it out. */
+  experimental: boolean;
 }
 
 /**

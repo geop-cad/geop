@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { ColorInput, Dropdown, SearchSelect, SliderNumber } from "./controls";
+import { ColorInput, Dropdown, SearchSelect } from "./controls";
 import { Icon } from "./icons";
 import { entityLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
 
@@ -81,8 +81,7 @@ function TextInput({ value, onChange }: { value: string; onChange: (v: string) =
 
 /**
  * A number that may be given as a formula of the parameters, typed as in
- * the parameters panel: its text edited in place (Enter applies), with a
- * slider beside it while the kernel offers one — a plain value — and what
+ * the parameters panel: its text edited in place (Enter applies), and what
  * a formula comes to, or why it does not evaluate, while it is one.
  */
 function FormulaNumber({
@@ -100,20 +99,9 @@ function FormulaNumber({
     <>
       <div className="slider-number formula-number">
         <span className="slider-number-label">{label}</span>
-        {c.range ? (
-          <input
-            type="range"
-            min={c.range[0]}
-            max={c.range[1]}
-            step={c.step}
-            value={c.value}
-            onChange={(e) => send({ type: "number", value: Number(e.target.value) })}
-          />
-        ) : (
-          <span className="hint formula-value">
-            {formula && c.error == null ? `= ${Number(c.value.toFixed(6))}` : ""}
-          </span>
-        )}
+        <span className="hint formula-value">
+          {formula && c.error == null ? `= ${Number(c.value.toFixed(6))}` : ""}
+        </span>
         <TextInput value={text} onChange={(value) => send({ type: "text", value })} />
       </div>
       {c.error && <p className="op-error-text">{c.error}</p>}
@@ -298,16 +286,7 @@ export function DialogView({ step, onDialog, onChooseFile, setPreview, error, on
       case "number": {
         const label = UNITS[c.unit] ? `${c.label} (${UNITS[c.unit]})` : c.label;
         if (c.text != null) return <FormulaNumber label={label} c={c} send={send} />;
-        return c.range ? (
-          <SliderNumber
-            label={label}
-            value={c.value}
-            onChange={(value) => send({ type: "number", value })}
-            min={c.range[0]}
-            max={c.range[1]}
-            step={c.step}
-          />
-        ) : (
+        return (
           <label className="row">
             {label}
             <NumberInput value={c.value} step={c.step} onChange={(value) => send({ type: "number", value })} />

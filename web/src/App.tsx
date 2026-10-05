@@ -589,6 +589,24 @@ function App() {
   }, [programValue]);
 
   const infos = program?.operations ?? [];
+  /** Reduced mode, on unless turned off in the Help menu: only the
+   *  operations that are robust today, the experimental ones left out.
+   *  Remembered per browser. */
+  const [reducedMode, setReducedModeState] = useState(() => {
+    try {
+      return localStorage.getItem("geop.reducedMode") !== "off";
+    } catch {
+      return true;
+    }
+  });
+  const setReducedMode = (on: boolean) => {
+    setReducedModeState(on);
+    try {
+      localStorage.setItem("geop.reducedMode", on ? "on" : "off");
+    } catch {
+      // Not remembered, then: private windows may refuse storage.
+    }
+  };
   const stepCount = steps.length;
   const triangles = (view: PartView | undefined) => view?.faces.reduce((n, f) => n + f.triangles.length, 0) ?? 0;
   const triangleCount =
@@ -604,7 +622,7 @@ function App() {
 
   const dragTool = program?.drag_tool ?? false;
   const tools: Tool[] = [
-    ...infos.map((info) => ({
+    ...infos.filter((info) => !reducedMode || !info.experimental).map((info) => ({
       ...info,
       active: step?.kind === info.kind && step.id == null,
       disabled: !wasmReady || (step != null && step.kind !== info.kind),
@@ -615,7 +633,8 @@ function App() {
       label: "Drag",
       doc: "Drag placed parts as far as their mates let them",
       group: "Assembly",
-      tier: "Small",
+      tier: "Big",
+      experimental: false,
       active: dragTool,
       disabled: !wasmReady || step != null,
       onSelect: () => void dispatch({ command: "drag_tool", on: !dragTool }),
@@ -752,6 +771,8 @@ function App() {
         triangleCount={triangleCount}
         bugReportOpen={bugReportOpen}
         bugReportHost={isMobile ? bugReportHost : null}
+        reducedMode={reducedMode}
+        onReducedMode={setReducedMode}
         onBugReportOpen={() => {
           setBugReportOpen(true);
           setMobileTab("bug");

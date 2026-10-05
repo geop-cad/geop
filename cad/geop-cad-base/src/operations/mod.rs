@@ -151,7 +151,7 @@ pub enum PartOperation {
     Thread(ThreadArgs),
     /// Grow a thin wall from an open sketch profile up to a solid's faces,
     /// and join it.
-    #[operation(group = Features, tier = Menu)]
+    #[operation(group = Features, tier = Menu, experimental)]
     Rib(RibArgs),
     /// Round a solid's straight and circular edges.
     #[operation(group = Features, tier = Big)]
@@ -165,13 +165,13 @@ pub enum PartOperation {
     Shell(ShellArgs),
     /// Tilt planar faces about a neutral plane, so the part comes out of
     /// its mould.
-    #[operation(group = Features, tier = Menu)]
+    #[operation(group = Features, tier = Menu, experimental)]
     Draft(DraftArgs),
     /// Raise a lip along the rim of one half of an enclosure.
-    #[operation(group = Features, tier = Menu)]
+    #[operation(group = Features, tier = Menu, experimental)]
     Lip(LipArgs),
     /// Cut the groove that takes a lip into the rim of the other half.
-    #[operation(group = Features, tier = Menu)]
+    #[operation(group = Features, tier = Menu, experimental)]
     Groove(GrooveArgs),
     /// Unite, intersect or subtract two solids.
     #[operation(group = Bodies, tier = Big)]
@@ -196,31 +196,31 @@ pub enum PartOperation {
     DeleteBody(DeleteBodyArgs),
     /// Span a face standing on its own between two edges, or fill a closed
     /// loop of edges — optionally tangent to the flat faces along them.
-    #[operation(label = "Boundary surface", group = Surface, tier = Small)]
+    #[operation(label = "Boundary surface", group = Surface, tier = Small, experimental)]
     BoundarySurface(BoundarySurfaceArgs),
     /// Copy faces a distance along their normals into a face standing on
     /// its own.
-    #[operation(label = "Offset surface", group = Surface, tier = Menu)]
+    #[operation(label = "Offset surface", group = Surface, tier = Menu, experimental)]
     OffsetSurface(OffsetSurfaceArgs),
     /// Make a solid of a face standing on its own, a thickness on either
     /// side of it or on both.
-    #[operation(group = Surface, tier = Menu)]
+    #[operation(group = Surface, tier = Menu, experimental)]
     Thicken(ThickenArgs),
     /// Join faces standing on their own along the edges where they meet,
     /// into a solid once they close up.
-    #[operation(group = Surface, tier = Menu)]
+    #[operation(group = Surface, tier = Menu, experimental)]
     Knit(KnitArgs),
     /// Cut a face standing on its own back to one side of another face.
-    #[operation(label = "Trim surface", group = Surface, tier = Menu)]
+    #[operation(label = "Trim surface", group = Surface, tier = Menu, experimental)]
     TrimSurface(TrimSurfaceArgs),
     /// Carry a face standing on its own on past one of its edges.
-    #[operation(label = "Extend surface", group = Surface, tier = Menu)]
+    #[operation(label = "Extend surface", group = Surface, tier = Menu, experimental)]
     ExtendSurface(ExtendSurfaceArgs),
     /// Copy a face out of its body into a face standing on its own.
-    #[operation(label = "Extract face", group = Surface, tier = Menu)]
+    #[operation(label = "Extract face", group = Surface, tier = Menu, experimental)]
     ExtractFace(ExtractFaceArgs),
     /// Project a sketch's curves onto a face, dividing the face along them.
-    #[operation(label = "Project curve", group = Surface, tier = Menu)]
+    #[operation(label = "Project curve", group = Surface, tier = Menu, experimental)]
     ProjectCurve(ProjectCurveArgs),
     /// Start a sheet-metal body: a plate from a sketch's area, or a bent
     /// strip from a chain of lines and arcs.
@@ -237,7 +237,7 @@ pub enum PartOperation {
     #[operation(group = SheetMetal, tier = Menu)]
     Hem(HemArgs),
     /// Unfold a sheet-metal body into its flat pattern.
-    #[operation(label = "Flat pattern", group = SheetMetal, tier = Menu)]
+    #[operation(label = "Flat pattern", group = SheetMetal, tier = Small)]
     FlatPattern(FlatPatternArgs),
     /// Shape a freeform body by dragging the vertices, edges and faces of a
     /// control cage, built as its smooth subdivision surface.
@@ -249,11 +249,11 @@ pub enum PartOperation {
     AddPart(AddPartArgs),
     /// Place copies of a placed part in a row along a line, or round an
     /// axis.
-    #[operation(label = "Part pattern", group = Assembly, tier = Menu)]
+    #[operation(label = "Part pattern", group = Assembly, tier = Menu, experimental)]
     PartPattern(PartPatternArgs),
     /// Route a bundle of wires from a connector through clips to another
     /// connector, its bends checked and every wire's cut length reported.
-    #[operation(group = Assembly, tier = Small)]
+    #[operation(group = Assembly, tier = Small, experimental)]
     Route(RouteArgs),
     /// Describe a 2-D drawing of the part — views with hidden lines, a
     /// section and a title block — annotated on its sheet with dimensions,
@@ -265,7 +265,7 @@ pub enum PartOperation {
     ImportStep(ImportStepArgs),
     /// Span a face standing on its own through a network of curves — u
     /// curves crossing v curves — running along every one of them.
-    #[operation(label = "UV surface", group = Surface, tier = Small)]
+    #[operation(label = "UV surface", group = Surface, tier = Small, experimental)]
     NetworkSurface(NetworkSurfaceArgs),
 }
 

@@ -7,7 +7,8 @@
 //! operation; `#[operation(...)]` gives its short name if that is not the
 //! variant's (`label = "..."`), and the group an editor files it in and how
 //! prominently, which every operation names (`group = Features, tier = Big`:
-//! an `OperationGroup` and an `OperationTier`).
+//! an `OperationGroup` and an `OperationTier`); `experimental` marks one an
+//! editor's reduced mode leaves out.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -90,6 +91,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
         let mut label = op.to_string();
         let mut group: Option<Ident> = None;
         let mut tier: Option<Ident> = None;
+        let mut experimental = false;
         for attr in variant
             .attrs
             .iter()
@@ -105,9 +107,12 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 } else if meta.path.is_ident("tier") {
                     tier = Some(meta.value()?.parse::<Ident>()?);
                     Ok(())
+                } else if meta.path.is_ident("experimental") {
+                    experimental = true;
+                    Ok(())
                 } else {
                     Err(meta.error(
-                        "expected `label = \"...\"`, `group = <OperationGroup>` or `tier = <OperationTier>`",
+                        "expected `label = \"...\"`, `group = <OperationGroup>`, `tier = <OperationTier>` or `experimental`",
                     ))
                 }
             });
@@ -134,6 +139,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 doc: #doc,
                 group: ::geop_ops::operation::OperationGroup::#group,
                 tier: ::geop_ops::operation::OperationTier::#tier,
+                experimental: #experimental,
             }
         });
         new_arms.push(quote! {

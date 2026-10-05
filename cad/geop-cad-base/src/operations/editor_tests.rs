@@ -613,7 +613,8 @@ fn new_offset_plane_dragged_by_its_handle() {
     assert!((after - before - 0.3).abs() < 1e-9, "{before} -> {after}");
 }
 
-/// A new linear pattern starts on the newest solid, along `x`: its
+/// A new linear pattern picks nothing by itself: it waits for the body or
+/// the feature to copy, here the drilled box, clicked. Along `x`, its
 /// spacing's handle, grabbed from above and pulled one further along `x`,
 /// spreads the copies two apart; a fourth is asked for in the dialog, and
 /// committed, the scene lists the drilled box and its three copies, the
@@ -624,6 +625,18 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
     let update = editor.handle(Command::New {
         kind: "linear_pattern".into(),
     });
+    let step = update.step.expect("the pattern is edited");
+    assert_eq!(step.missing, ["bodies"], "nothing is picked by itself");
+    // The box's top, beside its hole.
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Click {
+            pointer: pointer([0.3, 0.3, 10.0], [0.0, 0.0, -1.0]),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
     let step = update.step.expect("the pattern is edited");
     assert!(step.missing.is_empty(), "{:?}", step.missing);
     let (at, direction) = step

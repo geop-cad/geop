@@ -14,7 +14,7 @@ use geop_ops::{
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Seeds, newest_solid, seed_fields};
+use crate::common::{Seeds, seed_fields};
 
 /// Mirrors the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again mirrored, in a plane: a planar face, a datum plane, a frame's plane. The mirror
@@ -49,9 +49,11 @@ impl Operation for Mirror {
 
     /// The newest solid, mirrored in the origin's `yz` plane, kept as a
     /// new body.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> MirrorArgs {
+    fn new_args<S: Scalar>(&self, _: &Part<S>) -> MirrorArgs {
         MirrorArgs {
-            bodies: newest_solid(before),
+            // Nothing picked: what is patterned is the user's choice, a body
+            // or a feature, never guessed.
+            bodies: Vec::new(),
             features: Vec::new(),
             plane: Some(EntityRef::datum_component(
                 ORIGIN,
