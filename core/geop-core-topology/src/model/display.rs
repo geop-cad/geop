@@ -54,6 +54,15 @@ impl<S: Scalar> Display for Model<S> {
             writeln!(f, "    {id}: shells={:?}", solid.shells)?;
         }
 
+        writeln!(f, "  wires:")?;
+        for (id, wire) in &self.wires {
+            writeln!(
+                f,
+                "    {id}: vertices={:?}, edges={:?}",
+                wire.vertices, wire.edges
+            )?;
+        }
+
         write!(f, "}}")
     }
 }

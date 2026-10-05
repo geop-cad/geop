@@ -34,6 +34,14 @@ const DASHED: Style[] = ["construction", "draft", "guide", "reference"];
 const POINT_PX = 7;
 /** How big a handle's ball is on screen, in pixels — `geop_ops::ui::hit::HANDLE` reaches. */
 const HANDLE_PX = 0.8 * REACH_PX;
+/** How long a triad's arrows are, in reaches — `geop_ops::ui::TRIAD`. */
+export const TRIAD_REACHES = 6;
+/** A triad's arrows, coloured as the frame datums' axes are. */
+const TRIAD_AXES: { dir: THREE.Vector3; color: number }[] = [
+  { dir: new THREE.Vector3(1, 0, 0), color: 0xff5555 },
+  { dir: new THREE.Vector3(0, 1, 0), color: 0x55dd55 },
+  { dir: new THREE.Vector3(0, 0, 1), color: 0x5599ff },
+];
 
 /** Drawn over the model: what is being edited must be seen wherever it is. */
 function overlay<M extends THREE.Material>(material: M): M {
@@ -112,6 +120,24 @@ function build(visual: Visual): THREE.Object3D {
       group.userData.handle = true;
       return group;
     }
+    case "triad": {
+      // Unit arrows, scaled to the screen every frame: a shaft and a tip
+      // along each axis, coloured as the origin's — no planes.
+      const group = new THREE.Group();
+      for (const { dir, color } of TRIAD_AXES) {
+        const material = () => overlay(new THREE.MeshBasicMaterial({ color }));
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.8, 8), material());
+        shaft.position.copy(dir).multiplyScalar(0.4);
+        shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.2, 12), material());
+        tip.position.copy(dir).multiplyScalar(0.9);
+        tip.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        group.add(shaft, tip);
+      }
+      group.position.set(...visual.at);
+      group.userData.triad = true;
+      return group;
+    }
   }
 }
 
@@ -146,6 +172,9 @@ export class VisualLayer {
     const px = worldPerPixel(camera, target, height);
     for (const child of this.group.children) {
       if (child.userData.handle) child.scale.setScalar(worldPerPixel(camera, child.position, height) * HANDLE_PX);
+      if (child.userData.triad) {
+        child.scale.setScalar(worldPerPixel(camera, child.position, height) * REACH_PX * TRIAD_REACHES);
+      }
       const label = child.userData.label as { at: THREE.Vector3; offset: THREE.Vector3 } | undefined;
       if (label) {
         const reach = worldPerPixel(camera, label.at, height) * REACH_PX;

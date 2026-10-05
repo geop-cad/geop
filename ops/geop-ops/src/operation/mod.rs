@@ -45,7 +45,7 @@ mod aspects;
 mod entity;
 
 pub use aspects::{Aspects, Role, describe_roles};
-pub use entity::{EntityRef, INSTANCE_SEPARATOR, frame_along};
+pub use entity::{EntityRef, INSTANCE_SEPARATOR, NamedCurve, frame_along};
 
 pub use geop_ops_derive::Operations;
 

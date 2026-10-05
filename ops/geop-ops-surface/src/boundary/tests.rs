@@ -52,9 +52,10 @@ fn unit_cube() -> Part<S> {
 }
 
 fn span(part: Part<S>, edges: &[String], tangent: &[String]) -> GeopResult<Part<S>> {
+    let edge = |name: &String| EntityRef::Edge { name: name.clone() };
     let args = BoundarySurfaceArgs {
-        edges: edges.to_vec(),
-        tangent: tangent.to_vec(),
+        edges: edges.iter().map(edge).collect(),
+        tangent: tangent.iter().map(edge).collect(),
     };
     BoundarySurface.apply(part, "b", &args, &NoFiles)
 }

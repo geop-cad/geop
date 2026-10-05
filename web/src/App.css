@@ -392,6 +392,9 @@ button.small {
   padding: 0;
   pointer-events: none;
 }
+.visual-label.snap {
+  border-color: #58e07a;
+}
 
 button.inline {
   margin-left: 0.4rem;

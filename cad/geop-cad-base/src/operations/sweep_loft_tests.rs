@@ -924,3 +924,37 @@ fn rails_and_guides_round_trip() {
     let back: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(back, program);
 }
+
+/// The loft of [`loft_along_a_guide`], its guide a 3-D sketch's spline
+/// drawn through the same points in space: the same bulge.
+#[test]
+fn loft_along_a_3d_sketch_guide() {
+    let mut program = Program::new();
+    program.push("bottom", sketch(base(FrameAxis::Z), square(1.0)));
+    lifted(&mut program, "top_plane", 2.0);
+    program.push("top", sketch(EntityRef::datum("top_plane"), square(1.0)));
+    let mut bow = geop_ops_sketch3d::Sketch3d::new();
+    let p = [[1.0, 0.0, 0.0], [1.5, 0.0, 1.0], [1.0, 0.0, 2.0]]
+        .map(|p| bow.add_point(geop_core_math::vector::Vector3::from_array(p.map(n))));
+    bow.add_spline(p.to_vec());
+    program.push(
+        "guide",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: bow,
+            references: Vec::new(),
+        },
+    );
+    program.push(
+        "bulge",
+        LoftArgs {
+            guides: vec!["guide".into()],
+            ..lofted(&["bottom", "top"])
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    let edge = part.edge_id("loft(bulge,bottom,guide)").unwrap();
+    let curve = &part.topology().edges[&edge].curve;
+    let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
+    assert!(middle[0].to_f64() > 1.2, "{middle:?}");
+}

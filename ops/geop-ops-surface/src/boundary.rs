@@ -43,27 +43,29 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Curve3, EdgeId, Sense,
+    Curve3, Sense,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{
     BodyNames, Context, Library, Namer, Part,
-    operation::{Operation, Role},
+    operation::{EntityRef, Operation, Role},
     ui::Form,
 };
 use geop_ops_extrude_revolve::common::{bilinear, line2, line3};
 use serde::{Deserialize, Serialize};
 
-use crate::{edge, name_of, picked_names, refs};
+use crate::name_of;
 
-/// Spans a face standing on its own between the edges named `edges` — two
-/// of them ruled, a closed loop of them filled, see the module docs — for
-/// the operation `B`. The edges are copied, the originals left as they
-/// are; with `tangent`, the fill continues the flat faces those of its
-/// edges bound smoothly.
+/// Spans a face standing on its own between the curves `edges` — two of
+/// them ruled, a closed loop of them filled, see the module docs — for the
+/// operation `B`. A curve is an edge, of a face or of a wire — a 3-D
+/// sketch's line, arc or spline — or a planar sketch's curve. The curves
+/// are copied, the originals left as they are; with `tangent`, the fill
+/// continues the flat faces those of its edges bound smoothly.
 ///
-/// The face is named `boundary(B)`. The copy of each edge or vertex `X`
-/// picked is `boundary(B,X)`; a straight edge a ruled face adds between
+/// The face is named `boundary(B)`. The copy of each curve or end `X`
+/// picked is `boundary(B,X)` — for a sketch's curve `X` is `K,c3`, and
+/// its ends `K,p1` (see [`EntityRef::resolve_curve`]); a straight edge a ruled face adds between
 /// vertices `V` and `W` is `boundary(B,V,W)`. A patch of quadrilaterals
 /// names the one along edge `E` `boundary(B,E,patch)`, the inner polygon
 /// `boundary(B,inner)`, its side alongside `E` `boundary(B,E,inner)`, its
@@ -74,12 +76,12 @@ pub struct BoundarySurface;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BoundarySurfaceArgs {
-    /// The edges to span: two, or a closed loop.
-    pub edges: Vec<String>,
+    /// The curves to span: two, or a closed loop.
+    pub edges: Vec<EntityRef>,
     /// Those of them the fill is to be tangent along, to the flat face each
     /// bounds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tangent: Vec<String>,
+    pub tangent: Vec<EntityRef>,
 }
 
 impl Operation for BoundarySurface {
@@ -103,20 +105,20 @@ impl Operation for BoundarySurface {
         f.reference(
             "edges",
             "edges",
-            refs(&args.edges, edge),
-            &[Role::Edge],
+            args.edges.clone(),
+            &[Role::Curve],
             None,
             true,
-            |e, picked| e.args.edges = picked_names(&picked),
+            |e, picked| e.args.edges = picked,
         );
         f.reference(
             "tangent",
             "tangent along",
-            refs(&args.tangent, edge),
+            args.tangent.clone(),
             &[Role::Edge],
             None,
             true,
-            |e, picked| e.args.tangent = picked_names(&picked),
+            |e, picked| e.args.tangent = picked,
         );
         f.optional("tangent");
         f
@@ -131,22 +133,17 @@ impl Operation for BoundarySurface {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("boundary_surface({operation_id}, {args:?})");
         let namer = Namer::new("boundary", operation_id)?;
-        let ids = |names: &[String]| -> GeopResult<Vec<EdgeId>> {
-            names.iter().map(|name| part.edge_id(name)).collect()
-        };
-        let edges = ids(&args.edges).with_context(ctx)?;
-        let tangent = ids(&args.tangent).with_context(ctx)?;
-        boundary_surface(&mut part, &namer, &edges, &tangent).with_context(ctx)?;
+        boundary_surface(&mut part, &namer, &args.edges, &args.tangent).with_context(ctx)?;
         Ok(part)
     }
 }
 
-/// An edge picked, as it runs along the boundary: its curve and its
-/// vertices' points and names in that direction — `forward` if that is the
-/// edge's own.
+/// A curve picked, as it runs along the boundary: its curve and its ends'
+/// points and names in that direction — `forward` if that is the curve's
+/// own.
 #[derive(Clone, Debug)]
 struct Side<S: Scalar> {
-    edge: EdgeId,
+    entity: EntityRef,
     name: String,
     /// The edge's curve, as the edge runs.
     curve: Curve3<S>,
@@ -158,18 +155,17 @@ struct Side<S: Scalar> {
 }
 
 impl<S: Scalar> Side<S> {
-    fn of(part: &Part<S>, edge: EdgeId) -> GeopResult<Self> {
-        let model = part.topology();
-        let e = model.get_edge(edge)?;
+    fn of(part: &Part<S>, entity: &EntityRef) -> GeopResult<Self> {
+        let curve = entity.resolve_curve(part)?;
         Ok(Self {
-            edge,
-            name: name_of(part, edge)?,
-            curve: e.curve.clone(),
+            entity: entity.clone(),
+            name: curve.name,
+            curve: curve.curve,
             forward: true,
-            start: model.get_vertex(e.start_vertex)?.point,
-            end: model.get_vertex(e.end_vertex)?.point,
-            start_name: name_of(part, e.start_vertex)?,
-            end_name: name_of(part, e.end_vertex)?,
+            start: curve.start.1,
+            end: curve.end.1,
+            start_name: curve.start.0,
+            end_name: curve.end.0,
         })
     }
 
@@ -245,18 +241,17 @@ fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
 pub fn boundary_surface<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
-    edges: &[EdgeId],
-    tangent: &[EdgeId],
+    edges: &[EntityRef],
+    tangent: &[EntityRef],
 ) -> GeopResult<BuiltBody> {
     if let Some(t) = tangent.iter().find(|t| !edges.contains(t)) {
         return Err(GeopError::new(format!(
-            "edge {} is to be tangent along, but is not one of the edges spanned",
-            name_of(part, *t)?
+            "{t} is to be tangent along, but is not one of the curves spanned"
         )));
     }
     let sides = edges
         .iter()
-        .map(|&e| Side::of(part, e))
+        .map(|e| Side::of(part, e))
         .collect::<GeopResult<Vec<_>>>()?;
     let (spec, names) = match sides.as_slice() {
         [] => return Err(GeopError::new("no edges to span a surface between")),
@@ -272,7 +267,7 @@ pub fn boundary_surface<S: Scalar>(
             let sides = chain(&sides)?;
             let planes = tangent
                 .iter()
-                .map(|&t| Ok((t, tangent_plane(part, t)?)))
+                .map(|t| Ok((t.clone(), tangent_plane(part, t)?)))
                 .collect::<GeopResult<Vec<_>>>()?;
             fill(namer, &sides, &planes)?
         }
@@ -414,12 +409,17 @@ fn chain<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Vec<Side<S>>> {
 /// it away from the face it continues.
 type Tangency<S> = (Plane<S>, Vector3<S>);
 
-/// The plane of the flat face the edge `edge` bounds, and the direction in
-/// it away from that face at the middle of the edge — what a fill tangent
-/// along the edge continues.
-fn tangent_plane<S: Scalar>(part: &Part<S>, edge: EdgeId) -> GeopResult<Tangency<S>> {
+/// The plane of the flat face the edge `entity` bounds, and the direction
+/// in it away from that face at the middle of the edge — what a fill
+/// tangent along the edge continues.
+fn tangent_plane<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopResult<Tangency<S>> {
     let model = part.topology();
-    let name = name_of(part, edge)?;
+    let EntityRef::Edge { name } = entity else {
+        return Err(GeopError::new(format!(
+            "{entity} bounds no face: tangency is to the one face an edge bounds"
+        )));
+    };
+    let edge = part.edge_id(name)?;
     let coedges = model.coedges_of_edge(edge);
     let [coedge] = coedges.as_slice() else {
         return Err(GeopError::new(format!(
@@ -461,7 +461,7 @@ fn has_corner<S: Scalar>(a: &Curve3<S>, b: &Curve3<S>) -> GeopResult<bool> {
 fn fill<S: Scalar>(
     namer: &Namer,
     sides: &[Side<S>],
-    planes: &[(EdgeId, Tangency<S>)],
+    planes: &[(EntityRef, Tangency<S>)],
 ) -> GeopResult<(BodySpec<S>, BodyNames)> {
     let n = sides.len();
     // The loop's corners, side `k` running from corner `k` to `k + 1`, and
@@ -487,7 +487,7 @@ fn fill<S: Scalar>(
                 .could_be_equal(S::ZERO)
                 && p.signed_distance(&plane.point).could_be_equal(S::ZERO);
             if !same {
-                let side = sides.iter().find(|s| s.edge == *e).expect("a side");
+                let side = sides.iter().find(|s| s.entity == *e).expect("a side");
                 return Err(GeopError::new(format!(
                     "the loop is flat, in a plane other than that of the face along edge {}: the fill cannot be tangent to it",
                     side.name
@@ -533,7 +533,7 @@ fn fill<S: Scalar>(
         if !planes.is_empty() {
             let mut at: [Option<Tangency<S>>; 4] = Default::default();
             for (e, plane) in planes {
-                let k = sides.iter().position(|s| s.edge == *e).expect("a side");
+                let k = sides.iter().position(|s| s.entity == *e).expect("a side");
                 at[k] = Some(plane.clone());
             }
             surface = surface.tangent_to_planes(&at)?;
@@ -548,7 +548,7 @@ fn fill<S: Scalar>(
     }
 
     if let Some((e, _)) = planes.first() {
-        let side = sides.iter().find(|s| s.edge == *e).expect("a side");
+        let side = sides.iter().find(|s| s.entity == *e).expect("a side");
         return Err(GeopError::new(format!(
             "a loop of {n} edges is filled with a patch of quadrilaterals, which cannot be made tangent along edge {}: tangency is supported along a loop of four edges",
             side.name
@@ -785,7 +785,7 @@ fn quads<S: Scalar>(
         });
         names.edges.push(namer.name(&[&s.name, "inner"]));
         inner_sides.push(Side {
-            edge: s.edge,
+            entity: s.entity.clone(),
             name: namer.name(&[&s.name, "inner"]),
             curve,
             forward: true,

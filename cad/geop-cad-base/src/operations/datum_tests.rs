@@ -155,7 +155,7 @@ fn sketch_points_and_lines() {
     )
     .unwrap()
     .roles();
-    assert_eq!(roles, [Role::Line]);
+    assert_eq!(roles, [Role::Line, Role::Curve]);
 }
 
 #[test]

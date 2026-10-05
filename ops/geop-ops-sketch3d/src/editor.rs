@@ -4,10 +4,19 @@
 //!
 //! A click places a point where the pointer hits: on a point the sketch
 //! has, it *is* that point; on a vertex of the part or a datum point, it is
-//! a fixed point there, kept there as the part changes; on an edge, it is
-//! constrained onto the edge; on a face or a datum plane, it is where the
-//! face is hit. Anywhere else it lies in the plane through the last point
-//! placed, facing the eye. Coordinates can be typed instead.
+//! a fixed point there, kept there as the part changes; on an edge or a
+//! sketch's curve, it is constrained onto it; drawing a line, on the line
+//! along `x`, `y` or `z` through the point it starts at, it is there, and
+//! the line is made parallel to that axis; on a face or a datum plane, it
+//! is where the face is hit. Anywhere else it lies in the plane through
+//! the last point placed, facing the eye. Coordinates can be typed instead.
+//!
+//! As in a planar sketch, proximity only suggests: what a point snaps to is
+//! the constraint the sketch then holds, the snap is shown before the
+//! click, and holding shift turns snapping off — the point goes where the
+//! pointer meets a face or the plane through the last point. Arrows along
+//! `x`, `y` and `z` at the last point placed show the directions lines
+//! snap to.
 //!
 //! The lines a line tool draws chain from point to point, and so do the
 //! arcs of the arc tool: from where the last ended, through a point, to
@@ -31,6 +40,11 @@ use geop_ops::{
         Style, Tone, Unit, Value, Visual, hit::hit_visuals,
     },
 };
+
+/// How near the pointer, in its reaches, must pass the line along `x`,
+/// `y` or `z` through the point a line starts at for the line's end to
+/// snap onto it: an allowance on screen, like the pointer's own reach.
+const AXIS_SNAP: f64 = 2.0;
 
 use crate::{AddSketch3dArgs, Reference3d, Target};
 
@@ -74,8 +88,8 @@ pub struct Sketch3dSession {
     /// The points placed that were new: taken out again if what is drawn
     /// ends without using them.
     fresh: Vec<PointId>,
-    /// Where a click would place a point now.
-    hover: Option<V3>,
+    /// Where a click would place a point now, and what it snapped to.
+    hover: Option<Located>,
     /// The coordinates typed for the next point.
     typed: [f64; 3],
 }
@@ -161,8 +175,11 @@ enum Located {
     Point(PointId),
     /// A point of the part — a vertex, a datum point: a fixed point there.
     Fixed(EntityRef, V3),
-    /// A point of an edge of the part: on it.
+    /// A point of an edge of the part, or of a sketch's curve: on it.
     OnEdge(EntityRef, V3),
+    /// A point on the line along `axis` through the point a line starts
+    /// at: there, the line parallel to the axis.
+    Along(Coordinate, V3),
     /// Anywhere else.
     Free(V3),
 }
@@ -171,56 +188,100 @@ impl Located {
     fn at(&self, args: &AddSketch3dArgs) -> V3 {
         match self {
             Located::Point(p) => args.sketch.points[p].at,
-            Located::Fixed(_, at) | Located::OnEdge(_, at) | Located::Free(at) => *at,
+            Located::Fixed(_, at)
+            | Located::OnEdge(_, at)
+            | Located::Along(_, at)
+            | Located::Free(at) => *at,
         }
     }
 }
 
-/// Where a click with `pointer` places a point.
+/// The unit vector along `axis`.
+fn unit<S: Scalar>(axis: Coordinate) -> Vector3<S> {
+    let mut d = Vector3::zero();
+    d[axis.index()] = S::ONE;
+    d
+}
+
+/// Where `pointer` snaps onto a line along `x`, `y` or `z` through `from`,
+/// if it passes within [`AXIS_SNAP`] reaches of one: the axis it passes
+/// nearest on screen, and the point of it nearest the pointer's ray.
+fn along_axis<S: Scalar>(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
+    let from = from.map(|c| c.cast::<S>());
+    Coordinate::ALL
+        .into_iter()
+        .filter_map(|axis| {
+            let d = unit::<S>(axis);
+            let at = from.add(&d.prod_scalar(pointer.ray.line_parameter(&from, &d)?));
+            let (dist, t) = pointer.ray.distance_to_point(&at);
+            // Which axis is nearer on screen is a free choice between
+            // those within reach: plain numbers decide it.
+            let on_screen = dist.to_f64() / pointer.reach_at(1.0, t).to_f64();
+            pointer
+                .within(dist, t, AXIS_SNAP)
+                .then(|| (on_screen, axis, at.map(|c| c.cast::<Design>())))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, axis, at)| Located::Along(axis, at))
+}
+
+/// Where a click with `pointer` places a point (see the module docs) with
+/// the tool `tool` in hand — snapped, unless `shift` is held.
 fn locate<S: Scalar>(
     context: &Context<'_, S>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
+    tool: Tool,
     pointer: &Pointer<S>,
+    shift: bool,
 ) -> Option<Located> {
     let design = |v: &Vector3<S>| v.map(|c| c.cast::<Design>());
-    let points: Vec<Visual<S>> = args
-        .sketch
-        .points
-        .iter()
-        .map(|(id, p)| {
-            Visual::new(
-                id.to_string(),
-                Shape::Point {
-                    at: p.at.map(|c| c.cast()),
-                },
-                Style::Free,
-            )
-        })
-        .collect();
-    if let Some(hit) = hit_visuals(&points, pointer, None, |_| true) {
-        let id = args
+    if !shift {
+        let points: Vec<Visual<S>> = args
             .sketch
             .points
-            .keys()
-            .find(|p| p.to_string() == hit.visual.key)?;
-        return Some(Located::Point(*id));
+            .iter()
+            .map(|(id, p)| {
+                Visual::new(
+                    id.to_string(),
+                    Shape::Point {
+                        at: p.at.map(|c| c.cast()),
+                    },
+                    Style::Free,
+                )
+            })
+            .collect();
+        if let Some(hit) = hit_visuals(&points, pointer, None, |_| true) {
+            let id = args
+                .sketch
+                .points
+                .keys()
+                .find(|p| p.to_string() == hit.visual.key)?;
+            return Some(Located::Point(*id));
+        }
+        let pick = |roles: &[Role]| {
+            context
+                .view
+                .and_then(|view| view.pick(pointer, roles, None))
+        };
+        if let Some(hit) = pick(&[Role::Point]) {
+            let at = Aspects::of(&hit.entity, context.before).ok()?.point?;
+            return Some(Located::Fixed(hit.entity, design(&at)));
+        }
+        if let Some(hit) = pick(&[Role::Curve]) {
+            return Some(Located::OnEdge(hit.entity, design(&hit.point)));
+        }
+        let from = s.placed.last().map(|p| args.sketch.points[p].at);
+        if tool == Tool::Line
+            && let Some(along) = from.and_then(|from| along_axis(&from, pointer))
+        {
+            return Some(along);
+        }
     }
     if let Some(view) = context.view
-        && let Some(hit) = view.pick(
-            pointer,
-            &[Role::Point, Role::Edge, Role::Face, Role::Plane],
-            None,
-        )
+        && let Some(hit) = view.pick(pointer, &[Role::Face, Role::Plane], None)
     {
-        let aspects = Aspects::of(&hit.entity, context.before).ok()?;
-        return Some(if let Some(at) = aspects.point {
-            Located::Fixed(hit.entity, design(&at))
-        } else if aspects.curve.is_some() {
-            Located::OnEdge(hit.entity, design(&hit.point))
-        } else {
-            Located::Free(design(&hit.point))
-        });
+        return Some(Located::Free(design(&hit.point)));
     }
     // In the plane through the last point placed — or the origin — facing
     // the eye.
@@ -272,7 +333,7 @@ fn place(args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, located: Located) 
             s.fresh.push(point);
             point
         }
-        Located::Free(at) => {
+        Located::Along(_, at) | Located::Free(at) => {
             let point = sketch.add_point(at);
             s.fresh.push(point);
             point
@@ -337,6 +398,10 @@ fn click<S: Scalar>(
     tool: Tool,
     located: Located,
 ) {
+    let along = match located {
+        Located::Along(axis, _) => Some(axis),
+        _ => None,
+    };
     let p = place(args, s, located);
     match tool {
         Tool::Select => {}
@@ -348,6 +413,12 @@ fn click<S: Scalar>(
                 && !same(args, last, p)
             {
                 let line = args.sketch.add_line(last, p);
+                if let Some(axis) = along {
+                    args.sketch.constrain(Constraint3d::ParallelTo {
+                        line,
+                        direction: unit(axis),
+                    });
+                }
                 smooth_joints(args, line);
                 s.fresh.clear();
             }
@@ -440,10 +511,10 @@ pub(crate) fn event<S: Scalar>(
     let tool = s.tool(args);
     s.tool = Some(tool);
     match event {
-        CanvasEvent::Hover { pointer, .. } => {
+        CanvasEvent::Hover { pointer, shift } => {
             s.hover = tool
                 .draws()
-                .then(|| locate(&context, args, s, pointer).map(|l| l.at(args)))
+                .then(|| locate(&context, args, s, tool, pointer, *shift))
                 .flatten();
         }
         CanvasEvent::Leave => s.hover = None,
@@ -455,11 +526,13 @@ pub(crate) fn event<S: Scalar>(
         CanvasEvent::Click {
             pointer,
             button: Button::Primary,
+            shift,
             ..
         } if tool.draws() => {
-            if let Some(located) = locate(&context, args, s, pointer) {
+            if let Some(located) = locate(&context, args, s, tool, pointer, *shift) {
                 click(before, args, s, tool, located);
             }
+            s.hover = None;
         }
         CanvasEvent::Click {
             button: Button::Secondary,
@@ -822,17 +895,14 @@ fn visuals<S: Scalar>(
             Visual::new(id.to_string(), Shape::Point { at: cast(&p.at) }, style).selectable();
         out.push(if p.fixed { visual } else { visual.draggable() });
     }
-    if let Some(hover) = &s.hover {
+    let last = s.placed.last().map(|p| sketch.points[p].at);
+    if let Some(located) = &s.hover {
+        let hover = located.at(args);
         let mut draft: Vec<V3> = match s.tool(args) {
             Tool::Spline | Tool::Arc => s.placed.iter().map(|p| sketch.points[p].at).collect(),
-            _ => s
-                .placed
-                .last()
-                .map(|p| sketch.points[p].at)
-                .into_iter()
-                .collect(),
+            _ => last.into_iter().collect(),
         };
-        draft.push(*hover);
+        draft.push(hover);
         if draft.len() > 1 {
             out.push(Visual::new(
                 "draft",
@@ -842,10 +912,44 @@ fn visuals<S: Scalar>(
                 Style::Draft,
             ));
         }
+        if let (Located::Along(axis, _), Some(from)) = (located, last) {
+            // The axis snapped to, from the line's start through its end,
+            // and which it is.
+            out.push(Visual::new(
+                "snap_axis",
+                Shape::Polyline {
+                    points: vec![cast(&from), cast(&hover)],
+                },
+                Style::Snap,
+            ));
+            out.push(Visual::new(
+                "snap_label",
+                Shape::Label {
+                    at: cast(&hover),
+                    text: axis.name().to_string(),
+                    offset: Vector3::from_array([S::ONE, S::ONE, S::ZERO]),
+                },
+                Style::Snap,
+            ));
+        }
+        let style = match located {
+            Located::Free(_) => Style::Draft,
+            _ => Style::Snap,
+        };
         out.push(Visual::new(
             "snap",
-            Shape::Point { at: cast(hover) },
-            Style::Snap,
+            Shape::Point { at: cast(&hover) },
+            style,
+        ));
+    }
+    // The directions a line snaps to, from where it starts — or, before
+    // that, from where the next point goes.
+    let anchor = last.or_else(|| s.hover.as_ref().map(|l| l.at(args)));
+    if let Some(at) = anchor.filter(|_| s.tool(args).draws()) {
+        out.push(Visual::new(
+            "triad",
+            Shape::Triad { at: cast(&at) },
+            Style::Guide,
         ));
     }
     out

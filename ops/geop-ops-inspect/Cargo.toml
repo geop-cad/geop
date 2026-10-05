@@ -13,4 +13,5 @@ geop-ops-booleans.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+geop-core-sketch.workspace = true
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }

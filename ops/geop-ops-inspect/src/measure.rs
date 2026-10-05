@@ -75,9 +75,9 @@ pub fn measure<S: Scalar>(part: &Part<S>, entities: &[EntityRef]) -> Measurement
     out
 }
 
-/// One entity alone: a point's coordinates, an edge's length — and radius,
-/// if it is circular — a face's area — and radius, if it is a cylinder —
-/// a solid's volume, area and mass.
+/// One entity alone: a point's coordinates, a curve's length — an edge's
+/// or a sketch's, and its radius, if it is circular — a face's area — and
+/// radius, if it is a cylinder — a solid's volume, area and mass.
 fn alone<S: Scalar>(
     part: &Part<S>,
     entity: &EntityRef,
@@ -87,15 +87,14 @@ fn alone<S: Scalar>(
     let aspects = Aspects::of(entity, part).with_context(&ctx)?;
     let (owner, local, _) = resolve(part, entity).with_context(&ctx)?;
     out.plane = aspects.plane.clone();
+    if let Some(curve) = &aspects.curve {
+        out.values.push(measured(
+            "Length",
+            curve.length().with_context(&ctx)?.0,
+            "mm",
+        ));
+    }
     match &local {
-        EntityRef::Edge { name } => {
-            let curve = &owner.topology().get_edge(owner.edge_id(name)?)?.curve;
-            out.values.push(measured(
-                "Length",
-                curve.length().with_context(&ctx)?.0,
-                "mm",
-            ));
-        }
         EntityRef::Face { name } => {
             let face = owner.face_id(name)?;
             let (area, _) = owner.topology().face_area(face).with_context(&ctx)?;
@@ -177,28 +176,23 @@ fn together<S: Scalar>(
     Ok(())
 }
 
-/// What a distance can be measured to: a vertex or another point, an edge,
-/// a face — each where it is placed.
+/// What a distance can be measured to: a vertex or another point, an edge
+/// or a sketch's curve, a face — each where it is placed.
 fn feature<'p, S: Scalar>(part: &'p Part<S>, entity: &EntityRef) -> GeopResult<Feature<'p, S>> {
     let ctx = |e: GeopError| e.with_context(format!("measuring a distance to {entity}"));
     let (owner, local, pose) = resolve(part, entity).with_context(&ctx)?;
-    match &local {
-        EntityRef::Edge { name } => {
-            let curve = &owner.topology().get_edge(owner.edge_id(name)?)?.curve;
-            Ok(Feature::Curve(match &pose {
-                Some(pose) => curve.transform(&pose.motion()),
-                None => curve.clone(),
-            }))
-        }
-        EntityRef::Face { name } => Ok(Feature::Face(
+    if let EntityRef::Face { name } = &local {
+        return Ok(Feature::Face(
             PlacedFace::new(owner.topology(), owner.face_id(name)?, pose).with_context(&ctx)?,
-        )),
-        _ => match Aspects::of(entity, part).with_context(&ctx)?.point {
-            Some(point) => Ok(Feature::Point(point)),
-            None => Err(GeopError::new(format!(
-                "a distance is measured between vertices, points, edges and faces, and {entity} is none"
-            ))),
-        },
+        ));
+    }
+    let aspects = Aspects::of(entity, part).with_context(&ctx)?;
+    match (aspects.curve, aspects.point) {
+        (Some(curve), _) => Ok(Feature::Curve(curve)),
+        (None, Some(point)) => Ok(Feature::Point(point)),
+        (None, None) => Err(GeopError::new(format!(
+            "a distance is measured between vertices, points, curves and faces, and {entity} is none"
+        ))),
     }
 }
 

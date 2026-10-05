@@ -24,7 +24,7 @@ const SELECTION_ROLES: &[Role] = &[
     Role::Point,
     Role::Line,
     Role::Plane,
-    Role::Edge,
+    Role::Curve,
     Role::Circle,
     Role::Round,
 ];

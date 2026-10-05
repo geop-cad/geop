@@ -1,5 +1,6 @@
 use crate::{
     Coedge, CoedgeId, Edge, EdgeId, Face, FaceId, Shell, ShellId, Solid, SolidId, Vertex, VertexId,
+    Wire, WireId,
 };
 use geop_core_math::scalars::Scalar;
 
@@ -39,6 +40,12 @@ impl<S: Scalar> Model<S> {
     pub fn insert_solid(&mut self, s: Solid) -> SolidId {
         let id = SolidId(self.fresh_id());
         self.solids.insert(id, s);
+        id
+    }
+
+    pub fn insert_wire(&mut self, w: Wire) -> WireId {
+        let id = WireId(self.fresh_id());
+        self.wires.insert(id, w);
         id
     }
 }

@@ -98,10 +98,8 @@ fn path_field<'a, S: Scalar, A: 'a>(
     }
     let value = if path.is_empty() {
         Vec::new()
-    } else if before.sketch3d_id(path).is_ok() {
-        vec![EntityRef::Sketch3d { name: path.into() }]
     } else {
-        vec![EntityRef::Sketch { name: path.into() }]
+        vec![path_ref(before, path)]
     };
     form.reference(
         key,
@@ -112,12 +110,57 @@ fn path_field<'a, S: Scalar, A: 'a>(
         false,
         move |edit, picked| {
             let name = match picked.as_slice() {
-                [EntityRef::Sketch { name } | EntityRef::Sketch3d { name }] => name.clone(),
+                [entity] => path_name(entity).unwrap_or_default(),
                 _ => String::new(),
             };
             set(edit.args, name);
         },
     );
+}
+
+/// The paths field `key` of a form, labelled `label`: sketches or 3-D
+/// sketches whose curves something runs along — a sweep's rails, a loft's
+/// guides — `set` given their names. Nothing before there is any sketch.
+fn paths_field<'a, S: Scalar, A: 'a>(
+    form: &mut Form<'a, S, A>,
+    before: &Part<S>,
+    key: &str,
+    label: &str,
+    paths: &[String],
+    set: impl Fn(&mut A, Vec<String>) + 'a,
+) {
+    if before.sketches().next().is_none() && before.sketches3d().next().is_none() {
+        return;
+    }
+    let value = paths.iter().map(|name| path_ref(before, name)).collect();
+    form.reference(
+        key,
+        label,
+        value,
+        &[Role::Path],
+        None,
+        true,
+        move |edit, picked| set(edit.args, picked.iter().filter_map(path_name).collect()),
+    );
+    form.optional(key);
+}
+
+/// The sketch or 3-D sketch `name` of `before`, as a reference.
+fn path_ref<S: Scalar>(before: &Part<S>, name: &str) -> EntityRef {
+    let name = name.to_string();
+    if before.sketch3d_id(&name).is_ok() {
+        EntityRef::Sketch3d { name }
+    } else {
+        EntityRef::Sketch { name }
+    }
+}
+
+/// The name of the sketch or 3-D sketch `entity` is, if it is one.
+fn path_name(entity: &EntityRef) -> Option<String> {
+    match entity {
+        EntityRef::Sketch { name } | EntityRef::Sketch3d { name } => Some(name.clone()),
+        _ => None,
+    }
 }
 
 /// How far one side of an extrude or revolve goes: a length — an angle, in

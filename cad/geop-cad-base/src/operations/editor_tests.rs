@@ -837,7 +837,7 @@ fn sweep_with_rails_twist_and_orientation() {
     editor.handle(dialog("profile", sketch("mouth")));
     editor.handle(dialog("path", sketch("axis")));
     let update = editor.handle(dialog("rails", Value::Press));
-    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Sketch]);
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Path]);
     let update = editor.handle(dialog("rails", sketch("flare")));
     let dialog_shown = update.step.unwrap().presentation.dialog;
     assert!(
@@ -967,7 +967,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     let update = editor.handle(Command::New {
         kind: "boundary_surface".into(),
     });
-    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Edge]);
+    assert_eq!(update.step.unwrap().presentation.pickable, [Role::Curve]);
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
@@ -3369,4 +3369,305 @@ fn operations_are_offered_by_group() {
     assert_eq!(json["group"], "Sketch");
     let sheet = operations.iter().find(|o| o.kind == "hem").unwrap();
     assert_eq!(serde_json::to_value(sheet).unwrap()["group"], "Sheet metal");
+}
+
+/// A click of the primary button with `pointer`.
+fn click_at(pointer: Pointer<S>) -> Command<S> {
+    Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    }
+}
+
+/// Looking straight down at `(x, y)`.
+fn from_above(x: f64, y: f64) -> Pointer<S> {
+    pointer([x, y, 10.0], [0.0, 0.0, -1.0])
+}
+
+/// The 3-D sketch `route`: lines from `(1, 1, 1)` to `(3, 1, 1)` and on to
+/// `(3, 2, 2)` — its points `p0`, `p1` and `p3`, its lines `c2` and `c4`.
+fn route() -> geop_ops_sketch3d::AddSketch3dArgs {
+    let mut s = geop_ops_sketch3d::Sketch3d::new();
+    let at = |p: [f64; 3]| Vector3::from_array(p.map(examples::n));
+    let a = s.add_point(at([1.0, 1.0, 1.0]));
+    let b = s.add_point(at([3.0, 1.0, 1.0]));
+    s.add_line(a, b);
+    let c = s.add_point(at([3.0, 2.0, 2.0]));
+    s.add_line(b, c);
+    geop_ops_sketch3d::AddSketch3dArgs {
+        sketch: s,
+        references: Vec::new(),
+    }
+}
+
+/// An editor on `program`, which builds.
+fn editing(program: Program) -> Editor<S> {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::Load {
+        program,
+        path: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor
+}
+
+/// A 3-D sketch drawn by clicks from the side: the second point, clicked
+/// near the line along `x` through the first, snaps onto it; the third,
+/// near the line along `z` through the second, onto that; the fourth, near
+/// the first point, is the first point. Committed, the sketch is one loop
+/// with two lines parallel to the axes they snapped to.
+#[test]
+fn a_3d_sketch_snaps_along_axes_and_onto_points() {
+    let mut editor = editing(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let side = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
+    editor.handle(click_at(side(1.0, 1.0)));
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: side(4.0, 1.006),
+            shift: false,
+        },
+    });
+    let visuals = update.step.unwrap().presentation.visuals;
+    assert!(
+        visuals.iter().any(|v| matches!(
+            &v.shape,
+            geop_ops::ui::Shape::Label { text, .. } if text == "x"
+        )),
+        "the snap to x is shown: {visuals:?}"
+    );
+    editor.handle(click_at(side(4.0, 1.006)));
+    editor.handle(click_at(side(4.007, 3.0)));
+    editor.handle(click_at(side(1.005, 1.0)));
+    editor.handle(Command::Event {
+        event: StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    });
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch3d(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a 3-D sketch");
+    };
+    let sketch = &args.sketch;
+    assert_eq!(sketch.points.len(), 3);
+    let parallel: Vec<usize> = sketch
+        .constraints
+        .values()
+        .filter_map(|c| match c {
+            geop_core_sketch::space::Constraint3d::ParallelTo { direction, .. } => {
+                (0..3).find(|&k| direction[k].to_f64() == 1.0)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(parallel, [0, 2]);
+    let chains = sketch.chains().unwrap();
+    assert!(chains.len() == 1 && chains[0].closed, "{chains:?}");
+}
+
+/// What a 3-D sketch builds is picked like any edge or vertex — before
+/// they were edges and vertices, nothing of a 3-D sketch could be picked
+/// but the whole sketch, as a path. A datum's selection takes the sketch's
+/// corner, lit when hovered, and then its line; the datum builds on them.
+#[test]
+fn a_3d_sketch_point_and_line_are_picked() {
+    let mut program = Program::new();
+    program.push("route", route());
+    let mut editor = editing(program);
+    editor.handle(Command::New {
+        kind: "add_datum".into(),
+    });
+    let corner = EntityRef::Vertex {
+        name: "sketch3d(route,p1)".into(),
+    };
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: from_above(3.004, 1.0),
+            shift: false,
+        },
+    });
+    let highlights = update.step.unwrap().presentation.highlights;
+    assert!(highlights.contains(&corner), "{highlights:?}");
+    editor.handle(click_at(from_above(3.004, 1.0)));
+    editor.handle(click_at(from_above(2.0, 1.005)));
+    editor.handle(dialog("construction", Value::Choice("parallel".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddDatum(datum) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a datum");
+    };
+    assert_eq!(
+        datum.selection,
+        [
+            corner,
+            EntityRef::Edge {
+                name: "sketch3d(route,c2)".into()
+            }
+        ]
+    );
+    let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+    part.check_names().unwrap();
+}
+
+/// A boundary surface between a planar sketch's line and a 3-D sketch's
+/// line, both clicked: the ruled face between them, a valid sheet.
+#[test]
+fn a_boundary_surface_spans_sketch_lines() {
+    let mut base = geop_ops_sketch::Sketch::new();
+    let (a, b) = (
+        base.add_point(examples::n(0.0), examples::n(0.0)),
+        base.add_point(examples::n(2.0), examples::n(0.0)),
+    );
+    let line = base.add_line(a, b);
+    let mut program = Program::new();
+    program.push(
+        "base",
+        geop_ops_sketch::AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: base,
+            ..Default::default()
+        },
+    );
+    program.push("route", route());
+    let mut editor = editing(program);
+    editor.handle(Command::New {
+        kind: "boundary_surface".into(),
+    });
+    editor.handle(click_at(from_above(1.0, 0.004)));
+    editor.handle(click_at(from_above(2.0, 1.004)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::BoundarySurface(args) = &editor.program().steps.last().unwrap().operation
+    else {
+        panic!("a boundary surface");
+    };
+    assert_eq!(
+        args.edges,
+        [
+            EntityRef::SketchCurve {
+                sketch: "base".into(),
+                curve: line,
+            },
+            EntityRef::Edge {
+                name: "sketch3d(route,c2)".into()
+            }
+        ]
+    );
+    let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+    assert!(part.face_id("boundary(boundary_surface1)").is_ok());
+    let params = geop_core_topology::validation::ValidationParameters::default();
+    geop_core_topology::validation::validate(&params, part.topology()).unwrap();
+}
+
+/// The horn swept with a 3-D sketch as its rail, clicked where it runs:
+/// the rail is the whole sketch, and the horn builds as from the planar
+/// one.
+#[test]
+fn a_sweep_takes_a_3d_sketch_as_its_rail() {
+    let mut program = examples::horn();
+    program.steps.truncate(2);
+    let mut flare = geop_ops_sketch3d::Sketch3d::new();
+    let points = [
+        [0.0, 0.5, 0.0],
+        [1.5, 0.4, 0.0],
+        [3.0, 0.9, 0.0],
+        [4.0, 1.6, 0.0],
+    ]
+    .map(|p| flare.add_point(Vector3::from_array(p.map(examples::n))));
+    flare.add_spline(points.to_vec());
+    program.push(
+        "flare",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: flare,
+            references: Vec::new(),
+        },
+    );
+    let mut editor = editing(program);
+    editor.handle(Command::New {
+        kind: "sweep".into(),
+    });
+    let sketch = |name: &str| Value::Entities(vec![EntityRef::Sketch { name: name.into() }]);
+    editor.handle(dialog("combine", Value::Choice("new_body".into())));
+    editor.handle(dialog("profile", sketch("mouth")));
+    editor.handle(dialog("path", sketch("axis")));
+    editor.handle(dialog("rails", Value::Press));
+    editor.handle(click_at(from_above(1.5, 0.4)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::Sweep(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a sweep");
+    };
+    assert_eq!(args.rails, ["flare"]);
+    let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+    assert_eq!(part.solid_names().len(), 1);
+    let params = geop_core_topology::validation::ValidationParameters::default();
+    geop_core_topology::validation::validate(&params, part.topology()).unwrap();
+}
+
+/// The default view of an empty part, as the browser sends it — 1920 x
+/// 1080, the camera at `(66, 44, 88)` looking at the origin: a line's
+/// first click on the origin, its second 160 px right of and 90 px above
+/// it. Both place a point, and the line between them is drawn. (Reported
+/// as placing nothing: in a 1400 x 900 window that spot lies under the
+/// step's dialog, and the viewer sends no click there at all.)
+#[test]
+fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
+    let mut editor = editing(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let eye = |dir: [f64; 3]| {
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        Pointer {
+            ray: Ray::try_new(
+                v([65.90889047678681, 43.93926031785788, 87.87852063571576]),
+                v(dir),
+            )
+            .unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.00838515269409588),
+            },
+        }
+    };
+    for dir in [
+        [
+            -0.5570860145310995,
+            -0.3713906763541206,
+            -0.7427813527082412,
+        ],
+        [
+            -0.4499813577124772,
+            -0.2893350678973743,
+            -0.8448680347817981,
+        ],
+    ] {
+        let hover = editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: eye(dir),
+                shift: false,
+            },
+        });
+        let visuals = hover.step.unwrap().presentation.visuals;
+        assert!(
+            visuals.iter().any(|v| v.key == "snap"),
+            "where the click goes is shown: {visuals:?}"
+        );
+        editor.handle(click_at(eye(dir)));
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch3d(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a 3-D sketch");
+    };
+    assert_eq!(args.sketch.curves.len(), 1, "{:?}", args.sketch);
 }

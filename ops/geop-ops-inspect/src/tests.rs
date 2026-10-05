@@ -314,3 +314,73 @@ fn long_bars_overlap() {
         1e-9,
     );
 }
+
+/// A sketch's curves measure as edges do: a planar sketch's half circle its
+/// length and radius, a 3-D sketch's line its length — and the distance
+/// between the two, which lie a unit apart.
+#[test]
+fn sketch_curves_are_measured() {
+    use geop_core_math::primitives::CoordinateSystem;
+    use geop_core_sketch::{Sketch, space::Sketch3d};
+    let d = geop_ops::Design::from_f64;
+    let mut part = Part::<S>::new();
+    let mut arc = Sketch::new();
+    let (a, b) = (
+        arc.add_point(d(1.0), d(0.0)),
+        arc.add_point(d(-1.0), d(0.0)),
+    );
+    let half = arc.add_arc(a, b, d(PI));
+    part.add_sketch(
+        geop_ops::PlacedSketch {
+            plane: CoordinateSystem::world_at(Vector3::zero()),
+            sketch: arc,
+        },
+        "arc",
+    )
+    .unwrap();
+    let mut line = Sketch3d::new();
+    let at = |p: [f64; 3]| Vector3::from_array(p.map(d));
+    let (a, b) = (
+        line.add_point(at([-1.0, 2.0, 0.0])),
+        line.add_point(at([2.0, 2.0, 0.0])),
+    );
+    line.add_line(a, b);
+    part.add_sketch3d(line, "route").unwrap();
+
+    let curve = EntityRef::SketchCurve {
+        sketch: "arc".into(),
+        curve: half,
+    };
+    let edge = EntityRef::Edge {
+        name: "sketch3d(route,c2)".into(),
+    };
+    let value = |entities: &[EntityRef], label: &str| {
+        let measured = measure(&part, entities);
+        assert!(measured.error.is_none(), "{measured:?}");
+        measured
+            .values
+            .iter()
+            .find(|m| m.label == label)
+            .unwrap_or_else(|| panic!("no {label} in {measured:?}"))
+            .value
+    };
+    assert_near(
+        "half circle",
+        value(std::slice::from_ref(&curve), "Length"),
+        PI,
+        1e-9,
+    );
+    assert_near(
+        "its radius",
+        value(std::slice::from_ref(&curve), "Radius"),
+        1.0,
+        1e-9,
+    );
+    assert_near(
+        "line",
+        value(std::slice::from_ref(&edge), "Length"),
+        3.0,
+        1e-9,
+    );
+    assert_near("between", value(&[curve, edge], "Distance"), 1.0, 1e-6);
+}

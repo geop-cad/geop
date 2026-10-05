@@ -414,6 +414,30 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   return `${stats}, volume ${volume} mm³`;
 });
 
+await check("a 3-D sketch's point is clicked and measured, as a vertex", async () => {
+  await fresh();
+  await operation("3-D sketch").click();
+  await settle(page);
+  // Two points in the plane through the origin, facing the eye: a line.
+  await clickView(-220, -90);
+  await clickView(-60, -150);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  await popup.locator(".button-row button.primary").click();
+  await builtCleanly();
+  await page.getByTitle("Measure: click up to two vertices, edges, faces or datums").click();
+  await settle(page);
+  await clickView(-220, -90);
+  const picked = await page.locator(".inspect-entity").allInnerTexts();
+  expect(
+    picked.length === 1 && /^Vertex sketch3d\([^,]+,p\d+\)$/.test(picked[0].trim()),
+    `picked: ${picked.join(", ") || "nothing"}`,
+  );
+  const rows = await page.locator(".inspect-table th").allInnerTexts();
+  expect(["X", "Y", "Z"].every((axis) => rows.includes(axis)), `measured: ${rows.join(", ")}`);
+  return picked[0];
+});
+
 await check("a pattern picks a hole as a feature by a click on its wall", async () => {
   await fresh();
   await fileMenu(page, "Patterned plate");

@@ -383,3 +383,69 @@ fn arcs_take_three_clicks() {
     // The next arc starts where this one ended.
     assert_eq!(e.session().tool(&e.args()), crate::Tool::Arc);
 }
+
+/// Drawing a line, the pointer passing near the line along `x` through the
+/// line's start snaps the end onto it: shown as the axis, labelled, with
+/// the arrows of `x`, `y` and `z` at the start — and, clicked, the line is
+/// made parallel to `x`. With shift held nothing snaps. Back on the first
+/// point, the chain closes on it.
+#[test]
+fn lines_snap_along_axes_and_onto_points() {
+    use geop_ops::ui::{Shape, Style};
+    let mut e = Editor::on(Part::new());
+    let side = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
+    e.click(side(1.0, 1.0));
+    // Half a reach above the line along `x` through (1, 0, 1).
+    e.send(StepEditEvent::Hover {
+        pointer: side(3.0, 1.005),
+        shift: false,
+    });
+    let visuals = &e.presentation.visuals;
+    let shown = |key: &str| visuals.iter().find(|v| v.key == key);
+    assert!(
+        matches!(shown("snap_label"), Some(v) if matches!(&v.shape, Shape::Label { text, .. } if text == "x")),
+        "{visuals:?}"
+    );
+    assert!(matches!(shown("snap"), Some(v) if v.style == Style::Snap));
+    assert!(
+        matches!(shown("triad"), Some(v) if matches!(v.shape, Shape::Triad { at } if close(&at, [1.0, 0.0, 1.0])))
+    );
+    e.click(side(3.0, 1.005));
+    let p = e.points();
+    assert!(close(&e.at(p[1]), [3.0, 0.0, 1.0]), "{:?}", e.at(p[1]));
+    let along = |sketch: &Sketch3d, axis: usize| {
+        sketch.constraints.values().any(|c| {
+            matches!(c, Constraint3d::ParallelTo { direction, .. } if direction[axis].to_f64() == 1.0)
+        })
+    };
+    assert!(along(&e.sketch(), 0));
+
+    // Up along `z` — with shift, it stays where it is clicked, unaligned.
+    e.send(StepEditEvent::Click {
+        pointer: side(3.004, 2.0),
+        button: Button::Primary,
+        double: false,
+        shift: true,
+    });
+    let p = e.points();
+    assert!(close(&e.at(p[2]), [3.004, 0.0, 2.0]), "{:?}", e.at(p[2]));
+    assert!(!along(&e.sketch(), 2));
+
+    // Back to the first point: the chain ends on it, a loop.
+    e.send(StepEditEvent::Hover {
+        pointer: side(1.004, 1.0),
+        shift: false,
+    });
+    assert!(
+        e.presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "snap" && v.style == Style::Snap)
+    );
+    e.click(side(1.004, 1.0));
+    e.key("Escape");
+    let sketch = e.sketch();
+    assert_eq!(sketch.points.len(), 3);
+    let chains = sketch.chains().unwrap();
+    assert!(chains.len() == 1 && chains[0].closed, "{chains:?}");
+}

@@ -591,3 +591,72 @@ fn linear_patterns_and_moves_sweep() {
         assert!((got - 8.0).abs() < 1e-6, "{degrees}°: {got}");
     }
 }
+
+/// The pin patterned along a 3-D sketch's line — drawn beside the plate,
+/// along `x` — and along a planar sketch's line across it: a grid of holes,
+/// as along the origin's axes. The sketch's lines are picked as any
+/// straight edge is.
+#[test]
+fn holes_patterned_along_sketch_lines() {
+    let mut program = plate_and_pin();
+    let mut route = geop_ops_sketch3d::Sketch3d::new();
+    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(n));
+    let (a, b) = (
+        route.add_point(at([0.0, 3.0, 0.0])),
+        route.add_point(at([1.0, 3.0, 0.0])),
+    );
+    route.add_line(a, b);
+    program.push(
+        "rail",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: route,
+            references: Vec::new(),
+        },
+    );
+    let mut across = Sketch::new();
+    let (a, b) = (
+        across.add_point(n(-1.0), n(0.0)),
+        across.add_point(n(-1.0), n(1.0)),
+    );
+    let line = across.add_line(a, b);
+    program.push(
+        "across",
+        AddSketchArgs {
+            plane: Some(z_plane()),
+            sketch: across,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "holes",
+        LinearPatternArgs {
+            bodies: solid("extrude(pin)"),
+            features: Vec::new(),
+            first: Direction {
+                along: Some(EntityRef::Edge {
+                    name: "sketch3d(rail,c2)".into(),
+                }),
+                reversed: false,
+                count: 4.0.into(),
+                spacing: Spacing::step(2.0),
+            },
+            second: Some(Direction {
+                along: Some(EntityRef::SketchCurve {
+                    sketch: "across".into(),
+                    curve: line,
+                }),
+                reversed: true,
+                count: 2.0.into(),
+                spacing: Spacing::step(0.65),
+            }),
+            combine: Combine::Difference {
+                target: "extrude(plate)".into(),
+            },
+        },
+    );
+    let part = build(&program);
+    assert_valid(&part);
+    let expected = 8.0 * 2.0 * 0.5 - 8.0 * PI * 0.3 * 0.3 * 0.5;
+    let got = volume(&part, "linear_pattern(holes)");
+    assert!((got - expected).abs() < 1e-3, "{got} vs {expected}");
+}

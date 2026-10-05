@@ -118,8 +118,9 @@ impl<S: Scalar> Model<S> {
         Ok(())
     }
 
-    /// Drop everything no longer reachable from a face: the coedges no face
-    /// owns, then edges and vertices nothing refers to any more.
+    /// Drop everything no longer reachable from a face or a wire: the
+    /// coedges no face owns, then edges and vertices nothing refers to any
+    /// more.
     pub(crate) fn prune_unreachable(&mut self) {
         let live_faces: Vec<FaceId> = self.faces.keys().copied().collect();
         let live_coedges: HashSet<CoedgeId> = live_faces
@@ -132,6 +133,7 @@ impl<S: Scalar> Model<S> {
             .coedges
             .values()
             .filter_map(|c| c.edge().ok())
+            .chain(self.wires.values().flat_map(|w| w.edges.iter().copied()))
             .collect();
         self.edges.retain(|id, _| live_edges.contains(id));
 
@@ -151,6 +153,9 @@ impl<S: Scalar> Model<S> {
                     live_vertices.insert(v);
                 }
             }
+        }
+        for wire in self.wires.values() {
+            live_vertices.extend(wire.vertices.iter().copied());
         }
         self.vertices.retain(|id, _| live_vertices.contains(id));
     }

@@ -92,6 +92,7 @@ fn distance<S: Scalar>(
             .min_by(|&a, &b| nearer(a, b))
             .map(|t| (4, S::ZERO, t)),
         Shape::Instance { name } => view?.pick_instance(name, pointer).map(|t| (4, S::ZERO, t)),
+        Shape::Triad { .. } => None,
     }
 }
 

@@ -29,7 +29,7 @@ use geop_core_math::{
 };
 use geop_core_sketch::{CurveId, PointId, SplineShape};
 use geop_core_topology::CoedgeGeometry;
-use geop_ops::{Design, EntityRef, Part, RefId};
+use geop_ops::{Design, EntityRef, Part, RefId, operation::NamedCurve};
 use serde::{Deserialize, Serialize};
 
 use crate::{CurveKind, Sketch};
@@ -278,7 +278,7 @@ fn project<S: Scalar>(
             .ok_or_else(|| GeopError::new("an entity of the part has no name"))
     };
     let mut geometry = Geometry::default();
-    let mut edges = Vec::new();
+    let mut curves = Vec::new();
     match entity {
         EntityRef::Vertex { name: vertex } => {
             let point = topology.get_vertex(part.vertex_id(vertex)?)?.point;
@@ -286,11 +286,16 @@ fn project<S: Scalar>(
                 .points
                 .insert(vertex.clone(), plain(&in_plane(plane, &point)));
         }
-        EntityRef::Edge { name } => edges.push(part.edge_id(name)?),
+        EntityRef::Edge { .. } | EntityRef::SketchCurve { .. } => {
+            curves.push(entity.resolve_curve(part)?)
+        }
         EntityRef::Face { name: face } => {
             for coedge in topology.iterate_face_coedges(part.face_id(face)?) {
                 match topology.get_coedge(coedge)?.geometry {
-                    CoedgeGeometry::Edge(edge) => edges.push(edge),
+                    CoedgeGeometry::Edge(edge) => {
+                        let name = name(edge.into())?;
+                        curves.push(EntityRef::Edge { name }.resolve_curve(part)?)
+                    }
                     CoedgeGeometry::Vertex(vertex) => {
                         let point = topology.get_vertex(vertex)?.point;
                         geometry
@@ -302,26 +307,25 @@ fn project<S: Scalar>(
         }
         other => {
             return Err(GeopError::new(format!(
-                "{other} cannot be projected: pick a vertex, an edge or a face"
+                "{other} cannot be projected: pick a vertex, an edge, a sketch's curve or a face"
             )));
         }
     }
-    for edge_id in edges {
-        let edge = topology.get_edge(edge_id)?;
-        let key = name(edge_id.into())?;
-        let (start, end) = (
-            name(edge.start_vertex.into())?,
-            name(edge.end_vertex.into())?,
-        );
-        for (vertex, at) in [(edge.start_vertex, &start), (edge.end_vertex, &end)] {
-            let point = topology.get_vertex(vertex)?.point;
+    for curve in curves {
+        let NamedCurve {
+            name: key,
+            curve,
+            start,
+            end,
+        } = curve;
+        for (at, point) in [&start, &end] {
             geometry
                 .points
-                .insert(at.clone(), plain(&in_plane(plane, &point)));
+                .insert(at.clone(), plain(&in_plane(plane, point)));
         }
-        let ctx = with_context!("edge {key:?}");
+        let ctx = with_context!("curve {key:?}");
         if let Some(shape) =
-            project_curve(&edge.curve, plane, &key, start, end, &mut geometry.points)
+            project_curve(&curve, plane, &key, start.0, end.0, &mut geometry.points)
                 .with_context(ctx)?
         {
             geometry.curves.insert(key, shape);

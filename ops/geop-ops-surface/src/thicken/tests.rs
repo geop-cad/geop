@@ -18,7 +18,9 @@ pub(crate) fn square_sheet() -> (Part<S>, f64) {
     let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let corners = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     let edges = (0..4)
-        .map(|k| edge_between(&part, corners[k], corners[(k + 1) % 4]))
+        .map(|k| geop_ops::EntityRef::Edge {
+            name: edge_between(&part, corners[k], corners[(k + 1) % 4]),
+        })
         .collect();
     let args = BoundarySurfaceArgs {
         edges,

@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use geop_core_math::{geop_error::GeopError, scalars::Scalar};
 
-use crate::{CoedgeId, FaceId, Model, boundary::BoundaryType, validation::ValidationParameters};
+use crate::{
+    CoedgeGeometry, CoedgeId, EdgeId, FaceId, Model, VertexId, WireId, boundary::BoundaryType,
+    validation::ValidationParameters,
+};
 
 /// Checks every reference in the model that is meant to be mirrored by a
 /// reference pointing back the other way: parent/child links (a face's
@@ -147,6 +150,65 @@ pub fn check_two_way_references<S: Scalar>(
                     )));
                 }
             }
+        }
+    }
+
+    check_wires(errors, model);
+}
+
+/// A wire owns its edges and vertices alone (see [`crate::Wire`]): no
+/// coedge uses an edge of it or ends at a vertex of it, its edges end at
+/// its own vertices, and nothing is in two wires.
+fn check_wires<S: Scalar>(errors: &mut Vec<GeopError>, model: &Model<S>) {
+    let mut vertex_wire: HashMap<VertexId, WireId> = HashMap::new();
+    let mut edge_wire: HashMap<EdgeId, WireId> = HashMap::new();
+    for (&wire_id, wire) in &model.wires {
+        for &v in &wire.vertices {
+            if let Some(other) = vertex_wire.insert(v, wire_id) {
+                errors.push(GeopError::new(format!(
+                    "{v} is in both {other} and {wire_id}"
+                )));
+            }
+        }
+        for &e in &wire.edges {
+            if let Some(other) = edge_wire.insert(e, wire_id) {
+                errors.push(GeopError::new(format!(
+                    "{e} is in both {other} and {wire_id}"
+                )));
+            }
+            let Some(edge) = model.edges.get(&e) else {
+                continue;
+            };
+            for end in [edge.start_vertex, edge.end_vertex] {
+                if !wire.vertices.contains(&end) {
+                    errors.push(GeopError::new(format!(
+                        "{wire_id} has {e}, but not {end}, where it ends"
+                    )));
+                }
+            }
+        }
+    }
+    for (&coedge_id, coedge) in &model.coedges {
+        let (edge, vertices) = match coedge.geometry {
+            CoedgeGeometry::Edge(e) => match model.edges.get(&e) {
+                Some(edge) => (Some(e), vec![edge.start_vertex, edge.end_vertex]),
+                None => (Some(e), Vec::new()),
+            },
+            CoedgeGeometry::Vertex(v) => (None, vec![v]),
+        };
+        let used = edge
+            .and_then(|e| Some((e.to_string(), *edge_wire.get(&e)?)))
+            .into_iter()
+            .chain(
+                vertices
+                    .iter()
+                    .filter_map(|v| Some((v.to_string(), *vertex_wire.get(v)?))),
+            );
+        for (id, wire) in used {
+            errors.push(GeopError::new(format!(
+                "coedge {} of face {} uses {id} of {wire}, which bounds no face",
+                coedge_id.0, coedge.face.0
+            )));
         }
     }
 }

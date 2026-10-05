@@ -360,7 +360,7 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
         "project",
         "project",
         projected,
-        &[Role::Point, Role::Edge, Role::Plane, Role::Round],
+        &[Role::Point, Role::Curve, Role::Plane, Role::Round],
         None,
         true,
         move |edit, entities| editing(before, edit, |e| e.project(entities)),

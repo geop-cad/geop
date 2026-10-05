@@ -123,3 +123,67 @@ fn moving_a_mated_part_reroutes_the_cable() {
         / 4.0;
     assert!((centre - 6.0).abs() < 1e-9, "{centre}");
 }
+
+/// A route through the corners of a 3-D sketch — vertices like any other —
+/// and a planar sketch's point: routed through them, at least as long as
+/// the straight runs between them.
+#[test]
+fn a_route_runs_through_sketch_points() {
+    let mut program = Program::new();
+    let mut corners = geop_ops_sketch3d::Sketch3d::new();
+    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(examples::n));
+    let (a, b) = (
+        corners.add_point(at([0.0, 0.0, 0.0])),
+        corners.add_point(at([4.0, 0.0, 0.0])),
+    );
+    corners.add_line(a, b);
+    program.push(
+        "corners",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: corners,
+            references: Vec::new(),
+        },
+    );
+    let mut floor = geop_ops_sketch::Sketch::new();
+    let p = floor.add_point(examples::n(4.0), examples::n(4.0));
+    program.push(
+        "floor",
+        geop_ops_sketch::AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                geop_ops::ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: floor,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "route",
+        RouteArgs {
+            through: vec![
+                EntityRef::Vertex {
+                    name: "sketch3d(corners,p0)".into(),
+                },
+                EntityRef::Vertex {
+                    name: "sketch3d(corners,p1)".into(),
+                },
+                EntityRef::SketchPoint {
+                    sketch: "floor".into(),
+                    point: p,
+                },
+            ],
+            wires: vec![Wire {
+                size: WireSize::Diameter(0.1),
+                ..Wire::new("signal")
+            }],
+            fill: 1.0,
+            bend_factor: 5.0,
+            service_loop: 0.0,
+        },
+    );
+    let part = program.build::<S>(&geop_ops::NoFiles).unwrap();
+    let cable = part.cable("route(route)").unwrap();
+    let length = cable.length.to_f64();
+    // Two runs of 4 with a quarter-turn bend between them, rounded.
+    assert!(length > 7.5 && length < 10.0, "{:?}", cable.length);
+}
