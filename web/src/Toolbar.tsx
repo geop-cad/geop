@@ -10,6 +10,8 @@ interface Props {
   /** Whether the program files are somebody else's (VS Code): saving, loading and reporting are theirs. */
   hosted: boolean;
   hasSteps: boolean;
+  /** Start a new, empty part in a file of its own. */
+  onNewPart: () => void;
   onSave: () => void;
   /** Export the assembly as a URDF robot, for simulators. */
   onExportUrdf: () => void;
@@ -61,6 +63,7 @@ export function Toolbar({
   busy,
   hosted,
   hasSteps,
+  onNewPart,
   onSave,
   onExportUrdf,
   onExportStep,
@@ -93,6 +96,7 @@ export function Toolbar({
     ...(hosted
       ? []
       : ([
+          { kind: "item", label: "New part", icon: "add_part", hint: "empty file", onSelect: onNewPart },
           { kind: "item", label: "Open file…", icon: "open", onSelect: () => fileInput.current?.click() },
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
         ] as MenuEntry[])),

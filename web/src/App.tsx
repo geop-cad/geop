@@ -729,6 +729,7 @@ function App() {
         busy={!wasmReady}
         hosted={host != null}
         hasSteps={stepCount > 0}
+        onNewPart={() => void createFile(freePath(workspaceRef.current.files, "part.geop"))}
         onSave={() => downloadFile(workspace.active)}
         onExportUrdf={() => void exportUrdf()}
         onExportStep={() => void exportStep()}
