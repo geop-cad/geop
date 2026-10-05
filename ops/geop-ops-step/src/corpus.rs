@@ -71,9 +71,12 @@ fn cause(message: &str) -> String {
     out
 }
 
-/// Imports one file: `Ok` with its counts of solids/sheets and faces, or the
-/// error.
-fn import_file(path: &Path, full: bool) -> Result<(usize, usize), String> {
+/// What one file imported as: its count of solids and sheets, of faces, and
+/// what was rebuilt where it disagrees with itself (see `import::body`).
+type Imported = (usize, usize, Vec<String>);
+
+/// Imports one file: `Ok` with what it imported as, or the error.
+fn import_file(path: &Path, full: bool) -> Result<Imported, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&bytes);
     let bodies = read_step::<S>(&text).map_err(|e| format!("{e:?}"))?;
@@ -81,16 +84,27 @@ fn import_file(path: &Path, full: bool) -> Result<(usize, usize), String> {
         return Err("RootError: no bodies".into());
     }
     let n = bodies.len();
+    let healed = bodies
+        .iter()
+        .flat_map(|b| {
+            b.healed
+                .details()
+                .into_iter()
+                .map(|line| format!("{}: {line}", b.label))
+        })
+        .collect();
     let mut part = Part::new();
     add_bodies(&mut part, &Namer::new("import", "i").unwrap(), bodies)
         .map_err(|e| format!("{e:?}"))?;
     if full && let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
+        // The cause first, as the table groups by it; then the whole.
+        let first = format!("{:?}", errors[0]);
         return Err(format!(
-            "RootError: full validation: {}",
-            cause(&format!("{:?}", errors[0]))
+            "RootError: full validation: {}\nin full: {first}",
+            cause(&first)
         ));
     }
-    Ok((n, part.topology().faces.len()))
+    Ok((n, part.topology().faces.len(), healed))
 }
 
 #[test]
@@ -145,9 +159,14 @@ fn corpus() {
                         .unwrap_or_else(|_| Err("RootError: panicked".into()));
                     let seconds = start.elapsed().as_secs_f64();
                     match &result {
-                        Ok((bodies, faces)) => println!(
-                            "PASS {seconds:7.2}s {bodies:3} bodies {faces:5} faces  {name}"
-                        ),
+                        Ok((bodies, faces, healed)) => {
+                            println!(
+                                "PASS {seconds:7.2}s {bodies:3} bodies {faces:5} faces  {name}"
+                            );
+                            for line in healed {
+                                println!("       healed {line}");
+                            }
+                        }
                         Err(e) => {
                             println!("FAIL {seconds:7.2}s  {name}: {}", cause(e));
                             if only.is_some() {

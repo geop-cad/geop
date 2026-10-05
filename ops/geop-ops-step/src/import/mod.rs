@@ -17,7 +17,7 @@ pub mod structure;
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 
-pub use body::ImportedBody;
+pub use body::{Healing, ImportedBody};
 
 use crate::part21::Exchange;
 

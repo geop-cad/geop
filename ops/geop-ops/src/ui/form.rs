@@ -275,6 +275,35 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
         })
     }
 
+    /// A file the program reads, by its path relative to the program: one
+    /// of `files`, or one the user adds from elsewhere (see
+    /// [`Control::File`]) — of the kinds `accept`, extensions without the
+    /// dot.
+    pub fn file(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        files: Vec<String>,
+        accept: &[&str],
+        set: impl Fn(&mut A, &str) + 'a,
+    ) -> &mut Self {
+        let control = Control::File {
+            label: label.into(),
+            value: value.into(),
+            options: files
+                .into_iter()
+                .map(|file| Choice::new(file.clone(), file))
+                .collect(),
+            accept: accept.iter().map(|a| a.to_string()).collect(),
+        };
+        self.field(key, control, move |edit, value| {
+            if let Value::Choice(choice) = value {
+                set(edit.args, &choice);
+            }
+        })
+    }
+
     /// Makes the reference field `key` optional: the step builds without
     /// it, and it is only picked for when pressed (see
     /// [`Reference::required`]).

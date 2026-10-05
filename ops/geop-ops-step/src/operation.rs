@@ -12,11 +12,11 @@ use geop_core_topology::{
 use geop_ops::{
     BodyNames, Context, Library, Namer, Part,
     operation::Operation,
-    ui::{Choice, Form, Tone},
+    ui::{Form, Tone},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::import::{ImportedBody, read_step};
+use crate::import::{Healing, ImportedBody, read_step};
 
 /// Adds every body of the STEP file `file` — its solids, and its sheets of
 /// faces — to the part, where the file has them: the parts of an assembly
@@ -32,6 +32,11 @@ use crate::import::{ImportedBody, read_step};
 /// `fN,mK,v`, and a strip turning more than once into pieces `fN,qM` along
 /// meridians `fN,mM`; an edge split where a cut crosses it, or because it
 /// closes on itself, into pieces `eN,pM` at the vertices `eN,cM`.
+///
+/// Where the file disagrees with itself further than the kernel can carry
+/// as one point or curve, what is rebuilt from its surfaces — and how far
+/// it moved — is recorded on the solid ([`Healed`]) and shown in the
+/// dialog.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportStep;
 
@@ -41,10 +46,15 @@ pub struct ImportStepArgs {
     pub file: String,
 }
 
+/// The extensions of a STEP file.
+pub const STEP_EXTENSIONS: [&str; 2] = ["step", "stp"];
+
 /// Whether `path` names a STEP file.
 pub fn is_step_file(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
-    lower.ends_with(".step") || lower.ends_with(".stp")
+    STEP_EXTENSIONS
+        .iter()
+        .any(|e| lower.ends_with(&format!(".{e}")))
 }
 
 /// Adds the bodies `bodies` to `part`, named by `namer` as [`ImportStep`]
@@ -105,9 +115,31 @@ pub fn add_bodies<S: Scalar>(
             faces: body.face_names.iter().map(|n| named(n)).collect(),
             solid: body.spec.solid.then(|| namer.name(&[&solid])),
         };
+        let solid = names.solid.clone();
         part.build_body(body.spec, names)?;
+        if let Some(solid) = solid
+            && !body.healed.is_empty()
+        {
+            part.set_body_data(
+                &solid,
+                Healed {
+                    label: body.label,
+                    healing: body.healed,
+                },
+            )?;
+        }
     }
     Ok(())
+}
+
+/// What the import rebuilt of a solid where the file disagrees with itself
+/// further than the kernel can carry (see `import::body`), recorded on it
+/// for the step's dialog to show.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Healed {
+    /// What the file calls the solid.
+    pub label: String,
+    pub healing: Healing,
 }
 
 impl Operation for ImportStep {
@@ -118,7 +150,8 @@ impl Operation for ImportStep {
         ImportStepArgs::default()
     }
 
-    /// The file, chosen from the STEP files next to the program.
+    /// The file: one of the STEP files next to the program, or one the
+    /// user chooses from elsewhere, which the front end stores next to it.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -137,28 +170,36 @@ impl Operation for ImportStep {
         if !args.file.is_empty() && !files.contains(&args.file) {
             files.push(args.file.clone());
         }
-        if files.is_empty() {
-            f.text(
-                "no_files",
-                "There are no STEP files (.step, .stp) next to this program: add one first.",
-                Tone::Hint,
-            );
-        }
-        let options = std::iter::once(Choice::new("", "Choose a file…"))
-            .chain(
-                files
-                    .iter()
-                    .map(|file| Choice::new(file.clone(), file.clone())),
-            )
-            .collect();
-        f.select(
+        f.file(
             "file",
             "file",
             args.file.clone(),
-            options,
-            true,
+            files,
+            &STEP_EXTENSIONS,
             |args, file| args.file = file.to_string(),
         );
+        // What was rebuilt where the file disagrees with itself, solid by
+        // solid, as the step last built them.
+        if let (Some(built), Ok(namer)) = (context.built, Namer::new("import", context.id)) {
+            for k in 0.. {
+                let solid = namer.name(&[&format!("s{k}")]);
+                if built.solid_id(&solid).is_err() {
+                    break;
+                }
+                if let Some(healed) = built.body_data::<Healed>(&solid) {
+                    f.text(
+                        &format!("healed_{k}"),
+                        format!(
+                            "Healed {} ({}): {}.",
+                            healed.label,
+                            solid,
+                            healed.healing.summary()
+                        ),
+                        Tone::Hint,
+                    );
+                }
+            }
+        }
         f
     }
 

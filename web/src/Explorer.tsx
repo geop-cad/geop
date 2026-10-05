@@ -283,7 +283,7 @@ export function Explorer({ workspace, enabled, onOpen, onCreate, onRename, onDel
             ref={uploadRef}
             type="file"
             multiple
-            accept=".geop,.json,application/json"
+            accept=".geop,.json,application/json,.step,.stp"
             hidden
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];

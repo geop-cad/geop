@@ -204,6 +204,47 @@ pub enum CurveDef {
     },
 }
 
+/// Where a curve the file defines is a circle or a line, what tells
+/// whether it runs along a parallel or a meridian of a surface of
+/// revolution (see [`Revolved::iso_line`]).
+#[derive(Clone, Copy, Debug)]
+pub enum Shape {
+    Circle {
+        center: P3,
+        normal: P3,
+        radius: f64,
+    },
+    Line {
+        origin: P3,
+        direction: P3,
+    },
+    /// Built as a parallel or a meridian of the surface of revolution about
+    /// the axis through `origin` along `axis` — by the importer itself,
+    /// cutting a face that wraps round it.
+    Iso {
+        origin: P3,
+        axis: P3,
+    },
+}
+
+impl CurveDef {
+    /// Whether it is a circle or a line, and which.
+    pub fn shape(&self) -> Option<Shape> {
+        match self {
+            CurveDef::Circle { frame, radius } => Some(Shape::Circle {
+                center: frame.origin,
+                normal: frame.z,
+                radius: *radius,
+            }),
+            CurveDef::Line { origin, direction } => Some(Shape::Line {
+                origin: *origin,
+                direction: normalize(*direction)?,
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum ConicKind {
     /// `a cosh u x + b sinh u y`.
@@ -332,6 +373,36 @@ impl Revolved {
             Profile::Circle { rho: rc, h: hc, .. } => (h - hc).atan2(rho - rc),
         };
         (angle, v)
+    }
+
+    /// Whether a curve of `shape` lying on this surface runs along a line
+    /// of one parameter of its patches, to within `uncertainty`, the file's
+    /// statement of which places are one: a circle about its axis is a
+    /// parallel, at one profile parameter, and a line in a plane through
+    /// its axis a meridian, at one angle. On a patch its pcurve is then
+    /// straight.
+    pub fn iso_line(&self, shape: &Shape, uncertainty: f64) -> bool {
+        let (o, z) = (self.frame.origin, self.frame.z);
+        match *shape {
+            Shape::Iso { origin, axis } => origin == o && axis == z,
+            Shape::Circle {
+                center,
+                normal,
+                radius,
+            } => {
+                // Its plane square to the axis — tilted by no more than
+                // the uncertainty at its rim — and its centre on the axis.
+                norm(cross(normal, z)) * radius <= uncertainty
+                    && norm(cross(sub(center, o), z)) <= uncertainty
+            }
+            Shape::Line { origin, direction } => {
+                // In a plane with the axis: no further from it, across
+                // both, than the uncertainty — `across` as long as the sine
+                // of the angle between them, none for a line along it.
+                let across = cross(direction, z);
+                dot(sub(origin, o), across).abs() <= uncertainty * norm(across)
+            }
+        }
     }
 
     /// For a circle crossing the axis, how much nearer `p` lies to the
@@ -479,6 +550,14 @@ impl Revolved {
         v1: f64,
     ) -> GeopResult<NurbSurface3D<S>> {
         NurbSurface::revolve(&self.profile_curve(v0, v1)?, &self.axis()?, from, to)
+    }
+
+    /// What a parallel or a meridian of it is, as an edge's [`Shape`].
+    pub fn iso(&self) -> Shape {
+        Shape::Iso {
+            origin: self.frame.origin,
+            axis: self.frame.z,
+        }
     }
 
     /// The motion turning by `angle` about the axis.
@@ -1465,6 +1544,68 @@ fn quasi_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
     }
     knots.extend(std::iter::repeat_n((inner + 1) as f64, degree + 1));
     knots
+}
+
+/// A curve's midpoints in `f64`: its control points, weights and knots each
+/// at the middle of its enclosure. For searches whose answer is a free
+/// choice — which parameter to measure a gap at, where to sample — many
+/// times cheaper than evaluating the enclosure, and off it only by
+/// roundings.
+pub struct Midpoints {
+    degree: usize,
+    knots: Vec<f64>,
+    /// Homogeneous: `(w x, w y, w z, w)`.
+    points: Vec<[f64; 4]>,
+}
+
+impl Midpoints {
+    pub fn of<S: Scalar>(curve: &NurbCurve3D<S>) -> Self {
+        Self {
+            degree: curve.degree,
+            knots: curve.knot_vector.iter().map(|k| k.to_f64()).collect(),
+            points: curve
+                .control_points
+                .iter()
+                .map(|p| std::array::from_fn(|c| p[c].to_f64()))
+                .collect(),
+        }
+    }
+
+    pub fn domain(&self) -> (f64, f64) {
+        (self.knots[self.degree], self.knots[self.points.len()])
+    }
+
+    /// The point at `t`, clamped into the domain: de Boor's algorithm.
+    pub fn point(&self, t: f64) -> P3 {
+        let p = self.degree;
+        let (lo, hi) = self.domain();
+        let t = t.clamp(lo, hi);
+        // The span `k` with `knots[k] <= t < knots[k + 1]`, the last one at
+        // the domain's end.
+        let n = self.points.len();
+        let k = (p..n)
+            .rev()
+            .find(|&k| self.knots[k] <= t && self.knots[k] < self.knots[k + 1])
+            .unwrap_or(p);
+        let mut d: Vec<[f64; 4]> = (0..=p).map(|j| self.points[j + k - p]).collect();
+        for r in 1..=p {
+            for j in (r..=p).rev() {
+                let i = j + k - p;
+                let span = self.knots[i + p + 1 - r] - self.knots[i];
+                let a = if span == 0.0 {
+                    0.0
+                } else {
+                    (t - self.knots[i]) / span
+                };
+                let before = d[j - 1];
+                for (x, y) in d[j].iter_mut().zip(before) {
+                    *x = (1.0 - a) * y + a * *x;
+                }
+            }
+        }
+        let h = d[p];
+        [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
+    }
 }
 
 /// The point of `curve` at the parameter `t`, chosen in `f64`: at a domain

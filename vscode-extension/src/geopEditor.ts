@@ -8,10 +8,11 @@ type FromPage =
   | { type: "ready" }
   | { type: "command"; id: number; command: string }
   | { type: "program"; program: unknown }
-  | { type: "save"; file: { name: string; text?: string; bytes?: string } };
+  | { type: "save"; file: { name: string; text?: string; bytes?: string } }
+  | { type: "add"; id: number; name: string; text: string };
 
 /** The files a program reads: other programs, and STEP files it imports. */
-const FILES = "**/*.{geop,step,stp,STEP,STP}";
+const FILES = "**/*.{geop,step,stp,STEP,STP,Step,Stp}";
 
 /** Whether `p` is a file a program reads. */
 const isWorkspaceFile = (p: string) => /\.(geop|step|stp)$/i.test(p);
@@ -191,6 +192,36 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
             latest = message.program;
             if (!writing) await write();
             break;
+          case "add": {
+            // A file the user chose in a file field, stored next to the
+            // document — under another name if one of its name there holds
+            // something else — and sent to the kernel before the page is
+            // told its path, relative to the document.
+            const dir = vscode.Uri.joinPath(document.uri, "..");
+            const name = path.posix.basename(message.name.replace(/\\/g, "/"));
+            const dot = name.lastIndexOf(".");
+            const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+            const content = new TextEncoder().encode(message.text);
+            try {
+              let target = vscode.Uri.joinPath(dir, name);
+              for (let n = 2; ; n++) {
+                let existing: Uint8Array | null = null;
+                try {
+                  existing = await vscode.workspace.fs.readFile(target);
+                } catch {
+                  // Not there: free.
+                }
+                if (existing == null || Buffer.from(existing).equals(Buffer.from(content))) break;
+                target = vscode.Uri.joinPath(dir, `${stem} ${n}${extension}`);
+              }
+              await vscode.workspace.fs.writeFile(target, content);
+              sendFiles({ [pathOf(target)]: message.text });
+              void panel.webview.postMessage({ type: "added", id: message.id, path: path.posix.basename(target.path) });
+            } catch (e) {
+              void panel.webview.postMessage({ type: "not_added", id: message.id, message: String(e) });
+            }
+            break;
+          }
           case "save": {
             // An exported file — a drawing, a robot, a STEP file — saved where the user
             // says, next to the document unless told otherwise: text, or

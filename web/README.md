@@ -75,7 +75,8 @@ npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
   so; that a SubD face and a 3-D sketch point are dragged by their gizmos'
   arrows, lit where the kernel says the pointer is (with `--shots`, a
   screenshot half way through each drag, `gizmo-*.png`); and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
-  non-empty files of their kind.
+  non-empty files of their kind; and that a STEP file chosen from disk in
+  the Import STEP dialog is stored next to the program and imported.
 - `npm run e2e:vscode` builds the release CLI and the extension's page
   (`build:vscode`), writes example workspaces with `geop examples
   --out-dir`, and opens them through `e2e/bridge.mjs`, which stands in for
@@ -84,8 +85,9 @@ npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
   `npm run compile` there):
   single parts, an assembly with standard parts (`bolted_plate`) and a
   jointed one (`arm`). An edit, its undo and a moved joint must be written
-  back to the document, exports must reach VS Code to be saved, and a
-  `geop serve` that panics must be restarted with the document.
+  back to the document, exports must reach VS Code to be saved, a STEP
+  file chosen from disk must be stored next to the document and imported,
+  and a `geop serve` that panics must be restarted with the document.
 
 Both exit non-zero if any check fails: a page error, an error shown, a
 step that fails, an example that does not build. A failing check leaves a

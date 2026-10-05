@@ -2063,9 +2063,11 @@ fn an_assembly_is_exported_as_urdf() {
     );
 }
 
-/// "Download STEP" writes the part shown; dropped next to a new program,
-/// the file is offered by a new "Import STEP" step, which brings its solid
-/// back, named after the step.
+/// "Download STEP" writes the part shown; stored next to a new program in a
+/// folder — as the front end stores a file the user chooses in the file
+/// field — the file is offered by a new "Import STEP" step by its path
+/// relative to the program, and brings its solid back, named after the
+/// step.
 #[test]
 fn a_part_exported_as_step_is_imported_back() {
     let (mut editor, _) = editor();
@@ -2076,13 +2078,13 @@ fn a_part_exported_as_step_is_imported_back() {
     assert!(export.text().unwrap().contains("MANIFOLD_SOLID_BREP"));
 
     let files = std::collections::BTreeMap::from([(
-        "box.step".to_string(),
+        "parts/box.step".to_string(),
         Some(export.text().unwrap().to_string()),
     )]);
     assert!(editor.handle(Command::Files { files }).error.is_none());
     let update = editor.handle(Command::Load {
         program: Program::new(),
-        path: Some("imported.geop".into()),
+        path: Some("parts/imported.geop".into()),
     });
     assert!(update.error.is_none(), "{:?}", update.error);
     let update = editor.handle(Command::New {
@@ -2090,10 +2092,14 @@ fn a_part_exported_as_step_is_imported_back() {
     });
     let step = update.step.expect("a step is edited");
     assert_eq!(step.label, "Import STEP");
-    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
-        panic!("the file is chosen from a list");
+    let Some(Control::File {
+        options, accept, ..
+    }) = step.presentation.dialog.get("file")
+    else {
+        panic!("the file is a file field");
     };
     assert!(options.iter().any(|o| o.value == "box.step"), "{options:?}");
+    assert_eq!(accept, &["step", "stp"]);
     let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
     assert!(update.step.unwrap().error.is_none());
     let update = editor.handle(Command::Commit);
@@ -2108,6 +2114,67 @@ fn a_part_exported_as_step_is_imported_back() {
         .map(|item| item.name)
         .collect();
     assert_eq!(solids, vec![format!("import({id},s0)")]);
+}
+
+/// A STEP file whose corner lies 3e-4 above where its three faces meet —
+/// further than the kernel can carry as one point — imports with the corner
+/// put back where they meet, and the dialog says what was rebuilt, and how
+/// far it moved.
+#[test]
+fn an_import_that_heals_the_file_says_what_it_rebuilt() {
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::ExportStep);
+    let text = update
+        .export
+        .expect("a file is written")
+        .text()
+        .unwrap()
+        .to_string();
+    // The first vertex's point, raised.
+    let at = text.find("=VERTEX_POINT(").expect("a vertex");
+    let id = &text[at..];
+    let id = &id[id.find("',#").unwrap() + 3..id.find(");").unwrap()];
+    let line = format!("#{id}=CARTESIAN_POINT('',(");
+    let start = text.find(&line).expect("its point") + line.len();
+    let end = start + text[start..].find("))").unwrap();
+    let mut xyz: Vec<f64> = text[start..end]
+        .split(',')
+        .map(|c| c.parse().unwrap())
+        .collect();
+    xyz[2] += 3e-4;
+    let raised = format!(
+        "{}{:?},{:?},{:?}{}",
+        &text[..start],
+        xyz[0],
+        xyz[1],
+        xyz[2],
+        &text[end..]
+    );
+
+    let files = std::collections::BTreeMap::from([("box.step".to_string(), Some(raised))]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("imported.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::New {
+        kind: "import_step".into(),
+    });
+    let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
+    let step = update.step.expect("a step is edited");
+    assert!(step.error.is_none(), "{:?}", step.error);
+    let Some(Control::Text { text, .. }) = step.presentation.dialog.get("healed_0") else {
+        panic!(
+            "the dialog does not say what was rebuilt: {:?}",
+            step.presentation.dialog
+        );
+    };
+    assert!(
+        text.contains("by up to 3.0e-4 mm") && text.contains("1 vertices and"),
+        "{text}"
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
 }
 
 /// "Download STL" writes every solid of the part shown as a binary STL

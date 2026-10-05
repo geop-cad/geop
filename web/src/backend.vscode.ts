@@ -15,12 +15,16 @@ type FromHost =
   | { type: "answer"; id: number; update: string }
   | { type: "failure"; id: number; message: string; crashed?: boolean }
   | { type: "document"; text: string; path: string }
-  | { type: "files"; files: Record<string, string | null> };
+  | { type: "files"; files: Record<string, string | null> }
+  | { type: "added"; id: number; path: string }
+  | { type: "not_added"; id: number; message: string };
 
 const vscode = acquireVsCodeApi();
 
 let nextId = 0;
 const waiting = new Map<number, { resolve: (update: string) => void; reject: (e: Error) => void }>();
+/** Files sent to be stored next to the document, by id, until the host has stored them. */
+const adding = new Map<number, { resolve: (path: string) => void; reject: (e: Error) => void }>();
 let onText: ((text: string, path: string) => void) | null = null;
 let onFiles: ((files: Record<string, string | null>) => void) | null = null;
 /** Files that came before anyone listened for them: the host sends them right after the document. */
@@ -35,6 +39,13 @@ window.addEventListener("message", (e: MessageEvent<FromHost>) => {
   if (message.type === "files") {
     if (onFiles) onFiles(message.files);
     else unheard = { ...unheard, ...message.files };
+    return;
+  }
+  if (message.type === "added" || message.type === "not_added") {
+    const pending = adding.get(message.id);
+    adding.delete(message.id);
+    if (message.type === "added") pending?.resolve(message.path);
+    else pending?.reject(new Error(message.message));
     return;
   }
   const pending = waiting.get(message.id);
@@ -60,6 +71,13 @@ export const host: Host = {
   },
   saveFile(file) {
     vscode.postMessage({ type: "save", file });
+  },
+  addFile(name, text) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      adding.set(id, { resolve, reject });
+      vscode.postMessage({ type: "add", id, name, text });
+    });
   },
 };
 

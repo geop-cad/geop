@@ -439,6 +439,28 @@ function App() {
     trackFile("loaded");
   }
 
+  /**
+   * Store `file`, chosen from disk for a file field, next to the program
+   * edited — under another name if one of its name there holds something
+   * else — and give the kernel it: its path relative to the program.
+   */
+  async function chooseFile(file: File): Promise<string | null> {
+    try {
+      const text = await file.text();
+      if (host) return await host.addFile(file.name, text);
+      const { files, active } = workspaceRef.current;
+      const folder = active.slice(0, active.lastIndexOf("/") + 1);
+      const wanted = folder + file.name;
+      const path = files[wanted] == null || files[wanted] === text ? wanted : freePath(files, wanted);
+      await changeFiles({ [path]: text });
+      trackFile("loaded");
+      return path.slice(folder.length);
+    } catch (e) {
+      setError(`${file.name} could not be added: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }
+
   /** Write the part shown as a STEP file, and save it. */
   async function exportStep() {
     const update = await dispatch({ command: "export_step" });
@@ -692,6 +714,7 @@ function App() {
     <DialogView
       step={step}
       onDialog={(key: string, value: Value) => event({ type: "dialog", key, value })}
+      onChooseFile={chooseFile}
       setPreview={(preview) => dispatch({ command: "preview", preview })}
       error={error}
       onCommit={() => void close({ command: "commit" })}

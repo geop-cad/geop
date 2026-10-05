@@ -8,8 +8,9 @@
 //
 // The page opens the document `doc` (relative to `folder`) at `/?doc=<doc>`.
 // Every program it writes back is written to the document's file and
-// recorded (`written[doc]`), and every exported file it asks to save is
-// recorded (`saved[doc]`).
+// recorded (`written[doc]`), every exported file it asks to save is
+// recorded (`saved[doc]`), and a file it adds is written next to the
+// document.
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -110,6 +111,24 @@ export async function startBridge({ media, exe, folder }) {
         case "save":
           (saved[doc] ??= []).push(message.file);
           break;
+        case "add": {
+          // As the extension does: stored next to the document, under
+          // another name if one of its name there holds something else,
+          // and sent to the kernel before the page is told its path.
+          const dir = path.dirname(path.join(folder, doc));
+          const name = path.basename(message.name);
+          const dot = name.lastIndexOf(".");
+          const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+          let target = path.join(dir, name);
+          for (let n = 2; fs.existsSync(target) && fs.readFileSync(target, "utf8") !== message.text; n++) {
+            target = path.join(dir, `${stem} ${n}${extension}`);
+          }
+          fs.writeFileSync(target, message.text);
+          const relative = path.relative(folder, target).split(path.sep).join("/");
+          ws.send(JSON.stringify({ type: "files", files: { [relative]: message.text } }));
+          ws.send(JSON.stringify({ type: "added", id: message.id, path: path.basename(target) }));
+          break;
+        }
       }
     });
     ws.on("close", () => {

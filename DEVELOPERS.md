@@ -127,7 +127,8 @@ cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
                                each placed component once
 ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
                                B-rep solids and sheets of a file into exact
-                               NURBS bodies (an assembly flattened), writing
+                               NURBS bodies (an assembly flattened), healed
+                               where the file disagrees with itself, writing
                                a part as one — an assembly as products and
                                occurrences; the import operation
 ops/geop-ops-bom              bills of materials: placed parts grouped by
@@ -143,7 +144,9 @@ MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d
 samples): `ops/geop-ops-step/scripts/fetch_corpus.sh` fetches it into
 `target/step-corpus/` (never committed), and
 `cargo test -p geop-ops-step corpus -- --ignored --nocapture` imports every
-file and prints what passed and the causes of what failed.
+file and prints what passed, what was healed and the causes of what failed
+(`STEP_CORPUS_FULL=1` validates fully, `STEP_CORPUS_ONLY=<name>` imports
+the files matching a name and prints their errors in full).
 
 The web app draws placed parts batched per component — one
 `InstancedMesh` each (`web/src/placed3d.ts`) — and takes the scene's

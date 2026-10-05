@@ -72,7 +72,11 @@ below is what was missing then, and where each item stands now.
   downloaded from the dialog; assembly drawings with balloons and a
   BOM table; SVG and DXF.
 - STEP AP214 import and export; assemblies exported as product structure;
-  318 of 361 public corpus files import valid (`scripts/fetch_corpus.sh`).
+  a file chosen from disk in the import's dialog; where a file disagrees
+  with itself further than the kernel can carry, vertices and edges rebuilt
+  where its surfaces meet and narrow faces from their edges, reported in
+  the dialog; 322 of 361 public corpus files import valid, 299 fully
+  (`scripts/fetch_corpus.sh`); an 886-face SolidWorks part in 15 s.
 - URDF export of jointed assemblies for robot simulators.
 - STL download in the web app.
 
@@ -99,9 +103,9 @@ below is what was missing then, and where each item stands now.
   fixed-point cylinder far from the origin exhausts its search budget.
 - Fillets: rolling over a crease, mitres for rolled fillets, corners where
   fillets arrive with different radii.
-- STEP: rebuild edges that disagree with their faces from the kernel's own
-  intersections (most of the remaining corpus failures); assembly import as
-  placed parts.
+- STEP: pcurves fitted wide on B-spline surfaces (most of the remaining
+  corpus failures); assembly import as placed parts; the editor resends a
+  committed import's whole mesh (114 MB for 886 faces).
 - Drawings: exploded views; parts that pass through each other; annotating
   the section view; ordinate dimensions and tolerances.
 - Assemblies: actuator effort and velocity for URDF; collision checks for

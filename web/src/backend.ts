@@ -33,6 +33,13 @@ export interface Host {
   programChanged(program: unknown): void;
   /** Offer to save `file`, an exported file, next to the document. */
   saveFile(file: ExportedFile): void;
+  /**
+   * Store a file the user chose — `name`, holding `text` — next to the
+   * document, under another name if a file of that name there holds
+   * something else; resolves with its path relative to the document once
+   * the kernel has been sent it (`onFiles`).
+   */
+  addFile(name: string, text: string): Promise<string>;
 }
 
 export const host: Host | null = null;

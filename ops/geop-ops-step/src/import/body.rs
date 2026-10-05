@@ -25,7 +25,14 @@
 //!   `AGENTS.md` on combining enclosures of one value with `union`). An
 //!   edge is widened until it reaches the midpoints of its pcurve's points
 //!   on each of its faces. What lies further apart than the kernel's
-//!   accuracy is refused, naming the entities and saying how far.
+//!   accuracy is rebuilt from the surfaces, which a B-rep is defined by:
+//!   a vertex where its faces' surfaces meet, an edge along where they
+//!   meet — and where the surfaces themselves contradict each other, the
+//!   smallest faces there from their edges (see [`heal`]). The file's
+//!   uncertainty bounds it: what is rebuilt lies on its surfaces to within
+//!   it, and what cannot be is refused, naming the entities and saying how
+//!   far. What was rebuilt, and how far it moved, is reported
+//!   ([`Healing`]).
 //!
 //! Every surface is built as an exact NURBS patch covering its face — or,
 //! for a B-spline, taken as it is — oriented so its normal points out of
@@ -50,8 +57,8 @@ use geop_core_topology::{
 
 use super::{
     geometry::{
-        P3, Profile, Revolved, Scope, SurfaceDef, SurfaceKind, distance, dot, normalize, scale,
-        to_p3,
+        Frame, Midpoints, P3, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, add, cross,
+        distance, dot, norm, normalize, parameter_of, scale, sub, to_p3,
     },
     reader::{Reader, unsupported},
     structure::Item,
@@ -67,6 +74,82 @@ pub struct ImportedBody<S: Scalar> {
     pub vertex_names: Vec<Vec<String>>,
     pub edge_names: Vec<Vec<String>>,
     pub face_names: Vec<Vec<String>>,
+    /// What was rebuilt where the file disagrees with itself further than
+    /// the kernel can carry (see `heal`).
+    pub healed: Healing,
+}
+
+/// What [`heal`] rebuilt of a body where its file disagrees with itself
+/// further than the kernel can carry, and how far it moved.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Healing {
+    /// Each vertex moved to where its faces meet, and how far.
+    pub vertices: Vec<(String, f64)>,
+    /// Each edge rebuilt where its faces meet, and how far it moved at most.
+    pub edges: Vec<(String, f64)>,
+    /// Each face rebuilt from its edges.
+    pub faces: Vec<String>,
+    /// The file's uncertainty, which everything rebuilt meets to.
+    pub uncertainty: f64,
+}
+
+impl Healing {
+    pub fn is_empty(&self) -> bool {
+        self.vertices.is_empty() && self.edges.is_empty() && self.faces.is_empty()
+    }
+
+    /// How far anything moved, at most.
+    pub fn furthest(&self) -> f64 {
+        self.vertices
+            .iter()
+            .chain(&self.edges)
+            .map(|m| m.1)
+            .fold(0.0, f64::max)
+    }
+
+    /// In one sentence, for a user: how far, how much, which faces.
+    pub fn summary(&self) -> String {
+        let mut out = format!(
+            "its faces disagree with each other by up to {:.1e} mm (the file states {:e} mm): {} vertices and {} edges were moved onto them",
+            self.furthest(),
+            self.uncertainty,
+            self.vertices.len(),
+            self.edges.len()
+        );
+        if !self.faces.is_empty() {
+            out += &format!(
+                ", and {} faces rebuilt from their edges: {}",
+                self.faces.len(),
+                self.faces.join(", ")
+            );
+        }
+        out
+    }
+
+    /// Entity by entity, how far each moved.
+    pub fn details(&self) -> Vec<String> {
+        let line = |what: &str, moved: &[(String, f64)]| {
+            let names: Vec<String> = moved
+                .iter()
+                .map(|(name, by)| format!("{name} by {by:.1e}"))
+                .collect();
+            format!("{what}: {}", names.join(", "))
+        };
+        let mut out = Vec::new();
+        if !self.vertices.is_empty() {
+            out.push(line("vertices put where their faces meet", &self.vertices));
+        }
+        if !self.edges.is_empty() {
+            out.push(line("edges rebuilt where their faces meet", &self.edges));
+        }
+        if !self.faces.is_empty() {
+            out.push(format!(
+                "faces rebuilt from their edges, their surfaces contradicting their neighbours': {}",
+                self.faces.join(", ")
+            ));
+        }
+        out
+    }
 }
 
 /// Search budget for the containment searches `fit_pcurve` falls back on.
@@ -80,6 +163,10 @@ const MIN_SUBDIVISION_SIZE: f64 = 1e-4;
 /// all the way round.
 const LOOP_SAMPLES: usize = 16;
 
+/// Candidate axes for a sphere whose file's axis does not serve (see
+/// [`Builder::sphere_axis`]).
+const SPHERE_AXES: usize = 256;
+
 struct Vertex<S: Scalar> {
     /// Every place the file says the vertex is, united (see the module
     /// docs): grows as its edges and faces are built.
@@ -89,6 +176,15 @@ struct Vertex<S: Scalar> {
     /// widen what the next one is projected from.
     origin: Vector3<S>,
     name: Vec<String>,
+    /// The file's `VERTEX_POINT`, for one read from it.
+    id: Option<u64>,
+}
+
+impl<S: Scalar> Vertex<S> {
+    /// Its name, and the file's id of it where it has one: for messages.
+    fn label(&self) -> String {
+        label(&self.name, self.id)
+    }
 }
 
 struct Edge<S: Scalar> {
@@ -98,6 +194,26 @@ struct Edge<S: Scalar> {
     name: Vec<String>,
     /// False once split into pieces or found to be a seam.
     alive: bool,
+    /// The file's `EDGE_CURVE`, for one read from it or a piece of one.
+    id: Option<u64>,
+    /// Where the file's curve is a circle or a line, which: for one read
+    /// from it or a piece of one, until it is rebuilt.
+    shape: Option<Shape>,
+}
+
+impl<S: Scalar> Edge<S> {
+    /// Its name, and the file's id of it where it has one: for messages.
+    fn label(&self) -> String {
+        label(&self.name, self.id)
+    }
+}
+
+/// `name`, and the file's id `#id` where there is one: `e3,p1 (#120)`.
+fn label(name: &[String], id: Option<u64>) -> String {
+    match id {
+        Some(id) => format!("{} (#{id})", name.join(",")),
+        None => name.join(","),
+    }
 }
 
 /// A coedge of a loop: an edge, and whether the loop runs along it.
@@ -189,14 +305,7 @@ pub fn read_body<S: Scalar>(reader: Reader<'_>, item: &Item) -> GeopResult<Impor
         }
     }
     builder.normalize()?;
-    let (spec, vertex_names, edge_names, face_names) = builder.spec(solid)?;
-    Ok(ImportedBody {
-        label: item.label.clone(),
-        spec,
-        vertex_names,
-        edge_names,
-        face_names,
-    })
+    builder.spec(solid, item.label.clone())
 }
 
 impl<S: Scalar> Builder<'_, S> {
@@ -224,6 +333,7 @@ impl<S: Scalar> Builder<'_, S> {
             point: s3(point),
             origin: s3(point),
             name: name("v", self.vertex_index.len()),
+            id: Some(id),
         });
         self.vertex_index.insert(id, v);
         Ok(v)
@@ -241,6 +351,7 @@ impl<S: Scalar> Builder<'_, S> {
             .reader
             .curve(&self.scope, args.reference(3)?)
             .map_err(ctx)?;
+        let shape = curve.shape();
         let along = args.logical(4).map_err(ctx)? != reversed;
         let (a, b) = (
             to_p3(&self.vertices[start].point),
@@ -262,6 +373,8 @@ impl<S: Scalar> Builder<'_, S> {
             end,
             name: name("e", self.edge_index.len()),
             alive: true,
+            id: Some(id),
+            shape,
         });
         self.edge_index.insert(id, e);
         Ok(e)
@@ -324,6 +437,13 @@ impl<S: Scalar> Builder<'_, S> {
             }
             loops.push(coedges);
         }
+        let surface = match surface.revolved() {
+            Some(revolved) if matches!(revolved.profile, Profile::Sphere { .. }) => SurfaceDef {
+                kind: SurfaceKind::Revolved(self.sphere_axis(revolved, &loops)?),
+                ..surface
+            },
+            _ => surface,
+        };
         // A face on a circle crossing its axis lies on one of its two
         // sheets: the one past the axis is a surface of its own. Decided at
         // the vertex that tells them apart best — not one at a pole.
@@ -361,6 +481,74 @@ impl<S: Scalar> Builder<'_, S> {
             id,
         });
         Ok(())
+    }
+
+    /// The axis a face on the sphere `sphere` is built about. Which axis a
+    /// sphere has is a free choice: the file's, unless one of its poles
+    /// lies on an edge of the face's `loops` away from the edge's ends. A
+    /// loop running through a pole has no angle about the axis there, and
+    /// its angle turns by half a turn across it, which neither the
+    /// windings nor the cuts along meridians can follow. Then the axis is
+    /// chosen whose poles lie furthest from the loops — inside the face,
+    /// where it is cut into sectors round it, or outside it.
+    fn sphere_axis(&self, sphere: &Revolved, loops: &[Vec<Use>]) -> GeopResult<Revolved> {
+        let frame = &sphere.frame;
+        let poles = [frame.point([0.0, 0.0, 1.0]), frame.point([0.0, 0.0, -1.0])];
+        let Profile::Sphere { radius } = sphere.profile else {
+            unreachable!("a sphere's profile");
+        };
+        let poles = poles.map(|p| add(frame.origin, scale(sub(p, frame.origin), radius)));
+        let mut through = false;
+        for &(e, _) in loops.iter().flatten() {
+            let edge = &self.edges[e];
+            let ends = [edge.start, edge.end].map(|v| to_p3(&self.vertices[v].origin));
+            for pole in poles {
+                if ends
+                    .iter()
+                    .any(|&end| distance(end, pole) <= sphere.on_axis)
+                {
+                    continue;
+                }
+                let t = parameter_of(&edge.curve, pole)?;
+                if distance(to_p3(&edge.curve.evaluate(t)?), pole) <= sphere.on_axis {
+                    through = true;
+                }
+            }
+        }
+        if !through {
+            return Ok(sphere.clone());
+        }
+        let mut points = Vec::new();
+        for &u in loops.iter().flatten() {
+            points.extend(
+                self.samples(u, LOOP_SAMPLES)?
+                    .into_iter()
+                    .filter_map(|(_, p)| normalize(sub(p, frame.origin))),
+            );
+        }
+        // Candidates spread evenly over a half sphere (both ends of an
+        // axis are poles): each scored by how near its poles come to a
+        // point of the loops, as the cosine of the angle between.
+        let nearest = |axis: P3| {
+            points
+                .iter()
+                .map(|p| dot(*p, axis).abs())
+                .fold(0.0, f64::max)
+        };
+        let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+        let axis = (0..SPHERE_AXES)
+            .map(|k| {
+                let z = (k as f64 + 0.5) / SPHERE_AXES as f64;
+                let r = (1.0 - z * z).sqrt();
+                let (s, c) = (golden * k as f64).sin_cos();
+                [r * c, r * s, z]
+            })
+            .min_by(|a, b| nearest(*a).total_cmp(&nearest(*b)))
+            .expect("candidates");
+        Ok(Revolved {
+            frame: Frame::new(frame.origin, axis, frame.x)?,
+            ..sphere.clone()
+        })
     }
 
     /// The vertex a coedge starts at, and the one it ends at.
@@ -405,7 +593,8 @@ impl<S: Scalar> Builder<'_, S> {
     /// loop of every face. Returns the new vertices.
     fn split_edge(&mut self, e: usize, ts: &[S]) -> GeopResult<Vec<usize>> {
         let edge = &self.edges[e];
-        let (start, end, base) = (edge.start, edge.end, edge.name.clone());
+        let (start, end, base, id, shape) =
+            (edge.start, edge.end, edge.name.clone(), edge.id, edge.shape);
         let curve = edge.curve.clone();
         let (lo, hi) = curve.domain();
         let mut bounds = vec![lo];
@@ -420,6 +609,7 @@ impl<S: Scalar> Builder<'_, S> {
                 point: curve.evaluate(t)?,
                 origin: curve.evaluate(t)?,
                 name,
+                id: None,
             });
             new_vertices.push(v);
         }
@@ -438,6 +628,8 @@ impl<S: Scalar> Builder<'_, S> {
                 end: chain[k + 1],
                 name,
                 alive: true,
+                id,
+                shape,
             });
         }
         self.edges[e].alive = false;
@@ -556,7 +748,7 @@ impl<S: Scalar> Builder<'_, S> {
             {
                 return Err(GeopError::new(format!(
                     "the edge {} it runs along twice is used by another face too",
-                    self.edges[e].name.join(",")
+                    self.edges[e].label()
                 )));
             }
             let loops = std::mem::take(&mut self.faces[f].loops);
@@ -569,7 +761,7 @@ impl<S: Scalar> Builder<'_, S> {
                         if lp[i].1 == lp[j].1 {
                             return Err(GeopError::new(format!(
                                 "it runs along the edge {} twice the same way",
-                                self.edges[e].name.join(",")
+                                self.edges[e].label()
                             )));
                         }
                         let inner: Vec<Use> = lp[i + 1..j].to_vec();
@@ -583,7 +775,7 @@ impl<S: Scalar> Builder<'_, S> {
                     _ => {
                         return Err(GeopError::new(format!(
                             "the edge {} is used twice, by different loops of it",
-                            self.edges[e].name.join(",")
+                            self.edges[e].label()
                         )));
                     }
                 }
@@ -810,6 +1002,7 @@ impl<S: Scalar> Builder<'_, S> {
                         point: s3(p),
                         origin: s3(p),
                         name: vec![builder.faces[f].name[0].clone(), which.to_string()],
+                        id: None,
                     });
                     builder.vertices.len() - 1
                 })
@@ -838,6 +1031,8 @@ impl<S: Scalar> Builder<'_, S> {
                 end,
                 name,
                 alive: true,
+                id: None,
+                shape: Some(revolved.iso()),
             });
         }
 
@@ -1068,6 +1263,8 @@ impl<S: Scalar> Builder<'_, S> {
                 end: b,
                 name,
                 alive: true,
+                id: None,
+                shape: Some(revolved.iso()),
             });
         }
 
@@ -1190,6 +1387,7 @@ impl<S: Scalar> Builder<'_, S> {
                 point,
                 origin: point,
                 name: [name.clone(), vec!["v".to_string()]].concat(),
+                id: None,
             });
             parallels.push(self.edges.len());
             self.edges.push(Edge {
@@ -1198,6 +1396,8 @@ impl<S: Scalar> Builder<'_, S> {
                 end: v,
                 name,
                 alive: true,
+                id: None,
+                shape: Some(revolved.iso()),
             });
         }
         let n = cuts.len();
@@ -1399,7 +1599,7 @@ impl<S: Scalar> Builder<'_, S> {
             {
                 return Err(GeopError::new(format!(
                     "a cut crosses its loop at a vertex, at the end of the edge {}",
-                    self.edges[e].name.join(",")
+                    self.edges[e].label()
                 )));
             }
             let created = self.split_edge(e, &ts)?;
@@ -1435,6 +1635,8 @@ impl<S: Scalar> Builder<'_, S> {
                     end: t,
                     name,
                     alive: true,
+                    id: None,
+                    shape: Some(revolved.iso()),
                 });
                 partner.insert(b, (t, m));
                 partner.insert(t, (b, m));
@@ -1536,7 +1738,7 @@ impl<S: Scalar> Builder<'_, S> {
             {
                 return Err(GeopError::new(format!(
                     "a cut crosses a loop round it at a vertex: the edge {} at its parameters {ts:?}, its domain [{lo:?}, {hi:?}]",
-                    self.edges[e].name.join(",")
+                    self.edges[e].label()
                 )));
             }
             let created = self.split_edge(e, &ts)?;
@@ -1675,15 +1877,8 @@ impl<S: Scalar> Builder<'_, S> {
 
     /// The description of the body, and the names of what it is made of.
     #[allow(clippy::type_complexity)]
-    fn spec(
-        self,
-        solid: bool,
-    ) -> GeopResult<(
-        BodySpec<S>,
-        Vec<Vec<String>>,
-        Vec<Vec<String>>,
-        Vec<Vec<String>>,
-    )> {
+    /// The body built, `label` what the file calls it.
+    fn spec(self, solid: bool, label: String) -> GeopResult<ImportedBody<S>> {
         let Builder {
             vertices,
             edges,
@@ -1719,27 +1914,51 @@ impl<S: Scalar> Builder<'_, S> {
         let mut extents = Vec::with_capacity(faces.len());
         let mut face_names = Vec::with_capacity(faces.len());
         let mut face_shells = vec![Vec::new(); shells];
+        let face_ctx = |face: &Face| {
+            let what = format!("building the face #{} ({})", face.id, face.name.join(","));
+            move |e: GeopError| e.with_context(what.clone())
+        };
+        // Every face's patch first: what its vertices and edges are healed
+        // onto where they disagree with it.
+        let mut built = Vec::with_capacity(faces.len());
         for face in &faces {
-            let ctx = |e: GeopError| {
-                e.with_context(format!(
-                    "building the face #{} ({})",
-                    face.id,
-                    face.name.join(",")
-                ))
-            };
-            let patch = patch_of(face, &edges, &vertices, &scope).map_err(ctx)?;
-            let natural = face.outward_is_natural();
-            let surface = if natural {
+            let ctx = face_ctx(face);
+            let patch = patch_of(face, &edges, &vertices, &scope).map_err(&ctx)?;
+            let surface = if face.outward_is_natural() {
                 patch.surface.clone()
             } else {
                 patch.surface.reverse_u()
             };
-            let grid = Grid::new(&surface).map_err(ctx)?;
+            let grid = Grid::new(&surface).map_err(&ctx)?;
+            built.push((patch, surface, grid));
+        }
+        let (rebuild, healed) = heal(&faces, &built, &mut edges, &mut vertices, &scope)?;
+        for (f, face) in faces.iter().enumerate() {
+            if rebuild[f] {
+                let surface = rebuilt_surface(face, &edges).map_err(|e| {
+                    e.with_context(format!(
+                        "rebuilding the face #{} ({}) from its edges, where its surface contradicts its neighbours'",
+                        face.id,
+                        face.name.join(",")
+                    ))
+                })?;
+                let grid = Grid::new(&surface).map_err(face_ctx(face))?;
+                let patch = Patch {
+                    surface: surface.clone(),
+                    extent: None,
+                    kind: PatchKind::Other,
+                };
+                built[f] = (patch, surface, grid);
+            }
+        }
+        for (face, (patch, surface, grid)) in faces.iter().zip(built) {
+            let ctx = face_ctx(face);
+            let natural = face.outward_is_natural();
             let mut loops = Vec::new();
             for lp in &face.loops {
                 loops.push(
                     fit_loop(lp, &surface, &grid, &patch, &edges, &mut vertices, &scope)
-                        .map_err(ctx)?,
+                        .map_err(&ctx)?,
                 );
             }
             // The outer loop runs counter-clockwise in the patch.
@@ -1750,7 +1969,7 @@ impl<S: Scalar> Builder<'_, S> {
                         .iter()
                         .map(|lp| signed_area(lp))
                         .collect::<GeopResult<_>>()
-                        .map_err(ctx)?;
+                        .map_err(&ctx)?;
                     let ccw: Vec<usize> = (0..areas.len()).filter(|&k| areas[k] > 0.0).collect();
                     match ccw.as_slice() {
                         [k] => *k,
@@ -1781,18 +2000,23 @@ impl<S: Scalar> Builder<'_, S> {
         // How far each edge has been widened so far, either way.
         let mut total = vec![0.0f64; edges.len()];
         let mut history: Vec<Vec<f64>> = vec![Vec::new(); edges.len()];
+        // Which edges to measure: all at first, then those just widened —
+        // an edge left as it was measures as it did.
+        let mut measure = vec![true; edges.len()];
         for round in 0..WIDENINGS {
             let mut gaps = vec![[0.0f64; 3]; edges.len()];
             for (((surface, outer, holes), face_name), extent) in
                 face_specs.iter().zip(&face_names).zip(&extents)
             {
                 for (on, pcurve) in outer.iter().chain(holes.iter().flatten()) {
-                    if let CoedgeOnLocal::Edge(e, _) = *on {
+                    if let CoedgeOnLocal::Edge(e, _) = *on
+                        && measure[e]
+                    {
                         let (gap, worst) =
                             edge_gap(&edges[e].curve, surface, pcurve).map_err(|err| {
                                 err.with_context(format!(
                             "measuring how far the edge {} lies from where its pcurve puts it",
-                            edges[e].name.join(",")
+                            edges[e].label()
                         ))
                             })?;
                         // Widened by it either way, the edge must still be
@@ -1813,7 +2037,7 @@ impl<S: Scalar> Builder<'_, S> {
                             });
                             return Err(GeopError::new(format!(
                                 "the edge {} lies up to {most:e} mm from where its pcurve puts it on its face {}, its own points up to {off} from the surface — the curve widened by that either way would be wider than the {ACCURACY:e} mm the kernel can carry as one curve (measured {gap:?} per coordinate after widening it by {:?} in {round} rounds{furthest}; the edge from {:?} to {:?}, the pcurve from {:?} to {:?} on the patch over the angles and profile parameters {extent:?})",
-                                edges[e].name.join(","),
+                                edges[e].label(),
                                 face_name.join(","),
                                 history[e],
                                 to_p3(&read[e].evaluate(read[e].domain().0)?),
@@ -1837,6 +2061,9 @@ impl<S: Scalar> Builder<'_, S> {
             }
             for (h, gap) in history.iter_mut().zip(&gaps) {
                 h.push(gap.iter().copied().fold(0.0, f64::max));
+            }
+            for (m, gap) in measure.iter_mut().zip(&gaps) {
+                *m = *gap != [0.0; 3];
             }
         }
 
@@ -1895,7 +2122,14 @@ impl<S: Scalar> Builder<'_, S> {
             shells: face_shells.into_iter().filter(|s| !s.is_empty()).collect(),
             solid,
         };
-        Ok((spec, vertex_names, edge_names, face_names))
+        Ok(ImportedBody {
+            label,
+            spec,
+            vertex_names,
+            edge_names,
+            face_names,
+            healed,
+        })
     }
 }
 
@@ -1911,9 +2145,20 @@ struct Patch<S: Scalar> {
     /// For a surface of revolution, the angles and profile parameters it
     /// was built over: for messages.
     extent: Option<[f64; 4]>,
-    /// Whether it is a plane's: a parallelogram, on which every pcurve is
-    /// its edge in the plane's coordinates (see [`plane_pcurve`]).
-    planar: bool,
+    kind: PatchKind,
+}
+
+/// What a [`Patch`] is the surface of, as far as a pcurve on it can be
+/// written down rather than fitted.
+#[derive(Clone, Debug)]
+enum PatchKind {
+    /// A plane's parallelogram, on which every pcurve is its edge in the
+    /// plane's coordinates (see [`plane_pcurve`]).
+    Plane,
+    /// A surface of revolution's, on which a parallel or a meridian is a
+    /// straight pcurve (see [`Revolved::iso_line`]).
+    Revolved(Revolved),
+    Other,
 }
 
 /// A row of a patch's control points collapsed to one point: a pole of its
@@ -2178,13 +2423,13 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface,
                 extent: None,
-                planar: true,
+                kind: PatchKind::Plane,
             })
         }
         SurfaceKind::Nurbs(nurbs) => Ok(Patch {
             surface: nurbs.to_nurbs()?,
             extent: None,
-            planar: false,
+            kind: PatchKind::Other,
         }),
         SurfaceKind::Extrusion { curve, vector } => {
             let length2 = dot(*vector, *vector);
@@ -2211,7 +2456,7 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface: start.sweep(s3(scale(*vector, v1 - v0))),
                 extent: None,
-                planar: false,
+                kind: PatchKind::Other,
             })
         }
         SurfaceKind::Revolved(revolved) => {
@@ -2222,7 +2467,7 @@ fn patch_of<S: Scalar>(
             Ok(Patch {
                 surface: revolved.patch(from, to, v0, v1)?,
                 extent: Some([from, to, v0, v1]),
-                planar: false,
+                kind: PatchKind::Revolved(revolved.clone()),
             })
         }
     }
@@ -2462,13 +2707,29 @@ fn fit_loop<S: Scalar>(
         let pin_start = pin(corners[(k + n - 1) % n], start, true)?;
         let pin_end = pin(corners[k], end, false)?;
         let ctx = |e: GeopError| {
-            e.with_context(format!(
-                "fitting the pcurve of the edge {}",
-                edge.name.join(",")
-            ))
+            e.with_context(format!("fitting the pcurve of the edge {}", edge.label()))
         };
-        let pcurve = if patch.planar {
+        // Not from a pole: there the pin's free parameter is taken from a
+        // point near it (see `pin`), not where the line runs.
+        let at_pole = corners[(k + n - 1) % n].is_none() || corners[k].is_none();
+        let straight = match (&patch.kind, &edge.shape) {
+            (PatchKind::Revolved(revolved), Some(shape)) => {
+                !at_pole && revolved.iso_line(shape, scope.uncertainty)
+            }
+            _ => false,
+        };
+        let pcurve = if let PatchKind::Plane = patch.kind {
             plane_pcurve(surface, &curve, pin_start, pin_end).with_context(&ctx)?
+        } else if straight {
+            // A parallel or a meridian: straight in the patch, from one
+            // end's foot point to the other's.
+            let h = |p: Vector2<S>| Vector3::from_array([p[0], p[1], S::ONE]);
+            NurbCurve::try_new(
+                1,
+                vec![h(pin_start), h(pin_end)],
+                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            )
+            .with_context(&ctx)?
         } else {
             surface
                 .fit_pcurve(
@@ -2508,9 +2769,9 @@ fn fit_loop<S: Scalar>(
                 if off > ACCURACY {
                     return Err(GeopError::new(format!(
                         "the vertex {} is at {:?}, but {source} {} is {off:e} mm from it — more than the {ACCURACY:e} mm the kernel can carry as one point (the face built over the angles and profile parameters {:?})",
-                        vertices[v].name.join(","),
+                        vertices[v].label(),
                         to_p3(&vertices[v].origin),
-                        edge.name.join(","),
+                        edge.label(),
                         patch.extent,
                     )));
                 }
@@ -2544,6 +2805,544 @@ fn fit_loop<S: Scalar>(
         }
     }
     Ok(joined)
+}
+
+/// The nearest point of `surface` to `p`, and the surface's unit normal
+/// there — none at an apex, where it has no single one.
+fn foot<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    grid: &Grid<S>,
+    p: P3,
+) -> GeopResult<(P3, Option<P3>)> {
+    let (u, v) = sharp_inside(surface, grid.project(surface, &s3(p))?);
+    Ok((
+        to_p3(&surface.evaluate(u, v)?),
+        surface.normal(u, v).ok().map(|n| to_p3(&n)),
+    ))
+}
+
+/// A point of the enclosure `(u, v)` of a foot point on `surface`, sharp:
+/// which is a free choice — one in the domain, which its midpoint may not
+/// be by a rounding at its end.
+fn sharp_inside<S: Scalar>(surface: &NurbSurface3D<S>, (u, v): (S, S)) -> (S, S) {
+    let inside = |t: S, (lo, hi): (S, S)| {
+        let t = t.sharpen();
+        if t.to_f64() < lo.to_f64() {
+            lo
+        } else if t.to_f64() > hi.to_f64() {
+            hi
+        } else {
+            t
+        }
+    };
+    (inside(u, surface.domain_u()), inside(v, surface.domain_v()))
+}
+
+/// How far `p` lies from `surface`.
+fn off<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid<S>, p: P3) -> GeopResult<f64> {
+    Ok(distance(foot(surface, grid, p)?.0, p))
+}
+
+/// Samples along an edge telling whether it strays from its faces.
+const STRAY_SAMPLES: usize = 16;
+
+/// How far `curve` strays from `surface`, sampled: the first sample's foot
+/// point found from the grid, each next one's by Newton from the one before
+/// — a walk along the curve, as `fit_pcurve` takes.
+fn strays<S: Scalar>(
+    curve: &Midpoints,
+    surface: &NurbSurface3D<S>,
+    grid: &Grid<S>,
+) -> GeopResult<f64> {
+    let (lo, hi) = curve.domain();
+    let mut seed: Option<(S, S)> = None;
+    let mut most = 0.0f64;
+    for k in 0..=STRAY_SAMPLES {
+        let p = curve.point(lo + (hi - lo) * k as f64 / STRAY_SAMPLES as f64);
+        let (u, v) = sharp_inside(
+            surface,
+            match seed {
+                None => grid.project(surface, &s3(p))?,
+                Some((u, v)) => surface.project(s3(p), u, v, 30)?,
+            },
+        );
+        seed = Some((u, v));
+        most = most.max(distance(to_p3(&surface.evaluate(u, v)?), p));
+    }
+    Ok(most)
+}
+
+/// Newton steps taken towards where surfaces meet.
+const MEET_ITERATIONS: usize = 40;
+
+/// How much a step towards where surfaces meet is held back along a
+/// direction they barely constrain (Levenberg–Marquardt damping, against
+/// unit normals): where surfaces meet at an angle under a thousandth of a
+/// radian, the point stays near where it was along their tangent instead of
+/// running off along it. A free choice of which point, among those the
+/// surfaces leave free; whether it lies on them is checked after.
+const MEET_DAMPING: f64 = 1e-6;
+
+/// The point near `start` lying on every one of `surfaces`, where they
+/// meet: Newton's step on their tangent planes, from `start`, each moving
+/// the point as little as satisfies them. Whether it got there is for the
+/// caller to check ([`off`]): surfaces that do not meet leave it where they
+/// come nearest to each other.
+fn meet<S: Scalar>(start: P3, surfaces: &[(&NurbSurface3D<S>, &Grid<S>)]) -> GeopResult<P3> {
+    let mut x = start;
+    for _ in 0..MEET_ITERATIONS {
+        // (Σ n nᵀ + μ I) dx = -Σ n (n · (x - f)).
+        let mut a: [[f64; 3]; 3] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| if i == j { MEET_DAMPING } else { 0.0 })
+        });
+        let mut b = [0.0f64; 3];
+        for (surface, grid) in surfaces {
+            let (f, normal) = foot(surface, grid, x)?;
+            // Off the surface, the way to its nearest point is its normal
+            // there, whatever the surface's own: what an apex has instead.
+            let Some(n) = normal.or_else(|| normalize(sub(x, f))) else {
+                continue;
+            };
+            let r = dot(n, sub(x, f));
+            for i in 0..3 {
+                for j in 0..3 {
+                    a[i][j] += n[i] * n[j];
+                }
+                b[i] -= n[i] * r;
+            }
+        }
+        let det = |m: [[f64; 3]; 3]| dot(m[0], cross(m[1], m[2]));
+        let d = det(a);
+        // Cramer's rule: `a` is symmetric positive definite.
+        let dx: P3 = std::array::from_fn(|c| {
+            let mut m = a;
+            for (row, value) in m.iter_mut().zip(b) {
+                row[c] = value;
+            }
+            det(m) / d
+        });
+        let next = add(x, dx);
+        if next == x {
+            break;
+        }
+        x = next;
+    }
+    Ok(x)
+}
+
+/// Samples along an edge rebuilt where its faces' surfaces meet, at first
+/// and at most.
+const REBUILT_SAMPLES: usize = 16;
+const MOST_REBUILT_SAMPLES: usize = 256;
+
+/// Where the file's vertices and edges lie further from the surfaces of
+/// their faces than the kernel can carry as one point or one curve (see
+/// [`ACCURACY`]), they are rebuilt from those surfaces, which a B-rep is
+/// defined by: a vertex where the surfaces of its faces meet nearest to the
+/// file's point, an edge through where the surfaces of its faces meet along
+/// it, between its vertices. Nearer, the file's places are kept and united
+/// (see `fit_loop` and the edges' widening in `Builder::spec`), as the
+/// enclosure of one point or curve.
+///
+/// The file's uncertainty bounds what is rebuilt: the surfaces have to meet
+/// to within it — they are the file's statement of where the solid is, to
+/// its accuracy. Where they contradict each other — those of a vertex's
+/// faces do not meet near it, or those of an edge's along it — the
+/// smallest of the faces there are left out, one by one, until the rest
+/// meet: their surfaces are rebuilt from their edges instead (see
+/// [`rebuilt_surface`]), and returned as such. A face that small is one the
+/// file approximated more coarsely than its neighbours: a narrow wall
+/// running tangent into a hole, say. An edge between such faces only is
+/// moved with its vertices. Refused, by name, where a vertex or an edge
+/// would move further than half the length of an edge there: that is no
+/// longer the same vertex or edge.
+fn heal<S: Scalar>(
+    faces: &[Face],
+    built: &[(Patch<S>, NurbSurface3D<S>, Grid<S>)],
+    edges: &mut [Edge<S>],
+    vertices: &mut [Vertex<S>],
+    scope: &Scope,
+) -> GeopResult<(Vec<bool>, Healing)> {
+    let mut faces_of_edge: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
+    let mut faces_of_vertex: Vec<Vec<usize>> = vec![Vec::new(); vertices.len()];
+    let mut edges_of_vertex: Vec<Vec<usize>> = vec![Vec::new(); vertices.len()];
+    for (f, face) in faces.iter().enumerate() {
+        for &(e, _) in face.loops.iter().flatten() {
+            let add = |list: &mut Vec<usize>, item: usize| {
+                if !list.contains(&item) {
+                    list.push(item);
+                }
+            };
+            add(&mut faces_of_edge[e], f);
+            for v in [edges[e].start, edges[e].end] {
+                add(&mut faces_of_vertex[v], f);
+                add(&mut edges_of_vertex[v], e);
+            }
+        }
+    }
+    let surfaces = |fs: &[usize]| -> Vec<(&NurbSurface3D<S>, &Grid<S>)> {
+        fs.iter().map(|&f| (&built[f].1, &built[f].2)).collect()
+    };
+    let names = |fs: &[usize]| -> String {
+        fs.iter()
+            .map(|&f| format!("{} (#{})", faces[f].name.join(","), faces[f].id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    // How far `p` lies from each of `fs`, at most.
+    let furthest = |p: P3, fs: &[usize]| -> GeopResult<f64> {
+        let mut most = 0.0f64;
+        for (surface, grid) in surfaces(fs) {
+            most = most.max(off(surface, grid, p)?);
+        }
+        Ok(most)
+    };
+    let chord = |e: &Edge<S>, vertices: &[Vertex<S>]| {
+        distance(
+            to_p3(&vertices[e.start].origin),
+            to_p3(&vertices[e.end].origin),
+        )
+    };
+    // How large each face is, to tell which to leave out first: the area
+    // its loops' samples enclose, as vectors summed — the face's own area
+    // where it is flat, about it where it is not.
+    let mut size = Vec::with_capacity(faces.len());
+    for face in faces {
+        let mut area = [0.0f64; 3];
+        for lp in &face.loops {
+            let mut points = Vec::new();
+            for &(e, forward) in lp {
+                let curve = Midpoints::of(&edges[e].curve);
+                let (lo, hi) = curve.domain();
+                for i in 0..LOOP_SAMPLES {
+                    let f = i as f64 / LOOP_SAMPLES as f64;
+                    let f = if forward { f } else { 1.0 - f };
+                    points.push(curve.point(lo + (hi - lo) * f));
+                }
+            }
+            for (k, &p) in points.iter().enumerate() {
+                area = add(area, scale(cross(p, points[(k + 1) % points.len()]), 0.5));
+            }
+        }
+        size.push(norm(area));
+    }
+
+    // Of the faces `fs`, those whose surfaces are kept: all but those to
+    // be rebuilt, the smallest first.
+    let kept = |fs: &[usize], rebuild: &[bool]| -> Vec<usize> {
+        let mut kept: Vec<usize> = fs.iter().copied().filter(|&f| !rebuild[f]).collect();
+        kept.sort_by(|&a, &b| size[a].total_cmp(&size[b]));
+        kept
+    };
+    // Where the surfaces of the faces `fs` meet within `reach` of `p` —
+    // where they contradict each other, the least area of faces that can be
+    // rebuilt (see `rebuilt_surface`) left out, to be rebuilt, so that the
+    // rest do. `None` where all of them are rebuilt; an error naming them
+    // where no choice serves.
+    let settle = |p: P3,
+                  fs: &[usize],
+                  reach: f64,
+                  rebuild: &mut [bool]|
+     -> GeopResult<Option<P3>> {
+        let kept = kept(fs, rebuild);
+        let free: Vec<usize> = kept
+            .iter()
+            .copied()
+            .filter(|&f| rebuildable(&faces[f]))
+            .take(MOST_REBUILT_AT_ONCE)
+            .collect();
+        let mut choices: Vec<(f64, Vec<usize>)> = (0..1usize << free.len())
+            .map(|mask| {
+                let out: Vec<usize> = (0..free.len())
+                    .filter(|k| mask & (1 << k) != 0)
+                    .map(|k| free[k])
+                    .collect();
+                (out.iter().map(|&f| size[f]).sum(), out)
+            })
+            .collect();
+        choices.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut nearest = None;
+        for (_, out) in choices {
+            let rest: Vec<usize> = kept.iter().copied().filter(|f| !out.contains(f)).collect();
+            let healed = if rest.is_empty() {
+                None
+            } else {
+                let healed = meet(p, &surfaces(&rest))?;
+                let left = furthest(healed, &rest)?;
+                nearest.get_or_insert((left, healed));
+                if left > scope.uncertainty || distance(healed, p) > reach {
+                    continue;
+                }
+                Some(healed)
+            };
+            for f in out {
+                rebuild[f] = true;
+            }
+            return Ok(healed);
+        }
+        let (left, healed) = nearest.unwrap_or((0.0, p));
+        Err(GeopError::new(format!(
+            "the surfaces of its faces {} {} — and no choice of the faces of one loop of four edges or more among them, rebuilt from their edges instead, leaves the rest meeting there",
+            names(&kept),
+            if left > scope.uncertainty {
+                format!(
+                    "do not meet near {p:?} to within the file's uncertainty of {:e} mm: they come no nearer each other than {left:e} mm, at {healed:?}",
+                    scope.uncertainty
+                )
+            } else {
+                format!(
+                    "meet only {:e} mm from {p:?}, at {healed:?}, more than the {reach:e} mm it may move: half the shortest edge there",
+                    distance(healed, p)
+                )
+            },
+        )))
+    };
+
+    let mut rebuild = vec![false; faces.len()];
+    let mut moved = vec![false; vertices.len()];
+    // What was moved, and how far, for the report.
+    let mut moved_vertices: Vec<(String, f64)> = Vec::new();
+    let mut moved_edges: Vec<(String, f64)> = Vec::new();
+    // How far each vertex and edge lies from the surfaces of its faces kept,
+    // as the first pass measured it: the second measures again only where
+    // a face of it is to be rebuilt since.
+    let mut vertex_apart: Vec<Option<(Vec<usize>, f64)>> = vec![None; vertices.len()];
+    let mut edge_apart: Vec<Option<(Vec<usize>, f64)>> = vec![None; edges.len()];
+    // Twice: first deciding which faces are rebuilt, everywhere, then
+    // moving what is to move onto the surfaces kept — so that a vertex is
+    // not put where a surface meets the others that a later vertex finds
+    // contradicting its neighbours.
+    for apply in [false, true] {
+        moved.fill(false);
+        for v in 0..vertices.len() {
+            if faces_of_vertex[v].is_empty() {
+                continue;
+            }
+            let at = to_p3(&vertices[v].origin);
+            let what = format!("healing the vertex {} at {at:?}", vertices[v].label());
+            let vctx = |e: GeopError| e.with_context(what.clone());
+            let fs = kept(&faces_of_vertex[v], &rebuild);
+            let apart = match &vertex_apart[v] {
+                Some((measured, apart)) if *measured == fs => *apart,
+                _ => furthest(at, &fs).map_err(&vctx)?,
+            };
+            vertex_apart[v] = Some((fs.clone(), apart));
+            if 2.0 * apart <= ACCURACY {
+                continue;
+            }
+            let shortest = edges_of_vertex[v]
+                .iter()
+                .map(|&e| chord(&edges[e], vertices))
+                .fold(f64::INFINITY, f64::min);
+            let Some(healed) = settle(at, &fs, shortest / 2.0, &mut rebuild).map_err(&vctx)? else {
+                // Every face of it rebuilt: through it, where it is.
+                continue;
+            };
+            moved[v] = true;
+            if !apply {
+                continue;
+            }
+            vertices[v].origin = s3(healed);
+            vertices[v].point = s3(healed);
+            moved_vertices.push((vertices[v].label(), distance(healed, at)));
+        }
+
+        for e in 0..edges.len() {
+            if faces_of_edge[e].is_empty() || !edges[e].alive {
+                continue;
+            }
+            let what = format!("healing the edge {}", edges[e].label());
+            let ectx = |e: GeopError| e.with_context(what.clone());
+            let old = edges[e].curve.clone();
+            let (lo, hi) = old.domain();
+            let (lo, hi) = (lo.to_f64(), hi.to_f64());
+            let at = |f: f64| super::geometry::point_at(&old, lo + (hi - lo) * f);
+            let (start, end) = (edges[e].start, edges[e].end);
+            let fs = kept(&faces_of_edge[e], &rebuild);
+            let apart = match &edge_apart[e] {
+                Some((measured, apart)) if *measured == fs => *apart,
+                _ => {
+                    let midpoints = Midpoints::of(&old);
+                    let mut apart = 0.0f64;
+                    for (surface, grid) in surfaces(&fs) {
+                        apart = apart.max(strays(&midpoints, surface, grid).map_err(&ectx)?);
+                    }
+                    apart
+                }
+            };
+            edge_apart[e] = Some((fs.clone(), apart));
+            if !moved[start] && !moved[end] && 2.0 * apart <= ACCURACY {
+                continue;
+            }
+            // Which faces' surfaces the edge is rebuilt on: decided at its
+            // middle.
+            let length = chord(&edges[e], vertices);
+            let middle =
+                settle(at(0.5).map_err(&ectx)?, &fs, length / 2.0, &mut rebuild).map_err(&ectx)?;
+            if !apply {
+                continue;
+            }
+            let fs = kept(&fs, &rebuild);
+            // How far its ends move with its vertices.
+            let ends = [at(0.0).map_err(&ectx)?, at(1.0).map_err(&ectx)?];
+            let shifts = [
+                sub(to_p3(&vertices[start].origin), ends[0]),
+                sub(to_p3(&vertices[end].origin), ends[1]),
+            ];
+            // Where the old curve's point `p`, `f` of the way along it, goes:
+            // where the kept surfaces meet, or — none kept — along with its
+            // vertices.
+            let furthest_shift = std::cell::Cell::new(0.0f64);
+            let onto = |p: P3, f: f64| -> GeopResult<P3> {
+                if middle.is_none() {
+                    let moved = add(p, add(scale(shifts[0], 1.0 - f), scale(shifts[1], f)));
+                    furthest_shift.set(furthest_shift.get().max(distance(moved, p)));
+                    return Ok(moved);
+                }
+                let healed = meet(p, &surfaces(&fs))?;
+                let left = furthest(healed, &fs)?;
+                let shift = distance(healed, p);
+                furthest_shift.set(furthest_shift.get().max(shift));
+                if left > scope.uncertainty || 2.0 * shift > length {
+                    return Err(GeopError::new(format!(
+                        "the edge {} lies {apart:e} mm off the surfaces of its faces {}{}, and they {} — so it cannot be rebuilt where they meet",
+                        edges[e].label(),
+                        names(&fs),
+                        if moved[start] || moved[end] {
+                            ", and a vertex of it was moved to where they meet"
+                        } else {
+                            ""
+                        },
+                        if left > scope.uncertainty {
+                            format!(
+                                "do not meet along it to within the file's uncertainty of {:e} mm: near its point {p:?} they come no nearer each other than {left:e} mm",
+                                scope.uncertainty
+                            )
+                        } else {
+                            format!(
+                                "meet only {shift:e} mm from its point {p:?}, more than half its length of {length:e} mm"
+                            )
+                        },
+                    )));
+                }
+                Ok(healed)
+            };
+            // Sampled more densely while the cubic through the samples strays
+            // between them from where the surfaces meet by more than the
+            // file's uncertainty.
+            let mut samples = REBUILT_SAMPLES;
+            let rebuilt = loop {
+                let mut points = vec![vertices[start].origin];
+                for k in 1..samples {
+                    let f = k as f64 / samples as f64;
+                    points.push(s3(onto(at(f).map_err(&ectx)?, f).map_err(&ectx)?));
+                }
+                points.push(vertices[end].origin);
+                let rebuilt = NurbCurve3D::interpolate(&points, 3).map_err(|err| {
+                    err.with_context(format!(
+                        "rebuilding the edge {} where its faces {} meet",
+                        edges[e].label(),
+                        names(&fs)
+                    ))
+                })?;
+                if samples >= MOST_REBUILT_SAMPLES || middle.is_none() {
+                    break rebuilt;
+                }
+                let (r0, r1) = rebuilt.domain();
+                let (r0, r1) = (r0.to_f64(), r1.to_f64());
+                let mut strays = 0.0f64;
+                for k in 0..samples {
+                    let t = r0 + (r1 - r0) * (k as f64 + 0.5) / samples as f64;
+                    let p = super::geometry::point_at(&rebuilt, t).map_err(&ectx)?;
+                    strays = strays.max(furthest(p, &fs).map_err(&ectx)?);
+                }
+                if strays <= scope.uncertainty {
+                    break rebuilt;
+                }
+                samples *= 2;
+            };
+            edges[e].curve = rebuilt;
+            edges[e].shape = None;
+            moved_edges.push((edges[e].label(), furthest_shift.get()));
+        }
+    }
+    let healing = Healing {
+        vertices: moved_vertices,
+        edges: moved_edges,
+        faces: (0..faces.len())
+            .filter(|&f| rebuild[f])
+            .map(|f| names(&[f]))
+            .collect(),
+        uncertainty: scope.uncertainty,
+    };
+    Ok((rebuild, healing))
+}
+
+/// The most faces at one vertex or edge among which [`heal`] chooses which to
+/// rebuild: every choice is tried.
+const MOST_REBUILT_AT_ONCE: usize = 6;
+
+/// Whether [`rebuilt_surface`] can rebuild the surface of `face`.
+fn rebuildable(face: &Face) -> bool {
+    matches!(face.loops.as_slice(), [lp] if lp.len() >= 4)
+}
+
+/// The surface of `face` rebuilt from its edges, where its own contradicts
+/// its neighbours' (see [`heal`]): the Coons patch of its loop, cut into
+/// four sides at the four corners where it turns most sharply — a narrow
+/// wall's two long edges and its two short ones. Which corners is a free
+/// choice; the patch passes through every edge whichever it is. Its normal
+/// is the one the loop winds about, which runs counter-clockwise about the
+/// face's outward normal. Only for a face of one loop of four edges or
+/// more.
+fn rebuilt_surface<S: Scalar>(face: &Face, edges: &[Edge<S>]) -> GeopResult<NurbSurface3D<S>> {
+    let [lp] = face.loops.as_slice() else {
+        return Err(GeopError::new(format!(
+            "it has {} loops: only a face of one loop is rebuilt from its edges",
+            face.loops.len()
+        )));
+    };
+    let n = lp.len();
+    if n < 4 {
+        return Err(GeopError::new(format!(
+            "its loop has {n} edges: only one of four or more is rebuilt from its edges, cut into four sides"
+        )));
+    }
+    let curves: Vec<NurbCurve3D<S>> = lp
+        .iter()
+        .map(|&(e, forward)| {
+            if forward {
+                edges[e].curve.clone()
+            } else {
+                edges[e].curve.reverse()
+            }
+        })
+        .collect();
+    let direction = |c: &NurbCurve3D<S>, at_end: bool| -> GeopResult<P3> {
+        let (lo, hi) = c.domain();
+        let t = if at_end { hi } else { lo };
+        normalize(to_p3(&c.tangent(t)?))
+            .ok_or_else(|| GeopError::new("an edge of it has no direction at an end"))
+    };
+    // How sharply the loop turns at the end of each coedge.
+    let mut turns = Vec::with_capacity(n);
+    for k in 0..n {
+        let arriving = direction(&curves[k], true)?;
+        let leaving = direction(&curves[(k + 1) % n], false)?;
+        turns.push((1.0 - dot(arriving, leaving), k));
+    }
+    turns.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut corners: Vec<usize> = turns[..4].iter().map(|&(_, k)| k).collect();
+    corners.sort();
+    let mut sides = Vec::with_capacity(4);
+    for j in 0..4 {
+        let (from, to) = (corners[j] + 1, corners[(j + 1) % 4]);
+        let count = (to + n - from) % n + 1;
+        let chain: Vec<NurbCurve3D<S>> =
+            (0..count).map(|i| curves[(from + i) % n].clone()).collect();
+        sides.push(NurbCurve3D::join(&chain)?);
+    }
+    NurbSurface3D::coons([&sides[0], &sides[1], &sides[2], &sides[3]])
 }
 
 /// The pcurve of `curve` on `surface`, a plane's parallelogram patch
@@ -2609,6 +3408,10 @@ const GAP_SAMPLES: usize = 64;
 /// sample: from two table steps down to a rounding of the parameter.
 const NEAREST_ITERATIONS: usize = 80;
 
+/// Of those, the last ones, taken on the curve's enclosure rather than its
+/// midpoints in `f64`.
+const NEAREST_ON_ENCLOSURE: usize = 12;
+
 /// How far, per coordinate, the points a pcurve puts on its surface lie
 /// from the edge's curve `curve` — sampled, each against the curve's
 /// nearest point: how far the point's midpoint, the pcurve's own best
@@ -2625,13 +3428,14 @@ fn edge_gap<S: Scalar>(
     // Each sample's nearest curve point: the nearest of a table of the
     // curve's points, polished by Newton.
     let (c0f, c1f) = (c0.to_f64(), c1.to_f64());
+    let midpoints = Midpoints::of(curve);
     let rows = 8 * curve.control_points.len() + 32;
     let table: Vec<(f64, P3)> = (0..=rows)
         .map(|k| {
             let t = c0f + (c1f - c0f) * k as f64 / rows as f64;
-            Ok((t, super::geometry::point_at(curve, t)?))
+            (t, midpoints.point(t))
         })
-        .collect::<GeopResult<_>>()?;
+        .collect();
     let step = (c1f - c0f) / rows as f64;
     for i in 0..=GAP_SAMPLES {
         let f = S::from_ratio(i as i64, GAP_SAMPLES as i64)?;
@@ -2658,40 +3462,67 @@ fn edge_gap<S: Scalar>(
         // point at an end, reached a rounding past it, and the window's
         // middle is half a step off; on a widened curve its last step
         // inherits the width, and is off along the curve by about that.)
+        // The midpoints in `f64` narrow the window, which is cheap; the
+        // enclosure's own midpoints, which the gap is measured against,
+        // decide its last bits, where the two differ by roundings.
         let (mut a, mut b) = ((seed - step).max(c0f), (seed + step).min(c1f));
-        let gap_at = |t: f64| -> GeopResult<f64> {
-            Ok(distance(super::geometry::point_at(curve, t)?, target))
+        let gap_at = |t: f64, k: usize| -> GeopResult<f64> {
+            if k + NEAREST_ON_ENCLOSURE < NEAREST_ITERATIONS {
+                Ok(distance(midpoints.point(t), target))
+            } else {
+                Ok(distance(super::geometry::point_at(curve, t)?, target))
+            }
         };
         let ratio = (5f64.sqrt() - 1.0) / 2.0;
         let (mut x, mut y) = (b - ratio * (b - a), a + ratio * (b - a));
-        let (mut fx, mut fy) = (gap_at(x)?, gap_at(y)?);
-        for _ in 0..NEAREST_ITERATIONS {
+        let (mut fx, mut fy) = (gap_at(x, 0)?, gap_at(y, 0)?);
+        for k in 0..NEAREST_ITERATIONS {
+            if k + NEAREST_ON_ENCLOSURE == NEAREST_ITERATIONS {
+                // From here on, on the enclosure.
+                (fx, fy) = (gap_at(x, k)?, gap_at(y, k)?);
+            }
             if fx <= fy {
                 b = y;
                 (y, fy) = (x, fx);
                 x = b - ratio * (b - a);
-                fx = gap_at(x)?;
+                fx = gap_at(x, k)?;
             } else {
                 a = x;
                 (x, fx) = (y, fy);
                 y = a + ratio * (b - a);
-                fy = gap_at(y)?;
+                fy = gap_at(y, k)?;
             }
         }
-        // The ends are the domain's own.
+        // The ends are the domain's own. The pcurve's own ends are pinned
+        // where the edge ends, at its vertices: they are measured against
+        // the curve's nearer end, never a point next to it — which can be
+        // as near to a rounding, its enclosure holding the point where the
+        // end's does not, while the validation's clipping, tight at an
+        // end, holds to the end's. Which is nearest is told on the curve's
+        // enclosure, which the gap is measured against.
         let candidates = [
             (c0f, c0),
             (c1f, c1),
             ((a + b) / 2.0, S::from_f64((a + b) / 2.0)),
         ];
-        let mut s = candidates[2].1;
-        let mut best = gap_at(candidates[2].0)?;
-        for &(t, exact) in &candidates[..2] {
-            let d = gap_at(t)?;
-            if d < best {
-                (s, best) = (exact, d);
+        let exact_gap_at = |t: f64| -> GeopResult<f64> {
+            Ok(distance(super::geometry::point_at(curve, t)?, target))
+        };
+        let pinned = i == 0 || i == GAP_SAMPLES;
+        let choices = if pinned {
+            &candidates[..2]
+        } else {
+            &candidates[..]
+        };
+        // The first of the nearest: an end where one is as near.
+        let mut nearest: Option<(S, f64)> = None;
+        for &(t, exact) in choices {
+            let d = exact_gap_at(t)?;
+            if nearest.is_none_or(|(_, best)| d < best) {
+                nearest = Some((exact, d));
             }
         }
+        let (s, _) = nearest.expect("candidates");
         let near = curve.evaluate(s)?;
         // How far the point lies outside the curve's enclosure: what the
         // curve must widen by to reach it.
