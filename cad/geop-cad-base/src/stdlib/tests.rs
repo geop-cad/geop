@@ -240,7 +240,7 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
 
 /// The tooth counts a gear of module 1 is built with by
 /// [`every_size_of_every_family_builds_to_its_table`].
-const GEAR_TEETH: [usize; 8] = [12, 17, 25, 33, 42, 60, 80, 120];
+const GEAR_TEETH: [usize; 7] = [12, 17, 25, 33, 42, 60, 80];
 
 /// The sizes of the family `part` builds to its table — every one but
 /// those of a gear, of which a range (see [`every_size`]) — fully validated
@@ -303,7 +303,7 @@ fn every_size_of_every_family_builds_to_its_table() {
 /// The spur gears of [`every_size_of_every_family_builds_to_its_table`]
 /// alone: every module, and a range of tooth counts.
 #[test]
-#[ignore = "slow: sixteen gears, up to 120 teeth — run with `cargo test -- --ignored`"]
+#[ignore = "slow: fifteen gears, up to 80 teeth, half an hour — run with `cargo test -- --ignored`"]
 fn every_spur_gear_builds_to_its_table() {
     let failures = build_every_size(super::part("std:spur_gear.geop").unwrap());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));

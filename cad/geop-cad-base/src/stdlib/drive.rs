@@ -58,8 +58,9 @@ use crate::Program;
 /// The table parameter a gear's tooth count is chosen by.
 pub const TEETH: &str = "teeth";
 
-/// The most teeth a gear of the library has.
-pub const MOST_TEETH: usize = 120;
+/// The most teeth a gear of the library has: with 120, each arc of the rim
+/// is cut by ten gaps, and grows too wide on the way (see [`RIM_ARCS`]).
+pub const MOST_TEETH: usize = 80;
 
 /// How many arcs a gear's rim is drawn in (see [`spur_gear`]).
 const RIM_ARCS: usize = 12;
