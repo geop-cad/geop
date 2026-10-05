@@ -64,6 +64,8 @@ mod edit_tests;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
+mod feature_pattern_tests;
+#[cfg(test)]
 mod fillet_tests;
 #[cfg(test)]
 mod harness_tests;
@@ -105,8 +107,6 @@ mod tests;
 mod urdf_tests;
 #[cfg(test)]
 mod view_tests;
-#[cfg(test)]
-mod feature_pattern_tests;
 
 /// An operation the editor offers, together with its arguments, not yet
 /// applied to any part.

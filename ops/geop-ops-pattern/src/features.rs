@@ -30,6 +30,7 @@
 
 use std::collections::BTreeSet;
 
+use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Motion,
@@ -37,7 +38,6 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_geometry::shape::Axis;
 use geop_core_topology::Body;
 use geop_ops::{BooleanOp, Namer, Part, operation::EntityRef};
 use geop_ops_booleans::{Combine, Tool};
@@ -79,7 +79,9 @@ fn feature_solid<S: Scalar>(part: &Part<S>, steps: &[String]) -> GeopResult<Stri
         let Some(name) = part.name_of(face) else {
             continue;
         };
-        if made.of(name).is_some_and(|step| steps.iter().any(|s| s == step))
+        if made
+            .of(name)
+            .is_some_and(|step| steps.iter().any(|s| s == step))
             && let Body::Solid(solid) = model.body_of_face(face)?
             && let Some(solid) = part.name_of(solid)
         {
@@ -101,10 +103,7 @@ fn feature_solid<S: Scalar>(part: &Part<S>, steps: &[String]) -> GeopResult<Stri
 /// The middle of the corners of the tools of the features `refs` refers
 /// to, where they were built: where a pattern of them shows its handles.
 /// None, if it refers to none.
-pub(crate) fn features_center<S: Scalar>(
-    part: &Part<S>,
-    refs: &[EntityRef],
-) -> Option<Vector3<S>> {
+pub(crate) fn features_center<S: Scalar>(part: &Part<S>, refs: &[EntityRef]) -> Option<Vector3<S>> {
     let mut sum = [0.0; 3];
     let mut n = 0usize;
     for step in feature_steps(part, refs).ok()? {
@@ -150,7 +149,9 @@ pub(crate) fn repeat_features<S: Scalar>(
             for (label, motion) in placements {
                 for tool in group {
                     let names = tool.names.renamed(|name| rename(label, name));
-                    let built = part.build_body(tool.spec.clone(), names).with_context(ctx)?;
+                    let built = part
+                        .build_body(tool.spec.clone(), names)
+                        .with_context(ctx)?;
                     let solid = built.solid.ok_or_else(|| {
                         GeopError::new(format!("a tool of feature {step:?} is no solid"))
                     })?;

@@ -5,19 +5,17 @@
 
 use std::f64::consts::PI;
 
-use geop_core_math::primitives::FrameAxis;
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_math::vector::Vector3;
-use geop_ops::{EntityRef, Part};
+use geop_ops::{EntityRef, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
 use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
-use geop_ops_pattern::{CircularPatternArgs, Direction, LinearPatternArgs, Spacing};
+use geop_ops_pattern::{CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, Spacing};
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
 
-use super::pattern_tests::{
-    assert_valid, axis, build, circle, extruded, polygon, volume, z_plane,
-};
+use super::pattern_tests::{assert_valid, axis, build, circle, extruded, polygon, volume, z_plane};
 use crate::examples::n;
 use crate::{PartOperation, Program};
 
@@ -41,7 +39,9 @@ fn linear(features: &[&str], count: f64, step: f64) -> LinearPatternArgs {
         bodies: Vec::new(),
         features: features
             .iter()
-            .map(|f| EntityRef::Feature { name: f.to_string() })
+            .map(|f| EntityRef::Feature {
+                name: f.to_string(),
+            })
             .collect(),
         first: along_x(count, step),
         second: None,
@@ -51,7 +51,13 @@ fn linear(features: &[&str], count: f64, step: f64) -> LinearPatternArgs {
 
 /// A sketch on the `z` plane named `{name}_sketch`, and the extrude `name`
 /// of it — `extent` — combined with the plate as `combine` says.
-fn extrude_into(program: &mut Program, name: &str, sketch: Sketch, extent: Extents, combine: Combine) {
+fn extrude_into(
+    program: &mut Program,
+    name: &str,
+    sketch: Sketch,
+    extent: Extents,
+    combine: Combine,
+) {
     let sketch_name = format!("{name}_sketch");
     program.push(
         &sketch_name,
@@ -79,6 +85,28 @@ fn through() -> Extents {
     extents
 }
 
+/// A plate 8 x 2 x 0.5, `extrude(plate)`, with a hole of radius 0.3 at
+/// (1, 1) cut through it by the extrude `hole`.
+pub(super) fn plate_with_hole() -> Program {
+    let mut program = Program::new();
+    extruded(
+        &mut program,
+        "plate",
+        polygon(&[[0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [0.0, 2.0]]),
+        Extents::blind(0.5),
+    );
+    extrude_into(
+        &mut program,
+        "hole",
+        circle([1.0, 1.0], 0.3),
+        through(),
+        Combine::Difference {
+            target: "extrude(plate)".into(),
+        },
+    );
+    program
+}
+
 /// The faces of `part` the feature of `step` made, as a pick tells.
 fn faces_of(part: &Part<S>, step: &str) -> Vec<String> {
     let made = part.feature_faces();
@@ -100,22 +128,7 @@ fn faces_of(part: &Part<S>, step: &str) -> Vec<String> {
 /// wall is the pattern's; the original's still the hole's.
 #[test]
 fn extruded_hole_patterned_in_a_row() {
-    let mut program = Program::new();
-    extruded(
-        &mut program,
-        "plate",
-        polygon(&[[0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [0.0, 2.0]]),
-        Extents::blind(0.5),
-    );
-    extrude_into(
-        &mut program,
-        "hole",
-        circle([1.0, 1.0], 0.3),
-        through(),
-        Combine::Difference {
-            target: "extrude(plate)".into(),
-        },
-    );
+    let mut program = plate_with_hole();
     program.push("holes", linear(&["hole"], 4.0, 2.0));
     let part = build(&program);
     assert_valid(&part);
@@ -174,6 +187,51 @@ fn extruded_hole_patterned_around_an_axis() {
     assert_eq!(part.solid_names(), ["circular_pattern(bolts)"]);
     let expected = 36.0 * 0.5 - 6.0 * PI * 0.3 * 0.3 * 0.5;
     let got = volume(&part, "circular_pattern(bolts)");
+    assert!((got - expected).abs() < 1e-3, "{got} vs {expected}");
+}
+
+/// The row of holes mirrored in the `yz` plane, as a feature of its own:
+/// the plate, reaching to `x = -8`, drilled four times on either side.
+/// The pattern is a feature like any other: its copies are its tools.
+#[test]
+fn pattern_of_holes_mirrored() {
+    let mut program = Program::new();
+    extruded(
+        &mut program,
+        "plate",
+        polygon(&[[-8.0, 0.0], [8.0, 0.0], [8.0, 2.0], [-8.0, 2.0]]),
+        Extents::blind(0.5),
+    );
+    extrude_into(
+        &mut program,
+        "hole",
+        circle([1.0, 1.0], 0.3),
+        through(),
+        Combine::Difference {
+            target: "extrude(plate)".into(),
+        },
+    );
+    program.push("holes", linear(&["hole"], 4.0, 2.0));
+    program.push(
+        "m",
+        MirrorArgs {
+            bodies: Vec::new(),
+            features: feature("hole")
+                .into_iter()
+                .chain(feature("holes"))
+                .collect(),
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::X),
+            )),
+            combine: Combine::NewBody,
+        },
+    );
+    let part = build(&program);
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["mirror(m)"]);
+    let expected = 16.0 * 2.0 * 0.5 - 8.0 * PI * 0.3 * 0.3 * 0.5;
+    let got = volume(&part, "mirror(m)");
     assert!((got - expected).abs() < 1e-3, "{got} vs {expected}");
 }
 
@@ -283,7 +341,9 @@ fn tapped_hole_patterned_with_its_thread() {
         );
         assert!(thread.axis.direction.could_be_equal(&v([0.0, 0.0, -1.0])));
         assert!(
-            thread.face.starts_with(&format!("linear_pattern(p,{i},hole(h,centres,p0,wall")),
+            thread
+                .face
+                .starts_with(&format!("linear_pattern(p,{i},hole(h,centres,p0,wall")),
             "{}",
             thread.face
         );
@@ -342,26 +402,15 @@ fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
 /// that made no feature are refused, saying so.
 #[test]
 fn what_is_no_feature_is_refused() {
-    let mut program = Program::new();
-    extruded(
-        &mut program,
-        "plate",
-        polygon(&[[0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [0.0, 2.0]]),
-        Extents::blind(0.5),
-    );
-    extrude_into(
-        &mut program,
-        "hole",
-        circle([1.0, 1.0], 0.3),
-        through(),
-        Combine::Difference {
-            target: "extrude(plate)".into(),
-        },
-    );
+    let program = plate_with_hole();
     let refused = |args: LinearPatternArgs| {
         let mut program = program.clone();
         program.push("p", args);
-        program.build::<S>(&geop_ops::NoFiles).err().unwrap().to_string()
+        program
+            .build::<S>(&geop_ops::NoFiles)
+            .err()
+            .unwrap()
+            .to_string()
     };
     let mut both = linear(&["hole"], 2.0, 2.0);
     both.bodies = vec![EntityRef::Solid {

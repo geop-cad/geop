@@ -5,6 +5,8 @@
 //!   along two.
 //! - [`CircularPattern`]: copies turned around an axis.
 //! - [`Mirror`]: a mirror image in a plane.
+//!
+//! These three repeat bodies or features.
 //! - [`MoveBody`]: bodies, or a copy of them, turned and shifted.
 //!
 //! Each acts on solids, and on sheets — faces standing on their own — and
@@ -16,14 +18,15 @@
 //!
 //! # Patterning a feature
 //!
-//! A program has no "pattern the cut of step `E`": a step only sees the
-//! part the steps before it built, never their arguments, and an extrude
-//! that cuts keeps nothing of its tool — the solid it cut with is consumed
-//! the moment it is combined. What a feature pattern repeats is that tool,
-//! so the program builds it as a body of its own and patterns *that*: an
-//! extrude kept as a new body, then a pattern cutting it — and every copy —
-//! from the plate. The tool is design data like any other body, so the
-//! holes follow when it changes.
+//! Patterns and mirrors also repeat features — a hole cut by an extrude, a
+//! boss joined to a plate, a tapped hole with its thread — picked by a face
+//! each made. A step only sees the part the steps before it built, never
+//! their arguments; what it sees of a feature is what the feature's step
+//! recorded on the part as it combined its tools (see
+//! [`geop_ops::Feature`]). A pattern copies those tools, moves them, and
+//! combines each copy with the solid the feature lies on as the feature
+//! combined it: why that, rather than running the step again, is said in
+//! `features.rs`.
 
 mod circular;
 mod common;

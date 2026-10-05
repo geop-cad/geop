@@ -169,7 +169,8 @@ pub(crate) fn bodies_field<'a, S: Scalar, A: 'a>(
 /// The fields picking what a pattern repeats, `seeds` giving its bodies
 /// and its features: the bodies (see [`bodies_field`]), or the features,
 /// keyed `features`, each by a face it made — a hole by its wall. A step
-/// repeats one or the other, so picking either empties the other.
+/// repeats one or the other, so picking either empties the other, and only
+/// the one in use waits for picks.
 pub(crate) fn seed_fields<'a, S: Scalar, A: 'a>(
     form: &mut Form<'a, S, A>,
     bodies: &[EntityRef],
@@ -206,6 +207,12 @@ pub(crate) fn seed_fields<'a, S: Scalar, A: 'a>(
             *features = picked;
         },
     );
+    // Only the one in use is needed; the other is picked for when asked.
+    form.optional(if features.is_empty() {
+        "features"
+    } else {
+        "bodies"
+    });
 }
 
 /// What a pattern repeats, as its arguments pick it: `bodies` — kept as

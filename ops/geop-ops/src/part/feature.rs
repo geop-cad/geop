@@ -146,7 +146,10 @@ fn origin(name: &str) -> Option<&str> {
     let mut start = 0usize;
     // The first argument is the step's id, never a name.
     let mut first = true;
-    for (k, c) in inner.char_indices().chain(std::iter::once((inner.len(), ','))) {
+    for (k, c) in inner
+        .char_indices()
+        .chain(std::iter::once((inner.len(), ',')))
+    {
         match c {
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),

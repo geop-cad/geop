@@ -1664,11 +1664,10 @@ pub fn horn() -> Program {
     program
 }
 
-/// An 8 x 3 x 0.5 plate with a row of four holes: a pin sketched on the Z
-/// plane and extruded through the plate as a body of its own (`pin`), then
-/// patterned four times 2 apart along `x` and cut from the plate, itself
-/// and every copy (`holes`) — the drilled plate is `linear_pattern(holes)`,
-/// and the holes follow the pin when it changes.
+/// An 8 x 3 x 0.5 plate with a row of four holes: a circle sketched on the
+/// Z plane and cut through the plate (`hole`), and that feature done again
+/// three more times 2 apart along `x` (`holes`) — the drilled plate is
+/// `linear_pattern(holes)`, and the holes follow the hole when it changes.
 pub fn patterned_plate() -> Program {
     let mut program = Program::new();
     let z_plane = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
@@ -1691,33 +1690,35 @@ pub fn patterned_plate() -> Program {
             combine: Combine::NewBody,
         },
     );
-    let mut pin = Sketch::new();
-    circle(&mut pin, [1.0, 1.5], 0.3);
+    let mut hole = Sketch::new();
+    circle(&mut hole, [1.0, 1.5], 0.3);
     program.push(
-        "pin_sketch",
+        "hole_sketch",
         AddSketchArgs {
             plane: Some(z_plane()),
-            sketch: solved(pin),
+            sketch: solved(hole),
             ..Default::default()
         },
     );
     let mut through = Extents::blind(2.0);
     through.symmetric = true;
     program.push(
-        "pin",
+        "hole",
         ExtrudeArgs {
-            sketch: "pin_sketch".into(),
+            sketch: "hole_sketch".into(),
             extent: through,
             face: false,
-            combine: Combine::NewBody,
+            combine: Combine::Difference {
+                target: "extrude(plate)".into(),
+            },
         },
     );
     program.push(
         "holes",
         LinearPatternArgs {
-            features: Vec::new(),
-            bodies: vec![EntityRef::Solid {
-                name: "extrude(pin)".into(),
+            bodies: Vec::new(),
+            features: vec![EntityRef::Feature {
+                name: "hole".into(),
             }],
             first: Direction {
                 along: Some(EntityRef::datum_component(
@@ -1729,9 +1730,7 @@ pub fn patterned_plate() -> Program {
                 spacing: Spacing::step(2.0),
             },
             second: None,
-            combine: Combine::Difference {
-                target: "extrude(plate)".into(),
-            },
+            combine: Combine::NewBody,
         },
     );
     program
