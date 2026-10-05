@@ -2952,3 +2952,53 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     let params = geop_core_topology::validation::ValidationParameters::default();
     geop_core_topology::validation::validate(&params, part.topology()).unwrap();
 }
+
+/// The default view of an empty part, as the browser sends it — 1920 x
+/// 1080, the camera at `(66, 44, 88)` looking at the origin: a line's
+/// first click on the origin, its second 160 px right of and 90 px above
+/// it. Both place a point, and the line between them is drawn. (Reported
+/// as placing nothing: in a 1400 x 900 window that spot lies under the
+/// step's dialog, and the viewer sends no click there at all.)
+#[test]
+fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
+    let mut editor = editing(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let eye = |dir: [f64; 3]| {
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        Pointer {
+            ray: Ray::try_new(
+                v([65.90889047678681, 43.93926031785788, 87.87852063571576]),
+                v(dir),
+            )
+            .unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.00838515269409588),
+            },
+        }
+    };
+    for dir in [
+        [-0.5570860145310995, -0.3713906763541206, -0.7427813527082412],
+        [-0.4499813577124772, -0.2893350678973743, -0.8448680347817981],
+    ] {
+        let hover = editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: eye(dir),
+                shift: false,
+            },
+        });
+        let visuals = hover.step.unwrap().presentation.visuals;
+        assert!(
+            visuals.iter().any(|v| v.key == "snap"),
+            "where the click goes is shown: {visuals:?}"
+        );
+        editor.handle(click_at(eye(dir)));
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch3d(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a 3-D sketch");
+    };
+    assert_eq!(args.sketch.curves.len(), 1, "{:?}", args.sketch);
+}
