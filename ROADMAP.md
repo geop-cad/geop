@@ -1,88 +1,97 @@
-# Roadmap: what geop still needs to design a robot
+# Roadmap: what geop needs to design a robot
 
 The yardstick is SolidWorks, Onshape, Fusion 360, Rhino, Creo and NX, but only
 the features an engineer reaches for when designing a real machine such as a
 robot: its structure, drive train, enclosures, wiring and fasteners. Breadth
 for its own sake (CAM, CAE, rendering, PDM) is out of scope.
 
-## What geop has (October 2026)
+In October 2026 geop had 2-D sketches, extrude/revolve/sweep/loft, booleans,
+fillets and chamfers on straight and circular edges, shell, datums,
+parameters, multi-file assemblies with simple mates, and STL export. The list
+below is what was missing then, and where each item stands now.
 
-- 2-D constraint sketches: lines, arcs, circles, splines, slots and arc
-  slots, polygons; 23 constraint kinds, projections of the part, trim,
-  fillet and chamfer corners; offset, mirror, linear and circular patterns,
-  tied to their source by constraints.
-- Extrude and revolve (blind, up to next, through all, symmetric, two sides),
-  sweep along a sketch path, loft (with matching points).
-- Booleans (union, intersection, difference) and split by a face.
-- Fillet and chamfer on straight and circular edges, mitred at corners.
-- Shell, delete body, extract face, project a curve onto a face.
-- Datums: points, axes, planes, coordinate systems.
-- Parameters and formulas, multi-file workspaces, placed parts with mates
-  (coincident, concentric, parallel, perpendicular, distance, angle), drag.
-- STL export; web editor (wasm) and VS Code extension (native `geop serve`).
-
-## Missing, by area
-
-Each item names the workstream that delivers it (see below). Items marked
-*later* are deliberately left out of this round.
+## Done
 
 ### Sketching and reference geometry
-- 3-D sketches: points, lines and interpolating splines in space, snapping to
-  model vertices and datums, usable as sweep paths and guide rails.
-  — `sketch3d`
-- Helix and spiral curves (pitch, turns, taper) as paths. — `hole-thread`
-- Sketch patterns and offset curves. — `sketch2` (done; text in sketches
-  *later*)
+- 2-D sketches: slots, arc slots, polygons, sketch fillets and chamfers;
+  offset, mirror, linear and circular patterns tied to their source by
+  constraints; auto-tangent; redundant but consistent constraints proven,
+  conflicting ones named.
+- 3-D sketches: points, lines, 3-point arcs, splines; snapping to the model;
+  usable as sweep paths and rails.
+- Helices (exact on their cylinder) as thread and sweep paths.
 
 ### Part features
-- Hole feature: simple, counterbore, countersink, tapped, clearance sizes from
-  ISO tables, placed at sketch points on a face. — `hole-thread`
-- Threads: cosmetic (recorded, drawn) and modelled helical threads. —
-  `hole-thread`
-- Linear and circular patterns, mirror, move/copy body. — `pattern`
-- Rib, lip/groove (enclosure joints), draft on planar faces. — `plastic`
-- Fillets on arbitrary (free-form) edges, variable radius. — `fillet-general`
-- Sheet metal: base and edge flanges, bends with K-factor, flat pattern. —
-  `sheetmetal`
+- Holes: simple, counterbore, countersink, tapped; ISO 273/261/2306 tables;
+  blind with drill point, up to next, through all.
+- Threads: cosmetic (drawn in the view and in drawings) and modelled.
+- Linear and circular patterns, mirror, move/copy body.
+- Rib, lip and groove, draft on planar faces.
+- Fillets on any edge (rolling ball), tangent chains, variable radius,
+  rounded corners where three fillets meet; chamfers on any edge.
+- Sheet metal: base and edge flanges, hems, open and closed corners, cuts
+  after flanging (across bends), exact flat pattern, DXF for laser cutting.
+- Operation dimensions as formulas of parameters; parameters renamed
+  everywhere they are read.
 
 ### Sweeps and surfacing
-- Sweep with guide rails (profile scaled and oriented by rails), twist and
-  orientation control; loft with guide curves. — `sweep-guides`
-- Surfaces: boundary (Coons) and N-sided fill, offset surface, thicken, knit
-  faces into a solid, trim and extend. — `surfacing`
-- Subdivision surfaces: Catmull–Clark cage editing (extrude face, crease),
-  converted to a NURBS solid. — `subd`
+- Sweeps with one or two guide rails, twist, end scale, fixed or following
+  orientation; lofts with up to three guide curves.
+- Ruled, boundary (Coons, tangent to adjacent planes) and N-sided fill
+  surfaces, offset surface, thicken, knit into solids, trim, extend.
+- Subdivision surfaces: Catmull–Clark cage editing with creases and mirror,
+  converted to a valid NURBS solid.
 
 ### Assemblies
-- Mates for mechanisms: revolute and slider with limits, gear, rack and
-  pinion, screw. Patterns of placed parts. — `assembly`
-- Smarter caching: invalidate only the files a change reaches, share meshes
-  between instances, build independent parts in parallel; measured on an
-  assembly of hundreds of instances. — `caching`
-- Standard parts: ISO metric screws, nuts, washers, bearings, dowel pins,
-  standoffs, 20-series aluminium extrusions; placed like any other file. —
-  `stdlib`
-- Wire harness: routes through clips and connectors in an assembly, bend
-  radius checked, bundle diameter swept, cut lengths reported. — `harness`
+- Joints: revolute, slider, cylindrical, fastened, with limits; gear, rack
+  and pinion and screw couplings; degrees of freedom and conflicting mates
+  reported; part patterns.
+- Caching for large assemblies: incremental workspace, instanced drawing,
+  independent groups solved apart (a drag in 2000 parts takes about 0.25 s).
+- Standard parts: ISO screws, nuts, washers, dowel pins, standoffs, bearings,
+  T-slot extrusions, NEMA 17 steppers (`std:` files), with datums for mating,
+  designations and materials.
+- Wire harness routes: connectors and clips, bend radius checked, cut lengths.
 
 ### Inspection and output
-- Measure (distance, angle), mass properties (volume, area, centre of mass,
-  inertia), interference check, section view. — `inspect`
-- STEP AP214/AP242 import and export of B-rep solids, validated against a
-  downloaded public corpus. — `step`
-- Drawings: projected views with hidden lines, dimensions, export to SVG and
-  DXF; assembly drawings with hidden lines across parts and ballooned bills
-  of materials. — `drawings`
-- URDF export of an assembly for robot simulation: links from rigidly
-  held parts, revolute/continuous/prismatic joints, mimics from couplings,
-  inertia, meshes; closed loops refused. — `urdf`
-- Configurations, design tables, BOM tables, PDM, rendering, CAM, FEA. —
-  *later* or out of scope
+- Measure, mass properties from the exact B-rep, interference, section view.
+- Bills of materials, flat or indented, CSV, `geop bom`.
+- Drawings: projected views with hidden lines and silhouettes, sections,
+  dimensions, threads, title block; assembly drawings with balloons and a
+  BOM table; SVG and DXF.
+- STEP AP214 import and export; assemblies exported as product structure;
+  318 of 361 public corpus files import valid (`scripts/fetch_corpus.sh`).
+- URDF export of jointed assemblies for robot simulators.
+- STL download in the web app.
 
-## Testing policy for new features
+### Editor and front ends
+- Web app and VS Code extension: every operation, inspect and BOM panels,
+  joint values, every export; camera framing; a scrolling toolbar; the
+  kernel restarted with the program after a crash.
+- End-to-end checks: `npm run e2e` and `npm run e2e:vscode` in `web/`.
+
+## Next
+
+- Booleans and geometry: surface evaluation over an interval parameter
+  still uses one knot span (curves now unite all spans), the main remaining
+  cost in the slow stress tests; an arc split many times grows wide; a
+  fixed-point cylinder far from the origin exhausts its search budget.
+- Fillets: rolling over a crease, mitres for rolled fillets, corners where
+  fillets arrive with different radii.
+- STEP: rebuild edges that disagree with their faces from the kernel's own
+  intersections (most of the remaining corpus failures); assembly import as
+  placed parts.
+- Drawings: exploded views; parts that pass through each other.
+- Assemblies: actuator effort and velocity for URDF; collision checks for
+  harness routes.
+- Configurations, design tables beyond table parameters, PDM, rendering, CAM,
+  FEA: later, or out of scope.
+
+## Testing policy
 
 Every feature gets a fast test that it still works, run by `cargo test`, and,
 where depth is needed, validation tests marked
 ``#[ignore = "slow: … — run with `cargo test -- --ignored`"]``. Anything a user
 reaches through the editor also gets a test in `editor_tests.rs` that drives
-it the way the front end does.
+it the way the front end does, and the flows that matter most are checked
+end to end in a browser by `npm run e2e`.
