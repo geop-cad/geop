@@ -416,7 +416,7 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
 
 await check("a 3-D sketch's point is clicked and measured, as a vertex", async () => {
   await fresh();
-  await operation("3-D sketch").click();
+  await clickOperation(page, "3-D sketch");
   await settle(page);
   // Two points in the plane through the origin, facing the eye: a line.
   await clickView(-220, -90);
@@ -604,7 +604,7 @@ async function dragGizmo(part, from, to, name) {
 
 await check("a subd cage face is moved up by the gizmo's arrow", async () => {
   await fresh();
-  await operation("SubD").click();
+  await clickOperation(page, "SubD");
   await settle(page);
   await page.locator("button.fit-view").click();
   await page.waitForTimeout(1200);
@@ -632,7 +632,7 @@ await check("a subd cage face is moved up by the gizmo's arrow", async () => {
 
 await check("a 3-D sketch point is dragged along an axis by the gizmo", async () => {
   await fresh();
-  await operation("3-D sketch").click();
+  await clickOperation(page, "3-D sketch");
   await settle(page);
   // A line: from the origin out, then put down — Escape ends it, Escape
   // again takes up selecting — and its end clicked to select it.
@@ -711,7 +711,7 @@ await check("a drawing is dimensioned on its sheet and downloaded from its dialo
   await fresh();
   await fileMenu(page, "Box with drill hole");
   await builtCleanly();
-  await operation("Drawing").click();
+  await clickOperation(page, "Drawing");
   await settle(page);
   // The sheet, framed head on: wait for the camera to glide there.
   await page.waitForTimeout(1500);
