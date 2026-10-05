@@ -31,7 +31,7 @@ use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
     contains::{
         face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
-        shell::{PointClassification as ShellPoint, shell_contains},
+        shell::{PointClassification as ShellPoint, shell_contains, shell_contains_from},
     },
 };
 use geop_ops::{Namer, Part};
@@ -302,9 +302,10 @@ fn combine<S: Scalar>(
     let mut decisions: HashMap<FaceId, (FaceClassification, Keep)> = HashMap::new();
     let mut keep: Vec<FaceId> = Vec::new();
     let mut reverse: Vec<FaceId> = Vec::new();
+    let mut classified = Classified::default();
     for (faces, from_a, other) in [(&faces_a, true, solid_b), (&faces_b, false, solid_a)] {
         for &face_id in faces {
-            let class = classify_face(model, face_id, other, params)
+            let class = classify_face(model, face_id, other, params, &mut classified)
                 .with_context(&ctx)
                 .with_context(&|e: GeopError| {
                     e.with_context(format!("classifying face {face_id}"))
@@ -658,11 +659,18 @@ fn check_closed<S: Scalar>(
 /// `face_interior_point_where`); any point off the other solid's boundary
 /// classifies the whole face. Only if every one lies on it are the patches
 /// coincident, and their normals are compared.
+///
+/// Each point is classified from the nearest point `classified` already
+/// holds — of this face or one classified before — along the segment
+/// between them (see `shell_contains_from`), and added to it: one ray
+/// across the whole solid for the first point of a boolean, and short ones
+/// after it, instead of one across the solid for every point.
 pub fn classify_face<S: Scalar>(
     model: &Model<S>,
     face_id: FaceId,
     other_solid: SolidId,
     params: RemeshParams<S>,
+    classified: &mut Classified<S>,
 ) -> GeopResult<FaceClassification> {
     let face = model.get_face(face_id)?;
     let shells = model.get_solid(other_solid)?.shells.clone();
@@ -680,14 +688,25 @@ pub fn classify_face<S: Scalar>(
             // its outer shell, but not in a void.
             let mut inside = false;
             for &shell_id in &shells {
-                match shell_contains(
-                    model,
-                    shell_id,
-                    point,
-                    params.max_nodes,
-                    params.curve_curve_min_subdivision_size,
-                    SEED,
-                )? {
+                let (max_nodes, epsilon) =
+                    (params.max_nodes, params.curve_curve_min_subdivision_size);
+                let class = match classified.nearest(shell_id, &point) {
+                    Some((from, from_inside)) => shell_contains_from(
+                        model,
+                        shell_id,
+                        point,
+                        from,
+                        from_inside,
+                        max_nodes,
+                        epsilon,
+                        SEED,
+                    )?,
+                    None => shell_contains(model, shell_id, point, max_nodes, epsilon, SEED)?,
+                };
+                if let ShellPoint::Inside | ShellPoint::Outside = class {
+                    classified.add(shell_id, point, class == ShellPoint::Inside);
+                }
+                match class {
                     ShellPoint::Inside => inside = !inside,
                     ShellPoint::Outside => {}
                     ShellPoint::OnFace | ShellPoint::OnEdge | ShellPoint::OnVertex => {
@@ -758,6 +777,36 @@ pub fn classify_face<S: Scalar>(
             "classify_face: face {face_id} yielded interior points, yet none was classified or set aside"
         )),
     })
+}
+
+/// Points already classified against shells, each strictly inside or
+/// outside: what [`classify_face`] classifies later points from.
+pub struct Classified<S: Scalar> {
+    points: Vec<(ShellId, Vector3<S>, bool)>,
+}
+
+impl<S: Scalar> Default for Classified<S> {
+    fn default() -> Self {
+        Self { points: Vec::new() }
+    }
+}
+
+impl<S: Scalar> Classified<S> {
+    /// The point classified against `shell` nearest to `point`, and whether
+    /// it is inside: which one is a free choice, so it is chosen by the
+    /// midpoints.
+    fn nearest(&self, shell: ShellId, point: &Vector3<S>) -> Option<(Vector3<S>, bool)> {
+        let distance = |p: &Vector3<S>| p.sub(point).norm_sq().to_f64();
+        self.points
+            .iter()
+            .filter(|(s, _, _)| *s == shell)
+            .min_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)))
+            .map(|&(_, p, inside)| (p, inside))
+    }
+
+    fn add(&mut self, shell: ShellId, point: Vector3<S>, inside: bool) {
+        self.points.push((shell, point, inside));
+    }
 }
 
 /// The normal of whichever face of `shell_id` contains `point`.
@@ -850,7 +899,16 @@ mod tests {
         let mut inside = 0;
         let mut outside = 0;
         for face_id in s.part.topology().solid_faces(s.solid_a).unwrap() {
-            match classify_face(s.part.topology(), face_id, s.solid_b, params).unwrap() {
+            let mut classified = super::Classified::default();
+            match classify_face(
+                s.part.topology(),
+                face_id,
+                s.solid_b,
+                params,
+                &mut classified,
+            )
+            .unwrap()
+            {
                 FaceClassification::Inside => inside += 1,
                 FaceClassification::Outside => outside += 1,
                 _ => {}

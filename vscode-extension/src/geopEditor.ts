@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { GeopServer } from "./server";
+import { GeopServer, KernelCrashed, restoreCommands } from "./server";
 
 /** What the page sends to the extension; see `web/src/backend.vscode.ts`. */
 type FromPage =
@@ -43,16 +43,6 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
     const media = vscode.Uri.joinPath(this.context.extensionUri, "media");
     panel.webview.options = { enableScripts: true, localResourceRoots: [media] };
     panel.webview.html = this.html(panel.webview, media);
-
-    let server: GeopServer;
-    try {
-      server = GeopServer.start(this.executable(), (text) => this.log.append(text));
-    } catch (e) {
-      panel.webview.html = failure(String(e));
-      return;
-    }
-    const subscriptions: vscode.Disposable[] = [{ dispose: () => server.dispose() }];
-    panel.onDidDispose(() => subscriptions.forEach((s) => s.dispose()));
 
     /** The program last exchanged with the page, canonically written: what the document already says, so it need not be sent or written again. */
     let known: string | null = null;
@@ -106,9 +96,10 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
     const sendFiles = (files: Record<string, string | null>) => {
       if (Object.keys(files).length > 0) void panel.webview.postMessage({ type: "files", files });
     };
-    const sendAllFiles = async () => {
+    /** Every other program file of the folder, by path. */
+    const allFiles = async () => {
       const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, FILES), "**/node_modules/**");
-      const files: Record<string, string | null> = {};
+      const files: Record<string, string> = {};
       for (const uri of uris.filter(isOther)) {
         try {
           files[pathOf(uri)] = await textOf(uri);
@@ -116,12 +107,29 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
           this.log.appendLine(`could not read ${uri.fsPath}: ${e}`);
         }
       }
-      sendFiles(files);
+      return files;
     };
+    const sendAllFiles = async () => sendFiles(await allFiles());
     const sendDocument = () => {
       known = canonical(document.getText());
       void panel.webview.postMessage({ type: "document", text: document.getText(), path: pathOf(document.uri) });
     };
+    let server: GeopServer;
+    try {
+      // A kernel that crashes is restarted with the files and the document
+      // as they are now: the program as the page last wrote it.
+      server = new GeopServer(
+        this.executable(),
+        (text) => this.log.append(text),
+        async () => restoreCommands(await allFiles(), document.getText(), pathOf(document.uri)),
+      );
+    } catch (e) {
+      panel.webview.html = failure(String(e));
+      return;
+    }
+    const subscriptions: vscode.Disposable[] = [{ dispose: () => server.dispose() }];
+    panel.onDidDispose(() => subscriptions.forEach((s) => s.dispose()));
+
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, FILES));
     /** A file changed on disk: sent, unless it is open — then its edits are what counts, and were sent as made. */
     const onDisk = async (uri: vscode.Uri) => {
@@ -175,7 +183,8 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
               const update = await server.request(message.command);
               void panel.webview.postMessage({ type: "answer", id: message.id, update });
             } catch (e) {
-              void panel.webview.postMessage({ type: "failure", id: message.id, message: String(e) });
+              const crashed = e instanceof KernelCrashed;
+              void panel.webview.postMessage({ type: "failure", id: message.id, message: (e as Error).message, crashed });
             }
             break;
           case "program":

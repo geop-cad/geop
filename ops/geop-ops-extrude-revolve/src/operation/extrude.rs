@@ -102,6 +102,10 @@ impl Operation for Extrude {
     type Args = ExtrudeArgs;
     type Session = ();
 
+    fn formulas<'a>(&self, args: &'a mut ExtrudeArgs) -> Vec<&'a mut String> {
+        args.extent.formulas()
+    }
+
     /// The newest sketch, a unit up, joined to the newest solid if there is
     /// one.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> ExtrudeArgs {

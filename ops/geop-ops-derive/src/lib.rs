@@ -68,6 +68,7 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
     let mut form_arms = Vec::new();
     let mut set_arms = Vec::new();
     let mut event_arms = Vec::new();
+    let mut formulas_arms = Vec::new();
     let mut kind_arms = Vec::new();
     let mut label_arms = Vec::new();
     let mut froms = Vec::new();
@@ -144,6 +145,9 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 },
                 event,
             ),
+        });
+        formulas_arms.push(quote! {
+            #name::#op(args) => #operation::formulas(&#op, args),
         });
         kind_arms.push(quote! { #name::#op(_) => #kind, });
         label_arms.push(quote! { #name::#op(_) => #label, });
@@ -232,6 +236,12 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
             ) {
                 match self {
                     #(#event_arms)*
+                }
+            }
+
+            fn formulas(&mut self) -> ::std::vec::Vec<&mut ::std::string::String> {
+                match self {
+                    #(#formulas_arms)*
                 }
             }
 

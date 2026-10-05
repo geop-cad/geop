@@ -21,7 +21,7 @@ use super::{
 };
 use crate::nurb_surface::clamp;
 use crate::{
-    aabb::aabb_could_overlap,
+    aabb::{aabb_could_overlap, curve_could_meet_aabb},
     contains::curve::curve_could_contain,
     fat_line::{
         Stalled, carried_width, chord, clip_tensor, extent, greville_abscissae, restriction,
@@ -334,8 +334,12 @@ where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {
     // Disjoint bounding boxes rule out crossings and overlaps alike, before
-    // any candidate probe runs.
-    if max_solutions == 0 || !aabb_could_overlap(&curve_a.aabb, &curve_b.aabb, C) {
+    // any candidate probe runs — a straight segment's own extent, not its
+    // box (see `curve_could_meet_aabb`).
+    if max_solutions == 0
+        || !curve_could_meet_aabb(curve_a, &curve_b.aabb, C)
+        || !curve_could_meet_aabb(curve_b, &curve_a.aabb, C)
+    {
         return Ok(Intersections::Found(vec![]));
     }
     let ctx = |e: GeopError| {

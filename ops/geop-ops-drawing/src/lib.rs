@@ -1,19 +1,22 @@
 //! 2-D engineering drawings of a part: projected views with hidden lines
-//! and silhouettes ([`hidden_lines`]), laid out on a sheet with dimensions,
-//! centre marks and a title block ([`sheet`]), written as SVG or DXF, and
-//! the [`Drawing`] operation of a program, which describes one.
+//! and silhouettes ([`hidden_lines`]) — of an assembly, of every part
+//! placed, where it is placed ([`scene`]) — laid out on a sheet with
+//! dimensions, centre marks, a title block and a ballooned bill of
+//! materials ([`sheet`]), written as SVG or DXF, and the [`Drawing`]
+//! operation of a program, which describes one.
 
 pub mod drawing;
 pub mod dxf;
 pub mod hidden_lines;
 pub mod operation;
+pub mod scene;
 pub mod section;
 pub mod sheet;
 pub mod silhouette;
 pub mod svg;
 pub mod view;
 
-pub use drawing::{Dimension, DrawingArgs, Projection, SheetSize, compose};
+pub use drawing::{Dimension, DrawingArgs, PartsListLine, Projection, SheetSize, compose};
 pub use dxf::to_dxf;
 pub use hidden_lines::{LineKind, ProjectedView, ViewLine, ViewOptions, project_view};
 pub use operation::Drawing;
@@ -58,15 +61,16 @@ impl Format {
     }
 }
 
-/// `part`'s drawing as `args` describe it, dated `date`, written as
-/// `format`.
+/// `part`'s drawing as `args` describe it, dated `date`, with `parts` its
+/// bill of materials if `args` asks for one, written as `format`.
 pub fn render<S: Scalar>(
     part: &geop_ops::Part<S>,
     args: &DrawingArgs,
     date: &str,
+    parts: &[PartsListLine],
     format: Format,
 ) -> geop_core_math::geop_error::GeopResult<String> {
-    let sheet = compose(part, args, date)?;
+    let sheet = compose(part, args, date, parts)?;
     Ok(match format {
         Format::Svg => to_svg(&sheet),
         Format::Dxf => to_dxf(&sheet),

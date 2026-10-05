@@ -20,16 +20,38 @@ thread_local! {
     static EDITOR: RefCell<Editor<S>> = RefCell::new(Editor::new());
 }
 
+#[wasm_bindgen]
+extern "C" {
+    /// Told every panic's message just before the module traps. The page
+    /// runs the module in a worker that defines it (see
+    /// `web/src/kernel.worker.ts`), and says why the kernel crashed with it.
+    #[wasm_bindgen(js_name = geopPanicked)]
+    fn panicked(message: &str);
+}
+
 /// Install a panic hook that forwards Rust panics to the JS console with a
-/// proper stack trace, instead of an opaque "unreachable executed" trap.
-/// Call once, right after the wasm module is instantiated.
+/// proper stack trace, instead of an opaque "unreachable executed" trap,
+/// and tells the page what panicked. Call once, right after the wasm module
+/// is instantiated.
+///
+/// A panic aborts on wasm: nothing unwinds, so the editor stays borrowed
+/// and this instance runs no further command. The page starts a fresh one
+/// with the program it holds.
 #[wasm_bindgen]
 pub fn init_panic_hook() {
-    console_error_panic_hook::set_once();
+    std::panic::set_hook(Box::new(|info| {
+        console_error_panic_hook::hook(info);
+        panicked(&info.to_string());
+    }));
 }
 
 fn handle_json(command: &str) -> Result<String, String> {
-    EDITOR.with(|editor| editor.borrow_mut().handle_json(command))
+    EDITOR.with(|editor| {
+        editor
+            .try_borrow_mut()
+            .map_err(|_| "the kernel crashed in an earlier command: start a fresh one".to_string())?
+            .handle_json(command)
+    })
 }
 
 /// Apply a command (JSON `geop_cad_base::Command`) and return what to show
@@ -65,7 +87,13 @@ mod tests {
             serde_json::json!([0.0, 0.0, 1.0])
         );
 
-        send(serde_json::json!({"command": "load", "program": {"steps": []}}));
+        let empty = send(serde_json::json!({"command": "load", "program": {"steps": []}}));
+        // Drawn as big as a robot's part, not 1 mm: lengths are millimetres
+        // (`geop_ops::ui::EMPTY_EXTENT`).
+        assert_eq!(
+            empty["scene"]["part"]["extent"]["size"],
+            serde_json::json!(100.0)
+        );
         let started = send(serde_json::json!({"command": "new", "kind": "add_sketch"}));
         let step = &started["step"];
         assert_eq!(step["presentation"]["dialog"][0]["type"], "reference");

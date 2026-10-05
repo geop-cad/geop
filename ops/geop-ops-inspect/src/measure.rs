@@ -110,12 +110,15 @@ fn alone<S: Scalar>(
         EntityRef::Solid { name } => {
             let density = owner.material().map_or(UNGIVEN_DENSITY, |m| m.density);
             let per_mm3 = S::from_f64(density).div(S::from_f64(1e9))?;
+            let solid = owner.solid_id(name)?;
             let mass = owner
                 .topology()
-                .mass_properties(owner.solid_id(name)?, per_mm3)
-                .with_context(&ctx)?;
+                .mass_properties(solid)
+                .with_context(&ctx)?
+                .with_density(per_mm3);
+            let (area, _) = owner.topology().solid_area(solid).with_context(&ctx)?;
             out.values.push(measured("Volume", mass.volume, "mm³"));
-            out.values.push(measured("Area", mass.area, "mm²"));
+            out.values.push(measured("Area", area, "mm²"));
             out.values.push(measured("Mass", mass.mass, "kg"));
         }
         _ => {}

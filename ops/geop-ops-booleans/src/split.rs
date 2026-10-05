@@ -30,7 +30,7 @@ use geop_core_topology::{
 use geop_ops::{BodyNames, Namer, Part, RefId};
 
 use crate::{
-    boolean::{FaceClassification, classify_face},
+    boolean::{Classified, FaceClassification, classify_face},
     remesh::remesh::{RemeshParams, remesh},
 };
 
@@ -83,8 +83,9 @@ pub fn split<S: Scalar>(
     let model = part.topology();
     let solid_faces = model.solid_faces(solid).with_context(&ctx)?;
     let mut cuts = Vec::new();
+    let mut classified = Classified::default();
     for face in model.body_faces(cutter).with_context(&ctx)? {
-        let class = classify_face(model, face, solid, params)
+        let class = classify_face(model, face, solid, params, &mut classified)
             .with_context(&ctx)
             .with_context(&|e: GeopError| e.with_context(format!("classifying face {face}")))?;
         if class == FaceClassification::Inside {
@@ -110,7 +111,9 @@ pub fn split<S: Scalar>(
     let turned = |i: usize| i + k;
     let mut pieces = UnionFind::new(n + 2 * k);
     let mut users: HashMap<EdgeId, Vec<(usize, geop_core_topology::Sense)>> = HashMap::new();
-    for (&face, &i) in &side {
+    // In the order of the sides, not of the map: it decides the order of
+    // each edge's users below.
+    for (i, &face) in solid_faces.iter().chain(&cuts).enumerate() {
         for coedge in model.iterate_face_coedges(face) {
             let coedge = model.get_coedge(coedge)?;
             if let CoedgeGeometry::Edge(edge) = coedge.geometry {

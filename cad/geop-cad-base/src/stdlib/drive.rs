@@ -51,7 +51,7 @@ use super::{
         Around, axis_datum, col, extrude, offset_datum, outline_plane, plane_datum, profile_plane,
         revolve, size, z_axis,
     },
-    tables,
+    tables, titled,
 };
 use crate::Program;
 
@@ -123,7 +123,7 @@ fn steel() -> Option<Material> {
 /// plane, bored `bore` through: a disc of the tip diameter, the gap of
 /// [`involute::gap`] patterned round it and cut away. Its datums: `axis`,
 /// `side`, and the sketch `pitch`, its pitch circle on the side.
-pub fn spur_gear() -> GeopResult<StandardPart> {
+pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: steel(),
@@ -139,6 +139,7 @@ pub fn spur_gear() -> GeopResult<StandardPart> {
                 100.0,
             ),
         ],
+        ..Parameters::default()
     };
     let m = col("m");
     let z = format!("{TEETH}.z");
@@ -241,11 +242,13 @@ pub fn spur_gear() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
-        file: "std:spur_gear.geop",
-        title: "Involute spur gear, 20° pressure angle",
-        designation: "Spur gear",
+        file,
         base: "side",
-        program,
+        program: titled(
+            program,
+            "Involute spur gear, 20° pressure angle",
+            "Spur gear",
+        ),
         threaded: Vec::new(),
     })
 }
@@ -266,7 +269,7 @@ pub const RACK_TEETH: usize = 30;
 /// rack's long edges dozens of times over. Its datums: `axis`, the `z` axis
 /// on the pitch plane — a slider joint's connector — `pitch`, `back`, and
 /// `end`.
-pub fn rack() -> GeopResult<StandardPart> {
+pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: steel(),
@@ -275,6 +278,7 @@ pub fn rack() -> GeopResult<StandardPart> {
             size(tables::racks()),
             number("teeth", "20", 1.0, RACK_TEETH as f64),
         ],
+        ..Parameters::default()
     };
     let (m, b, h) = (col("m"), col("b"), col("h"));
     // In the profile plane: `x` up the teeth, along `y`; `y` along `z`.
@@ -333,11 +337,9 @@ pub fn rack() -> GeopResult<StandardPart> {
     offset_datum(&mut program, "back", xz(), &format!("-{h}"));
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
-        file: "std:gear_rack.geop",
-        title: "Gear rack, 20° pressure angle",
-        designation: "Gear rack",
+        file,
         base: "back",
-        program,
+        program: titled(program, "Gear rack, 20° pressure angle", "Gear rack"),
         threaded: Vec::new(),
     })
 }
@@ -374,6 +376,7 @@ fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<
         material: aluminium(),
         color: Some("#c8ccd2".into()),
         values: vec![size(bores)],
+        ..Parameters::default()
     };
     let (d, dh, lh) = (col("d"), col("dh"), col("lh"));
     let (t, w) = (1.0, 7.0);
@@ -463,24 +466,22 @@ fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<
     program.push("pitch", circle.on(EntityRef::datum("belt"))?);
     Ok(StandardPart {
         file,
-        title: "GT2 timing pulley, 6 mm belt",
-        designation: "GT2 pulley",
         base: "end",
-        program,
+        program: titled(program, "GT2 timing pulley, 6 mm belt", "GT2 pulley"),
         threaded: Vec::new(),
     })
 }
 
-pub fn gt2_pulley_16() -> GeopResult<StandardPart> {
-    gt2_pulley(16, "std:gt2_pulley_16t.geop", tables::gt2_pulleys(16))
+pub fn gt2_pulley_16(file: &'static str) -> GeopResult<StandardPart> {
+    gt2_pulley(16, file, tables::gt2_pulleys(16))
 }
 
-pub fn gt2_pulley_20() -> GeopResult<StandardPart> {
-    gt2_pulley(20, "std:gt2_pulley_20t.geop", tables::gt2_pulleys(20))
+pub fn gt2_pulley_20(file: &'static str) -> GeopResult<StandardPart> {
+    gt2_pulley(20, file, tables::gt2_pulleys(20))
 }
 
-pub fn gt2_pulley_36() -> GeopResult<StandardPart> {
-    gt2_pulley(36, "std:gt2_pulley_36t.geop", tables::gt2_pulleys(36))
+pub fn gt2_pulley_36(file: &'static str) -> GeopResult<StandardPart> {
+    gt2_pulley(36, file, tables::gt2_pulleys(36))
 }
 
 /// A shaft collar after DIN 705 A: a ring bored `d`, `D` across and `b`
@@ -488,12 +489,13 @@ pub fn gt2_pulley_36() -> GeopResult<StandardPart> {
 /// through its wall along `+x`, half way up: the thread's nominal
 /// diameter. The boolean cutting it names the hole's faces after what it
 /// crossed, so they are not listed as threaded.
-pub fn shaft_collar() -> GeopResult<StandardPart> {
+pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: steel(),
         color: Some("#8e949c".into()),
         values: vec![size(tables::shaft_collars())],
+        ..Parameters::default()
     };
     let (d, big, b) = (col("d"), col("D"), col("b"));
     let mut profile = Drawing::new(&program.parameters)?;
@@ -534,11 +536,13 @@ pub fn shaft_collar() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     Ok(StandardPart {
-        file: "std:shaft_collar.geop",
-        title: "Shaft collar with set screw, DIN 705 A",
-        designation: "DIN 705 A",
+        file,
         base: "base",
-        program,
+        program: titled(
+            program,
+            "Shaft collar with set screw, DIN 705 A",
+            "DIN 705 A",
+        ),
         threaded: Vec::new(),
     })
 }
@@ -548,12 +552,13 @@ pub fn shaft_collar() -> GeopResult<StandardPart> {
 /// on the `xy` plane, and between them, in the middle, the bolted flanges
 /// `F` across and `f` thick together. Its datums: `axis`, `end` — the `d1`
 /// end — and `far_end`.
-pub fn flange_coupling() -> GeopResult<StandardPart> {
+pub fn flange_coupling(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: aluminium(),
         color: Some("#c8ccd2".into()),
         values: vec![size(tables::flange_couplings())],
+        ..Parameters::default()
     };
     let (d1, d2, big, flange, l, f) =
         (col("d1"), col("d2"), col("D"), col("F"), col("L"), col("f"));
@@ -588,11 +593,9 @@ pub fn flange_coupling() -> GeopResult<StandardPart> {
     plane_datum(&mut program, "end", "0");
     plane_datum(&mut program, "far_end", &l);
     Ok(StandardPart {
-        file: "std:flange_coupling.geop",
-        title: "Rigid flange shaft coupling",
-        designation: "Flange coupling",
+        file,
         base: "end",
-        program,
+        program: titled(program, "Rigid flange shaft coupling", "Flange coupling"),
         threaded: Vec::new(),
     })
 }

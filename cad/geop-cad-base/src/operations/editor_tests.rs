@@ -808,6 +808,10 @@ fn new_route_is_picked_and_its_wires_chosen() {
 /// A sweep made in the editor: the horn's sketches picked, its rail
 /// dropped for a twist and taper, the profile kept facing one way —
 /// the dialog showing the twist and scale only once there is no rail.
+///
+/// It is made a new body first: joined to the horn, every change in the
+/// dialog would run a boolean of the sweep with it, which is not what is
+/// tested here.
 #[test]
 fn sweep_with_rails_twist_and_orientation() {
     let mut editor = Editor::new();
@@ -828,6 +832,7 @@ fn sweep_with_rails_twist_and_orientation() {
     editor.handle(Command::New {
         kind: "sweep".into(),
     });
+    editor.handle(dialog("combine", Value::Choice("new_body".into())));
     let sketch = |name: &str| Value::Entities(vec![EntityRef::Sketch { name: name.into() }]);
     editor.handle(dialog("profile", sketch("mouth")));
     editor.handle(dialog("path", sketch("axis")));
@@ -850,7 +855,6 @@ fn sweep_with_rails_twist_and_orientation() {
         panic!("the twist is shown without rails");
     };
     assert_eq!(twist.value, 90.0);
-    editor.handle(dialog("combine", Value::Choice("new_body".into())));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     assert_eq!(solids(&update), 2);
@@ -2325,4 +2329,298 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     assert_eq!(dxf.matches("\nUP 180%%d R0.03\n").count(), 1, "{dxf}");
     // Three holes, each one circle.
     assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 3, "{dxf}");
+}
+
+/// The sketch tools the way the front end uses them: a plate drawn as a
+/// rectangle with a chamfered corner, an arc slot and a circumscribed hex
+/// hole in it, and round it all an offset rim — a second sketch offset into
+/// a ring by clicks. Each extrudes into a valid solid.
+#[test]
+fn sketch_tools_draw_profiles_that_extrude() {
+    let mut editor = Editor::<S>::new();
+    let event = |editor: &mut Editor<S>, event: StepEditEvent<S>| {
+        let update = editor.handle(Command::Event { event });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        update
+    };
+    let click = |editor: &mut Editor<S>, x: f64, y: f64| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: pointer([x, y, 10.0], [0.0, 0.0, -1.0]),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    let hover = |editor: &mut Editor<S>, x: f64, y: f64| {
+        event(
+            editor,
+            StepEditEvent::Hover {
+                pointer: pointer([x, y, 10.0], [0.0, 0.0, -1.0]),
+                shift: false,
+            },
+        )
+    };
+    let key =
+        |editor: &mut Editor<S>, key: &str| event(editor, StepEditEvent::Key { key: key.into() });
+    let tool = |editor: &mut Editor<S>, name: &str| {
+        editor.handle(dialog("tool", Value::Choice(name.into())))
+    };
+    let extruded = |editor: &mut Editor<S>| {
+        let update = editor.handle(Command::Commit);
+        assert!(update.error.is_none(), "{:?}", update.error);
+        editor.handle(Command::New {
+            kind: "extrude".into(),
+        });
+        editor.handle(dialog("distance", Value::Number(0.3)));
+        let update = editor.handle(Command::Commit);
+        assert!(update.error.is_none(), "{:?}", update.error);
+        let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
+        if let Err(e) = super::regression_tests::check_valid(&part) {
+            panic!("{e}");
+        }
+        part
+    };
+    // A new sketch on the origin's xy plane, seen from above.
+    let new_sketch = |editor: &mut Editor<S>| {
+        editor.handle(Command::New {
+            kind: "add_sketch".into(),
+        });
+        click(editor, 0.04, 0.04);
+    };
+
+    new_sketch(&mut editor);
+    tool(&mut editor, "rectangle");
+    click(&mut editor, 0.2, 0.2);
+    click(&mut editor, 2.6, 1.8);
+    tool(&mut editor, "chamfer");
+    let update = click(&mut editor, 2.6, 1.8);
+    let prompt = update.step.unwrap().presentation.prompt;
+    assert!(prompt.is_some(), "the chamfer's size is asked for");
+    editor.handle(dialog("prompt", Value::Text("0.2".into())));
+    // An arc slot about (1.2, 0.6), its arc from (1.6, 0.6) half round.
+    tool(&mut editor, "arc_slot");
+    click(&mut editor, 1.2, 0.6);
+    click(&mut editor, 1.6, 0.6);
+    hover(&mut editor, 1.2, 1.0);
+    click(&mut editor, 0.8, 0.6);
+    click(&mut editor, 1.7, 0.6);
+    // A hexagon 0.3 across its flats.
+    tool(&mut editor, "polygon");
+    editor.handle(dialog("circumscribed", Value::Bool(true)));
+    click(&mut editor, 2.1, 0.7);
+    let update = click(&mut editor, 2.25, 0.7);
+    let step = update.step.unwrap();
+    match step.presentation.dialog.get("status") {
+        Some(Control::Text { text, tone }) => {
+            assert!(text.contains("1 region"), "{text}");
+            assert_ne!(*tone, Tone::Error, "{text}");
+        }
+        other => panic!("{other:?}"),
+    }
+    key(&mut editor, "Escape");
+    let part = extruded(&mut editor);
+    assert_eq!(part.solid_names().len(), 1);
+
+    // A rim round a 1 x 1 square, offset outwards by clicks.
+    new_sketch(&mut editor);
+    tool(&mut editor, "rectangle");
+    click(&mut editor, 4.0, 0.2);
+    click(&mut editor, 5.0, 1.2);
+    key(&mut editor, "o");
+    click(&mut editor, 4.5, 0.2);
+    hover(&mut editor, 4.5, 0.05);
+    click(&mut editor, 4.5, 0.05);
+    editor.handle(dialog("prompt", Value::Text("0.1".into())));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch(rim) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a sketch");
+    };
+    let regions = rim.sketch.regions().unwrap();
+    assert_eq!(regions.len(), 1, "a ring");
+    assert_eq!(regions[0].holes.len(), 1, "round the square");
+    let id = editor.program().steps.last().unwrap().id.clone();
+    editor.handle(Command::Open { id });
+    extruded(&mut editor);
+}
+
+/// What reads each parameter is sent with the program, for the parameters
+/// panel to warn before one is removed; and renaming one, as its dialog's
+/// name field does, renames it in every formula — the other parameters',
+/// a sketch's dimensions, an extrude's length, a table's columns — so
+/// nothing fails and the part is the same. A name taken, and a rename
+/// while a step is edited, are refused; undo takes a rename back.
+#[test]
+fn renaming_a_parameter_renames_what_reads_it() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadExample {
+        name: "parametric_plate".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let uses = update.program.expect("the program is sent").parameter_uses;
+    let readers = |name: &str| uses.get(name).cloned().unwrap_or_default();
+    assert_eq!(readers("width"), ["depth", "outline"]);
+    assert_eq!(readers("depth"), ["outline"]);
+    assert_eq!(readers("thickness"), ["plate"]);
+    assert_eq!(readers("screw"), ["hole_sketch"]);
+    let volume = |editor: &Editor<S>| {
+        let part = editor.part();
+        let [name] = part.solid_names().try_into().expect("one solid");
+        geop_ops_inspect::bodies::PlacedSolid {
+            solid: part.solid_id(&name).unwrap(),
+            name,
+            part,
+            component: None,
+            pose: None,
+        }
+        .mass_properties()
+        .unwrap()
+        .volume
+        .to_f64()
+    };
+    let before = volume(&editor);
+
+    for (from, to) in [
+        ("width", "plate_width"),
+        ("screw", "bolt"),
+        ("thickness", "t"),
+    ] {
+        let update = editor.handle(Command::RenameParameter {
+            from: from.into(),
+            to: to.into(),
+        });
+        assert!(update.error.is_none(), "{from} -> {to}: {:?}", update.error);
+        let program = update.program.expect("the program is sent");
+        assert!(
+            program.steps.iter().all(|s| s.error.is_none()),
+            "{:?}",
+            program.steps
+        );
+        assert!(
+            program.parameters.errors.is_empty(),
+            "{:?}",
+            program.parameters.errors
+        );
+        assert!(
+            !program.parameter_uses.contains_key(from),
+            "{from} is still read"
+        );
+    }
+    let program = editor.program();
+    let json = program.to_json().unwrap();
+    for (old, new) in [
+        ("\"width / 2\"", "\"plate_width / 2\""),
+        ("\"screw.clearance\"", "\"bolt.clearance\""),
+        ("{\"blind\":\"thickness\"}", "{\"blind\":\"t\"}"),
+    ] {
+        let compact: String = json.split_whitespace().collect();
+        assert!(
+            !compact.contains(&old.replace(' ', "")),
+            "{old} is left in {json}"
+        );
+        assert!(
+            compact.contains(&new.replace(' ', "")),
+            "{new} is not in {json}"
+        );
+    }
+    assert_eq!(volume(&editor), before);
+
+    let taken = editor.handle(Command::RenameParameter {
+        from: "depth".into(),
+        to: "t".into(),
+    });
+    let error = taken.error.expect("a name taken is refused");
+    assert!(
+        error.contains(r#"there is a parameter "t" already"#),
+        "{error}"
+    );
+    editor.handle(Command::Open { id: "plate".into() });
+    let editing = editor.handle(Command::RenameParameter {
+        from: "depth".into(),
+        to: "plate_depth".into(),
+    });
+    assert!(editing.error.is_some(), "renamed while a step is edited");
+    editor.handle(Command::Cancel);
+
+    editor.handle(Command::Undo);
+    assert!(editor.program().parameters.get("thickness").is_some());
+    assert!(editor.program().parameters.get("t").is_none());
+}
+
+/// The bolted plate's drawing with its bill of materials, as the front end
+/// makes it: a new drawing step, "Bill of materials" ticked, committed and
+/// exported. The sheet draws the parts placed, where they are placed, and
+/// lists them: the plate, and the standard screw and nut by the titles and
+/// designations their own programs carry — which name their products in
+/// a STEP file too — each line ballooned once with its item number.
+#[test]
+fn an_assembly_drawing_lists_its_parts() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "bolted_plate".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    let step = update.step.expect("a drawing is edited");
+    assert!(matches!(
+        step.presentation.dialog.get("bom"),
+        Some(Control::Checkbox { value: false, .. })
+    ));
+    editor.handle(dialog("bom", Value::Bool(true)));
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let exported = editor.handle(Command::ExportDrawing {
+        id: None,
+        format: geop_ops_drawing::Format::Svg,
+        date: "2026-10-04".into(),
+    });
+    assert!(exported.error.is_none(), "{:?}", exported.error);
+    let svg = exported.export.unwrap().text().unwrap().to_string();
+    for text in [
+        ">ITEM<",
+        ">DESIGNATION<",
+        ">ISO 4762 M4x12<",
+        ">ISO 4032 M4<",
+        ">plate<",
+        ">Steel<",
+    ] {
+        assert!(svg.contains(text), "{text} is not on the sheet");
+    }
+    // The four default views draw the parts, with their hidden lines; three
+    // balloons, each with its item number, stand on the dimension layer.
+    let layer = |name: &str| {
+        let start = svg.find(&format!("<g class=\"{name}\"")).unwrap();
+        let end = start + svg[start..].find("</g>").unwrap();
+        svg[start..end].to_string()
+    };
+    assert!(layer("VISIBLE").contains("<line"), "no view line");
+    assert!(layer("HIDDEN").contains("<line"), "no hidden line");
+    let dimensions = layer("DIMENSIONS");
+    assert_eq!(dimensions.matches("r=\"4\"/>").count(), 3, "{dimensions}");
+    for item in ["1", "2", "3"] {
+        assert!(
+            dimensions.contains(&format!(">{item}</text>")),
+            "balloon {item}"
+        );
+    }
+    // A STEP file names them so too: one product per size.
+    let step = editor.handle(Command::ExportStep);
+    let text = step
+        .export
+        .expect("a STEP file")
+        .text()
+        .unwrap()
+        .to_string();
+    assert!(
+        text.contains("PRODUCT('ISO 4762 M4x12'"),
+        "the screw's product"
+    );
+    assert!(text.contains("PRODUCT('plate'"), "the plate's product");
 }

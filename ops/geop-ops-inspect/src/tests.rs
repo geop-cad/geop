@@ -278,10 +278,11 @@ fn overlapping_and_touching_boxes() {
 fn mass_properties_are_placed() {
     let mut part = Part::<S>::new();
     let solid = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 1.0, 1.0)).unwrap();
-    let mass = part.topology().mass_properties(solid, S::ONE).unwrap();
+    let mass = part.topology().mass_properties(solid).unwrap();
     // A quarter turn about z, then up by 5.
     let pose = Pose::from_euler(v(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(S::from_f64)).unwrap();
-    let placed = MassSummary::of(&mass.placed(&pose).unwrap()).unwrap();
+    let area = part.topology().solid_area(solid).unwrap();
+    let placed = MassSummary::of(&mass.placed(&pose).unwrap(), area).unwrap();
     for (k, want) in [-0.5, 1.0, 5.5].into_iter().enumerate() {
         assert_near("centre", placed.center[k], want, 1e-9);
     }

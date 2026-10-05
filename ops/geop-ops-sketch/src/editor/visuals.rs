@@ -1,6 +1,7 @@
 //! What the sketch looks like while it is edited.
 
 use super::drawing::{Hints, construct};
+use super::modify::offset_to;
 use super::snap::curve_mid;
 use super::trim::Plan;
 use super::*;
@@ -176,6 +177,20 @@ pub(super) fn visuals<S: Scalar>(
             }
         }
     }
+    if let (Tool::Modify(ModifyTool::Offset), Some(cursor)) = (s.tool, s.cursor) {
+        for (i, points) in offset_preview(args, s, selection, cursor)
+            .into_iter()
+            .enumerate()
+        {
+            out.push(Visual::new(
+                format!("offset{i}"),
+                Shape::Polyline {
+                    points: points.into_iter().map(world).collect(),
+                },
+                Style::Draft,
+            ));
+        }
+    }
     for (&id, point) in &sketch.points {
         if hidden.contains(&id) {
             continue;
@@ -344,6 +359,7 @@ fn draft_preview(args: &AddSketchArgs, s: &SketchSession, cursor: P2) -> Vec<Vec
         let first_new = temp.next_id;
         let hints = Hints {
             sides: s.sides,
+            circumscribed: s.circumscribed,
             tangent_to: draft.previous,
             sweep: draft.sweep,
             min_size: 0.0,
@@ -357,4 +373,29 @@ fn draft_preview(args: &AddSketchArgs, s: &SketchSession, cursor: P2) -> Vec<Vec
         }
     }
     vec![placed.iter().map(|p| p.at).collect()]
+}
+
+/// The offset of what is selected, were it made to `cursor`, as polylines:
+/// none where it would be refused.
+fn offset_preview(
+    args: &AddSketchArgs,
+    s: &SketchSession,
+    selection: &[String],
+    cursor: P2,
+) -> Vec<Vec<P2>> {
+    let curves = selected_curves(&args.sketch, selection);
+    if curves.is_empty() {
+        return Vec::new();
+    }
+    let mut temp = args.sketch.clone();
+    let first_new = temp.next_id;
+    let options = &s.modify;
+    if offset_to(&mut temp, &curves, cursor, options.both, options.corners).is_err() {
+        return Vec::new();
+    }
+    temp.curves
+        .range(CurveId(first_new)..)
+        .filter(|(_, c)| !c.construction)
+        .map(|(&c, _)| polyline(&temp, c))
+        .collect()
 }

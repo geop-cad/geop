@@ -3,7 +3,6 @@
 
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::ScalInF64 as S;
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
@@ -13,18 +12,10 @@ use geop_ops_subd::{Cage, Mirror, SubdArgs};
 use crate::Program;
 use crate::examples::n;
 
+/// `validate_manifold` runs `validate` first: once is enough.
 fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    if let Err(errors) = validate(&params, part.topology()) {
-        let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
-        panic!(
-            "{} validation error(s):\n{}",
-            messages.len(),
-            messages.join("\n")
-        );
-    }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{errors:?}");
+    if let Err(report) = super::regression_tests::check_valid(part) {
+        panic!("{report}");
     }
 }
 

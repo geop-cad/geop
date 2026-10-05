@@ -7,8 +7,10 @@ for its own sake (CAM, CAE, rendering, PDM) is out of scope.
 
 ## What geop has (October 2026)
 
-- 2-D constraint sketches: lines, arcs, circles, splines; 20 constraint kinds,
-  projections of the part, trim.
+- 2-D constraint sketches: lines, arcs, circles, splines, slots and arc
+  slots, polygons; 23 constraint kinds, projections of the part, trim,
+  fillet and chamfer corners; offset, mirror, linear and circular patterns,
+  tied to their source by constraints.
 - Extrude and revolve (blind, up to next, through all, symmetric, two sides),
   sweep along a sketch path, loft (with matching points).
 - Booleans (union, intersection, difference) and split by a face.
@@ -29,7 +31,8 @@ Each item names the workstream that delivers it (see below). Items marked
   model vertices and datums, usable as sweep paths and guide rails.
   — `sketch3d`
 - Helix and spiral curves (pitch, turns, taper) as paths. — `hole-thread`
-- Sketch patterns and offset curves. — *later*
+- Sketch patterns and offset curves. — `sketch2` (done; text in sketches
+  *later*)
 
 ### Part features
 - Hole feature: simple, counterbore, countersink, tapped, clearance sizes from
@@ -68,7 +71,8 @@ Each item names the workstream that delivers it (see below). Items marked
 - STEP AP214/AP242 import and export of B-rep solids, validated against a
   downloaded public corpus. — `step`
 - Drawings: projected views with hidden lines, dimensions, export to SVG and
-  DXF. — `drawings`
+  DXF; assembly drawings with hidden lines across parts and ballooned bills
+  of materials. — `drawings`
 - URDF export of an assembly for robot simulation: links from rigidly
   held parts, revolute/continuous/prismatic joints, mimics from couplings,
   inertia, meshes; closed loops refused. — `urdf`

@@ -1133,6 +1133,8 @@ fn number_parameter(name: &str, expression: &str, min: f64, max: f64) -> Paramet
 pub fn parametric_plate() -> Program {
     let mut program = Program::new();
     program.parameters = Parameters {
+        title: None,
+        designation: None,
         color: Some("#d0893e".into()),
         material: Some(Material {
             name: "Aluminium 6061".into(),
@@ -1437,54 +1439,55 @@ pub fn bolted_plate() -> Program {
     program
 }
 
-/// Every example made of several files, by name: each file's path and
-/// program, the one to open first first.
-pub fn workspaces() -> Vec<(&'static str, Vec<(&'static str, Program)>)> {
+/// The files of an example made of several: each file's path and program,
+/// the one to open first first.
+pub type ExampleFiles = Vec<(&'static str, Program)>;
+
+/// An example by name, with what makes it: a program, or the files of one
+/// made of several.
+pub type Example<T> = (&'static str, fn() -> T);
+
+/// Every example made of several files, by name, each with what makes its
+/// files: listing them builds nothing (see [`all`]).
+pub fn workspaces() -> Vec<Example<ExampleFiles>> {
     vec![
-        (
-            "pin_in_plate",
+        ("pin_in_plate", || {
             vec![
                 ("assembly.geop", pin_in_plate_assembly()),
                 ("plate.geop", box_with_drill_hole()),
                 ("pin.geop", pin()),
-            ],
-        ),
-        (
-            "chain",
-            vec![("chain.geop", chain_assembly()), ("link.geop", link())],
-        ),
-        (
-            "parametric_plates",
+            ]
+        }),
+        ("chain", || {
+            vec![("chain.geop", chain_assembly()), ("link.geop", link())]
+        }),
+        ("parametric_plates", || {
             vec![
                 ("plates.geop", plates_assembly()),
                 ("plate.geop", parametric_plate()),
-            ],
-        ),
-        (
-            "four_bar",
+            ]
+        }),
+        ("four_bar", || {
             vec![
                 ("four_bar.geop", four_bar_assembly()),
                 ("ground.geop", bar(4.0)),
                 ("crank.geop", bar(1.5)),
                 ("rocker.geop", bar(3.0)),
                 ("coupler.geop", bar(4.0)),
-            ],
-        ),
-        (
-            "arm",
-            vec![("arm.geop", arm_assembly()), ("link.geop", link())],
-        ),
-        (
-            "bolted_plate",
+            ]
+        }),
+        ("arm", || {
+            vec![("arm.geop", arm_assembly()), ("link.geop", link())]
+        }),
+        ("bolted_plate", || {
             vec![
                 ("bolted_plate.geop", bolted_plate()),
                 ("plate.geop", metric_plate()),
-            ],
-        ),
+            ]
+        }),
     ]
 }
 
-/// Every example, by name.
 /// The NACA 2412 section, chord 1 from its leading edge at the origin to
 /// its trailing edge at `(1, 0)`: the upper side from the trailing edge to
 /// the leading edge, then the lower side back — points of the four-digit
@@ -2067,27 +2070,86 @@ pub fn rounded_box() -> Program {
     program
 }
 
-pub fn all() -> Vec<(&'static str, Program)> {
+/// A motor flange 30 across and 2.5 thick, drawn the way the sketch tools
+/// draw it: its bore an offset of its rim, 10 in, so the wall follows the
+/// rim; and its bolt circle one hole patterned six times round its middle,
+/// so the copies follow the first hole.
+pub fn motor_flange() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    let middle = outline.add_point(n(0.0), n(0.0));
+    outline.constrain(Constraint::Fix {
+        point: middle,
+        x: n(0.0),
+        y: n(0.0),
+    });
+    let rim = outline.add_circle(middle, n(16.0));
+    outline.constrain(Constraint::Radius {
+        curve: rim,
+        value: n(15.0),
+    });
+    outline
+        .offset(&[rim], n(10.0), geop_core_sketch::offset::Corners::Round)
+        .expect("a circle offsets inwards by less than its radius");
+    let bolt = circle(&mut outline, [11.0, 0.0], 1.2);
+    outline
+        .pattern(
+            &[bolt],
+            &geop_core_sketch::copies::Step::Round {
+                center: middle,
+                angle: n(std::f64::consts::PI / 3.0),
+            },
+            6,
+        )
+        .expect("a hole off the middle turns round it");
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "flange",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(2.5),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program
+}
+
+/// Every example, by name, each with what makes its program: listing them
+/// builds nothing — an editor lists them when it starts, and making one
+/// may solve sketches, or build a part to name its faces.
+pub fn all() -> Vec<Example<Program>> {
     vec![
-        ("box_with_drill_hole", box_with_drill_hole()),
-        ("bracket", bracket()),
-        ("cross_drilled_shaft", cross_drilled_shaft()),
-        ("split_plate", split_plate()),
-        ("boss_on_reference_plane", boss_on_reference_plane()),
-        ("handle_with_hole", handle_with_hole()),
-        ("luggage_tag", luggage_tag()),
-        ("revolved_cone_on_box", revolved_cone_on_box()),
-        ("pin", pin()),
-        ("link", link()),
-        ("parametric_plate", parametric_plate()),
-        ("airfoil_wing", airfoil_wing()),
-        ("subd_mouse", subd_mouse()),
-        ("sheet_metal_bracket", sheet_metal_bracket()),
-        ("pipe", pipe()),
-        ("patterned_plate", patterned_plate()),
-        ("horn", horn()),
-        ("hole_plate", hole_plate()),
-        ("rounded_box", rounded_box()),
+        ("box_with_drill_hole", box_with_drill_hole),
+        ("bracket", bracket),
+        ("cross_drilled_shaft", cross_drilled_shaft),
+        ("split_plate", split_plate),
+        ("boss_on_reference_plane", boss_on_reference_plane),
+        ("handle_with_hole", handle_with_hole),
+        ("luggage_tag", luggage_tag),
+        ("revolved_cone_on_box", revolved_cone_on_box),
+        ("pin", pin),
+        ("link", link),
+        ("parametric_plate", parametric_plate),
+        ("airfoil_wing", airfoil_wing),
+        ("subd_mouse", subd_mouse),
+        ("sheet_metal_bracket", sheet_metal_bracket),
+        ("pipe", pipe),
+        ("patterned_plate", patterned_plate),
+        ("horn", horn),
+        ("hole_plate", hole_plate),
+        ("rounded_box", rounded_box),
+        ("motor_flange", motor_flange),
     ]
 }
 
@@ -2477,6 +2539,30 @@ mod tests {
             .filter(|name| name.ends_with(",corner)"))
             .count();
         assert_eq!(corners, 8);
+    }
+
+    /// The motor flange is a ring with six bolt holes through it: solid in
+    /// its wall, open in its bore and in every hole, the copies round the
+    /// bolt circle as much as the first.
+    #[test]
+    fn motor_flange_round_trips() {
+        let part = build_and_round_trip("motor_flange", &motor_flange());
+        let solid = "extrude(flange)";
+        let at = |angle: f64, r: f64| {
+            let a = angle.to_radians();
+            [r * a.cos(), r * a.sin(), 1.25]
+        };
+        for (p, expected) in [
+            (at(30.0, 11.0), PointClassification::Inside),
+            (at(0.0, 7.0), PointClassification::Inside),
+            (at(0.0, 0.0), PointClassification::Outside),
+            (at(0.0, 11.0), PointClassification::Outside),
+            (at(120.0, 11.0), PointClassification::Outside),
+            (at(300.0, 11.0), PointClassification::Outside),
+            (at(0.0, 16.0), PointClassification::Outside),
+        ] {
+            assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
+        }
     }
 
     /// Reproduces the real bug report described on `revolved_cone_on_box`.

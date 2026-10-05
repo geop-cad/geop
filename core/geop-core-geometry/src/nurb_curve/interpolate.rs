@@ -72,6 +72,13 @@ fn chord_length_params<S: Scalar, const C: usize>(points: &[Vector<S, C>]) -> Ve
             Err(_) => return uniform_params(m),
         };
     }
+    // Sharpened from chords as wide as they are long — points a rounding
+    // apart, as a silhouette 4e-13 long gave — the fractions need not even
+    // increase, or stay below 1, and the knots averaged from them leave a
+    // parameter outside the domain.
+    if !t.windows(2).all(|w| w[0].definitely_less(w[1])) {
+        return uniform_params(m);
+    }
     t
 }
 
@@ -136,6 +143,16 @@ fn basis_funs<S: Scalar>(span: usize, t: S, degree: usize, knots: &[S]) -> Vec<S
 /// `averaging_knots` is totally positive and nonsingular (Piegl & Tiller
 /// §9.2.1) — the same reason the reference algorithm doesn't pivot either.
 ///
+/// The matrix is banded: row `k` is nonzero only in the `degree + 1`
+/// columns of its parameter's knot span, and the spans never decrease down
+/// the rows. Elimination without pivoting keeps the band, so it runs within
+/// it: below a pivot only the rows whose band reaches its column, and in
+/// them only the columns the pivot row's band reaches. Outside the band
+/// every factor and every entry is an exact zero, and subtracting zero
+/// times zero changes nothing but the enclosure — outward rounding widened
+/// each entry by an ulp per pivot above it, and the dense elimination took
+/// `m³ / 3` steps for what the band holds in `m (degree + 1)²`.
+///
 /// Generic over the dimension `C` of `points`, which are solved for as they
 /// are: Cartesian points (see [`with_unit_weights`]) or homogeneous ones.
 fn solve_interpolation_system<S: Scalar, const C: usize>(
@@ -147,27 +164,33 @@ fn solve_interpolation_system<S: Scalar, const C: usize>(
     let m = points.len();
     let p = degree;
 
+    // Row `k`'s band: columns `first[k] ..= last[k]`.
     let mut a = vec![vec![S::ZERO; m]; m];
+    let mut first = vec![0; m];
+    let mut last = vec![0; m];
     for (k, &tk) in t.iter().enumerate() {
         let span = find_span(p, knots, m - 1, tk)?;
         let funs = basis_funs(span, tk, p, knots);
         for (j, &val) in funs.iter().enumerate() {
             a[k][span - p + j] = val;
         }
+        (first[k], last[k]) = (span - p, span);
+    }
+    if first.windows(2).any(|w| w[1] < w[0]) || last.windows(2).any(|w| w[1] < w[0]) {
+        return Err(GeopError::new(format!(
+            "NurbCurve::interpolate: parameters {t:?} do not run through the knot spans in order"
+        )));
     }
 
-    let mut rhs = vec![vec![S::ZERO; C]; m];
-    for (k, pt) in points.iter().enumerate() {
-        for c in 0..C {
-            rhs[k][c] = pt[c];
-        }
-    }
-
+    let mut rhs: Vec<Vector<S, C>> = points.to_vec();
     for col in 0..m {
         let pivot = a[col][col];
         for row in (col + 1)..m {
+            if first[row] > col {
+                break;
+            }
             let factor = a[row][col].div(pivot)?;
-            for c in col..m {
+            for c in col..=last[col] {
                 a[row][c] = a[row][c].sub(factor.mul(a[col][c]));
             }
             for c in 0..C {
@@ -176,30 +199,20 @@ fn solve_interpolation_system<S: Scalar, const C: usize>(
         }
     }
 
-    let mut ctrl = vec![vec![S::ZERO; C]; m];
+    let mut ctrl = vec![Vector::<S, C>::zero(); m];
     for row in (0..m).rev() {
-        let mut sum = rhs[row].clone();
-        for (col, ctrl_col) in ctrl.iter().enumerate().take(m).skip(row + 1) {
+        let mut sum = rhs[row];
+        for col in (row + 1)..=last[row] {
             let coef = a[row][col];
             for c in 0..C {
-                sum[c] = sum[c].sub(coef.mul(ctrl_col[c]));
+                sum[c] = sum[c].sub(coef.mul(ctrl[col][c]));
             }
         }
         for c in 0..C {
             ctrl[row][c] = sum[c].div(a[row][row])?;
         }
     }
-
-    Ok(ctrl
-        .into_iter()
-        .map(|c| {
-            let mut v = Vector::<S, C>::zero();
-            for (i, &val) in c.iter().enumerate() {
-                v[i] = val;
-            }
-            v
-        })
-        .collect())
+    Ok(ctrl)
 }
 
 /// The Cartesian points `points` as homogeneous control points of weight
@@ -692,6 +705,36 @@ mod tests {
     #[test]
     fn interpolate_reproduces_endpoints() {
         for_all_scalars!(check_interpolate_reproduces_endpoints);
+    }
+
+    /// Points a rounding apart, each as wide as the steps between them — a
+    /// silhouette 4e-13 long, from an iso view of `cross_drilled_shaft` —
+    /// still interpolate. Their chord-length fractions, sharpened, did not
+    /// increase, and a knot averaged from them lay outside the domain.
+    fn check_points_a_rounding_apart_interpolate<S: Scalar>() {
+        let i = |lo: f64, hi: f64| S::from_f64(lo).union(S::from_f64(hi));
+        let (x, y) = (
+            i(-0.4242640687119382, -0.4242640687119197),
+            i(-0.42426406871193406, -0.4242640687119227),
+        );
+        let points: Vec<Vector3<S>> = [
+            (1.0000000000003741, 1.0000000000004499),
+            (1.000000000000271, 1.0000000000003466),
+            (1.0000000000001676, 1.0000000000002431),
+            (1.0000000000000644, 1.0000000000001399),
+            (0.9999999999999599, 1.0000000000000369),
+        ]
+        .iter()
+        .map(|&(lo, hi)| Vector3::from_array([x, y, i(lo, hi)]))
+        .collect();
+        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let (t0, t1) = curve.domain();
+        assert!(curve.evaluate(t0).unwrap().could_be_equal(&points[0]));
+        assert!(curve.evaluate(t1).unwrap().could_be_equal(&points[4]));
+    }
+    #[test]
+    fn points_a_rounding_apart_interpolate() {
+        for_all_scalars!(check_points_a_rounding_apart_interpolate);
     }
 
     /// Same parabola-fitting check as `check_interpolate_curve_matches_samples`,

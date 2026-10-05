@@ -656,7 +656,15 @@ impl<S: Scalar> Sketch3d<S> {
         if !problem.report(&system, 0, Vec::new())?.converged {
             return Ok(Enclosure3d::as_drawn(self));
         }
-        let enclosed = system.enclose().map_err(ctx)?;
+        let enclosed = system
+            .enclose()
+            .map_err(|e| {
+                e.named(|i| {
+                    let c = &problem.constraints[i];
+                    format!("{} {:?}", c.id, c.constraint)
+                })
+            })
+            .map_err(ctx)?;
         let layout = &problem.layout;
         let x: Vec<S> = problem
             .start

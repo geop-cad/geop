@@ -20,7 +20,7 @@ use super::{
     steps::{
         Around, axis_datum, col, extrude, offset_datum, outline_plane, plane_datum, revolve, size,
     },
-    tables,
+    tables, titled,
 };
 use crate::Program;
 
@@ -28,7 +28,7 @@ use crate::Program;
 /// outside, `B` wide, their edges chamfered by `r`, with the gap between
 /// the rings — where the balls and shields are — a shallow groove in
 /// either side.
-pub fn ball_bearing() -> GeopResult<StandardPart> {
+pub fn ball_bearing(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: Some(Material {
@@ -37,6 +37,7 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
         }),
         color: Some("#b8bcc4".into()),
         values: vec![size(tables::ball_bearings())],
+        ..Parameters::default()
     };
     let (d, big, b, r) = (col("d"), col("D"), col("B"), col("r"));
     let bore = format!("{d} / 2");
@@ -76,11 +77,9 @@ pub fn ball_bearing() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
-        file: "std:ball_bearing.geop",
-        title: "Deep-groove ball bearing",
-        designation: "Ball bearing",
+        file,
         base: "side",
-        program,
+        program: titled(program, "Deep-groove ball bearing", "Ball bearing"),
         threaded: Vec::new(),
     })
 }
@@ -127,6 +126,7 @@ fn tslot(
                 max: Some(1000.0),
             },
         }],
+        ..Parameters::default()
     };
     let (half_w, half_h) = (100, 100 * cells);
     // Round the outline clockwise, from its top left corner; each side
@@ -177,27 +177,25 @@ fn tslot(
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
         file,
-        title,
-        designation,
         base: "end",
-        program,
+        program: titled(program, title, designation),
         threaded: Vec::new(),
     })
 }
 
-pub fn tslot_2020() -> GeopResult<StandardPart> {
+pub fn tslot_2020(file: &'static str) -> GeopResult<StandardPart> {
     tslot(
         1,
-        "std:tslot_2020.geop",
+        file,
         "T-slot aluminium extrusion 20x20, B-type slot 6",
         "T-slot 2020",
     )
 }
 
-pub fn tslot_2040() -> GeopResult<StandardPart> {
+pub fn tslot_2040(file: &'static str) -> GeopResult<StandardPart> {
     tslot(
         2,
-        "std:tslot_2040.geop",
+        file,
         "T-slot aluminium extrusion 20x40, B-type slot 6",
         "T-slot 2040",
     )
@@ -208,7 +206,7 @@ pub fn tslot_2040() -> GeopResult<StandardPart> {
 /// pilot boss 22 across and 2 high, a shaft 5 across standing 24 out, and
 /// four M3 holes 4.5 deep on a 31 square. The body is its outline extruded
 /// `L` down, the boss and the shaft one profile turned on its face.
-pub fn nema17() -> GeopResult<StandardPart> {
+pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: Some(Material {
@@ -217,6 +215,7 @@ pub fn nema17() -> GeopResult<StandardPart> {
         }),
         color: Some("#3a3d42".into()),
         values: vec![size(tables::nema17())],
+        ..Parameters::default()
     };
     let mut outline = Drawing::new(&program.parameters)?;
     let (side, cut) = ("21.15", "17.15");
@@ -293,11 +292,9 @@ pub fn nema17() -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "face", "0");
     Ok(StandardPart {
-        file: "std:nema17_stepper.geop",
-        title: "NEMA 17 stepper motor",
-        designation: "NEMA 17 stepper",
+        file,
         base: "face",
-        program,
+        program: titled(program, "NEMA 17 stepper motor", "NEMA 17 stepper"),
         threaded: Vec::new(),
     })
 }
@@ -321,7 +318,7 @@ fn steel() -> Option<Material> {
 /// along the middle of its bottom: a [`linear_carriage`] of the same size
 /// slides on it by a slider joint between the two `axis` datums. The
 /// mounting holes are not modelled.
-pub fn linear_rail() -> GeopResult<StandardPart> {
+pub fn linear_rail(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: steel(),
@@ -337,6 +334,7 @@ pub fn linear_rail() -> GeopResult<StandardPart> {
                 },
             },
         ],
+        ..Parameters::default()
     };
     let (w, h) = (col("W"), col("H"));
     let side = format!("{w} / 2");
@@ -372,11 +370,13 @@ pub fn linear_rail() -> GeopResult<StandardPart> {
     offset_datum(&mut program, "top", xz_plane(), &h);
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
-        file: "std:linear_rail.geop",
-        title: "Miniature linear guide rail, MGN series",
-        designation: "Linear rail",
+        file,
         base: "base",
-        program,
+        program: titled(
+            program,
+            "Miniature linear guide rail, MGN series",
+            "Linear rail",
+        ),
         threaded: Vec::new(),
     })
 }
@@ -388,12 +388,13 @@ pub fn linear_rail() -> GeopResult<StandardPart> {
 /// apart across and `C` along. It is drawn where it sits on its rail at
 /// `z = 0`: its datum `axis`, the `z` axis, is the rail's, and a slider
 /// joint between the two moves it along.
-pub fn linear_carriage() -> GeopResult<StandardPart> {
+pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = Program::new();
     program.parameters = Parameters {
         material: steel(),
         color: Some("#8e949c".into()),
         values: vec![size(tables::linear_carriages())],
+        ..Parameters::default()
     };
     let (w, h, h1, wr, hr) = (col("W"), col("H"), col("H1"), col("WR"), col("HR"));
     let side = format!("{w} / 2");
@@ -455,11 +456,13 @@ pub fn linear_carriage() -> GeopResult<StandardPart> {
     }
     axis_datum(&mut program);
     Ok(StandardPart {
-        file: "std:linear_carriage.geop",
-        title: "Miniature linear guide carriage, MGN series",
-        designation: "Linear carriage",
+        file,
         base: "top",
-        program,
+        program: titled(
+            program,
+            "Miniature linear guide carriage, MGN series",
+            "Linear carriage",
+        ),
         threaded: Vec::new(),
     })
 }
@@ -532,6 +535,7 @@ fn servo(
             rows: vec![(row.to_string(), Vec::new())],
             selected: row,
         })],
+        ..Parameters::default()
     };
     // Side on, in the `xz` plane — whose sketch runs along `x` and `-z`.
     let n = |v: f64| format!("{v}");
@@ -620,15 +624,13 @@ fn servo(
     plane_datum(&mut program, "output", &n(top));
     Ok(StandardPart {
         file,
-        title,
-        designation: "Servo",
         base: "mount",
-        program,
+        program: titled(program, title, "Servo"),
         threaded: Vec::new(),
     })
 }
 
-pub fn servo_sg90() -> GeopResult<StandardPart> {
+pub fn servo_sg90(file: &'static str) -> GeopResult<StandardPart> {
     servo(
         &Servo {
             length: 22.8,
@@ -646,12 +648,12 @@ pub fn servo_sg90() -> GeopResult<StandardPart> {
             grams: 9.0,
         },
         "SG90",
-        "std:servo_sg90.geop",
+        file,
         "Micro servo SG90",
     )
 }
 
-pub fn servo_mg996r() -> GeopResult<StandardPart> {
+pub fn servo_mg996r(file: &'static str) -> GeopResult<StandardPart> {
     servo(
         &Servo {
             length: 40.7,
@@ -669,7 +671,7 @@ pub fn servo_mg996r() -> GeopResult<StandardPart> {
             grams: 55.0,
         },
         "MG996R",
-        "std:servo_mg996r.geop",
+        file,
         "Standard servo MG996R",
     )
 }

@@ -220,6 +220,17 @@ pub trait Operation {
     ) {
         let _ = (context, edit, event);
     }
+
+    /// The text of every formula of the part's parameters in `args` — each
+    /// [`crate::parameters::Formula`] that is no plain number, and a
+    /// sketch's dimensions: what tells which parameters a step reads, and
+    /// what renaming one renames (see [`crate::Program::rename_parameter`]).
+    /// An operation whose arguments take formulas lists every one, used or
+    /// not.
+    fn formulas<'a>(&self, args: &'a mut Self::Args) -> Vec<&'a mut String> {
+        let _ = args;
+        Vec::new()
+    }
 }
 
 /// A set of operations, each together with its arguments: the enum a
@@ -284,6 +295,9 @@ pub trait Operations: Clone + std::fmt::Debug + PartialEq + Serialize + Deserial
         state: &mut State,
         event: &CanvasEvent<S>,
     );
+
+    /// See [`Operation::formulas`].
+    fn formulas(&mut self) -> Vec<&mut String>;
 
     /// The operation's kind, as it is serialized: `extrude`.
     fn kind(&self) -> &'static str;

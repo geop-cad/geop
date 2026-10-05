@@ -57,6 +57,12 @@ use crate::{
 const PROJECT_ITERATIONS: usize = 20;
 /// Seed for the containment tests.
 const FACE_CONTAINS_SEED: u64 = 0xD_0A_11;
+/// Where a search for where two lines cross on the paper hands over when
+/// one with the fine handoff could not settle (see [`meetings`]), and
+/// where one between the lines of two parts does (see
+/// [`crate::scene`]): far below what a sheet shows at any scale it is
+/// drawn at.
+pub(crate) const COARSE_SUBDIVISION: f64 = 1e-5;
 
 /// What a line of a view shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,11 +102,14 @@ pub struct ViewLine<S: Scalar> {
     pub curve3: NurbCurve3D<S>,
     pub kind: LineKind,
     pub visible: bool,
-    /// The edge it is a piece of, if it is one.
+    /// The edge it is a piece of, if it is one: of the model of its body.
     pub edge: Option<EdgeId>,
+    /// Which body of the scene it is a line of (see [`crate::scene`]): 0
+    /// in a view of one model.
+    pub body: usize,
     /// Which curve it is a piece of, and where: its parameter range there.
-    source: usize,
-    range: (S, S),
+    pub(crate) source: usize,
+    pub(crate) range: (S, S),
 }
 
 /// A part seen from one direction.
@@ -151,7 +160,7 @@ struct Source<S: Scalar> {
 }
 
 /// The box holding `curve`'s control points (and so the curve).
-fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<[f64; 4]> {
+pub(crate) fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<[f64; 4]> {
     let mut b = [
         f64::INFINITY,
         f64::INFINITY,
@@ -168,7 +177,7 @@ fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<[f64; 4]> {
     Ok(b)
 }
 
-fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
+pub(crate) fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
     a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 }
 
@@ -258,15 +267,15 @@ fn edge_kind<S: Scalar>(
 }
 
 /// A face that can hide something, with the box holding it.
-struct Occluder<S: Scalar> {
+pub(crate) struct Occluder<S: Scalar> {
     face: FaceId,
     surface: NurbSurface3D<S>,
     /// `[lo, hi]` per axis, holding every control point's whole enclosure.
-    bounds: [[f64; 2]; 3],
+    pub(crate) bounds: [[f64; 2]; 3],
 }
 
 impl<S: Scalar> Occluder<S> {
-    fn of(model: &Model<S>, face: FaceId) -> GeopResult<Self> {
+    pub(crate) fn of(model: &Model<S>, face: FaceId) -> GeopResult<Self> {
         let surface = model.get_face(face)?.surface.clone();
         let mut bounds = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
         for q in &surface.control_points {
@@ -299,7 +308,7 @@ impl<S: Scalar> Occluder<S> {
 /// behind. A crossing at the point itself — it lies on the faces it bounds
 /// — is no crossing; one right on a face's trim boundary means an edge is
 /// in front (see the module docs) and counts as hiding it.
-fn seen<S: Scalar>(
+pub(crate) fn seen<S: Scalar>(
     model: &Model<S>,
     occluders: &[Occluder<S>],
     point: Vector3<S>,
@@ -353,26 +362,9 @@ fn seen<S: Scalar>(
     Ok(!behind_an_edge)
 }
 
-/// Whether `point` is seen through `frame` with the faces `faces` of
-/// `model` in front of it: what decides a line drawn that is no edge or
-/// silhouette of the faces, such as a cosmetic thread (see [`seen`]).
-pub(crate) fn point_seen<S: Scalar>(
-    model: &Model<S>,
-    faces: &[FaceId],
-    frame: &ViewFrame<S>,
-    point: Vector3<S>,
-) -> GeopResult<bool> {
-    let occluders = faces
-        .iter()
-        .map(|&f| Occluder::of(model, f))
-        .collect::<GeopResult<Vec<_>>>()?;
-    let length = ray_length(&occluders);
-    seen(model, &occluders, point, &frame.toward_eye(), length)
-}
-
 /// The ray length that clears every occluder from anywhere on them: twice
 /// the diagonal of their boxes' box.
-fn ray_length<S: Scalar>(occluders: &[Occluder<S>]) -> S {
+pub(crate) fn ray_length<'o, S: Scalar>(occluders: impl IntoIterator<Item = &'o Occluder<S>>) -> S {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
     for o in occluders {
@@ -388,7 +380,7 @@ fn ray_length<S: Scalar>(occluders: &[Occluder<S>]) -> S {
 /// The parameter boxes in `boxes` merged where they overlap, as sharp cut
 /// points strictly inside `(t0, t1)`: where to cut is a free choice within
 /// each.
-fn cut_points<S: Scalar>(mut boxes: Vec<S>, (t0, t1): (S, S)) -> Vec<S> {
+pub(crate) fn cut_points<S: Scalar>(mut boxes: Vec<S>, (t0, t1): (S, S)) -> Vec<S> {
     boxes.sort_by(|a, b| a.lower().to_f64().total_cmp(&b.lower().to_f64()));
     let mut merged: Vec<S> = Vec::new();
     for b in boxes {
@@ -545,7 +537,13 @@ pub fn project_view<S: Scalar>(
             {
                 continue;
             }
-            let (a_cuts, b_cuts) = meetings(&sources[i], &sources[j]).map_err(|e| {
+            let (a, b) = (&sources[i], &sources[j]);
+            let (a_cuts, b_cuts) = meetings(
+                (&a.curve, &a.curve3),
+                (&b.curve, &b.curve3),
+                min_subdivision_size(),
+            )
+            .map_err(|e| {
                 let describe = |s: &Source<S>| match s.edge {
                     Some(edge) => format!("{:?} of edge {edge}", s.kind),
                     None => format!(
@@ -646,6 +644,7 @@ pub fn project_view<S: Scalar>(
             kind: source.kind,
             visible,
             edge: source.edge,
+            body: 0,
             source: *index,
             range: (*a, *b),
         });
@@ -653,15 +652,19 @@ pub fn project_view<S: Scalar>(
 
     Ok(ProjectedView {
         frame: *frame,
-        lines: rejoin(&sources, drop_drawn(lines)?)?,
+        lines: rejoin(&sources, drop_drawn(lines, |_, _| true)?)?,
     })
 }
 
 /// Where the projections of `a` and `b` cross or begin and end running
 /// along each other: the parameters to cut each at.
-fn search<S: Scalar>(a: &NurbCurve2D<S>, b: &NurbCurve2D<S>) -> GeopResult<(Vec<S>, Vec<S>)> {
-    let (overlaps, crossings) =
-        curve_curve_overlaps_and_crossings(a, b, MAX_NODES, min_subdivision_size())?;
+/// `handoff` is where the search hands over (see `AGENTS.md`).
+fn search<S: Scalar>(
+    a: &NurbCurve2D<S>,
+    b: &NurbCurve2D<S>,
+    handoff: S,
+) -> GeopResult<(Vec<S>, Vec<S>)> {
+    let (overlaps, crossings) = curve_curve_overlaps_and_crossings(a, b, MAX_NODES, handoff)?;
     let (mut on_a, mut on_b) = (Vec::new(), Vec::new());
     for (s, t) in crossings {
         on_a.push(s);
@@ -674,8 +677,9 @@ fn search<S: Scalar>(a: &NurbCurve2D<S>, b: &NurbCurve2D<S>) -> GeopResult<(Vec<
     Ok((on_a, on_b))
 }
 
-/// Where the pieces `a` and `b` have to be cut for each other (see
-/// [`search`]).
+/// Where the pieces `a` and `b`, each on the paper and in space, have to
+/// be cut for each other (see [`search`]), searched with the handoff
+/// `handoff`.
 ///
 /// Two curves meeting at a common end often meet there tangentially on the
 /// paper — an edge running into another smoothly, seen from the side —
@@ -685,45 +689,70 @@ fn search<S: Scalar>(a: &NurbCurve2D<S>, b: &NurbCurve2D<S>) -> GeopResult<(Vec<
 /// halves of the two, leaving out the two halves that meet at the common
 /// end. A crossing within those two halves, other than at the common end,
 /// would go unseen: a known limit, taken rather than failing the view.
-fn meetings<S: Scalar>(a: &Source<S>, b: &Source<S>) -> GeopResult<(Vec<S>, Vec<S>)> {
-    let error = match search(&a.curve, &b.curve) {
-        Ok(found) => return Ok(found),
-        Err(e) => e,
-    };
-    let ends = |c: &NurbCurve3D<S>| -> GeopResult<[Vector3<S>; 2]> {
-        let (t0, t1) = c.domain();
-        Ok([c.evaluate(t0)?, c.evaluate(t1)?])
-    };
-    let (ea, eb) = (ends(&a.curve3)?, ends(&b.curve3)?);
-    let shared = (0..2)
-        .flat_map(|i| (0..2).map(move |j| (i, j)))
-        .find(|&(i, j)| ea[i].could_be_equal(&eb[j]));
-    let ends_context = format!("their ends in space: {ea:?} and {eb:?}");
-    let Some((end_a, end_b)) = shared else {
-        return Err(error.with_context(ends_context));
-    };
-    let error = error.with_context(ends_context);
-    let halves = |c: &NurbCurve2D<S>| -> GeopResult<[NurbCurve2D<S>; 2]> {
-        let (l, r) = c.split_mid()?;
-        Ok([l, r])
-    };
-    let (ha, hb) = (halves(&a.curve)?, halves(&b.curve)?);
-    let (mut on_a, mut on_b) = (Vec::new(), Vec::new());
-    for (i, half_a) in ha.iter().enumerate() {
-        for (j, half_b) in hb.iter().enumerate() {
-            if i == end_a && j == end_b {
-                continue;
+///
+/// Two curves touching elsewhere — a screw's head seen from above, round,
+/// touching the line a flat of the nut under it is seen as — come closer
+/// than a fine handoff along a stretch the search cannot get through
+/// either. Should all else fail, the search is run once more with a
+/// coarser handoff ([`COARSE_SUBDIVISION`]) if `handoff` is finer: the
+/// touch comes out as one wide cluster, cut at a free point inside it, and
+/// two crossings closer together than that are taken as one.
+pub(crate) fn meetings<S: Scalar>(
+    (a, a3): (&NurbCurve2D<S>, &NurbCurve3D<S>),
+    (b, b3): (&NurbCurve2D<S>, &NurbCurve3D<S>),
+    handoff: S,
+) -> GeopResult<(Vec<S>, Vec<S>)> {
+    let fine = || -> GeopResult<(Vec<S>, Vec<S>)> {
+        let error = match search(a, b, handoff) {
+            Ok(found) => return Ok(found),
+            Err(e) => e,
+        };
+        let ends = |c: &NurbCurve3D<S>| -> GeopResult<[Vector3<S>; 2]> {
+            let (t0, t1) = c.domain();
+            Ok([c.evaluate(t0)?, c.evaluate(t1)?])
+        };
+        let (ea, eb) = (ends(a3)?, ends(b3)?);
+        let shared = (0..2)
+            .flat_map(|i| (0..2).map(move |j| (i, j)))
+            .find(|&(i, j)| ea[i].could_be_equal(&eb[j]));
+        let ends_context = format!("their ends in space: {ea:?} and {eb:?}");
+        let Some((end_a, end_b)) = shared else {
+            return Err(error.with_context(ends_context));
+        };
+        let error = error.with_context(ends_context);
+        let halves = |c: &NurbCurve2D<S>| -> GeopResult<[NurbCurve2D<S>; 2]> {
+            let (l, r) = c.split_mid()?;
+            Ok([l, r])
+        };
+        let (ha, hb) = (halves(a)?, halves(b)?);
+        let (mut on_a, mut on_b) = (Vec::new(), Vec::new());
+        for (i, half_a) in ha.iter().enumerate() {
+            for (j, half_b) in hb.iter().enumerate() {
+                if i == end_a && j == end_b {
+                    continue;
+                }
+                let (x, y) = search(half_a, half_b, handoff).map_err(|e| {
+                    e.with_context(format!(
+                        "searched again without the common end, after: {error}"
+                    ))
+                })?;
+                on_a.extend(x);
+                on_b.extend(y);
             }
-            let (x, y) = search(half_a, half_b).map_err(|e| {
-                e.with_context(format!(
-                    "searched again without the common end, after: {error}"
-                ))
-            })?;
-            on_a.extend(x);
-            on_b.extend(y);
         }
-    }
-    Ok((on_a, on_b))
+        Ok((on_a, on_b))
+    };
+    let coarse = S::from_f64(COARSE_SUBDIVISION);
+    fine().or_else(|error| {
+        if !handoff.definitely_less(coarse) {
+            return Err(error);
+        }
+        search(a, b, coarse).map_err(|e| {
+            e.with_context(format!(
+                "searched again with a coarser handoff, after: {error}"
+            ))
+        })
+    })
 }
 
 /// `lines` with the pieces of one curve that follow on from each other, and
@@ -769,10 +798,14 @@ fn rejoin<S: Scalar>(
 }
 
 /// `lines` without every piece lying on one drawn before it — visible ones
-/// first, so a hidden line under a visible one goes. Pieces are cut wherever
-/// their projections meet, so a piece lies on another all along or only
-/// touches it at its ends: its middle tells which.
-fn drop_drawn<S: Scalar>(mut lines: Vec<ViewLine<S>>) -> GeopResult<Vec<ViewLine<S>>> {
+/// first, so a hidden line under a visible one goes — of the pieces
+/// `compare` says to compare it with. Pieces are cut wherever their
+/// projections meet, so a piece lies on another all along or only touches
+/// it at its ends: its middle tells which.
+pub(crate) fn drop_drawn<S: Scalar>(
+    mut lines: Vec<ViewLine<S>>,
+    compare: impl Fn(&ViewLine<S>, &ViewLine<S>) -> bool,
+) -> GeopResult<Vec<ViewLine<S>>> {
     lines.sort_by_key(|l| !l.visible);
     let mut kept: Vec<(ViewLine<S>, [f64; 4])> = Vec::new();
     for line in lines {
@@ -782,6 +815,7 @@ fn drop_drawn<S: Scalar>(mut lines: Vec<ViewLine<S>>) -> GeopResult<Vec<ViewLine
         let mut drawn = false;
         for (other, there) in &kept {
             if boxes_meet(&here, there)
+                && compare(&line, other)
                 && curve_could_contain(&other.curve, &mid, MAX_NODES, min_subdivision_size())?
                     .is_some()
             {

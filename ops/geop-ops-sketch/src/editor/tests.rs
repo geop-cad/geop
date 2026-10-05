@@ -1311,3 +1311,470 @@ fn the_axes_neither_cut_nor_are_trimmed() {
     assert_eq!(e.drawn_curves().len(), 3, "{:?}", e.sketch());
     assert!(e.report().converged, "{:?}", e.report());
 }
+
+/// The bounding box of the points of `curves`, as solved.
+fn bounds(s: &Sketch, curves: &[CurveId]) -> [f64; 4] {
+    let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+    for c in curves {
+        for p in s.curves[c].points() {
+            let q = xy(s, p);
+            b = [
+                b[0].min(q[0]),
+                b[1].min(q[1]),
+                b[2].max(q[0]),
+                b[3].max(q[1]),
+            ];
+        }
+    }
+    b
+}
+
+fn near(a: [f64; 4], b: [f64; 4]) -> bool {
+    a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6)
+}
+
+impl Editor {
+    /// The drawn curves of the kind `kind` names: `"line"`, `"arc"`,
+    /// `"circle"`.
+    fn curves_of(&self, kind: &str) -> Vec<CurveId> {
+        self.drawn_curves()
+            .into_iter()
+            .filter(|(_, k)| {
+                matches!(
+                    (kind, k),
+                    ("line", CurveKind::Line { .. })
+                        | ("arc", CurveKind::Arc { .. })
+                        | ("circle", CurveKind::Circle { .. })
+                )
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// The profile curves drawn: not construction.
+    fn profile_curves(&self) -> Vec<CurveId> {
+        self.drawn_curves()
+            .into_iter()
+            .filter(|(id, _)| !self.sketch().curves[id].construction)
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// The centers of the circles drawn.
+    fn circle_centers(&self) -> Vec<P2> {
+        let s = self.sketch();
+        self.drawn_curves()
+            .into_iter()
+            .filter_map(|(_, k)| match k {
+                CurveKind::Circle { center, .. } => Some(xy(s, *center)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// Offset: a click on a side takes the rectangle's whole chain, the
+/// pointer beside it shows the offset there, and a click makes it — rounded
+/// round the corners, tied to the rectangle by one distance, which is
+/// asked for and which the offset follows, as it follows the rectangle.
+#[test]
+fn offsets_follow_their_chain() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.2, 0.2);
+    e.click(1.2, 0.7);
+    let rectangle: Vec<CurveId> = e.drawn_curves().iter().map(|(id, _)| *id).collect();
+    e.key("o");
+    assert_eq!(e.session().tool, Tool::Modify(ModifyTool::Offset));
+    e.click(0.7, 0.2);
+    assert_eq!(e.selection().len(), 4, "the side's chain: all four");
+    e.hover(0.7, -0.1);
+    assert!(
+        e.presentation
+            .visuals
+            .iter()
+            .any(|v| v.key.starts_with("offset") && v.style == Style::Draft),
+        "the offset is previewed"
+    );
+    e.click(0.7, -0.05);
+    assert_eq!(e.drawn_curves().len(), rectangle.len() + 8);
+    assert_eq!(e.curves_of("arc").len(), 4, "a round corner each");
+    let offset = e.count(
+        |c| matches!(c, Constraint::Offset { value, .. } if (value.to_f64() - 0.25).abs() < 1e-9),
+    );
+    assert_eq!(offset, 1, "{:?}", e.sketch().constraints);
+    assert!(e.presentation.prompt.is_some(), "the distance is asked for");
+    e.dialog("prompt", Value::Text("0.1".into()));
+    let report = e.report();
+    assert!(report.converged, "{report:?}");
+    // The rectangle keeps its four freedoms; the offset adds none.
+    assert_eq!(report.dof, 4, "{report:?}");
+    let lines: Vec<CurveId> = e
+        .curves_of("line")
+        .into_iter()
+        .filter(|c| !rectangle.contains(c) && !e.sketch().curves[c].construction)
+        .collect();
+    // Wherever the solve left the rectangle, its offset is 0.1 round it.
+    let around = |e: &Editor| {
+        let r = bounds(e.sketch(), &rectangle);
+        near(
+            bounds(e.sketch(), &lines),
+            [r[0] - 0.1, r[1] - 0.1, r[2] + 0.1, r[3] + 0.1],
+        )
+    };
+    assert!(around(&e), "{:?}", e.sketch());
+    assert_eq!(e.sketch().regions().unwrap().len(), 1, "a ring");
+    // The rectangle's corner dragged out: the offset goes with it.
+    let corner = bounds(e.sketch(), &rectangle);
+    e.drag([corner[2], corner[3]], [1.5, 0.9], true);
+    assert!(e.report().converged);
+    assert!(around(&e), "{:?}", e.sketch());
+    let r = bounds(e.sketch(), &rectangle);
+    assert!(close([r[2], r[3]], [1.5, 0.9]), "{r:?}");
+}
+
+/// Offset to both sides, corners extended: two offsets, each with its own
+/// distance, meeting at their corners; an inward offset too deep for the
+/// shape is refused, saying why.
+#[test]
+fn offsets_to_both_sides_and_refusals() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.2, 0.2);
+    e.click(1.2, 0.7);
+    e.key("o");
+    e.dialog("both", Value::Bool(true));
+    e.dialog("corners", Value::Choice("extend".into()));
+    e.click(0.7, 0.2);
+    e.click(0.7, 0.3);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Offset { .. })), 2);
+    assert_eq!(e.profile_curves().len(), 12);
+    assert!(e.report().converged, "{:?}", e.report());
+    // An arc offset past its center, from beyond it: refused.
+    e.act("tool", "arc");
+    e.click(3.0, 1.0);
+    e.click(5.0, 1.0);
+    e.click(4.0, 2.0);
+    e.key("Escape");
+    let curves = e.sketch().curves.len();
+    e.key("o");
+    e.click(4.0, 2.0);
+    assert_eq!(e.selection().len(), 1);
+    e.click(4.0, -0.5);
+    assert_eq!(e.sketch().curves.len(), curves, "nothing made");
+    assert!(
+        matches!(e.session().error.as_deref(), Some(why) if why.contains("smaller")),
+        "{:?}",
+        e.session().error
+    );
+}
+
+/// Mirror: what is selected is mirrored across the line clicked, a half
+/// outline ending on the sketch's `y` axis closing into a whole one; with
+/// nothing selected, the line comes first and each curve clicked after is
+/// mirrored.
+#[test]
+fn mirrors_close_half_outlines() {
+    let mut e = drawing();
+    e.lines(&[[0.0, 0.3], [0.6, 0.3], [0.6, 1.0], [0.0, 1.0]]);
+    assert_eq!(e.count(|c| matches!(c, Constraint::PointOnCurve { .. })), 2);
+    for p in [[0.3, 0.3], [0.6, 0.65], [0.3, 1.0]] {
+        e.click(p[0], p[1]);
+    }
+    assert_eq!(e.selection().len(), 3);
+    e.act("tool", "mirror");
+    e.click(0.0, 2.0);
+    assert_eq!(e.drawn_curves().len(), 6);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Symmetric { .. })), 2);
+    assert_eq!(e.sketch().regions().unwrap().len(), 1, "one closed outline");
+    assert!(e.report().converged, "{:?}", e.report());
+    assert_eq!(e.session().tool, Tool::Select);
+    // The original dragged wider: the image follows.
+    e.drag([0.6, 0.3], [0.8, 0.3], true);
+    assert!(e.report().converged);
+    let s = e.sketch();
+    assert!(
+        e.drawn_points()
+            .iter()
+            .any(|&p| close(xy(s, p), [-0.8, 0.3])),
+        "{:?}",
+        e.drawn_points()
+            .iter()
+            .map(|&p| xy(s, p))
+            .collect::<Vec<_>>()
+    );
+
+    // The line first, then what to mirror.
+    e.key("c");
+    e.click(2.0, 2.0);
+    e.click(2.2, 2.0);
+    e.act("tool", "mirror");
+    e.click(3.0, 0.0);
+    e.click(2.2, 2.0);
+    let centers = e.circle_centers();
+    assert!(
+        centers.iter().any(|&c| close(c, [2.0, -2.0])),
+        "{centers:?}"
+    );
+    assert!(e.has(|c| matches!(c, Constraint::Equal { .. })));
+    assert_eq!(
+        e.session().tool,
+        Tool::Modify(ModifyTool::Mirror),
+        "still in hand for the next"
+    );
+}
+
+/// A linear pattern of a circle along the `x` axis: as many copies as
+/// set, as far apart as set; then its construction line is selected, to
+/// give its count, and its spacing asked for.
+#[test]
+fn linear_patterns_repeat_along_a_line() {
+    let mut e = drawing();
+    e.key("c");
+    e.click(0.5, 0.5);
+    e.click(0.7, 0.5);
+    e.key("Escape");
+    e.click(0.7, 0.5);
+    assert_eq!(e.selection().len(), 1);
+    e.act("tool", "linear_pattern");
+    e.dialog("count", Value::Number(4.0));
+    e.dialog("spacing", Value::Number(1.0));
+    e.click(3.0, 0.0);
+    let mut xs: Vec<f64> = e.circle_centers().iter().map(|c| c[0]).collect();
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs.len(), 4, "{xs:?}");
+    assert!((xs[3] - 3.5).abs() < 1e-6, "{xs:?}");
+    assert!(e.report().converged, "{:?}", e.report());
+    assert!(e.presentation.prompt.is_some(), "the spacing is asked for");
+    assert!(e.presentation.dialog.get("pattern_count").is_some());
+    e.dialog("prompt", Value::Text("0.75".into()));
+    e.dialog("pattern_count", Value::Number(2.0));
+    let mut xs: Vec<f64> = e.circle_centers().iter().map(|c| c[0]).collect();
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs.len(), 2, "{xs:?}");
+    assert!((xs[1] - xs[0] - 0.75).abs() < 1e-6, "{xs:?}");
+    assert!(e.report().converged, "{:?}", e.report());
+    // Without a selection, there is nothing to pattern.
+    e.click(5.0, 5.0);
+    assert!(e.selection().is_empty());
+    assert!(matches!(
+        e.presentation.dialog.get("tool"),
+        Some(Control::Actions { actions }) if actions.iter().any(|a| a.value == "linear_pattern" && !a.enabled)
+    ));
+}
+
+/// A circular pattern of a hole round the origin, spread over the whole
+/// circle: its angle follows its count.
+#[test]
+fn circular_patterns_spread_round_the_circle() {
+    let mut e = drawing();
+    e.key("c");
+    e.click(0.8, 0.6);
+    e.click(0.9, 0.6);
+    e.key("Escape");
+    e.click(0.9, 0.6);
+    e.act("tool", "circular_pattern");
+    e.dialog("count", Value::Number(6.0));
+    e.click(0.0, 0.0);
+    let centers = e.circle_centers();
+    assert_eq!(centers.len(), 6);
+    let start = 0.6f64.atan2(0.8);
+    for k in 0..6 {
+        let a = start + std::f64::consts::PI / 3.0 * k as f64;
+        assert!(
+            centers.iter().any(|&c| close(c, [a.cos(), a.sin()])),
+            "{k}: {centers:?}"
+        );
+    }
+    assert!(e.args.formulas.values().any(|f| f == "360/6"));
+    e.dialog("pattern_count", Value::Number(8.0));
+    assert_eq!(e.circle_centers().len(), 8);
+    assert!(e.args.formulas.values().any(|f| f == "360/8"));
+    let report = e.report();
+    assert!(report.converged, "{report:?}");
+    // Wherever the solve turned the original to, the copies are an eighth
+    // of a turn apart all round.
+    let mut angles: Vec<f64> = e
+        .circle_centers()
+        .iter()
+        .map(|c| c[1].atan2(c[0]))
+        .collect();
+    angles.sort_by(f64::total_cmp);
+    for w in angles.windows(2) {
+        assert!(
+            (w[1] - w[0] - std::f64::consts::FRAC_PI_4).abs() < 1e-6,
+            "{angles:?}"
+        );
+    }
+}
+
+/// An arc slot: four clicks — the center of its arc, where the arc starts
+/// and ends, and its width — make a closed slot, round at both ends, that
+/// keeps its shape by constraint.
+#[test]
+fn arc_slots_bend_round_their_center() {
+    let mut e = drawing();
+    e.act("tool", "arc_slot");
+    for c in [[2.0, 2.0], [3.0, 2.0]] {
+        e.click(c[0], c[1]);
+    }
+    e.hover(2.7, 2.7);
+    e.click(2.0, 3.0);
+    e.click(3.2, 2.0);
+    assert_eq!(e.profile_curves().len(), 4);
+    assert_eq!(e.curves_of("arc").len(), 5, "its centerline among them");
+    let report = e.report();
+    assert!(report.converged, "{report:?}");
+    // Center, radius, start, sweep, width.
+    assert_eq!(report.dof, 6, "{report:?}");
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+    e.sketch().enclose::<S>().unwrap();
+    // Half round: its ends' centers and its center on one line.
+    let mut e = drawing();
+    e.act("tool", "arc_slot");
+    e.click(1.2, 0.6);
+    e.click(1.6, 0.6);
+    e.hover(1.2, 1.0);
+    e.click(0.8, 0.6);
+    e.click(1.7, 0.6);
+    let report = e.report();
+    assert!(report.converged && report.dof == 6, "{report:?}");
+    e.sketch().enclose::<S>().unwrap();
+}
+
+/// Circumscribed, a polygon's sides touch its circle: the second click is
+/// a side's middle, and the circle's diameter is the width across flats.
+#[test]
+fn circumscribed_polygons_touch_their_circle() {
+    let mut e = drawing();
+    e.act("tool", "polygon");
+    e.dialog("circumscribed", Value::Bool(true));
+    e.click(1.0, 1.0);
+    e.click(1.5, 1.0);
+    assert_eq!(e.curves_of("line").len(), 6);
+    let report = e.report();
+    assert!(report.converged && report.dof == 4, "{report:?}");
+    let s = e.sketch();
+    let corners: Vec<f64> = e
+        .drawn_points()
+        .iter()
+        .map(|&p| dist(xy(s, p), [1.0, 1.0]))
+        .filter(|&r| r > 0.1)
+        .collect();
+    let across_corners = 0.5 / (std::f64::consts::PI / 6.0).cos();
+    assert!(
+        corners.iter().all(|r| (r - across_corners).abs() < 1e-6),
+        "{corners:?}"
+    );
+    assert!(e.has(|c| matches!(c, Constraint::Tangent { .. })));
+    e.sketch().enclose::<S>().unwrap();
+}
+
+/// A chamfer bevels a corner: both sides cut back by one distance, given
+/// in place.
+#[test]
+fn chamfers_bevel_corners() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.2, 0.2);
+    e.click(1.2, 1.2);
+    e.act("tool", "chamfer");
+    e.click(1.2, 1.2);
+    assert_eq!(e.profile_curves().len(), 5);
+    assert!(e.presentation.prompt.is_some());
+    e.dialog("prompt", Value::Text("0.1".into()));
+    assert!(e.report().converged, "{:?}", e.report());
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+    // Wherever the solve left the corner, the bevel cuts 0.1 off each side.
+    let s = e.sketch();
+    let bevel = e
+        .profile_curves()
+        .into_iter()
+        .find_map(|c| match s.curves[&c].kind {
+            CurveKind::Line { start, end } if s.constraints.values().all(|k| {
+                !matches!(k, Constraint::Horizontal { line } | Constraint::Vertical { line } if *line == c)
+            }) => Some((xy(s, start), xy(s, end))),
+            _ => None,
+        })
+        .expect("the bevel");
+    assert!(
+        (dist(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6,
+        "{bevel:?}"
+    );
+    e.sketch().enclose::<S>().unwrap();
+}
+
+/// An arc drawn on from a line's end, running on smoothly from it, is made
+/// tangent to it; one drawn off at a corner is not.
+#[test]
+fn arcs_from_a_line_run_on_tangentially() {
+    let mut e = drawing();
+    e.lines(&[[0.0, 0.5], [1.0, 0.5]]);
+    e.act("tool", "arc");
+    e.click(1.0, 0.5);
+    e.click(1.0, 1.5);
+    e.click(1.49, 1.0);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 1);
+    assert!(e.report().converged, "{:?}", e.report());
+    // At a corner: no tangency.
+    e.lines(&[[3.0, 0.5], [4.0, 0.5]]);
+    e.act("tool", "arc");
+    e.click(4.0, 0.5);
+    e.click(4.0, 1.5);
+    e.click(3.6, 1.0);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 1);
+}
+
+/// A plate drawn with several tools — a rectangle with a chamfered corner,
+/// an arc slot and a circumscribed hexagon in it — is one region whose
+/// solution is proven, as extruding it needs.
+#[test]
+fn a_plate_of_several_tools_is_proven() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.2, 0.2);
+    e.click(2.6, 1.8);
+    e.act("tool", "chamfer");
+    e.click(2.6, 1.8);
+    e.dialog("prompt", Value::Text("0.2".into()));
+    e.sketch().enclose::<S>().unwrap();
+    e.act("tool", "arc_slot");
+    e.click(1.2, 0.6);
+    e.click(1.6, 0.6);
+    e.hover(1.2, 1.0);
+    e.click(0.8, 0.6);
+    e.click(1.7, 0.6);
+    // The rectangle's four freedoms, the chamfer's none, the slot's six.
+    assert_eq!(e.report().dof, 10, "{:?}", e.report());
+    e.sketch().enclose::<S>().unwrap();
+    e.act("tool", "polygon");
+    e.dialog("circumscribed", Value::Bool(true));
+    e.click(2.1, 0.7);
+    e.click(2.25, 0.7);
+    assert!(e.report().converged, "{:?}", e.report());
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+    e.sketch().enclose::<S>().unwrap();
+}
+
+/// A mirrored arc cut back by trimming turns less than its original: it
+/// keeps its ends' symmetry where they are left, but not its sweep.
+#[test]
+fn trimming_a_mirror_image_frees_its_sweep() {
+    let mut e = drawing();
+    e.act("tool", "arc");
+    e.click(0.5, 0.5);
+    e.click(1.5, 0.5);
+    e.click(1.0, 1.0);
+    e.key("Escape");
+    e.act("tool", "mirror");
+    e.click(0.0, 2.0);
+    e.click(1.0, 1.0);
+    assert!(e.has(|c| matches!(c, Constraint::EqualSweep { .. })));
+    e.key("Escape");
+    e.lines(&[[-1.0, 0.2], [-1.0, 1.5]]);
+    e.key("m");
+    e.click(-0.646, 0.854);
+    assert!(!e.has(|c| matches!(c, Constraint::EqualSweep { .. })));
+    assert_eq!(e.curves_of("arc").len(), 2, "{:?}", e.sketch());
+    assert!(e.report().converged, "{:?}", e.report());
+}

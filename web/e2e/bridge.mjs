@@ -2,20 +2,27 @@
 // the page the extension shows (`vscode-extension/media/`, from `npm run
 // build:vscode`) with an `acquireVsCodeApi` shim that carries its messages
 // over a WebSocket, and answers them as `vscode-extension/src/geopEditor.ts`
-// does — each page its own `geop serve` process, the workspace folder's
-// other program files sent first, then the document.
+// does — each page its own `geop serve` process, run and restarted after a
+// crash by the extension's own `GeopServer`, the workspace folder's other
+// program files sent first, then the document.
 //
 // The page opens the document `doc` (relative to `folder`) at `/?doc=<doc>`.
-// What it writes back is recorded instead of edited into a document: every
-// program (`written[doc]`) and every exported file it asks to save
-// (`saved[doc]`).
+// Every program it writes back is written to the document's file and
+// recorded (`written[doc]`), and every exported file it asks to save is
+// recorded (`saved[doc]`).
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import http from "node:http";
 import path from "node:path";
 import { WebSocketServer } from "ws";
-import { freePort } from "./lib.mjs";
+import { freePort, ROOT } from "./lib.mjs";
+
+// The extension's kernel process, compiled (`npm run compile` in
+// `vscode-extension/`): how it talks to `geop serve`, and restarts it.
+const { GeopServer, KernelCrashed, restoreCommands } = createRequire(import.meta.url)(
+  path.join(ROOT, "vscode-extension", "out", "server.js"),
+);
 
 const SHIM = `<script>
 const ws = new WebSocket("ws://" + location.host + "/ws" + location.search);
@@ -65,34 +72,17 @@ export async function startBridge({ media, exe, folder }) {
     res.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream" });
     res.end(body);
   });
-  const children = new Set();
+  const servers = new Set();
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (ws, req) => {
     const doc = new URL(req.url, "http://x").searchParams.get("doc");
-    const child = spawn(exe, ["serve"], { stdio: ["pipe", "pipe", "pipe"] });
-    children.add(child);
-    child.stderr.on("data", (d) => process.stderr.write(`[geop ${doc}] ${d}`));
-    // Answers come in the order the commands went: a line each.
-    const waiting = [];
-    let buffered = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      buffered += chunk;
-      for (let end = buffered.indexOf("\n"); end >= 0; end = buffered.indexOf("\n")) {
-        const line = buffered.slice(0, end);
-        buffered = buffered.slice(end + 1);
-        const id = waiting.shift();
-        if (line.startsWith('{"fatal":')) ws.send(JSON.stringify({ type: "failure", id, message: JSON.parse(line).fatal }));
-        else ws.send(JSON.stringify({ type: "answer", id, update: line }));
-      }
-    });
-    child.on("exit", (code, signal) => {
-      children.delete(child);
-      // Whatever still waits is never answered: fail it, as the extension would.
-      for (const id of waiting.splice(0)) {
-        ws.send(JSON.stringify({ type: "failure", id, message: `geop serve exited (${code ?? signal})` }));
-      }
-    });
+    // The extension's own kernel process, restarted as it restarts it.
+    const geop = new GeopServer(
+      exe,
+      (text) => process.stderr.write(`[geop ${doc}] ${text}`),
+      async () => restoreCommands(otherFiles(folder, doc), fs.readFileSync(path.join(folder, doc), "utf8"), doc),
+    );
+    servers.add(geop);
     ws.on("message", (raw) => {
       const message = JSON.parse(raw);
       switch (message.type) {
@@ -104,18 +94,28 @@ export async function startBridge({ media, exe, folder }) {
           break;
         }
         case "command":
-          waiting.push(message.id);
-          child.stdin.write(message.command + "\n");
+          geop.request(message.command).then(
+            (update) => ws.send(JSON.stringify({ type: "answer", id: message.id, update })),
+            (e) =>
+              ws.send(
+                JSON.stringify({ type: "failure", id: message.id, message: e.message, crashed: e instanceof KernelCrashed }),
+              ),
+          );
           break;
         case "program":
           (written[doc] ??= []).push(message.program);
+          // As VS Code would: the document is what the page wrote.
+          fs.writeFileSync(path.join(folder, doc), JSON.stringify(message.program, null, 2) + "\n");
           break;
         case "save":
           (saved[doc] ??= []).push(message.file);
           break;
       }
     });
-    ws.on("close", () => child.kill());
+    ws.on("close", () => {
+      geop.dispose();
+      servers.delete(geop);
+    });
   });
   const port = await freePort();
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
@@ -124,7 +124,7 @@ export async function startBridge({ media, exe, folder }) {
     written,
     saved,
     stop() {
-      for (const child of children) child.kill();
+      for (const geop of servers) geop.dispose();
       wss.close();
       server.close();
     },

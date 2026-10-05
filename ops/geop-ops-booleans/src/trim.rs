@@ -21,7 +21,7 @@ use geop_core_topology::{Body, CoedgeGeometry, EdgeId, FaceId, ShellId, SolidId}
 use geop_ops::{Namer, Part};
 
 use crate::{
-    boolean::classify_face,
+    boolean::{Classified, classify_face},
     remesh::remesh::{RemeshParams, remesh},
 };
 
@@ -67,9 +67,10 @@ pub fn trim_up_to_next<S: Scalar>(
         .into_iter()
         .collect();
     let mut classes = Vec::with_capacity(faces.len());
+    let mut classified = Classified::default();
     for &face in &faces {
         classes.push(
-            classify_face(model, face, copy, params)
+            classify_face(model, face, copy, params, &mut classified)
                 .with_context(&ctx)
                 .with_context(&|e: GeopError| e.with_context(format!("classifying face {face}")))?,
         );

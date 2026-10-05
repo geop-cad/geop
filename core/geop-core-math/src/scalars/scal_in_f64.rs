@@ -102,14 +102,17 @@ impl Display for ScalInF64 {
 }
 
 impl Ring for ScalInF64 {
+    #[inline]
     fn add(self, other: Self) -> Self {
         ScalInF64::new(next_down(self.lo + other.lo), next_up(self.hi + other.hi))
     }
 
+    #[inline]
     fn sub(self, other: Self) -> Self {
         ScalInF64::new(next_down(self.lo - other.hi), next_up(self.hi - other.lo))
     }
 
+    #[inline]
     fn mul(self, other: Self) -> Self {
         let products = [
             self.lo * other.lo,
@@ -122,12 +125,14 @@ impl Ring for ScalInF64 {
         ScalInF64::new(next_down(lo), next_up(hi))
     }
 
+    #[inline]
     fn neg(self) -> Self {
         ScalInF64::new(-self.hi, -self.lo)
     }
 }
 
 impl Field for ScalInF64 {
+    #[inline]
     fn div(self, other: Self) -> GeopResult<Self> {
         if other.lo <= 0.0 && other.hi >= 0.0 {
             return Err(GeopError::new(
@@ -167,13 +172,16 @@ impl Scalar for ScalInF64 {
         hi: f64::INFINITY,
     };
 
+    #[inline]
     fn from_i64(v: i64) -> Self {
         ScalInF64::degenerate(v as f64)
     }
+    #[inline]
     fn from_f64(v: f64) -> Self {
         ScalInF64::degenerate(v)
     }
 
+    #[inline]
     fn from_ratio(num: i64, den: i64) -> GeopResult<Self> {
         if den == 0 {
             return Err(GeopError::new("ScalInF64::from_ratio: denominator is zero"));
@@ -182,6 +190,7 @@ impl Scalar for ScalInF64 {
         Ok(ScalInF64::new(next_down(exact), next_up(exact)))
     }
 
+    #[inline]
     fn abs(self) -> Self {
         if self.lo >= 0.0 {
             self
@@ -192,6 +201,7 @@ impl Scalar for ScalInF64 {
         }
     }
 
+    #[inline]
     fn sqrt(self) -> GeopResult<Self> {
         if self.hi < 0.0 {
             return Err(GeopError::new(
@@ -205,18 +215,21 @@ impl Scalar for ScalInF64 {
         ))
     }
 
+    #[inline]
     fn sin(self) -> Self {
         use std::f64::consts::FRAC_PI_2;
         let (lo, hi) = interval_trig(self.lo, self.hi, f64::sin, FRAC_PI_2, -FRAC_PI_2);
         ScalInF64::new(lo, hi)
     }
 
+    #[inline]
     fn cos(self) -> Self {
         use std::f64::consts::PI;
         let (lo, hi) = interval_trig(self.lo, self.hi, f64::cos, 0.0, PI);
         ScalInF64::new(lo, hi)
     }
 
+    #[inline]
     fn acos(self) -> GeopResult<Self> {
         if self.hi < -1.0 || self.lo > 1.0 {
             return Err(GeopError::new(format!(
@@ -232,61 +245,75 @@ impl Scalar for ScalInF64 {
         ))
     }
 
+    #[inline]
     fn could_be_equal(self, other: Self) -> bool {
         self.lo <= other.hi && other.lo <= self.hi
     }
 
+    #[inline]
     fn definitely_not_equal(self, other: Self) -> bool {
         self.hi < other.lo || self.lo > other.hi
     }
 
+    #[inline]
     fn could_be_greater(self, other: Self) -> bool {
         self.hi > other.lo
     }
 
+    #[inline]
     fn definitely_greater(self, other: Self) -> bool {
         self.lo > other.hi
     }
 
+    #[inline]
     fn could_be_less(self, other: Self) -> bool {
         self.lo < other.hi
     }
 
+    #[inline]
     fn definitely_less(self, other: Self) -> bool {
         self.hi < other.lo
     }
 
+    #[inline]
     fn is_infinite(self) -> bool {
         self.lo == f64::NEG_INFINITY || self.hi == f64::INFINITY
     }
 
+    #[inline]
     fn is_finite(self) -> bool {
         self.lo.is_finite() && self.hi.is_finite()
     }
 
+    #[inline]
     fn midpoint(self) -> Self {
         let m = (self.lo + self.hi) / 2.0;
         ScalInF64::degenerate(m)
     }
 
+    #[inline]
     fn is_sharp(self) -> bool {
         self.lo == self.hi
     }
 
+    #[inline]
     fn lower(self) -> Self {
         ScalInF64::degenerate(self.lo)
     }
 
+    #[inline]
     fn upper(self) -> Self {
         ScalInF64::degenerate(self.hi)
     }
 
+    #[inline]
     fn width(self) -> Self {
         // Non-negative and sharp, so it can serve as a decidable threshold.
         let w = (self.hi - self.lo).max(0.0);
         ScalInF64::new(w, w)
     }
 
+    #[inline]
     fn intersect(self, other: Self) -> Self {
         let lo = self.lo.max(other.lo);
         let hi = self.hi.min(other.hi);
@@ -299,14 +326,17 @@ impl Scalar for ScalInF64 {
         }
     }
 
+    #[inline]
     fn to_f64(self) -> f64 {
         (self.lo + self.hi) / 2.0
     }
 
+    #[inline]
     fn union(self, other: Self) -> Self {
         ScalInF64::new(self.lo.min(other.lo), self.hi.max(other.hi))
     }
 
+    #[inline]
     fn is_subset_of(self, other: Self) -> bool {
         other.lo <= self.lo && self.hi <= other.hi
     }
@@ -314,42 +344,49 @@ impl Scalar for ScalInF64 {
 
 impl core::ops::Add for ScalInF64 {
     type Output = Self;
+    #[inline]
     fn add(self, rhs: Self) -> Self {
         Ring::add(self, rhs)
     }
 }
 impl core::ops::Sub for ScalInF64 {
     type Output = Self;
+    #[inline]
     fn sub(self, rhs: Self) -> Self {
         Ring::sub(self, rhs)
     }
 }
 impl core::ops::Mul for ScalInF64 {
     type Output = Self;
+    #[inline]
     fn mul(self, rhs: Self) -> Self {
         Ring::mul(self, rhs)
     }
 }
 impl core::ops::Neg for ScalInF64 {
     type Output = Self;
+    #[inline]
     fn neg(self) -> Self {
         Ring::neg(self)
     }
 }
 
 impl From<i64> for ScalInF64 {
+    #[inline]
     fn from(v: i64) -> Self {
         ScalInF64::from_i64(v)
     }
 }
 
 impl From<f64> for ScalInF64 {
+    #[inline]
     fn from(v: f64) -> Self {
         ScalInF64::degenerate(v)
     }
 }
 
 impl Default for ScalInF64 {
+    #[inline]
     fn default() -> Self {
         ScalInF64::ZERO
     }

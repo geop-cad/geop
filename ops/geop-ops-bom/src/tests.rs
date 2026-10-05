@@ -16,7 +16,7 @@ use geop_ops::{
 use geop_ops_extrude_revolve::shapes::cube::cube_solid;
 use geop_ops_sheetmetal::FlatPatternData;
 
-use crate::{Bom, LineKind, Standard, Structure, bom};
+use crate::{Bom, LineKind, Structure, bom};
 
 /// Steel: 7850 kg/m³, so a cube of side 1 mm weighs 7.85e-6 kg.
 const CUBE: f64 = 7.85e-6;
@@ -37,9 +37,12 @@ fn cube(part: &mut Part<S>, name: &str, side: f64) {
     cube_solid(part, name, v(0.0), v(side)).unwrap();
 }
 
-/// A "standard" screw, a steel cube of side 1, built at the size `size`.
+/// A "standard" screw, a steel cube of side 1, built at the size `size`:
+/// called a test screw, and ordered as `TEST M4`.
 fn screw(size: &str) -> Arc<Component<S>> {
     let mut parameters = steel();
+    parameters.title = Some("Test screw".into());
+    parameters.designation = Some("TEST".into());
     parameters.values.push(Parameter {
         name: "size".into(),
         kind: ParameterKind::Table {
@@ -111,16 +114,6 @@ fn assembly() -> Part<S> {
     part
 }
 
-fn standard(file: &str, values: &State) -> Option<Standard> {
-    let Some(ParamValue::Text(size)) = values.get("size") else {
-        return None;
-    };
-    (file == "std:screw.geop").then(|| Standard {
-        title: "Test screw".into(),
-        designation: format!("TEST {size}"),
-    })
-}
-
 /// The unit and total mass of a part line.
 #[track_caller]
 fn masses(bom: &Bom, item: &str) -> (f64, f64) {
@@ -149,7 +142,7 @@ fn assert_close(got: f64, want: f64) {
 /// for its own body, weighed without its screws.
 #[test]
 fn a_flat_bill_groups_repeated_parts() {
-    let bom = bom(&assembly(), "top.geop", Structure::Flat, &standard).unwrap();
+    let bom = bom(&assembly(), "top.geop", Structure::Flat).unwrap();
     let rows: Vec<(&str, u64, Option<&str>, usize)> = bom
         .lines
         .iter()
@@ -173,6 +166,13 @@ fn a_flat_bill_groups_repeated_parts() {
     );
     assert_eq!(bom.line("1").unwrap().name, "bracket");
     assert_eq!(bom.line("2").unwrap().name, "Test screw");
+    // Where each is placed, from the assembly: what a drawing balloons.
+    assert_eq!(bom.line("1").unwrap().placements, ["b1", "b2"]);
+    assert_eq!(
+        bom.line("2").unwrap().placements,
+        ["b1/s1", "b1/s2", "b2/s1", "b2/s2", "s1", "s2", "s3"]
+    );
+    assert_eq!(bom.line("3").unwrap().placements, ["s4"]);
     let LineKind::Part {
         parameters,
         material,
@@ -199,7 +199,7 @@ fn a_flat_bill_groups_repeated_parts() {
 /// body and its screws.
 #[test]
 fn an_indented_bill_follows_the_sub_assemblies() {
-    let bom = bom(&assembly(), "top.geop", Structure::Indented, &standard).unwrap();
+    let bom = bom(&assembly(), "top.geop", Structure::Indented).unwrap();
     let rows: Vec<(&str, usize, u64, &str)> = bom
         .lines
         .iter()
@@ -238,7 +238,7 @@ fn a_plain_part_is_one_line_with_its_sheet_thickness() {
     )
     .unwrap();
     for structure in [Structure::Flat, Structure::Indented] {
-        let bom = bom(&part, "parts/cover.geop", structure, &standard).unwrap();
+        let bom = bom(&part, "parts/cover.geop", structure).unwrap();
         assert_eq!(bom.lines.len(), 1, "{bom:#?}");
         let line = &bom.lines[0];
         assert_eq!((line.item.as_str(), line.name.as_str()), ("1", "cover"));
@@ -285,7 +285,7 @@ fn wires_are_lines_of_their_own() {
     place(&mut top, &harness, "h1", 0.0);
     place(&mut top, &harness, "h2", 5.0);
 
-    let flat = bom(&top, "top.geop", Structure::Flat, &standard).unwrap();
+    let flat = bom(&top, "top.geop", Structure::Flat).unwrap();
     let rows: Vec<(&str, u64, Option<&str>)> = flat
         .lines
         .iter()
@@ -318,7 +318,7 @@ fn wires_are_lines_of_their_own() {
     );
     assert!(lines[4].contains("Total"), "{csv}");
 
-    let indented = bom(&top, "top.geop", Structure::Indented, &standard).unwrap();
+    let indented = bom(&top, "top.geop", Structure::Indented).unwrap();
     let items: Vec<(&str, usize)> = indented
         .lines
         .iter()

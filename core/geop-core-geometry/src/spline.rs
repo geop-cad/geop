@@ -48,6 +48,46 @@ pub(crate) fn breakpoints<S: Scalar>(knots: &[S], degree: usize, num_points: usi
     out
 }
 
+/// The knot spans `t` could lie in, each with the part of `t` within it.
+///
+/// One span and `t` itself — [`find_span`]'s — unless `t` is an interval
+/// reaching past that span. One span's polynomial evaluated over all of
+/// such a `t` extrapolates it across the others, which encloses nothing of
+/// the spline there: a cubic of a curve fitted through 48 points, evaluated
+/// over its whole domain, came out 25 times as wide as the curve. So then
+/// it is every span the interval reaches, with the piece of `t` in it, and
+/// a curve's evaluation is the union of the pieces'.
+///
+/// A surface's is not yet: `NurbSurface::evaluate` and its derivatives
+/// still extrapolate [`find_span`]'s span. Uniting its pieces the same way
+/// left `chamfer_cylinder_flat_side`'s boolean with a face straddling the
+/// cylinder's cap — something downstream leans on the extrapolated width,
+/// and needs finding before surfaces can follow.
+pub(crate) fn find_spans<S: Scalar>(
+    degree: usize,
+    knots: &[S],
+    n: usize,
+    t: S,
+) -> GeopResult<Vec<(usize, S)>> {
+    let span = find_span(degree, knots, n, t)?;
+    // Wholly within the span found, its ends included: its polynomial holds
+    // over all of `t`.
+    let inside =
+        !t.lower().could_be_less(knots[span]) && !t.upper().could_be_greater(knots[span + 1]);
+    if t.is_sharp() || inside {
+        return Ok(vec![(span, t)]);
+    }
+    let pieces: Vec<(usize, S)> = (degree..=n)
+        .filter(|&k| knots[k].could_be_less(knots[k + 1]))
+        .filter(|&k| !t.definitely_less(knots[k]) && !t.definitely_greater(knots[k + 1]))
+        .map(|k| (k, t.intersect(knots[k].union(knots[k + 1]))))
+        .collect();
+    if pieces.is_empty() {
+        return Ok(vec![(span, t)]);
+    }
+    Ok(pieces)
+}
+
 /// The knot span containing `t`: the last index `k` in `[degree, n]` with
 /// `knots[k] <= t < knots[k+1]`, where `n + 1` is the number of control
 /// points.

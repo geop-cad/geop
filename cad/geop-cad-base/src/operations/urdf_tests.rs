@@ -27,7 +27,7 @@ fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
         .into_iter()
         .find(|(n, _)| *n == name)
         .unwrap()
-        .1;
+        .1();
     let program = files[0].1.clone();
     let files = files
         .into_iter()

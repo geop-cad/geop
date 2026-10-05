@@ -73,11 +73,18 @@ fn curvature_gap<S: Scalar>(
     }
     let [(ug, vg), (uf, vf)] = feet;
     let (ng, nf) = (surf_g.normal(ug, vg)?, surf_f.normal(uf, vf)?);
+    // Tangent is parallel normals: their cross product zero, and their dot
+    // product `±1`. Over a stretch of the edge the normals are wide, and
+    // then each component of the cross product can be zero somewhere, if
+    // never all at once — a hole's wall turning a quarter round against the
+    // plane it is drilled into — while the dot product still shows them
+    // apart.
     let cross = ng.prod_cross(&nf);
-    if !(0..3).all(|k| cross[k].could_be_equal(S::ZERO)) {
+    let alignment = ng.prod_dot(&nf);
+    if !(0..3).all(|k| cross[k].could_be_equal(S::ZERO)) || !alignment.abs().could_be_equal(S::ONE)
+    {
         return Ok(None);
     }
-    let alignment = ng.prod_dot(&nf);
     let h_f = surf_f.mean_curvature(uf, vf)?;
     let h_f = if alignment.definitely_greater(S::ZERO) {
         h_f
@@ -194,7 +201,7 @@ fn tangent_branch_points<S: Scalar>(
 /// where that is excluded exactly, before [`tangent_branch_points`] searches
 /// for one.
 ///
-/// Two cases are excluded, and both are the configurations that make the
+/// Three cases are excluded, and all are configurations that make the
 /// search exhaustive: two surfaces that agree in curvature all along the edge
 /// never let it discard a stretch, so it evaluates every one of its
 /// `2^ISOLATION_LEVELS` pieces and finds nothing. Two copies of one solid
@@ -204,12 +211,12 @@ fn tangent_branch_points<S: Scalar>(
 /// - **The same patch.** Where `g` and `f` are one surface, `g ∩ f` is that
 ///   surface, not branches leaving the edge; the overlap is imprinting's to
 ///   handle.
-/// - **Two planes.** Neither bends, so their curvature gap is zero all
-///   along the edge and no sign change can ever be found: the search would
-///   only confirm that, piece by piece. Coplanar ones are the common case —
-///   a boss extruded from the face it stands on, the teeth patterned round
-///   a gear's hub — and an edge of one lying in the other was the slowest
-///   boolean there was.
+/// - **Two flat faces.** Two planes tangent along the edge are one plane,
+///   which they share, not branches leaving the edge — the face a hole or a
+///   boss is cut from and the tool's end lying on it, two patches of one
+///   plane. Flat as [`NurbSurface3D::as_plane`] decides it, to within what
+///   the arithmetic resolves: a bend below that is rounding, and its
+///   curvature only noise for the search to chase.
 /// - **Opposite sides.** Where the edge runs along a boundary edge of `f`
 ///   (the other solid's copy of it), `f` lies to one side of it, and a branch
 ///   leaving into both faces needs `g` on that same side. Material lies left
@@ -229,9 +236,11 @@ fn branch_can_leave<S: Scalar>(
     min_subdivision_size: S,
 ) -> GeopResult<bool> {
     let (face_g, face_f) = (model.get_face(g)?, model.get_face(f)?);
-    if face_g.surface.could_be_equal(&face_f.surface)
-        || (face_g.surface.as_plane()?.is_some() && face_f.surface.as_plane()?.is_some())
-    {
+    if face_g.surface.could_be_equal(&face_f.surface) {
+        return Ok(false);
+    }
+    let flat = |face: &geop_core_topology::Face<S>| matches!(face.surface.as_plane(), Ok(Some(_)));
+    if flat(face_g) && flat(face_f) {
         return Ok(false);
     }
 

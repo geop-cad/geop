@@ -53,6 +53,14 @@ pub struct ProfileLoop {
     pub edges: Vec<ProfileEdge>,
 }
 
+/// Curves joined end to end, in order (see [`Sketch::chain`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chain {
+    pub edges: Vec<ProfileEdge>,
+    /// Its last curve ends where its first starts — or it is a circle.
+    pub closed: bool,
+}
+
 /// An area of the sketch: an outer loop (counter-clockwise) and the holes in
 /// it (clockwise).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,66 +102,147 @@ impl<S: Scalar> Sketch<S> {
     pub fn shape(&self) -> GeopResult<Shape> {
         self.validate()?;
         if self.loops()?.is_empty() {
-            Ok(Shape::Chain(self.chain()?))
+            Ok(Shape::Chain(self.sweep_chain()?))
         } else {
             Ok(Shape::Region(self.region()?))
         }
     }
 
-    /// The one open chain the sketch's non-construction curves form, walked
-    /// from its end at the lower point id. Fails unless they form exactly
-    /// one, unbranched.
-    fn chain(&self) -> GeopResult<ProfileLoop> {
-        let class = self.point_classes();
-        let edges: Vec<(CurveId, PointId, PointId)> = self
+    /// The one open chain the sketch's non-construction curves form (see
+    /// [`Sketch::chain`]). Fails unless they form exactly one, unbranched.
+    fn sweep_chain(&self) -> GeopResult<ProfileLoop> {
+        let curves: Vec<CurveId> = self
             .curves
             .iter()
-            .filter(|(_, c)| !c.construction)
+            .filter(|(_, c)| !c.construction && c.endpoints().is_some())
+            .map(|(&id, _)| id)
+            .collect();
+        if curves.is_empty() {
+            return Err(GeopError::new("sketch has no curves to sweep"));
+        }
+        let ctx = with_context!(
+            "one sketch is one profile to sweep: draw each chain in a sketch of its own"
+        );
+        let chain = self.chain(&curves).with_context(ctx)?;
+        Ok(ProfileLoop { edges: chain.edges })
+    }
+
+    /// `curves` in order as one chain, each joined to the next at an end
+    /// point, none branching: an open chain walked from its end at the
+    /// lower point id, a closed one from its first curve given — or a lone
+    /// circle.
+    pub fn chain(&self, curves: &[CurveId]) -> GeopResult<Chain> {
+        let mut ids: Vec<CurveId> = Vec::new();
+        for &c in curves {
+            self.curve(c)?;
+            if !ids.contains(&c) {
+                ids.push(c);
+            }
+        }
+        let Some(&first) = ids.first() else {
+            return Err(GeopError::new("no curves to make a chain of"));
+        };
+        if let Some(&circle) = ids
+            .iter()
+            .find(|c| matches!(self.curves[c].kind, CurveKind::Circle { .. }))
+        {
+            if ids.len() > 1 {
+                return Err(GeopError::new(format!(
+                    "circle {circle} is a chain of its own, apart from the other curves"
+                )));
+            }
+            return Ok(Chain {
+                edges: vec![ProfileEdge {
+                    curve: circle,
+                    reversed: false,
+                }],
+                closed: true,
+            });
+        }
+        let class = self.point_classes();
+        let ends = |c: CurveId| {
+            let (s, e) = self.curves[&c].endpoints().expect("no circle");
+            (class[&s], class[&e])
+        };
+        let mut at: BTreeMap<PointId, Vec<CurveId>> = BTreeMap::new();
+        for &c in &ids {
+            let (s, e) = ends(c);
+            at.entry(s).or_default().push(c);
+            at.entry(e).or_default().push(c);
+        }
+        if let Some((p, cs)) = at.iter().find(|(_, cs)| cs.len() > 2) {
+            return Err(GeopError::new(format!(
+                "curves branch at point {p}: {} curves meet there",
+                cs.len()
+            )));
+        }
+        // An open chain starts at its end at the lower point id.
+        let start = at.iter().find(|(_, cs)| cs.len() == 1).map(|(&p, cs)| {
+            let c = cs[0];
+            (c, ends(c).0 != p)
+        });
+        let closed = start.is_none();
+        let (mut c, mut reversed) = start.unwrap_or((first, false));
+        let mut edges = vec![ProfileEdge { curve: c, reversed }];
+        loop {
+            let (s, e) = ends(c);
+            let end = if reversed { s } else { e };
+            let Some(&next) = at[&end]
+                .iter()
+                .find(|&&k| !edges.iter().any(|edge| edge.curve == k))
+            else {
+                break;
+            };
+            reversed = ends(next).1 == end;
+            c = next;
+            edges.push(ProfileEdge { curve: c, reversed });
+        }
+        if let Some(apart) = ids
+            .iter()
+            .find(|&&k| !edges.iter().any(|edge| edge.curve == k))
+        {
+            return Err(GeopError::new(format!(
+                "the curves form separate chains: {apart} is not joined to {}",
+                edges[0].curve
+            )));
+        }
+        Ok(Chain { edges, closed })
+    }
+
+    /// The chain through `curve`: it, and on from each of its ends the
+    /// line or arc joined there — as long as exactly one other line or arc
+    /// of its kind (profile or construction) is.
+    pub fn chain_through(&self, curve: CurveId) -> GeopResult<Vec<CurveId>> {
+        let construction = self.curve(curve)?.construction;
+        let Some((s, e)) = self.curves[&curve].endpoints() else {
+            return Ok(vec![curve]);
+        };
+        let class = self.point_classes();
+        let kin: Vec<(CurveId, PointId, PointId)> = self
+            .curves
+            .iter()
+            .filter(|(_, c)| c.construction == construction)
+            .filter(|(_, c)| matches!(c.kind, CurveKind::Line { .. } | CurveKind::Arc { .. }))
             .filter_map(|(&id, c)| c.endpoints().map(|(s, e)| (id, class[&s], class[&e])))
             .collect();
-        if edges.is_empty() {
-            return Err(GeopError::new("sketch has no curves to sweep"));
-        }
-        let mut degree: BTreeMap<PointId, usize> = BTreeMap::new();
-        for &(_, a, b) in &edges {
-            *degree.entry(a).or_default() += 1;
-            *degree.entry(b).or_default() += 1;
-        }
-        if let Some((p, d)) = degree.iter().find(|(_, d)| **d > 2) {
-            return Err(GeopError::new(format!(
-                "profile curves branch at point {p}: {d} curves meet there"
-            )));
-        }
-        let ends: Vec<PointId> = degree
-            .iter()
-            .filter(|(_, d)| **d == 1)
-            .map(|(&p, _)| p)
-            .collect();
-        let pieces = ends.len() / 2;
-        let Some(&start) = ends.first() else {
-            return Err(GeopError::new("sketch has no curves to sweep"));
+        let others_at = |p: PointId, not: CurveId| -> Vec<(CurveId, PointId)> {
+            kin.iter()
+                .filter(|&&(id, s, e)| id != not && (s == p || e == p))
+                .map(|&(id, s, e)| (id, if s == p { e } else { s }))
+                .collect()
         };
-        let mut used = vec![false; edges.len()];
-        let mut chain = Vec::new();
-        let mut at = start;
-        while let Some(k) =
-            (0..edges.len()).find(|&k| !used[k] && (edges[k].1 == at || edges[k].2 == at))
-        {
-            used[k] = true;
-            let reversed = edges[k].1 != at;
-            chain.push(ProfileEdge {
-                curve: edges[k].0,
-                reversed,
-            });
-            at = if reversed { edges[k].1 } else { edges[k].2 };
+        let mut chain = vec![curve];
+        for from in [class[&e], class[&s]] {
+            let (mut c, mut p) = (curve, from);
+            while let [(next, far)] = others_at(p, c)[..] {
+                if chain.contains(&next) {
+                    break;
+                }
+                chain.push(next);
+                (c, p) = (next, far);
+            }
         }
-        if pieces != 1 || used.iter().any(|u| !u) {
-            return Err(GeopError::new(format!(
-                "sketch has {} separate chains of curves, but one sketch is one profile to sweep: draw each in a sketch of its own",
-                pieces.max(2)
-            )));
-        }
-        Ok(ProfileLoop { edges: chain })
+        Ok(chain)
     }
 
     /// Every region bounded by the sketch's non-construction curves.

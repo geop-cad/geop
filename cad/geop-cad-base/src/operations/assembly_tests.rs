@@ -958,10 +958,10 @@ fn an_assembly_opened_first_sends_its_parts() {
         .into_iter()
         .find(|(name, _)| *name == "pin_in_plate")
         .unwrap()
-        .1
-        .into_iter()
-        .map(|(path, program)| (path.to_string(), Some(program.to_json().unwrap())))
-        .collect();
+        .1()
+    .into_iter()
+    .map(|(path, program)| (path.to_string(), Some(program.to_json().unwrap())))
+    .collect();
     let mut known = BTreeMap::new();
     let mut keep = |update: crate::Update<S>| {
         assert!(update.error.is_none(), "{:?}", update.error);
@@ -993,7 +993,7 @@ fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
         .into_iter()
         .find(|(n, _)| *n == name)
         .unwrap()
-        .1;
+        .1();
     let program = files[0].1.clone();
     let files = files
         .into_iter()

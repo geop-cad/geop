@@ -179,7 +179,7 @@ families_build! {
     tslot_2020_builds: "std:tslot_2020.geop",
     tslot_2040_builds: "std:tslot_2040.geop",
     nema17_steppers_build: "std:nema17_stepper.geop",
-    #[ignore = "slow: twenty booleans, see `a_12_tooth_spur_gear_builds` — run with `cargo test -- --ignored`"]
+    #[ignore = "slow: twenty booleans, see `a_gear_gap_turned_234_degrees_is_cut_valid` — run with `cargo test -- --ignored`"]
     spur_gears_build: "std:spur_gear.geop",
     gt2_16t_pulleys_build: "std:gt2_pulley_16t.geop",
     #[ignore = "slow: like the 16-tooth one, with more grooves — run with `cargo test -- --ignored`"]
@@ -345,9 +345,11 @@ fn the_bolted_plate_holds_together() {
     }
 }
 
-/// The fewest teeth a gear has build into a valid gear: the fast check of
-/// the family, whose default of 20 teeth takes twenty booleans.
+/// The fewest teeth a gear has build into a valid gear, twelve booleans.
+/// The default suite checks the family by two gaps cut valid instead (see
+/// `a_gear_gap_turned_234_degrees_is_cut_valid`).
 #[test]
+#[ignore = "slow: twelve booleans — run with `cargo test -- --ignored`"]
 fn a_12_tooth_spur_gear_builds() {
     let part = super::part("std:spur_gear.geop").unwrap();
     let mut program = part.program.clone();
@@ -426,15 +428,14 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
             "Plastic",
         ),
     ] {
-        let standard = super::standard(file, &values).unwrap();
+        let program = &super::part(file).unwrap().program;
         // Unset parameters are the family's own: designated as defined.
-        let got = if values.is_empty() {
-            super::part(file)
-                .unwrap()
-                .designate(&super::part(file).unwrap().program.inputs())
+        let values = if values.is_empty() {
+            program.inputs()
         } else {
-            standard.designation
+            values
         };
+        let got = program.parameters.designate(&values).unwrap();
         assert_eq!(got, want, "{file}");
         let made_of = super::part(file)
             .unwrap()

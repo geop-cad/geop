@@ -454,3 +454,50 @@ fn robot_timings() {
         println!("  drag {drag:.3} s, {}", size(&update));
     }
 }
+
+/// Editing the robot asks its whole assembly something a few times per
+/// edit — to solve its mates, to check them — and never once per step: a
+/// step list of every placed part, each asking the whole assembly how
+/// free its part is, made a drag of a 2000-part robot take minutes. Counted
+/// in mates resolved (see [`geop_ops::assembly::mates_resolved`]), not
+/// timed, so it shows at a modest size: per mate of the top file, an edit
+/// resolves a few, however many there are.
+#[test]
+fn an_edit_resolves_each_mate_a_few_times() {
+    for screws in [20, 80] {
+        let mates = 1 + screws;
+        let resolved = |f: &mut dyn FnMut()| {
+            let before = geop_ops::assembly::mates_resolved();
+            f();
+            geop_ops::assembly::mates_resolved() - before
+        };
+        let mut editor = None;
+        let load = resolved(&mut || editor = Some(robot_editor(1, screws).0));
+        let mut editor = editor.unwrap();
+        let drag = resolved(&mut || {
+            editor.handle(Command::DragTool { on: true });
+            let update = editor.handle(Command::Event {
+                event: StepEditEvent::Drag {
+                    from: down_onto(0.25, 0.25),
+                    to: down_onto(0.35, 0.3),
+                    done: true,
+                    shift: false,
+                },
+            });
+            assert!(update.error.is_none(), "{:?}", update.error);
+        });
+        let last = editor.program().steps.last().unwrap().id.clone();
+        let remove = resolved(&mut || {
+            let update = editor.handle(Command::Remove { id: last.clone() });
+            assert!(update.error.is_none(), "{:?}", update.error);
+        });
+        // Now 3, 7 and 3 per mate; once per step, it was 7, 14 and 7 per
+        // mate with 21 mates, and 86, 173 and 84 with 81.
+        for (edit, resolved) in [("load", load), ("drag", drag), ("remove", remove)] {
+            assert!(
+                resolved <= 10 * mates,
+                "a {edit} of a robot of {mates} mates resolved {resolved}"
+            );
+        }
+    }
+}

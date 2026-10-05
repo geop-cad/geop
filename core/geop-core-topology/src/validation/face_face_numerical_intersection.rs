@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use geop_core_math::{geop_error::GeopError, scalars::Scalar};
 
 use crate::{
-    CoedgeGeometry, FaceId, Model,
+    CoedgeGeometry, FaceId, Model, VertexId,
     contains::{
         face::{PointClassification, face_contains},
         rng::Rng,
@@ -43,20 +43,25 @@ fn adjacent_face_pairs<S: Scalar>(model: &Model<S>) -> HashSet<(FaceId, FaceId)>
             .collect();
         mark_all(&faces);
     }
-    for &vertex_id in model.vertices.keys() {
-        let faces: Vec<FaceId> = model
-            .coedges
-            .values()
-            .filter(|c| match c.geometry {
-                CoedgeGeometry::Edge(edge_id) => {
-                    let edge = &model.edges[&edge_id];
-                    edge.start_vertex == vertex_id || edge.end_vertex == vertex_id
-                }
-                CoedgeGeometry::Vertex(v) => v == vertex_id,
-            })
-            .map(|c| c.face)
-            .collect();
-        mark_all(&faces);
+    // The faces at each vertex, in one pass over the coedges.
+    let mut faces_at: HashMap<VertexId, Vec<FaceId>> = HashMap::new();
+    for coedge in model.coedges.values() {
+        let vertices = match coedge.geometry {
+            CoedgeGeometry::Edge(edge_id) => {
+                let edge = &model.edges[&edge_id];
+                [Some(edge.start_vertex), Some(edge.end_vertex)]
+            }
+            CoedgeGeometry::Vertex(v) => [Some(v), None],
+        };
+        for v in vertices.into_iter().flatten() {
+            let faces = faces_at.entry(v).or_default();
+            if !faces.contains(&coedge.face) {
+                faces.push(coedge.face);
+            }
+        }
+    }
+    for faces in faces_at.values() {
+        mark_all(faces);
     }
     pairs
 }
@@ -77,7 +82,8 @@ fn adjacent_face_pairs<S: Scalar>(model: &Model<S>) -> HashSet<(FaceId, FaceId)>
 /// iterations — except the very last round, which is left unsharpened: the
 /// convergence check right after needs that residual imprecision, or an
 /// otherwise-genuine match can round to just outside `could_be_equal`'s
-/// tolerance.
+/// tolerance. Once a round's sharpened result is its own seed, the rounds
+/// stop there with the identical answer (see the loop).
 pub fn check_face_face_numerical_intersection<S: Scalar>(
     params: &ValidationParameters<S>,
     errors: &mut Vec<GeopError>,
@@ -99,18 +105,24 @@ fn check_faces_of_body<S: Scalar>(
 ) {
     for i in 0..face_ids.len() {
         for j in (i + 1)..face_ids.len() {
-            let face_a_id = face_ids[i];
-            let face_b_id = face_ids[j];
-            let normalized = if face_a_id.0 <= face_b_id.0 {
-                (face_a_id, face_b_id)
+            // The pair in order of id, whichever order the faces are listed
+            // in: which face is `a` decides the seed and which surface is
+            // projected onto which, and with it whether a crossing is found.
+            let (face_a_id, face_b_id) = if face_ids[i] <= face_ids[j] {
+                (face_ids[i], face_ids[j])
             } else {
-                (face_b_id, face_a_id)
+                (face_ids[j], face_ids[i])
             };
-            if adjacent.contains(&normalized) {
+            if adjacent.contains(&(face_a_id, face_b_id)) {
                 continue;
             }
             let face_a = &model.faces[&face_a_id];
             let face_b = &model.faces[&face_b_id];
+            // Surfaces apart share no point, so no projection between them
+            // converges: of a body of many patches, most pairs.
+            if !face_a.surface.could_overlap(&face_b.surface) {
+                continue;
+            }
 
             let (au_lo, au_hi) = face_a.surface.domain_u();
             let (av_lo, av_hi) = face_a.surface.domain_v();
@@ -133,6 +145,7 @@ fn check_faces_of_body<S: Scalar>(
                     let Ok((nu2, nv2)) = face_b.surface.project(p1, u2, v2, 1) else {
                         break;
                     };
+                    let seeds = [u1, v1, u2, v2];
                     u2 = nu2;
                     v2 = nv2;
 
@@ -149,10 +162,18 @@ fn check_faces_of_body<S: Scalar>(
                     // whose (still-uncertain) result feeds the convergence
                     // check right below the loop.
                     if round + 1 < params.face_face_newton_iterations {
-                        u1 = u1.midpoint();
-                        v1 = v1.midpoint();
-                        u2 = u2.midpoint();
-                        v2 = v2.midpoint();
+                        let sharp = [u1, v1, u2, v2].map(Scalar::midpoint);
+                        // Seeded as this round was, every round left would
+                        // repeat it to the bit, the last one's unsharpened
+                        // result included: that result is this one's.
+                        if sharp
+                            .iter()
+                            .zip(&seeds)
+                            .all(|(a, b)| a.is_sharp() && b.is_sharp() && a.could_be_equal(*b))
+                        {
+                            break;
+                        }
+                        [u1, v1, u2, v2] = sharp;
                     }
                 }
 
@@ -389,5 +410,34 @@ mod tests {
     #[test]
     fn coincident_planes_with_disjoint_trims_pass() {
         for_all_scalars!(check_coincident_planes_with_disjoint_trims_pass);
+    }
+
+    /// Whichever order a body's faces are listed in, a pair is checked the
+    /// same way and reports the same. The order used to come out of a
+    /// `HashMap`, the first of a pair seeded the samples and was projected
+    /// onto, and a failure could appear and disappear between runs.
+    fn check_a_pair_is_checked_alike_in_either_order<S: Scalar>() {
+        let mut model = Model::<S>::new();
+        let a = quarter_face(&mut model, (0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5));
+        let b = quarter_face(&mut model, (0.1, 0.1), (0.6, 0.1), (0.6, 0.6), (0.1, 0.6));
+        let adjacent = super::adjacent_face_pairs(&model);
+        let report = |faces: &[FaceId]| {
+            let mut errors = Vec::new();
+            super::check_faces_of_body(
+                &ValidationParameters::default(),
+                &mut errors,
+                &model,
+                faces,
+                &adjacent,
+            );
+            errors.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>()
+        };
+        let forward = report(&[a, b]);
+        assert!(!forward.is_empty());
+        assert_eq!(forward, report(&[b, a]));
+    }
+    #[test]
+    fn a_pair_is_checked_alike_in_either_order() {
+        for_all_scalars!(check_a_pair_is_checked_alike_in_either_order);
     }
 }

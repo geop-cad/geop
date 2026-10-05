@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::NurbCurve;
 use geop_core_math::scalars::Scalar;
@@ -48,14 +48,21 @@ pub type Curve3<S> = NurbCurve<S, 4>;
 /// methods each live in their own private submodule (`model::create`,
 /// `model::get`, `model::iterate`) — all still just plain inherent `Model`
 /// methods from the outside.
+///
+/// The arenas are ordered by id, which is the order of creation: every walk
+/// over a model's entities — validation, a boolean's classification, the
+/// remesh's pairing of faces — sees them in the same order on every run.
+/// A `HashMap` iterates in an order seeded afresh in each process, and a
+/// validation failure that depended on which face pair was checked first
+/// appeared and disappeared between runs.
 #[derive(Clone)]
 pub struct Model<S: Scalar> {
-    pub vertices: HashMap<VertexId, Vertex<S>>, // V
-    pub edges: HashMap<EdgeId, Edge<S>>,        // E
-    pub coedges: HashMap<CoedgeId, Coedge<S>>,  // C
-    pub faces: HashMap<FaceId, Face<S>>,        // F
-    pub shells: HashMap<ShellId, Shell>,        // S
-    pub solids: HashMap<SolidId, Solid>,
+    pub vertices: BTreeMap<VertexId, Vertex<S>>, // V
+    pub edges: BTreeMap<EdgeId, Edge<S>>,        // E
+    pub coedges: BTreeMap<CoedgeId, Coedge<S>>,  // C
+    pub faces: BTreeMap<FaceId, Face<S>>,        // F
+    pub shells: BTreeMap<ShellId, Shell>,        // S
+    pub solids: BTreeMap<SolidId, Solid>,
 
     next_id: u64,
 }
@@ -63,12 +70,12 @@ pub struct Model<S: Scalar> {
 impl<S: Scalar> Model<S> {
     pub fn new() -> Self {
         Self {
-            vertices: HashMap::new(),
-            edges: HashMap::new(),
-            coedges: HashMap::new(),
-            faces: HashMap::new(),
-            shells: HashMap::new(),
-            solids: HashMap::new(),
+            vertices: BTreeMap::new(),
+            edges: BTreeMap::new(),
+            coedges: BTreeMap::new(),
+            faces: BTreeMap::new(),
+            shells: BTreeMap::new(),
+            solids: BTreeMap::new(),
             next_id: 1,
         }
     }

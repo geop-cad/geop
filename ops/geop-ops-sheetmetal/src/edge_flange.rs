@@ -10,7 +10,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
-    parameters::Formula,
+    parameters::{Formula, expressions},
     ui::{Choice, Form, Number, Unit},
 };
 use geop_ops_extrude_revolve::common::{line2, start_point};
@@ -118,6 +118,10 @@ pub struct EdgeFlangeArgs {
 impl Operation for EdgeFlange {
     type Args = EdgeFlangeArgs;
     type Session = ();
+
+    fn formulas<'a>(&self, args: &'a mut EdgeFlangeArgs) -> Vec<&'a mut String> {
+        expressions([&mut args.angle, &mut args.length])
+    }
 
     /// No edge yet: a right angle, half a unit long, material inside.
     fn new_args<S: Scalar>(&self, _: &Part<S>) -> EdgeFlangeArgs {

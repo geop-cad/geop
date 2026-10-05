@@ -1,5 +1,6 @@
-//! Mass properties of solids, and areas of faces, integrated over the exact
-//! trimmed NURBS faces: [`Model::mass_properties`], [`Model::face_area`].
+//! Mass properties of solids, and areas of faces and solids, integrated over
+//! the exact trimmed NURBS faces: [`Model::mass_properties`],
+//! [`Model::face_area`], [`Model::solid_area`].
 //!
 //! # How
 //!
@@ -17,10 +18,28 @@
 //!
 //! with `∂D` the face's loops as the kernel orients them — the outer one
 //! counter-clockwise, holes clockwise — and `u0` the start of the surface's
-//! `u` domain, which the untrimmed surface covers. So every face is
-//! integrated along its own pcurves, each piece of a pcurve by adaptive
-//! Gauss–Kronrod, and every point of those by an inner Gauss–Kronrod along
-//! `u`, split at the surface's knots (see [`geop_core_math::quadrature`]).
+//! `u` domain, which the untrimmed surface covers. (Or the same with the
+//! roles swapped: `∬_D g du dv = -∮_∂D H du`, `H` integrating along `v`.)
+//! So every face is integrated along its own pcurves, each piece of a
+//! pcurve by adaptive Gauss–Kronrod, and every point of those by an inner
+//! integral split at the surface's knots (see [`geop_core_math::quadrature`]).
+//!
+//! # The inner integral is exact where it can be
+//!
+//! The inner integral is evaluated at every point of the outer one, so it
+//! decides the cost. It runs along a direction in which the surface is a
+//! polynomial where there is one: where the weights do not change along
+//! it — any plane, an extrusion along its straight direction, a cylinder
+//! along its axis. For a fixed other parameter the point is then a
+//! polynomial spline of the surface's degree `p` there, `S_u × S_v` one of
+//! degree `2p - 1`, and the moments, at most cubic in the point, of degree
+//! `5p - 1`: the Gauss–Legendre rule of `⌈5p / 2⌉` points integrates every
+//! span exactly (three points on a plane, against the fifteen of a
+//! Gauss–Kronrod panel), and the inner integral has no truncation error at
+//! all. The weights must be the same numbers, not merely overlapping
+//! enclosures: the same interval along every row, which is what a sweep or
+//! a plane is built with. Elsewhere — a sphere, a torus, an area's square
+//! root — it is adaptive Gauss–Kronrod.
 //!
 //! # Why not a tessellation
 //!
@@ -36,11 +55,13 @@
 
 use std::cell::Cell;
 
+use geop_core_geometry::nurb_surface::NurbSurface3D;
+
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::{Matrix, symmetric_eigen3},
     primitives::Pose,
-    quadrature::{Integral, Quadrature, integrate},
+    quadrature::{Integral, MAX_POLYNOMIAL_DEGREE, Quadrature, integrate, integrate_polynomial},
     scalars::Scalar,
     vector::Vector3,
 };
@@ -60,8 +81,9 @@ const INNER: Quadrature = Quadrature {
     max_panels: 32,
 };
 
-/// The mass properties of a body: its volume, the area of its boundary,
-/// its mass, where its centre of mass is and its inertia tensor about it.
+/// The mass properties of a body: its volume, its mass, where its centre of
+/// mass is and its inertia tensor about it. (The area of its boundary is no
+/// mass property, and costs more to integrate: see [`Model::solid_area`].)
 ///
 /// Every value is an enclosure in the sense of [`geop_core_math::quadrature`]:
 /// proven as far as interval arithmetic goes, widened by the quadrature's
@@ -70,14 +92,17 @@ const INNER: Quadrature = Quadrature {
 #[derive(Clone, Copy, Debug)]
 pub struct MassProperties<S: Scalar> {
     pub volume: S,
-    pub area: S,
-    /// The volume times the density.
+    /// The volume times the density: the volume itself, until a density
+    /// is given (see [`MassProperties::with_density`]).
     pub mass: S,
     pub center: Vector3<S>,
     /// The inertia tensor about `center`, along the world's axes:
-    /// `I_ij = ∫ ρ (|r|² δ_ij - r_i r_j) dV`, `r` measured from `center`.
+    /// `I_ij = ∫ ρ (|r|² δ_ij - r_i r_j) dV`, `r` measured from `center` —
+    /// with `ρ = 1` until a density is given.
     pub inertia: [[S; 3]; 3],
     pub converged: bool,
+    /// How many surface points the integration took: the work it did.
+    pub evaluations: usize,
 }
 
 /// The principal moments of inertia, ascending, each enclosed, and the axis
@@ -89,65 +114,101 @@ pub struct PrincipalAxes<S: Scalar> {
     pub axes: [Vector3<S>; 3],
 }
 
-/// The components a solid's integrand has, in this order: area, volume, the
+/// The components a solid's integrand has, in this order: volume, the
 /// three first moments `∫ x`, `∫ y`, `∫ z`, the three `∫ x²`, `∫ y²`, `∫ z²`
 /// and the three `∫ x y`, `∫ y z`, `∫ z x` — every coordinate measured from
 /// a reference point near the solid, so that the integrands do not cancel.
-const SOLID_COMPONENTS: usize = 11;
+const SOLID_COMPONENTS: usize = 10;
 
-/// What is integrated over a face: a function of the point `S(u, v)` and
-/// of `S_u × S_v`, of several components.
-type FaceIntegrand<'a, S> = dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>> + 'a;
+/// A function of the point `S(u, v)` and of `S_u × S_v`, of several
+/// components.
+type PointAndNormal<'a, S> = dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>> + 'a;
+
+/// What is integrated over a face: `g`, of `components` components.
+#[derive(Clone, Copy)]
+struct FaceIntegrand<'a, S: Scalar> {
+    components: usize,
+    g: &'a PointAndNormal<'a, S>,
+    /// The degree of `g` along a direction in which the surface is a
+    /// polynomial of degree `p`, as a function of `p` — `None` where it is
+    /// no polynomial there (see the module docs).
+    degree: Option<fn(usize) -> usize>,
+}
 
 impl<S: Scalar> Model<S> {
-    /// The area of the face `face`.
+    /// The area of the face `face`, and whether its quadrature converged.
     pub fn face_area(&self, face: FaceId) -> GeopResult<(S, bool)> {
         let ctx = |e: GeopError| e.with_context(format!("Model::face_area(face={face})"));
-        let integral = self
-            .integrate_over_face(face, 1, &|_, n| Ok(vec![n.norm()]))
-            .with_context(&ctx)?;
+        let area = FaceIntegrand {
+            components: 1,
+            g: &|_, n| Ok(vec![n.norm()]),
+            degree: None,
+        };
+        let integral = self.integrate_over_face(face, area).with_context(&ctx)?;
         Ok((integral.value[0], integral.converged))
     }
 
-    /// The mass properties of `solid`, of uniform `density`.
+    /// The area of the boundary of `solid`: the sum of its faces' areas,
+    /// and whether every face's quadrature converged.
+    pub fn solid_area(&self, solid: SolidId) -> GeopResult<(S, bool)> {
+        let ctx = |e: GeopError| e.with_context(format!("Model::solid_area(solid={solid})"));
+        let mut total = (S::ZERO, true);
+        for face in self.solid_faces(solid).with_context(&ctx)? {
+            let (area, converged) = self.face_area(face).with_context(&ctx)?;
+            total = (total.0.add(area), total.1 && converged);
+        }
+        Ok(total)
+    }
+
+    /// The mass properties of `solid`, of density one: what its shape
+    /// alone decides, and a material scales (see
+    /// [`MassProperties::with_density`]) — so they can be kept for a
+    /// shape, whatever it is made of.
     ///
     /// Fails for a solid whose faces do not enclose a volume definitely
     /// greater than zero — its faces pointing into the material, or its
     /// volume not resolved by the quadrature — naming it.
-    pub fn mass_properties(&self, solid: SolidId, density: S) -> GeopResult<MassProperties<S>> {
+    pub fn mass_properties(&self, solid: SolidId) -> GeopResult<MassProperties<S>> {
         let ctx = |e: GeopError| e.with_context(format!("Model::mass_properties(solid={solid})"));
         let faces = self.solid_faces(solid).with_context(&ctx)?;
         let reference = self.reference_point(&faces).with_context(&ctx)?;
         let mut total = [S::ZERO; SOLID_COMPONENTS];
         let mut converged = true;
+        let mut evaluations = 0;
+        let g = |p: &Vector3<S>, n: &Vector3<S>| {
+            let r = p.sub(&reference);
+            let (x, y, z) = (r[0], r[1], r[2]);
+            let half = |a: S| a.div(S::TWO);
+            let third = |a: S| a.div(S::from_f64(3.0));
+            Ok(vec![
+                third(r.prod_dot(n))?,
+                half(x.mul(x).mul(n[0]))?,
+                half(y.mul(y).mul(n[1]))?,
+                half(z.mul(z).mul(n[2]))?,
+                third(x.mul(x).mul(x).mul(n[0]))?,
+                third(y.mul(y).mul(y).mul(n[1]))?,
+                third(z.mul(z).mul(z).mul(n[2]))?,
+                half(x.mul(x).mul(y).mul(n[0]))?,
+                half(y.mul(y).mul(z).mul(n[1]))?,
+                half(z.mul(z).mul(x).mul(n[2]))?,
+            ])
+        };
+        let moments = FaceIntegrand {
+            components: SOLID_COMPONENTS,
+            g: &g,
+            // At most cubic in the point, of degree `p`, times `S_u × S_v`,
+            // of degree `2p - 1`.
+            degree: Some(|p| 5 * p - 1),
+        };
         for &face in &faces {
-            let integral = self
-                .integrate_over_face(face, SOLID_COMPONENTS, &|p, n| {
-                    let r = p.sub(&reference);
-                    let (x, y, z) = (r[0], r[1], r[2]);
-                    let half = |a: S| a.div(S::TWO);
-                    let third = |a: S| a.div(S::from_f64(3.0));
-                    Ok(vec![
-                        n.norm(),
-                        third(r.prod_dot(n))?,
-                        half(x.mul(x).mul(n[0]))?,
-                        half(y.mul(y).mul(n[1]))?,
-                        half(z.mul(z).mul(n[2]))?,
-                        third(x.mul(x).mul(x).mul(n[0]))?,
-                        third(y.mul(y).mul(y).mul(n[1]))?,
-                        third(z.mul(z).mul(z).mul(n[2]))?,
-                        half(x.mul(x).mul(y).mul(n[0]))?,
-                        half(y.mul(y).mul(z).mul(n[1]))?,
-                        half(z.mul(z).mul(x).mul(n[2]))?,
-                    ])
-                })
-                .with_context(&ctx)?;
+            let integral = self.integrate_over_face(face, moments).with_context(&ctx)?;
             converged &= integral.converged;
+            evaluations += integral.evaluations;
             for (t, v) in total.iter_mut().zip(integral.value) {
                 *t = t.add(v);
             }
         }
-        let [area, volume, hx, hy, hz, jxx, jyy, jzz, jxy, jyz, jzx] = total[..] else {
+        let [volume, hx, hy, hz, jxx, jyy, jzz, jxy, jyz, jzx] = total[..] else {
             unreachable!("{SOLID_COMPONENTS} components");
         };
         if !volume.definitely_greater(S::ZERO) {
@@ -171,16 +232,16 @@ impl<S: Scalar> Model<S> {
         for a in 0..3 {
             for b in 0..3 {
                 let delta = if a == b { trace } else { S::ZERO };
-                inertia[a][b] = delta.sub(jc[a][b]).mul(density);
+                inertia[a][b] = delta.sub(jc[a][b]);
             }
         }
         Ok(MassProperties {
             volume,
-            area,
-            mass: volume.mul(density),
+            mass: volume,
             center: reference.add(&offset),
             inertia,
             converged,
+            evaluations,
         })
     }
 
@@ -201,35 +262,68 @@ impl<S: Scalar> Model<S> {
         Ok(sum.prod_scalar(S::ONE.div(count)?).sharpen())
     }
 
-    /// `∬ g(S, S_u × S_v) du dv` over the trimmed region of `face`, for a
-    /// `components`-valued `g` — by Green's theorem, along the face's
-    /// pcurves (see the module docs).
+    /// `∬ g(S, S_u × S_v) du dv` over the trimmed region of `face` — by
+    /// Green's theorem, along the face's pcurves, the inner integral along
+    /// the direction it is exact in where there is one (see the module
+    /// docs).
     fn integrate_over_face(
         &self,
         face_id: FaceId,
-        components: usize,
-        g: &FaceIntegrand<'_, S>,
+        integrand: FaceIntegrand<'_, S>,
     ) -> GeopResult<Integral<S>> {
+        let FaceIntegrand {
+            components,
+            g,
+            degree,
+        } = integrand;
         let face = self.get_face(face_id)?;
         let surface = &face.surface;
-        let u_breaks = surface.breakpoints_u();
-        let u0 = u_breaks[0];
+        let (along_u, polynomial) = match (
+            polynomial_along(surface, true),
+            polynomial_along(surface, false),
+        ) {
+            (true, true) => (surface.degree_u <= surface.degree_v, true),
+            (true, false) => (true, true),
+            (false, true) => (false, true),
+            (false, false) => (true, false),
+        };
+        let (breaks, p) = if along_u {
+            (surface.breakpoints_u(), surface.degree_u)
+        } else {
+            (surface.breakpoints_v(), surface.degree_v)
+        };
+        let exact = degree
+            .filter(|_| polynomial)
+            .map(|degree| degree(p))
+            .filter(|&degree| degree <= MAX_POLYNOMIAL_DEGREE);
+        let start = breaks[0];
         let converged = Cell::new(true);
-        // `G(u, v)`: from the start of the domain to `u`, split at every
-        // knot passed on the way.
-        let inner = |u: S, v: S| -> GeopResult<Vec<S>> {
-            let mut breaks = vec![u0];
-            breaks.extend(u_breaks[1..].iter().filter(|k| k.definitely_less(u)));
-            breaks.push(u);
+        let evaluations = Cell::new(0);
+        // From the start of the domain to `a` along the inner direction, at
+        // `b` along the other, split at every knot passed on the way.
+        let inner = |a: S, b: S| -> GeopResult<Vec<S>> {
+            // On the domain's own start — along a seam or a boundary of the
+            // untrimmed surface there — the integral is over nothing.
+            if a.is_sharp() && a.could_be_equal(start) {
+                return Ok(vec![S::ZERO; components]);
+            }
+            let mut cuts = vec![start];
+            cuts.extend(breaks[1..].iter().filter(|k| k.definitely_less(a)));
+            cuts.push(a);
             let along = |s: S| -> GeopResult<Vec<S>> {
-                let p = surface.evaluate(s, v)?;
-                let (su, sv) = surface.derivatives(s, v)?;
-                g(&p, &su.prod_cross(&sv))
+                let (u, v) = if along_u { (s, b) } else { (b, s) };
+                let point = surface.evaluate(u, v)?;
+                let (su, sv) = surface.derivatives(u, v)?;
+                g(&point, &su.prod_cross(&sv))
             };
-            let integral = integrate(along, &breaks, components, &INNER)?;
+            let integral = match exact {
+                Some(degree) => integrate_polynomial(along, &cuts, components, degree)?,
+                None => integrate(along, &cuts, components, &INNER)?,
+            };
             if !integral.converged {
                 converged.set(false);
             }
+            evaluations.set(evaluations.get() + integral.evaluations);
             Ok(integral.value)
         };
         let mut total = vec![S::ZERO; components];
@@ -242,14 +336,21 @@ impl<S: Scalar> Model<S> {
                 let pcurve = &self.get_coedge(coedge_id)?.pcurve;
                 let around = |t: S| -> GeopResult<Vec<S>> {
                     let uv = pcurve.evaluate(t)?;
-                    let dv = pcurve.tangent(t)?[1];
-                    // Along an iso-`v` line nothing is added.
-                    if dv.is_sharp() && dv.could_be_equal(S::ZERO) {
+                    let tangent = pcurve.tangent(t)?;
+                    // `∮ G dv`, or `-∮ H du`.
+                    let (a, b, db) = if along_u {
+                        (uv[0], uv[1], tangent[1])
+                    } else {
+                        (uv[1], uv[0], tangent[0].neg())
+                    };
+                    // Along an iso-line of the other direction nothing is
+                    // added.
+                    if db.is_sharp() && db.could_be_equal(S::ZERO) {
                         return Ok(vec![S::ZERO; components]);
                     }
-                    Ok(inner(uv[0], uv[1])?
+                    Ok(inner(a, b)?
                         .into_iter()
-                        .map(|value| value.mul(dv))
+                        .map(|value| value.mul(db))
                         .collect())
                 };
                 let integral = integrate(around, &pcurve.breakpoints(), components, &OUTER)
@@ -265,11 +366,37 @@ impl<S: Scalar> Model<S> {
         Ok(Integral {
             value: total,
             converged: converged.get(),
+            evaluations: evaluations.get(),
         })
     }
 }
 
+/// Whether `surface` is a polynomial along `u` (`along_u`) or `v`: whether
+/// the weights of every row of control points along it are the same — the
+/// same enclosure, not merely overlapping ones, so the same number — so
+/// that for a fixed other parameter its denominator is constant.
+fn polynomial_along<S: Scalar>(surface: &NurbSurface3D<S>, along_u: bool) -> bool {
+    let (nu, nv) = (surface.num_u, surface.num_v);
+    let weight = |i: usize, j: usize| surface.control_points[i * nv + j][3];
+    let same = |a: S, b: S| a.is_subset_of(b) && b.is_subset_of(a);
+    if along_u {
+        (0..nv).all(|j| (1..nu).all(|i| same(weight(i, j), weight(0, j))))
+    } else {
+        (0..nu).all(|i| (1..nv).all(|j| same(weight(i, j), weight(i, 0))))
+    }
+}
+
 impl<S: Scalar> MassProperties<S> {
+    /// The body of density one (see [`Model::mass_properties`]) made of a
+    /// uniform `density`: its mass and inertia that many times.
+    pub fn with_density(&self, density: S) -> Self {
+        Self {
+            mass: self.volume.mul(density),
+            inertia: self.inertia.map(|row| row.map(|i| i.mul(density))),
+            ..*self
+        }
+    }
+
     /// The body moved by `pose`: its centre moved, its inertia turned with
     /// it (`R I Rᵀ`).
     pub fn placed(&self, pose: &Pose<S>) -> GeopResult<Self> {
@@ -324,11 +451,11 @@ impl<S: Scalar> MassProperties<S> {
         }
         Ok(Some(Self {
             volume: sum(&|p| p.volume),
-            area: sum(&|p| p.area),
             mass,
             center,
             inertia,
             converged: parts.iter().all(|p| p.converged),
+            evaluations: parts.iter().map(|p| p.evaluations).sum(),
         }))
     }
 
@@ -351,14 +478,12 @@ mod tests {
     fn check_unit_cube<S: Scalar>() {
         let mut model = Model::<S>::new();
         let solid = test_cube_solid(&mut model);
-        let mass = model.mass_properties(solid, S::TWO).unwrap();
+        let mass = model.mass_properties(solid).unwrap().with_density(S::TWO);
         assert!(mass.converged);
         assert!(mass.volume.could_be_equal(S::ONE), "{:?}", mass.volume);
-        assert!(
-            mass.area.could_be_equal(S::from_f64(6.0)),
-            "{:?}",
-            mass.area
-        );
+        let (area, converged) = model.solid_area(solid).unwrap();
+        assert!(converged);
+        assert!(area.could_be_equal(S::from_f64(6.0)), "{area:?}");
         assert!(mass.mass.could_be_equal(S::TWO));
         let half = S::from_f64(0.5);
         for k in 0..3 {

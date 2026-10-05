@@ -18,9 +18,15 @@ use crate::{
 
 impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// The same curve reparametrized from its domain onto `[0, 1]`: its
-    /// knots mapped linearly, its control points unchanged.
+    /// knots mapped linearly, its control points unchanged. A curve already
+    /// on exactly `[0, 1]` is returned as it is: mapping its knots would
+    /// only round them outwards.
     pub fn with_unit_domain(&self) -> GeopResult<Self> {
         let (t0, t1) = self.domain();
+        let exactly = |t: S, x: S| t.is_subset_of(x) && x.is_subset_of(t);
+        if exactly(t0, S::ZERO) && exactly(t1, S::ONE) {
+            return Ok(self.clone());
+        }
         let span = t1.sub(t0);
         let knots = self
             .knot_vector
@@ -212,9 +218,10 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// each brought onto its own unit domain with its ends weighted one (see
     /// [`Self::with_unit_end_weights`]) and raised to the highest degree
     /// among them, their knot vectors laid end to end, every joint a knot
-    /// of full multiplicity. A joint's control point is the end of the curve
-    /// before it — an error if the next curve could not start there. Every
-    /// curve stays the curve it was, on its new piece of the domain.
+    /// of full multiplicity. A joint's control point is the union of the end
+    /// of the curve before it and the start of the next — two enclosures of
+    /// the one point — and an error if they could not be equal. Every curve
+    /// stays the curve it was, on its new piece of the domain.
     pub fn join(curves: &[Self]) -> GeopResult<Self> {
         let n = curves.len();
         if n == 0 {
@@ -238,13 +245,14 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let mut knots = vec![S::ZERO; degree + 1];
         for (i, piece) in pieces.iter().enumerate() {
             let len = piece.control_points.len();
-            if let Some(end) = points.last() {
+            if let Some(end) = points.last_mut() {
                 let start = &piece.control_points[0];
-                if !(0..D).all(|k| end[k].could_be_equal(start[k])) {
+                if !end.could_be_equal(start) {
                     return Err(GeopError::new(format!(
                         "join: curve {i} starts at {start:?}, not where the one before ends, {end:?}"
                     )));
                 }
+                *end = end.union(start);
                 points.extend_from_slice(&piece.control_points[1..]);
             } else {
                 points.extend_from_slice(&piece.control_points);

@@ -117,6 +117,13 @@ pub enum Command<S: Scalar> {
     Parameters {
         parameters: Parameters,
     },
+    /// Name the parameter `from` `to`, and every formula reading it read
+    /// `to` (see [`geop_ops::Program::rename_parameter`]): the other
+    /// parameters', the steps'. Refused while a step is edited.
+    RenameParameter {
+        from: String,
+        to: String,
+    },
     /// Show the datum, sketch, solid or placed part `name` of the part
     /// drawn, or hide it — whatever the editor would do by itself — for as
     /// long as the same file is edited.
@@ -191,6 +198,10 @@ pub enum Command<S: Scalar> {
         #[serde(default)]
         solid: Option<String>,
     },
+    /// Panic, on purpose: how the front ends' recovery from a kernel that
+    /// crashed is checked (`web/e2e/`). A panic anywhere else is a bug;
+    /// this one stands in for it.
+    Crash,
 }
 
 /// How finely the curved faces of an exported mesh — an STL file, a robot's
@@ -282,6 +293,10 @@ pub struct ProgramState {
     /// What the program's parameters resolve to, and why those that do
     /// not resolve fail.
     pub parameters: Resolved,
+    /// What reads each parameter, by name: the steps and the other
+    /// parameters whose formulas do, which fail if it goes (see
+    /// [`geop_ops::Program::parameter_uses`]).
+    pub parameter_uses: BTreeMap<String, Vec<String>>,
     /// Every operation a step can be.
     pub operations: Vec<OperationInfo>,
     /// The names of the example programs [`Command::LoadExample`] loads.
@@ -948,6 +963,11 @@ impl<S: Scalar> Editor<S> {
                 self.program.parameters = parameters;
                 Changed::Program
             }
+            Command::RenameParameter { from, to } => {
+                idle(self)?;
+                self.program.rename_parameter(&from, &to)?;
+                Changed::Program
+            }
             Command::Remove { id } => {
                 idle(self)?;
                 let index = self.program.index_of(&id)?;
@@ -1032,7 +1052,7 @@ impl<S: Scalar> Editor<S> {
                     .into_iter()
                     .find(|(n, _)| *n == name)
                     .ok_or_else(|| GeopError::new(format!("there is no example {name:?}")))?;
-                self.program = program;
+                self.program = program();
                 self.marker = None;
                 Changed::Program
             }
@@ -1042,7 +1062,7 @@ impl<S: Scalar> Editor<S> {
                     .into_iter()
                     .find(|(n, _)| *n == name)
                     .ok_or_else(|| GeopError::new(format!("there is no example {name:?}")))?;
-                let files: Vec<File> = files
+                let files: Vec<File> = files()
                     .into_iter()
                     .map(|(path, program)| File {
                         path: match &folder {
@@ -1082,6 +1102,7 @@ impl<S: Scalar> Editor<S> {
                 });
                 Changed::Nothing
             }
+            Command::Crash => panic!("the kernel was asked to crash"),
             Command::ExportFlatPattern { solid } => {
                 let (_, dxf) =
                     geop_ops_sheetmetal::flat_pattern_dxf(self.runner.part(), solid.as_deref())?;
@@ -1148,7 +1169,8 @@ impl<S: Scalar> Editor<S> {
                 let library = library(&self.workspace, self.path.as_deref());
                 self.runner.run(&self.program, Some(index), &library);
                 let part = self.runner.part_at(index);
-                let text = geop_ops_drawing::render(part, &args, &date, format)?;
+                let parts = inspect::parts_list(part, &self.file(), &args)?;
+                let text = geop_ops_drawing::render(part, &args, &date, &parts, format)?;
                 let base = stem.unwrap_or_else(|| "drawing".to_string());
                 self.exported = Some(Export {
                     name: format!("{base}.{}", format.extension()),
@@ -1335,9 +1357,13 @@ impl<S: Scalar> Editor<S> {
                 if let Some((_, picked)) = before.get(i).filter(|(read, _)| read == step) {
                     return (step.clone(), picked.clone());
                 }
+                // What a step picks is its arguments': not what it built,
+                // which is why it is kept for as long as the step is the
+                // same. Without it, a form does none of the work it would
+                // to show what was built — a placed part's mates checked
+                // over the whole assembly, for every step.
                 let session = step.operation.new_session();
-                let context = Context::new(self.runner.part_at(i), &step.id, &library)
-                    .built(self.runner.built(i));
+                let context = Context::new(self.runner.part_at(i), &step.id, &library);
                 let form = step.operation.form(context, &*session, &[]);
                 (step.clone(), form.dialog.picked().cloned().collect())
             })
@@ -1561,9 +1587,13 @@ impl<S: Scalar> Editor<S> {
             .iter()
             .enumerate()
             .map(|(i, step)| {
+                // A summary is of the step's arguments and the program's
+                // state, not of what it built: every step's form is asked
+                // for on every change, and one shown with what it built
+                // checks a placed part's mates over the whole assembly.
                 let session = step.operation.new_session();
                 let context = Context::new(self.runner.part_at(i), &step.id, &library)
-                    .built(self.runner.built(i));
+                    .state(&self.program.state);
                 let form = step.operation.form(context, &*session, &[]);
                 StepInfo {
                     id: step.id.clone(),
@@ -1602,6 +1632,7 @@ impl<S: Scalar> Editor<S> {
                 })
                 .collect(),
             parameters: self.program.parameters.resolve(&self.program.state),
+            parameter_uses: self.program.parameter_uses(),
             operations: PartOperation::infos(),
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),

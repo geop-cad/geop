@@ -144,6 +144,10 @@ impl Operation for AddSketch {
     type Args = AddSketchArgs;
     type Session = SketchSession;
 
+    fn formulas<'a>(&self, args: &'a mut AddSketchArgs) -> Vec<&'a mut String> {
+        args.formulas.values_mut().collect()
+    }
+
     /// An empty sketch, on no plane yet: where to sketch is the first thing
     /// a new sketch asks for.
     fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddSketchArgs {

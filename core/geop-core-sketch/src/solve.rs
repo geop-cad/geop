@@ -338,11 +338,13 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     pt(point, &mut vars);
                     layout.curve_vars(sketch, *curve, &mut vars);
                 }
-                Symmetric { a, b, line } => {
+                Symmetric { a, b, line } | Moved { a, b, by: line } => {
                     pt(a, &mut vars);
                     pt(b, &mut vars);
                     layout.curve_vars(sketch, *line, &mut vars);
                 }
+                // Only the two sweeps.
+                EqualSweep { a, b } => vars.extend([layout.curve_var[a], layout.curve_var[b]]),
                 Horizontal { line: curve }
                 | Vertical { line: curve }
                 | Length { curve, .. }
@@ -354,6 +356,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 | Tangent { a, b }
                 | Equal { a, b }
                 | Concentric { a, b }
+                | Offset { a, b, .. }
                 | Angle { a, b, .. } => {
                     layout.curve_vars(sketch, *a, &mut vars);
                     layout.curve_vars(sketch, *b, &mut vars);
@@ -479,6 +482,45 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 out.push(line_distance(s, e, mid)?);
                 out.push(pb.sub(pa).dot(e.sub(s).unit()?));
             }
+            Moved { a, b, by } => {
+                // The motion carrying `by`'s start `s` onto its end `e`:
+                // `q ↦ e + R(q - s)`, `R` the turn by its sweep — none
+                // along a line. Smooth through a straight arc, where it is
+                // the shift along the chord.
+                let from = geo.point(a);
+                let image = match geo.arc(by) {
+                    Some(arc) => {
+                        let turn = arc.half.mul(c(S::TWO));
+                        arc.e.add(from.sub(arc.s).rotate(turn.cos(), turn.sin()))
+                    }
+                    None => {
+                        let (s, e) = geo.line(by);
+                        e.add(from.sub(s))
+                    }
+                };
+                let to = geo.point(b);
+                out.extend([to.x.sub(image.x), to.y.sub(image.y)]);
+            }
+            EqualSweep { a, b } => {
+                let half = |k: CurveId| geo.var(self.layout.curve_var[&k]);
+                out.push(half(b).sub(half(a)).mul(scale));
+            }
+            Offset { a, b, value } => match self.sketch.curves[&a].kind {
+                CurveKind::Line { .. } => {
+                    // Both ends of `b` the same distance from `a`'s line:
+                    // parallel, and that distance `value`.
+                    let (sa, ea) = geo.line(a);
+                    let (sb, eb) = geo.line(b);
+                    let (ds, de) = (line_distance(sa, ea, sb)?, line_distance(sa, ea, eb)?);
+                    out.push(ds.sub(de));
+                    out.push(ds.abs().sub(c(value)));
+                }
+                _ => {
+                    let ((ca, ra), (cb, rb)) = (geo.round(a)?, geo.round(b)?);
+                    out.extend([ca.x.sub(cb.x), ca.y.sub(cb.y)]);
+                    out.push(rb.sub(ra).abs().sub(c(value)));
+                }
+            },
             PointLineDistance { point, line, value } => {
                 let (s, e) = geo.line(line);
                 out.push(line_distance(s, e, geo.point(point))?.abs().sub(c(value)));
@@ -692,7 +734,15 @@ impl<S: Scalar> Sketch<S> {
         if !problem.report(&system, 0, Vec::new())?.converged {
             return Ok(Enclosure::as_drawn(self));
         }
-        let enclosed = system.enclose().map_err(ctx)?;
+        let enclosed = system
+            .enclose()
+            .map_err(|e| {
+                e.named(|i| {
+                    let c = &problem.constraints[i];
+                    format!("{} {:?}", c.id, c.constraint)
+                })
+            })
+            .map_err(ctx)?;
         let layout = &problem.layout;
         // What is fixed is as given; the rest as enclosed.
         let x: Vec<S> = values(&system)
@@ -866,6 +916,105 @@ mod tests {
                     "residual {k}: {x:?} in {v:?}, {row:?}"
                 );
             }
+        }
+    }
+
+    /// A rectangle drawn a little crooked, its constraints saying it twice
+    /// over: every corner square, and each pair of opposite sides parallel
+    /// too. Its first corner held at the origin, its sides `2` and `1`
+    /// long, and its bottom horizontal if `level`. Its sides.
+    fn rectangle_said_twice(s: &mut Sketch<S>, level: bool) -> Vec<CurveId> {
+        let p = [[0.0, 0.0], [2.05, 0.1], [1.9, 1.07], [-0.08, 0.95]]
+            .map(|q| s.add_point(n(q[0]), n(q[1])));
+        let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
+        s.constrain(Constraint::Fix {
+            point: p[0],
+            x: n(0.0),
+            y: n(0.0),
+        });
+        for i in 0..4 {
+            s.constrain(Constraint::Perpendicular {
+                a: l[i],
+                b: l[(i + 1) % 4],
+            });
+        }
+        for i in 0..2 {
+            s.constrain(Constraint::Parallel {
+                a: l[i],
+                b: l[i + 2],
+            });
+        }
+        if level {
+            s.constrain(Constraint::Horizontal { line: l[0] });
+        }
+        for (i, value) in [(0, 2.0), (1, 1.0)] {
+            s.constrain(Constraint::Length {
+                curve: l[i],
+                value: n(value),
+            });
+        }
+        l
+    }
+
+    /// The far corner of a rectangle as enclosed: where its second side
+    /// ends.
+    fn far_corner(s: &Sketch<S>, sides: &[CurveId], e: &Enclosure<S>) -> Vector2<S> {
+        let (_, end) = s.curves[&sides[1]].endpoints().unwrap();
+        e.points[&end]
+    }
+
+    /// Four right angles where three would do, and parallels besides: the
+    /// redundant constraints hold wherever the others do, and the solution
+    /// is proven — level, every coordinate determined; turned, the turn
+    /// left as drawn.
+    #[test]
+    fn a_rectangle_said_twice_is_proven() {
+        let mut s = Sketch::<S>::new();
+        let sides = rectangle_said_twice(&mut s, true);
+        let report = s.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        let e = s.enclose::<S>().unwrap();
+        let corner = far_corner(&s, &sides, &e);
+        assert!(
+            corner[0].could_be_equal(n(2.0)) && corner[1].could_be_equal(n(1.0)),
+            "{corner:?}"
+        );
+        assert!(corner[0].width().to_f64() < 1e-12, "{corner:?}");
+
+        let mut s = Sketch::<S>::new();
+        let sides = rectangle_said_twice(&mut s, false);
+        let report = s.solve().unwrap();
+        assert!(report.converged && report.dof == 1, "{report:?}");
+        let e = s.enclose::<S>().unwrap();
+        let corner = far_corner(&s, &sides, &e);
+        let diagonal = corner[0].mul(corner[0]).add(corner[1].mul(corner[1]));
+        assert!(diagonal.could_be_equal(n(5.0)), "{diagonal:?}");
+    }
+
+    /// Two lengths of one rectangle a hundred-billionth apart: closer than
+    /// the solver's tolerance, so the solve meets both, but they conflict,
+    /// and proving the solution says so, naming both.
+    #[test]
+    fn conflicting_lengths_are_named() {
+        let mut s = Sketch::<S>::new();
+        let sides = rectangle_said_twice(&mut s, true);
+        let top = s.constrain(Constraint::Length {
+            curve: sides[2],
+            value: n(2.0 + 1e-11),
+        });
+        let report = s.solve().unwrap();
+        assert!(report.converged, "{report:?}");
+        let e = s.enclose::<S>().unwrap_err();
+        let message = e.root_message();
+        let bottom = s
+            .constraints
+            .iter()
+            .find(|(_, c)| matches!(c, Constraint::Length { curve, .. } if *curve == sides[0]))
+            .map(|(id, _)| *id)
+            .unwrap();
+        assert!(message.contains("conflict"), "{message}");
+        for id in [top, bottom] {
+            assert!(message.contains(&format!("{id} ")), "{id}: {message}");
         }
     }
 }

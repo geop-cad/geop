@@ -1,35 +1,20 @@
 use core::fmt::{self, Display};
-use std::collections::HashMap;
-use std::hash::Hash;
 
 use geop_core_math::scalars::Scalar;
 
 use super::Model;
-
-/// `map`'s entries sorted by id (`.0`, the stable numeric part every
-/// `*Id` newtype wraps) — a `HashMap`'s own iteration order is arbitrary,
-/// which would otherwise make `Model`'s `Display` output nondeterministic
-/// from run to run.
-fn sorted_by_id<Id: Copy + Eq + Hash, V>(map: &HashMap<Id, V>) -> Vec<(Id, &V)>
-where
-    Id: Into<u64>,
-{
-    let mut entries: Vec<(Id, &V)> = map.iter().map(|(&id, v)| (id, v)).collect();
-    entries.sort_by_key(|(id, _)| (*id).into());
-    entries
-}
 
 impl<S: Scalar> Display for Model<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Model {{")?;
 
         writeln!(f, "  vertices:")?;
-        for (id, vertex) in sorted_by_id(&self.vertices) {
+        for (id, vertex) in &self.vertices {
             writeln!(f, "    {id}: point={}", vertex.point)?;
         }
 
         writeln!(f, "  edges:")?;
-        for (id, edge) in sorted_by_id(&self.edges) {
+        for (id, edge) in &self.edges {
             writeln!(
                 f,
                 "    {id}: {} -> {}, curve={}",
@@ -38,7 +23,7 @@ impl<S: Scalar> Display for Model<S> {
         }
 
         writeln!(f, "  coedges:")?;
-        for (id, coedge) in sorted_by_id(&self.coedges) {
+        for (id, coedge) in &self.coedges {
             writeln!(
                 f,
                 "    {id}: geometry={:?}, sense={:?}, next={}, prev={}, face={}, pcurve={}",
@@ -47,7 +32,7 @@ impl<S: Scalar> Display for Model<S> {
         }
 
         writeln!(f, "  faces:")?;
-        for (id, face) in sorted_by_id(&self.faces) {
+        for (id, face) in &self.faces {
             writeln!(
                 f,
                 "    {id}: shell={}, outer={:?}, holes={:?}, surface={}",
@@ -56,7 +41,7 @@ impl<S: Scalar> Display for Model<S> {
         }
 
         writeln!(f, "  shells:")?;
-        for (id, shell) in sorted_by_id(&self.shells) {
+        for (id, shell) in &self.shells {
             writeln!(
                 f,
                 "    {id}: solid={:?}, faces={:?}",
@@ -65,7 +50,7 @@ impl<S: Scalar> Display for Model<S> {
         }
 
         writeln!(f, "  solids:")?;
-        for (id, solid) in sorted_by_id(&self.solids) {
+        for (id, solid) in &self.solids {
             writeln!(f, "    {id}: shells={:?}", solid.shells)?;
         }
 

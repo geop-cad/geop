@@ -29,7 +29,8 @@ core/geop-core-solve          the constraint solver every system shares:
                                and the couplings between them, solved in
                                groups no mate ties together
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
-                               as residuals, profile extraction
+                               as residuals, profile extraction, geometry
+                               made from geometry (mirror, patterns, offset)
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, every entity with a stable
                                name), what an operation is and how it is
@@ -80,7 +81,8 @@ ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
                                extend of faces standing on their own
 ops/geop-ops-drawing          2-D drawings: projected views with hidden
                                lines and silhouettes, sections, dimensions,
-                               title block, SVG and DXF; the drawing step
+                               title block, bill of materials, SVG and DXF;
+                               the drawing step
 ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
                                the editor, built as its Catmull-Clark limit
                                surface, a solid of B-spline faces; the subd
@@ -116,7 +118,8 @@ ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
                                occurrences; the import operation
 ops/geop-ops-bom              bills of materials: placed parts grouped by
                                file and parameter values, flat or indented,
-                               with designations, materials, masses, sheet
+                               with designations (a part's own, see
+                               `Parameters::designation`), materials, masses, sheet
                                thickness and harness wires cut to length;
                                CSV; `geop bom`, the editor's BOM query
 ```
@@ -142,7 +145,9 @@ guides, hobby servos) live in
 its sizes the rows of a table parameter `size`. Every workspace reads them
 as read-only files named `std:…` (`std:iso4032_hex_nut.geop`) through
 `stdlib::WithStandardParts`, the one place they come from; the editor's
-part picker lists them, and `geop compile std:…` meshes one.
+part picker lists them, and `geop compile std:…` meshes one. Listing them
+builds nothing: a family's program is generated the first time its file
+is read (`stdlib::FAMILIES`).
 End-to-end checks drive the real app in headless Chrome (`web/e2e/`, see
 `web/README.md`): `npm run e2e` in `web/` loads every example from the
 File menu, opens and cancels every operation, sketches and extrudes a

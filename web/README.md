@@ -13,7 +13,11 @@ crate can build a solid, rasterize it, and hand the mesh to JS end-to-end.
 - `src/wasm/pkg/` — generated `wasm-pack` output (JS glue + `.wasm` binary).
   **Not committed** — rebuilt by `npm run build:wasm` (also runs
   automatically before `dev`/`build`).
-- `src/geop.ts` — thin typed wrapper around the generated bindings.
+- `src/geop.ts` — thin typed wrapper around the kernel.
+- `src/backend.ts` — where the kernel runs: the wasm module in a worker
+  (`src/kernel.worker.ts`), replaced by a fresh one, given the program the
+  app holds, if it crashes. `src/backend.vscode.ts` replaces it in the VS
+  Code build.
 - `src/App.tsx` — the editor: the program, the step being edited, and
   sending what the user does to `edit_step`.
 - `src/DialogView.tsx` — renders a step's dialog from its primitives.
@@ -41,6 +45,9 @@ npm run build        # rebuilds the wasm pkg, then produces a production build i
 `playwright-core`, which downloads no browser: it uses `$CHROME`, or a
 Google Chrome or Chromium installed in the usual places, and skips (exit
 code 0, with a message) if there is none. WebGL is rendered in software.
+Cap their memory with a cgroup (`systemd-run --user --scope -p
+MemoryMax=20G npm run e2e`): Chrome reserves far more address space than
+it uses, so `prlimit --as` kills it.
 
 ```sh
 npm run e2e          # the web app
@@ -52,15 +59,19 @@ npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
   example of the File menu builds without an error shown or a failed step;
   that every operation opens on an empty part and on a part, and cancels;
   that a rectangle sketched by clicks extrudes, and the inspect panel weighs
-  it; and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
+  it; that a kernel that panics is restarted with the program, and says
+  so; and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
   non-empty files of their kind.
 - `npm run e2e:vscode` builds the release CLI and the extension's page
   (`build:vscode`), writes example workspaces with `geop examples
   --out-dir`, and opens them through `e2e/bridge.mjs`, which stands in for
-  VS Code exactly as `vscode-extension/src/geopEditor.ts` talks to the page:
+  VS Code exactly as `vscode-extension/src/geopEditor.ts` talks to the page,
+  running the kernel with the extension's own `GeopServer` (compiled with
+  `npm run compile` there):
   single parts, an assembly with standard parts (`bolted_plate`) and a
   jointed one (`arm`). An edit, its undo and a moved joint must be written
-  back to the document, and exports must reach VS Code to be saved.
+  back to the document, exports must reach VS Code to be saved, and a
+  `geop serve` that panics must be restarted with the document.
 
 Both exit non-zero if any check fails: a page error, an error shown, a
 step that fails, an example that does not build. A failing check leaves a

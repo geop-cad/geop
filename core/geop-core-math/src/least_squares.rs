@@ -10,12 +10,18 @@
 //! Gauss–Newton near a solution, gradient descent far from one. `B` is what
 //! Gauss–Newton leaves out — the curvature of the constraints, weighted by
 //! how hard the sum pulls against them — estimated from the steps taken (a
-//! BFGS update, along the constraints only): without it, wherever the sum
-//! cannot reach zero against curved constraints, steps along them overshoot
-//! and the minimizer zig-zags. Where a step it proposed is turned down, the
-//! step is tried again without it, and it is learned afresh if that does
-//! better — a configuration passing through a singular one changes it
-//! abruptly.
+//! symmetric rank-one update, along the constraints only): without it,
+//! wherever the sum cannot reach zero against curved constraints, steps
+//! along them overshoot and the minimizer zig-zags. That curvature is as
+//! often negative as positive — a mate pulled outwards curves the sum down
+//! along it — so `B` is not kept positive, as a BFGS estimate would be:
+//! one that cannot learn a negative curvature left an arm's drags creeping
+//! towards the preferences' minimum until they ran out of steps. Only
+//! `J_rᵀJ_r + B + λD`, over the directions the constraints leave free, must
+//! be positive, and `λ` grows until it is. Where a step it proposed is
+//! turned down, the step is tried again without it, and it is learned
+//! afresh if that does better — a configuration passing through a singular
+//! one changes it abruptly.
 //!
 //! Keeping `c` exact, rather than adding it to the sum with a large weight,
 //! is what makes the sum a pure preference: it can never buy itself a
@@ -64,6 +70,9 @@ pub struct Outcome<S: Scalar> {
     /// How damped the last step was (`λ`, relative to each variable's
     /// curvature).
     pub damping: S,
+    /// Steps proposed and turned down — or proposed again without the
+    /// curvature learned — on the way: what the iterations do not count.
+    pub turned_down: usize,
 }
 
 /// Why [`minimize`] stopped where it did.
@@ -325,6 +334,10 @@ fn step<S: Scalar>(
         row[i] = row[i].add(mu.mul(d));
         row.iter_mut().for_each(|v| *v = choose(*v));
     }
+    // Damped so hard that the curvature is no finite number: no step.
+    if !h.iter().flatten().all(|v| v.is_finite()) {
+        return Ok(None);
+    }
 
     // Q, and each independent row's coefficients in it (modified
     // Gram–Schmidt): row `i` is `Σ_j R[i][j] q_j`, `R[i]` ending in its own
@@ -546,6 +559,7 @@ pub fn minimize<S: Scalar>(
             iterations: 0,
             stop: Stop::Infeasible,
             damping: S::ZERO,
+            turned_down: 0,
         });
     };
     // A variable moves only if some residual definitely depends on it: a
@@ -565,6 +579,7 @@ pub fn minimize<S: Scalar>(
     // definitely improve on each in one of the two.
     let mut filter: Vec<(S, S)> = Vec::new();
     let mut mu = S::from_ratio(1, 1000)?;
+    let mut turned_down = 0;
     let mut b = vec![vec![S::ZERO; n]; n];
     // The length of the last step taken.
     let mut last: Option<S> = None;
@@ -591,9 +606,20 @@ pub fn minimize<S: Scalar>(
                 // step expects no definite drop in either, no smaller step
                 // makes one — as near the minimum as can be told, or, damped
                 // already, no step helps — and no point is evaluated to
-                // learn it.
+                // learn it. The model of the sum is the one the step was
+                // computed from: its rows' linearization, and the curvature
+                // `B` it was computed with — what the constraints' curvature
+                // costs or gains a step along them. Without `B`, a step that
+                // `B` lengthened where the constraints curve the sum down
+                // looked to the rows alone like no drop at all: a gear pair
+                // dragged a quarter turn stopped, flat, at 36°.
                 let expects = |delta: &[S]| -> GeopResult<bool> {
-                    Ok(f.sub(e.sum.squared(delta)).definitely_greater(S::ZERO)
+                    let bent = (0..n).fold(S::ZERO, |sum, i| {
+                        sum.add(delta[i].mul(dot(&curvature[i], delta)))
+                    });
+                    Ok(f.sub(e.sum.squared(delta))
+                        .sub(bent)
+                        .definitely_greater(S::ZERO)
                         || theta
                             .sub(e.constraints.squared(delta).sqrt()?)
                             .definitely_greater(S::ZERO))
@@ -611,6 +637,7 @@ pub fn minimize<S: Scalar>(
                             Stop::Damped { rejected }
                         },
                         damping: mu,
+                        turned_down,
                     });
                 }
                 let length = norm(&delta)?;
@@ -638,6 +665,7 @@ pub fn minimize<S: Scalar>(
                             iterations: iteration,
                             stop: Stop::NoChange { rejected },
                             damping: mu,
+                            turned_down,
                         });
                     }
                     // How far the step went, before any correction: what
@@ -661,6 +689,7 @@ pub fn minimize<S: Scalar>(
                                 iterations: iteration,
                                 stop: Stop::Undecided,
                                 damping: mu,
+                                turned_down,
                             });
                         }
                         let taken =
@@ -693,12 +722,9 @@ pub fn minimize<S: Scalar>(
                         // hold — a configuration passing through a singular
                         // one changes it abruptly — so the step is first tried
                         // again without it, as it stands, before damping it.
-                        if !plain
-                            && b.iter()
-                                .flatten()
-                                .any(|v| !v.is_sharp() || v.definitely_not_equal(S::ZERO))
-                        {
+                        if !plain && learned(&b) {
                             plain = true;
+                            turned_down += 1;
                             continue;
                         }
                     } else {
@@ -710,6 +736,7 @@ pub fn minimize<S: Scalar>(
                 rejected = Some(Rejection::NotPositive);
             }
             first = false;
+            turned_down += 1;
             mu = mu.mul(S::from_i64(GROW)).sharpen();
             if !mu.is_finite() {
                 break None;
@@ -721,6 +748,7 @@ pub fn minimize<S: Scalar>(
                 iterations: iteration,
                 stop: Stop::Damped { rejected },
                 damping: mu,
+                turned_down,
             });
         };
         (x, e) = (next, e_next);
@@ -730,6 +758,7 @@ pub fn minimize<S: Scalar>(
         iterations: options.max_iterations,
         stop: Stop::Budget,
         damping: mu,
+        turned_down,
     })
 }
 
@@ -878,6 +907,13 @@ fn corrected<S: Scalar>(
     Ok((x, e))
 }
 
+/// Whether any curvature has been learned into `b`.
+fn learned<S: Scalar>(b: &[Vec<S>]) -> bool {
+    b.iter()
+        .flatten()
+        .any(|v| !v.is_sharp() || v.definitely_not_equal(S::ZERO))
+}
+
 /// The part of `v` along the constraints — orthogonal to the rows of their
 /// Jacobian, `v - J_cᵀ (J_c J_cᵀ)⁻¹ J_c v` — chosen (see [`choose`]); rows
 /// that say nothing the others do not left out.
@@ -898,8 +934,9 @@ fn along<S: Scalar>(constraints: &Rows<S>, v: &[S]) -> GeopResult<Vec<S>> {
 /// Updates `b`, the curvature Gauss–Newton leaves out, from the step `s`
 /// from `e` to `e_next`: by how much the gradient of the Lagrangian
 /// `½ Σ r² + λᵀc` turned along it, beyond what `J_rᵀJ_r` explains (a
-/// structured BFGS update). Only where it curves up along `s` — a model
-/// that curves down would step towards a maximum.
+/// structured symmetric rank-one update): `b` then turns the gradient along
+/// `s` exactly as it did, curving up or down. Skipped where the correction
+/// could be square to `s`, which leaves its size undetermined.
 fn update_curvature<S: Scalar>(
     b: &mut [Vec<S>],
     s: &[S],
@@ -924,21 +961,25 @@ fn update_curvature<S: Scalar>(
     // Only along the constraints: off them, the constraints decide where a
     // step goes, so a curvature there means nothing — and a large one, along
     // a variable they hold outright, would only skew their solve.
-    let (s, y) = (along(&e.constraints, s)?, along(&e.constraints, &y)?);
-    let s = &s[..];
-    let sy = dot(s, &y);
-    if !sy.definitely_greater(S::ZERO) {
+    let s = along(&e.constraints, s)?;
+    let bs: Vec<S> = (0..n).map(|i| dot(&b[i], &s)).collect();
+    // `(y - B s)·s`, asked of `y`'s honest enclosure — the same along the
+    // constraints as off them, `s` being along them. Where it could be
+    // zero, the correction is square to the step as far as the gradients
+    // tell, and dividing by it would make the curvature whatever their
+    // rounding says.
+    if !dot(&y, &s).sub(dot(&bs, &s)).definitely_not_equal(S::ZERO) {
         return Ok(());
     }
-    let bs: Vec<S> = (0..n).map(|i| dot(&b[i], s)).collect();
-    let sbs = dot(s, &bs);
+    let y = along(&e.constraints, &y)?;
+    let v: Vec<S> = (0..n).map(|i| choose(y[i].sub(bs[i]))).collect();
+    let vs = choose(dot(&v, &s));
+    if !vs.definitely_not_equal(S::ZERO) {
+        return Ok(());
+    }
     for i in 0..n {
         for j in 0..n {
-            let mut v = b[i][j].add(y[i].mul(y[j]).div(sy)?);
-            if sbs.definitely_greater(S::ZERO) {
-                v = v.sub(bs[i].mul(bs[j]).div(sbs)?);
-            }
-            b[i][j] = choose(v);
+            b[i][j] = choose(b[i][j].add(v[i].mul(v[j]).div(vs)?));
         }
     }
     Ok(())
@@ -1016,7 +1057,11 @@ mod tests {
 
     /// The point of the unit circle nearest `(3, 4)` — the sum pulling, the
     /// circle holding exactly, however hard the sum pulls — found quickly:
-    /// the constraint's curvature is learned, not stumbled over.
+    /// the constraint's curvature is learned, not stumbled over. Found as
+    /// near as the sum tells: `ε` along the circle from the nearest point
+    /// lowers the sum, about 16, by `5 ε²`, lost in its width below
+    /// `ε` of a few `1e-8` — where the minimizer stops is then a matter of
+    /// where its last step happened to land.
     #[test]
     fn minimizes_on_a_circle() {
         let outcome = minimize(
@@ -1039,7 +1084,7 @@ mod tests {
         .unwrap();
         let x = at(&outcome);
         assert!(
-            (x[0] - 0.6).abs() < 1e-12 && (x[1] - 0.8).abs() < 1e-12,
+            (x[0] - 0.6).abs() < 1e-9 && (x[1] - 0.8).abs() < 1e-9,
             "{outcome:?}"
         );
         assert!(outcome.iterations < 30, "{outcome:?}");

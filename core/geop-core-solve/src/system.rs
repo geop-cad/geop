@@ -156,6 +156,9 @@ impl<S: Scalar> Pull<S> {
 pub struct Phase<S: Scalar> {
     pub stop: Stop,
     pub iterations: usize,
+    /// Steps proposed and turned down on the way (see
+    /// [`least_squares::Outcome::turned_down`]).
+    pub turned_down: usize,
     #[serde(with = "geop_core_math::scalars::as_f64")]
     pub max_residual: S,
 }
@@ -430,10 +433,15 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
     /// Minimizes the pulls' sum among the points where the residuals hold if
     /// `hard` — else the residuals' and the pulls' sum — from the current
     /// parameters, then moves every free one to where it ended up.
-    fn minimize(&mut self, pulls: &[(Pull<S>, S)], hard: bool) -> GeopResult<(usize, Stop)> {
+    fn minimize(&mut self, pulls: &[(Pull<S>, S)], hard: bool) -> GeopResult<Phase<S>> {
         let n = self.len();
         if n == 0 {
-            return Ok((0, Stop::NoChange { rejected: None }));
+            return Ok(Phase {
+                stop: Stop::NoChange { rejected: None },
+                iterations: 0,
+                turned_down: 0,
+                max_residual: self.report()?.max_residual,
+            });
         }
         let result = least_squares::minimize(
             |x| self.evaluate(x, pulls, hard),
@@ -471,7 +479,12 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
             };
             self.params[p] = moved;
         }
-        Ok((result.iterations, result.stop))
+        Ok(Phase {
+            stop: result.stop,
+            iterations: result.iterations,
+            turned_down: result.turned_down,
+            max_residual: self.report()?.max_residual,
+        })
     }
 
     /// Every parameter that is [`Mobility::Held`] but `except`, held where
@@ -514,24 +527,13 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
         let pulled: Vec<usize> = pulls.iter().map(Pull::param).collect();
         let mut sum: Vec<(Pull<S>, S)> = pulls.iter().map(|p| (*p, ratio(PULL))).collect();
         sum.extend(self.stays(&pulled));
-        let (iterations, stop) = self.minimize(&sum, true)?;
-        let report = self.report()?;
-        let mut phases = vec![Phase {
-            stop,
-            iterations,
-            max_residual: report.max_residual,
-        }];
-        if !report.converged {
+        let mut phases = vec![self.minimize(&sum, true)?];
+        if !self.report()?.converged {
             // The residuals cannot all hold — or the constrained minimization
             // could not tell how to meet them: as near as they come, least
             // squares, still damped, so that what they leave free stays put.
             let stays = self.stays(&[]);
-            let (iterations, stop) = self.minimize(&stays, false)?;
-            phases.push(Phase {
-                stop,
-                iterations,
-                max_residual: self.report()?.max_residual,
-            });
+            phases.push(self.minimize(&stays, false)?);
         }
         Ok(Report {
             iterations: phases.iter().map(|p| p.iterations).sum(),
@@ -616,10 +618,10 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
     /// value, by variable — and its gradient with respect to every variable:
     /// an enclosure of both, for every point of the box. Fails where a
     /// residual is undecidable somewhere in it.
-    fn rows_over(&self, x: &[S]) -> GeopResult<Vec<(S, Vec<S>)>> {
+    fn rows_over(&self, x: &[S]) -> GeopResult<Vec<Row<S>>> {
         let offsets = self.offsets();
         let mut out = Vec::new();
-        for r in &self.residuals {
+        for (residual, r) in self.residuals.iter().enumerate() {
             let mut seeded = Vec::new();
             let mut values = Vec::new();
             for &p in r.params() {
@@ -643,11 +645,15 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
             let mut rs = Vec::new();
             r.eval(&values, &mut rs)?;
             for r in &rs {
-                let mut row = vec![S::ZERO; x.len()];
+                let mut slope = vec![S::ZERO; x.len()];
                 for &(slot, i) in &seeded {
-                    row[i] = row[i].add(r.d[slot]);
+                    slope[i] = slope[i].add(r.d[slot]);
                 }
-                out.push((r.v, row));
+                out.push(Row {
+                    residual,
+                    value: r.v,
+                    slope,
+                });
             }
         }
         Ok(out)
@@ -668,17 +674,38 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
     /// K(X) = x̃ - Y f(x̃) + (I - Y J(X)) (X - x̃)
     /// ```
     ///
-    /// and `K(X) ⊆ X` proves `X` holds a solution — in interval arithmetic,
-    /// so the proof is rigorous. The box is widened until the test passes;
-    /// its width is then how precisely the residuals pin the solution down,
-    /// and `K(X) ∩ X` is returned. Fails if no box passes: a singular
-    /// Jacobian — a tangency the residuals only just meet, say — leaves the
-    /// solution unproven, and nothing narrower than that is honest.
+    /// and `K(X) ⊆ X` proves `X` holds exactly one solution of the
+    /// independent residuals — in interval arithmetic, so the proof is
+    /// rigorous, and it proves too that they stay independent over the whole
+    /// box. The box is widened until the test passes; its width is then how
+    /// precisely the residuals pin the solution down, and `K(X) ∩ X` is
+    /// returned.
     ///
-    /// Redundant residuals (a rectangle's fourth side, say) are left out of
-    /// the test: they hold wherever the independent ones do, when the system
-    /// is consistent, which a converged solve says it is.
-    pub fn enclose(&self) -> GeopResult<Vec<S>> {
+    /// **Which residuals are independent** is decided over a box, not at a
+    /// point. A redundant residual — a rectangle's fourth right angle, an arc
+    /// concentric with a center it already has — says what the others do,
+    /// often only on the solution. Where the parameters are now, a solution
+    /// only to the solver's tolerance, it looks independent by a pivot about
+    /// as small as that tolerance; taken as independent, it makes the
+    /// solution a curve rather than a point, which nothing proves. So the
+    /// independent rows are chosen by eliminating the Jacobian over a box
+    /// around where the parameters are — first the point itself, then a box
+    /// as wide as the solver's tolerance, then twice as wide, and so on: a
+    /// pivot that could be zero somewhere in the box is no pivot, and once
+    /// the box reaches the solution a redundant row's pivot straddles zero.
+    /// Each new choice is put to the Krawczyk test.
+    ///
+    /// The residuals left out are then checked over the proven box: one that
+    /// holds wherever the independent ones do encloses zero there. One that
+    /// does not is a conflict — [`EncloseError::Conflict`], naming it and
+    /// the residuals it depends on. (Interval arithmetic can prove a
+    /// conflict, never its absence: a residual enclosing zero agrees with
+    /// the others to every digit the box resolves.)
+    ///
+    /// Fails if no choice passes: a singular Jacobian — a tangency the
+    /// residuals only just meet, say — leaves the solution unproven, and
+    /// nothing narrower than that is honest.
+    pub fn enclose(&self) -> Result<Vec<S>, EncloseError<S>> {
         let offsets = self.offsets();
         let mut x = vec![S::ZERO; self.len()];
         for (p, offset) in offsets.iter().enumerate() {
@@ -687,27 +714,72 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
                 (Param::Pose { .. }, Some(_)) => {
                     return Err(GeopError::new(
                         "enclosing the solution of free poses is not supported",
-                    ));
+                    )
+                    .into());
                 }
                 _ => {}
             }
         }
         let n = x.len();
-        let rows = self.rows_over(&x)?;
-        let jacobian: Vec<Vec<S>> = rows.iter().map(|(_, d)| d.clone()).collect();
-        let pivots = eliminate(jacobian, n).pivots;
+        let tolerance = self.scale.div(S::from_i64(RELATIVE_TOLERANCE))?;
+        let mut radius = S::ZERO;
+        let mut tried: Vec<Vec<(usize, usize)>> = Vec::new();
+        let mut failure = None;
+        for attempt in 0..ENCLOSE_ATTEMPTS {
+            if attempt == 1 {
+                radius = tolerance;
+            } else if attempt > 1 {
+                radius = S::TWO.mul(radius);
+            }
+            let around: Vec<S> = x
+                .iter()
+                .map(|v| v.sub(radius).union(v.add(radius)))
+                .collect();
+            let rows = match self.rows_over(&around) {
+                Ok(rows) => rows,
+                // Undecidable somewhere in this box: no wider one helps.
+                Err(e) => {
+                    failure.get_or_insert(e);
+                    break;
+                }
+            };
+            let mut pivots = eliminate(rows.into_iter().map(|r| r.slope).collect(), n).pivots;
+            pivots.sort_unstable();
+            if tried.contains(&pivots) {
+                continue;
+            }
+            tried.push(pivots.clone());
+            match self.prove(x.clone(), &pivots) {
+                Ok(boxed) => return self.implied(&boxed, &pivots, &around).map(|()| boxed),
+                Err(e) => failure = Some(e),
+            }
+        }
+        let failure = failure.expect("the first attempt evaluates the residuals");
+        let independent: Vec<usize> = tried.iter().map(Vec::len).collect();
+        Err(failure
+            .with_context(format!(
+                "enclose: no choice of independent residual rows was proven — tried {independent:?} rows, over {n} variables"
+            ))
+            .into())
+    }
+
+    /// The Krawczyk proof of [`System::enclose`] for the independent rows
+    /// `pivots` — `(variable, row)` pairs — from `x`: an enclosure of their
+    /// solution, every variable no pivot determines as it is in `x`.
+    fn prove(&self, x: Vec<S>, pivots: &[(usize, usize)]) -> GeopResult<Vec<S>> {
         if pivots.is_empty() {
             return Ok(x);
         }
-        let (cols, picked): (Vec<usize>, Vec<usize>) = pivots.into_iter().unzip();
+        let (cols, picked): (Vec<usize>, Vec<usize>) = pivots.iter().copied().unzip();
         let m = cols.len();
-        let square = |rows: &[(S, Vec<S>)]| -> Vec<Vec<S>> {
+        let square = |rows: &[Row<S>]| -> Vec<Vec<S>> {
             picked
                 .iter()
-                .map(|&r| cols.iter().map(|&c| rows[r].1[c]).collect())
+                .map(|&r| cols.iter().map(|&c| rows[r].slope[c]).collect())
                 .collect()
         };
-        let singular = || {
+        let singular = |rows: &[Row<S>]| {
+            let rows: Vec<(S, &Vec<S>)> = rows.iter().map(|r| (r.value, &r.slope)).collect();
             GeopError::new(format!(
                 "the residuals are singular at their solution: rows {picked:?} over variables {cols:?} of {rows:?}"
             ))
@@ -722,17 +794,17 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
         let mut xt = x;
         for _ in 0..POLISH_STEPS {
             let rows = self.rows_over(&xt)?;
-            let y = inverse(&square(&rows)).ok_or_else(singular)?;
+            let y = inverse(&square(&rows)).ok_or_else(|| singular(&rows))?;
             for (k, &c) in cols.iter().enumerate() {
-                let step = product(&y, k, &|j| rows[picked[j]].0);
+                let step = product(&y, k, &|j| rows[picked[j]].value);
                 xt[c] = xt[c].sub(step).sharpen();
             }
         }
 
         let rows = self.rows_over(&xt)?;
-        let y = inverse(&square(&rows)).ok_or_else(singular)?;
+        let y = inverse(&square(&rows)).ok_or_else(|| singular(&rows))?;
         let yf: Vec<S> = (0..m)
-            .map(|k| product(&y, k, &|j| rows[picked[j]].0))
+            .map(|k| product(&y, k, &|j| rows[picked[j]].value))
             .collect();
         let center: Vec<S> = cols.iter().map(|&c| xt[c]).collect();
         // Half-widths of the candidate box: at least what the Newton step
@@ -755,7 +827,7 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
                 .map(|k| {
                     let spread = (0..m).fold(S::ZERO, |sum, l| {
                         // Row `k` of `I - Y J(X)`, column `l`.
-                        let yj = product(&y, k, &|j| over[picked[j]].1[cols[l]]);
+                        let yj = product(&y, k, &|j| over[picked[j]].slope[cols[l]]);
                         let identity = if k == l { S::ONE } else { S::ZERO };
                         sum.add(identity.sub(yj).mul(offset[l]))
                     });
@@ -774,12 +846,125 @@ impl<S: Scalar, const N: usize> System<'_, S, N> {
                     radius[k] = reach;
                 }
                 if !radius[k].is_finite() {
-                    return Err(singular());
+                    return Err(singular(&rows));
                 }
             }
         }
         Err(GeopError::new(format!(
             "could not enclose the solution: no box around it passed the Krawczyk test in {ENCLOSE_ATTEMPTS} attempts"
         )))
+    }
+
+    /// Whether every row but the independent `pivots` encloses zero over
+    /// `boxed`, the proven solution of those: else the conflict, with the
+    /// rows each such row was reduced against when the pivots were chosen
+    /// over `around` — what it conflicts with.
+    fn implied(
+        &self,
+        boxed: &[S],
+        pivots: &[(usize, usize)],
+        around: &[S],
+    ) -> Result<(), EncloseError<S>> {
+        let picked: Vec<usize> = pivots.iter().map(|&(_, r)| r).collect();
+        let rows = self.rows_over(boxed)?;
+        let conflicting: Vec<usize> = (0..rows.len())
+            .filter(|i| !picked.contains(i) && !rows[*i].value.could_be_equal(S::ZERO))
+            .collect();
+        if conflicting.is_empty() {
+            return Ok(());
+        }
+        // The elimination that chose the pivots again, each row carrying
+        // which rows it is a combination of.
+        let n = boxed.len();
+        let selection = self.rows_over(around)?;
+        let m = selection.len();
+        let augmented = selection
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let mut row = r.slope.clone();
+                row.extend((0..m).map(|j| if i == j { S::ONE } else { S::ZERO }));
+                row
+            })
+            .collect();
+        let reduced = eliminate(augmented, n);
+        let mut with = Vec::new();
+        for (k, &o) in reduced.origin.iter().enumerate() {
+            if !conflicting.contains(&o) {
+                continue;
+            }
+            for (j, row) in selection.iter().enumerate() {
+                if reduced.rows[k][n + j].definitely_not_equal(S::ZERO)
+                    && !conflicting.contains(&j)
+                    && !with.contains(&row.residual)
+                {
+                    with.push(row.residual);
+                }
+            }
+        }
+        with.sort_unstable();
+        Err(EncloseError::Conflict {
+            conflicting: conflicting
+                .into_iter()
+                .map(|i| (rows[i].residual, rows[i].value))
+                .collect(),
+            with,
+        })
+    }
+}
+
+/// One row of a residual over a box (see [`System::rows_over`]).
+struct Row<S: Scalar> {
+    /// The residual it is one of, by index.
+    residual: usize,
+    value: S,
+    /// Its gradient with respect to every variable.
+    slope: Vec<S>,
+}
+
+/// Why [`System::enclose`] proves no enclosure of the solution.
+#[derive(Debug)]
+pub enum EncloseError<S: Scalar> {
+    /// Residuals that say something the others do not: over the proven
+    /// solution of the independent residuals, each of these rows — by its
+    /// residual's index, with its value there — stays away from zero.
+    /// `with` are the residuals they depend on, by index: what they
+    /// conflict with.
+    Conflict {
+        conflicting: Vec<(usize, S)>,
+        with: Vec<usize>,
+    },
+    /// No solution was proven (see [`System::enclose`]).
+    Unproven(GeopError),
+}
+
+impl<S: Scalar> From<GeopError> for EncloseError<S> {
+    fn from(e: GeopError) -> Self {
+        EncloseError::Unproven(e)
+    }
+}
+
+impl<S: Scalar> EncloseError<S> {
+    /// As an error, each residual named by `name`.
+    pub fn named(self, name: impl Fn(usize) -> String) -> GeopError {
+        match self {
+            EncloseError::Conflict { conflicting, with } => {
+                let mut residuals: Vec<usize> = conflicting.iter().map(|&(r, _)| r).collect();
+                residuals.dedup();
+                let names =
+                    |rs: &[usize]| rs.iter().map(|&r| name(r)).collect::<Vec<_>>().join(", ");
+                let others = if with.is_empty() {
+                    "the others".to_string()
+                } else {
+                    names(&with)
+                };
+                let off: Vec<S> = conflicting.iter().map(|&(_, v)| v).collect();
+                GeopError::new(format!(
+                    "the constraints conflict: {} cannot hold where {others} do (off by {off:?} there)",
+                    names(&residuals),
+                ))
+            }
+            EncloseError::Unproven(e) => e,
+        }
     }
 }

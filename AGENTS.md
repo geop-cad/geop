@@ -156,6 +156,31 @@ widened every control point. Skipping that multiplication fixed all six.
   entity (build both from a `git worktree` of HEAD outside the repo),
   comparing interval bounds, not just midpoints.
 
+## Evaluate relative to the patch, not the origin
+
+A rational spline evaluated at an interval parameter computes `A / W` from
+two enclosures interval arithmetic cannot correlate. The quotient's width
+then grows with `|A|`, that is with the patch's distance from the origin,
+not with its size. In fixed point, a cylinder's cap 50 along its axis came
+out spanning `[38, 94]` in height, and validation found the cylinder's two
+caps overlapping. A quarter arc at `(1000, -500)` gave a tangent 30 wide.
+
+Surfaces, curves and pcurves now evaluate and differentiate relative to a
+sharp control point of the span (`spline::centered`) and add it back with
+one rounding. Which point is a free choice. Wherever an interval formula
+subtracts or divides two large correlated quantities, move it to a local
+origin first. Test geometry far from the origin with both scalar types: in
+`f64` the effect hides behind the format's relative precision, in fixed
+point it does not.
+
+That one rounding is not free near the origin. A STEP edge lay `2e-31`
+above its plane face. Evaluated relative to a point `1.8e-15` up, its
+enclosure took in the plane, the importer measured no gap and did not widen
+the edge, and validation's clipping, which reads the control points, found
+the face's points off it. A curve now evaluates both ways and intersects
+the two. Both are enclosures of one point, and each is the tighter one
+somewhere.
+
 ## Combine two enclosures of the same value with `union`, never an average
 
 When two independent computations each produce an enclosure of the *same*
@@ -527,6 +552,16 @@ coordinates as if they were the geometry:
   on a plane (affine coordinates) and along an iso-line. It fails for a
   sphere's meridian cut by a plane: the inner copy is a small circle.
 
+The same holds for the coordinates a solver moves in. A body's turn was
+the quaternion `(1, w / 2)` normalized, which reaches a half turn only as
+`|w|` goes to infinity. A link of a dragged arm that had to turn nearly
+half way round ran its variables off to hundreds, each step turning it
+less, until the solver ran out of steps. Nothing was wrong with the mates.
+The turn is now given by modified Rodrigues parameters
+(`geop-core-solve/src/placed.rs`): rational, a half turn at `|w| = 4`,
+singular only at a full turn. When a solve stalls, check that its
+variables can reach the answer at a finite, well-conditioned value.
+
 ## A free choice still has to be a good one
 
 "Any value that cannot be zero" makes a pivot *valid*, not *good*. The
@@ -543,6 +578,25 @@ The same holds for every free choice the rules above allow: subdivision
 points, Newton seeds, which meridian to leave a pole along, where to split a
 curve at a matched point. Validity is the minimum. When a choice is free,
 choose the well-conditioned one.
+
+## Decide a rank over the box you prove, not at a point
+
+`System::enclose` chose its independent constraint rows by eliminating the
+Jacobian at the solved point. A redundant constraint (an arc slot's second
+`Concentric`, a rectangle's fourth right angle) holds only *on* the
+solution, and the solved point is a solution only to the solver's
+tolerance; there its row looked independent by a pivot as small as that
+tolerance. Taken as independent, it turned the solution into a curve, and
+no Krawczyk box could be proven. The sketch tools had to avoid redundancy
+by hand.
+
+The rows are now chosen over a box around the point, widened from the
+point itself through the solver's tolerance: a pivot that could be zero
+anywhere in the box is no pivot. The rows left out are then checked over
+the proven box, and one that does not enclose zero there is a conflict,
+reported by name. Interval arithmetic can prove a conflict, never its
+absence, so say "consistent to what the box resolves", not "implied".
+The old code proved an "exact solution" for two lengths 1e-11 apart.
 
 ## Refuse what you do not support: early, by name, and say why
 
@@ -602,6 +656,64 @@ boolean render sweep. Run the ignored set before changing blends, shells,
 booleans or the solver. When a regression test needs a slow setup, split
 it: a fast test of the actual defect, and an ignored test of the
 combinations.
+
+## Count the work, not the seconds
+
+A drag in a 2000-part robot went from 0.25 s to minutes, and nothing
+timed it. The editor builds every step's form on every change, for the
+step list; the added part's form asked the whole assembly how free its
+part was, a dense null space over every part's variables. Once per step,
+that is cubic in the parts. What fixed it, and what to keep doing:
+
+- A form shown in a list is of the step's arguments and the program's
+  state. Questions about what was built, over the whole assembly, are for
+  the one dialog open, once per edit.
+- A system that splits into independent groups is solved group by group,
+  and so is any question about it (`Assembly::freedom`, like the solve).
+- Listing must not build: example programs and standard parts are listed
+  by name, and made when opened or read.
+- Guard scaling with a count (`geop_ops::assembly::mates_resolved`), not
+  a time: a quadratic shows at 80 parts as clearly as at 2000.
+
+Timings mislead. Two builds of the same code differ by up to 30% (how
+code is split into codegen units), and other jobs on the machine slow
+everything. Compare CPU time, run the old and new binaries interleaved,
+and build both the same way. `perf` is not allowed here: profile by
+interrupting a capped run under gdb at intervals and counting stacks.
+`ptrace_scope` only lets gdb into a process it started: run the test under
+`gdb -batch`, send the inferior `SIGUSR2` (handled `stop print nopass`)
+and print the backtraces. To count, set breakpoints that only count —
+on a line, or on a function with its caller checked — never prints.
+
+The second round found the cost each time in work that was not needed,
+not in slow arithmetic:
+
+- **Where the representation says polynomial, integrate exactly.** Mass
+  properties ran an adaptive 15-point rule inside another along every
+  trim curve. Along a direction with equal weights a surface is a
+  polynomial, its moments one of known degree, and a Gauss–Legendre rule
+  of a few points has no truncation error at all: five times fewer
+  surface points, and a proven inner integral instead of an estimated
+  one (`mass.rs`).
+- **A deterministic iteration that repeats a seed is done.** Newton with
+  sharpened seeds rarely hits an exact fixed point; it cycles in the last
+  bit and ran out its iterations. Once a seed repeats, the rest is
+  periodic and the result known: the identical answer, in less than half
+  the iterations (`NurbSurface::project`).
+- **Ask the cheap question first.** A boolean cast a ray across the whole
+  other solid for every interior point it classified; a point near one
+  already classified is classified along a short path from it, which a
+  box test rules out of nearly every face (`shell_contains_from`). A path
+  between structured points is not generic, though: a straight segment
+  between two points of one face lies in its plane, and two corners of a
+  symmetric face can graze a cylinder. Go by a random point, as a ray
+  takes a random direction.
+- **An interval argument is no licence to extrapolate.** A spline
+  evaluated over a parameter interval reaching past one knot span used
+  that span's polynomial for all of it: 25 times too wide over a fitted
+  curve, which a search then subdivided away at great cost. Curves now
+  unite their spans' parts (`find_spans`); surfaces still extrapolate, and
+  the tangent-branch search on blends pays for it.
 
 ## Working in parallel worktrees
 
@@ -665,6 +777,16 @@ that order, and the ball's patch began at a different contact on every
 build; the example's round trip (build, save, load, build again) caught it.
 Wherever an order reaches the result — which loop corner comes first, which
 face is "first" — sort by the ids, which are given in creation order.
+
+The kernel's own curves are such data. Its arcs and helices are rational
+quadratics, only C1 where their spans meet. `fit_pcurve` fitted one C2
+cubic through 48 samples of the whole curve. Across those joints its drift
+shrank only as `h^2`, and a helix of pitch 1 came within 15% of the 1e-4
+an entity may carry. The joints are known: they are the knots of the
+source curve. So it now fits each smooth piece separately and joins them,
+and only then adapts, sampling a piece more densely while the pcurve is
+wider than the target. Use the structure you know before you sample
+blindly, and let the sample count follow the width it produces.
 
 ## Many booleans on one body: what grows with every cut
 

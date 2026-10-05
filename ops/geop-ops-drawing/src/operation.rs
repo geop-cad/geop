@@ -16,7 +16,10 @@ use geop_ops::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    drawing::{Dimension, DrawingArgs, Projection, SCALES, SheetSize, scale_label},
+    drawing::{
+        Dimension, DrawingArgs, Projection, SCALES, SheetSize, placed_edge, placed_vertex,
+        scale_label,
+    },
     view::ViewKind,
 };
 
@@ -169,6 +172,9 @@ impl Operation for Drawing {
                 args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
             },
         );
+        f.checkbox("bom", "Bill of materials", args.bom, |args, on| {
+            args.bom = on
+        });
         let mut title = Vec::new();
         for (key, caption, value) in [
             ("title:name", "Part name", &args.name),
@@ -298,12 +304,11 @@ impl Operation for Drawing {
         for dimension in &args.dimensions {
             match dimension {
                 Dimension::Distance { from, to } => {
-                    part.vertex_id(from).with_context(ctx)?;
-                    part.vertex_id(to).with_context(ctx)?;
+                    placed_vertex(&part, from).with_context(ctx)?;
+                    placed_vertex(&part, to).with_context(ctx)?;
                 }
                 Dimension::Radius { edge } | Dimension::Diameter { edge } => {
-                    let id = part.edge_id(edge).with_context(ctx)?;
-                    let curve = &part.topology().get_edge(id).with_context(ctx)?.curve;
+                    let curve = placed_edge(&part, edge).with_context(ctx)?;
                     if curve.as_arc().with_context(ctx)?.is_none() {
                         return Err(GeopError::new(format!(
                             "the edge {edge} is not circular: only a circle has a radius"

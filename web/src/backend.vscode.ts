@@ -3,6 +3,7 @@
 // message channel. See `backend.ts`, which this replaces, and
 // `vscode-extension/src/` for the other end.
 import type { Host } from "./backend";
+import { KernelCrashed } from "./crash";
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -12,7 +13,7 @@ declare function acquireVsCodeApi(): VsCodeApi;
 /** What the extension host sends to the page. */
 type FromHost =
   | { type: "answer"; id: number; update: string }
-  | { type: "failure"; id: number; message: string }
+  | { type: "failure"; id: number; message: string; crashed?: boolean }
   | { type: "document"; text: string; path: string }
   | { type: "files"; files: Record<string, string | null> };
 
@@ -40,7 +41,7 @@ window.addEventListener("message", (e: MessageEvent<FromHost>) => {
   if (!pending) return;
   waiting.delete(message.id);
   if (message.type === "answer") pending.resolve(message.update);
-  else pending.reject(new Error(message.message));
+  else pending.reject(message.crashed ? new KernelCrashed(message.message) : new Error(message.message));
 });
 
 export const host: Host = {
@@ -61,6 +62,13 @@ export const host: Host = {
     vscode.postMessage({ type: "save", file });
   },
 };
+
+/**
+ * Nothing to do: the extension host restarts a kernel that crashed with the
+ * workspace's files and the document itself (see
+ * `vscode-extension/src/server.ts`).
+ */
+export function onRestart(_commands: () => string[]) {}
 
 /** The process is started by the extension host, before the page is shown. */
 export async function loadBackend(): Promise<void> {}

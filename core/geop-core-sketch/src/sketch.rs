@@ -324,6 +324,30 @@ pub enum Constraint<S: Scalar> {
         #[serde(with = "as_f64")]
         value: S,
     },
+    /// `b` is `a` moved the way `by` carries its start onto its end: along
+    /// a line, shifted by it; round an arc, turned about the arc's center
+    /// by its sweep. How a pattern's copies follow what they copy (see
+    /// [`crate::copies`]).
+    Moved {
+        a: PointId,
+        b: PointId,
+        by: CurveId,
+    },
+    /// Two arcs turn by the same angle: an arc whose ends are the images of
+    /// another's, under a motion or a reflection, is then its image.
+    EqualSweep {
+        a: CurveId,
+        b: CurveId,
+    },
+    /// `b` runs `value` from `a`: two parallel lines `value` apart, or two
+    /// concentric circles/arcs whose radii differ by `value` (see
+    /// [`crate::offset`]).
+    Offset {
+        a: CurveId,
+        b: CurveId,
+        #[serde(with = "as_f64")]
+        value: S,
+    },
 }
 
 impl<S: Scalar> Constraint<S> {
@@ -335,7 +359,8 @@ impl<S: Scalar> Constraint<S> {
             | Distance { a, b, .. }
             | DistanceX { a, b, .. }
             | DistanceY { a, b, .. }
-            | Symmetric { a, b, .. } => vec![a, b],
+            | Symmetric { a, b, .. }
+            | Moved { a, b, .. } => vec![a, b],
             PointOnCurve { point, .. }
             | Midpoint { point, .. }
             | Center { point, .. }
@@ -358,14 +383,17 @@ impl<S: Scalar> Constraint<S> {
             Horizontal { line }
             | Vertical { line }
             | PointLineDistance { line, .. }
-            | Symmetric { line, .. } => vec![line],
+            | Symmetric { line, .. }
+            | Moved { by: line, .. } => vec![line],
             Parallel { a, b }
             | Perpendicular { a, b }
             | Collinear { a, b }
             | Tangent { a, b }
             | Equal { a, b }
             | Concentric { a, b }
-            | Angle { a, b, .. } => vec![a, b],
+            | Angle { a, b, .. }
+            | EqualSweep { a, b }
+            | Offset { a, b, .. } => vec![a, b],
             _ => Vec::new(),
         }
     }
@@ -753,6 +781,19 @@ impl<S: Scalar> Sketch<S> {
             Radius { curve, .. } | Diameter { curve, .. } => {
                 need(is_round(*curve)?, "a circle or arc")
             }
+            Moved { by, .. } => need(
+                matches!(kind(*by)?, CurveKind::Line { .. } | CurveKind::Arc { .. }),
+                "two points and a line or arc",
+            ),
+            EqualSweep { a, b } => need(
+                matches!(kind(*a)?, CurveKind::Arc { .. })
+                    && matches!(kind(*b)?, CurveKind::Arc { .. }),
+                "two arcs",
+            ),
+            Offset { a, b, .. } => need(
+                is_line(*a)? && is_line(*b)? || is_round(*a)? && is_round(*b)?,
+                "two lines or two circles/arcs",
+            ),
         }
     }
 

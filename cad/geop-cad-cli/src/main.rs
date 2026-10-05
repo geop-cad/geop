@@ -146,6 +146,10 @@ struct DrawingCliArgs {
     /// What the part is made of, for the title block.
     #[arg(long)]
     material: Option<String>,
+    /// Put the bill of materials of the parts placed on the sheet, above
+    /// the title block, whether or not the drawing step asks for it.
+    #[arg(long)]
+    bom: bool,
     /// Write instead the flat pattern of a sheet-metal body, for laser
     /// cutting — its outline and holes on a CUT layer, its bend lines on a
     /// BEND layer with how each is bent — as DXF: of the body named, else
@@ -321,7 +325,11 @@ fn drawing(args: &DrawingCliArgs) -> GeopResult<PathBuf> {
             output.display()
         ))
     })?;
-    let text = geop_ops_drawing::render(&part, &spec, &today(), format)?;
+    if args.bom {
+        spec.bom = true;
+    }
+    let parts = geop_cad_base::inspect::parts_list(&part, &args.program.to_string_lossy(), &spec)?;
+    let text = geop_ops_drawing::render(&part, &spec, &today(), &parts, format)?;
     std::fs::write(&output, text)
         .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
     Ok(output)
@@ -554,7 +562,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     let mut compiled = Vec::new();
     for (name, program) in singles.iter().filter(|(n, _)| chosen(n)) {
         let path = args.out_dir.join(format!("{name}.geop"));
-        write(&path, program)?;
+        write(&path, &program())?;
         let output = args.out_dir.join(format!("{name}.stl"));
         compiled.push(
             compile_to(path, output)
@@ -564,7 +572,8 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     for (name, files) in workspaces.iter().filter(|(n, _)| chosen(n)) {
         let dir = args.out_dir.join(name);
         std::fs::create_dir_all(&dir).map_err(dir_err(&dir))?;
-        for (file, program) in files {
+        let files = files();
+        for (file, program) in &files {
             write(&dir.join(file), program)?;
         }
         let (main, _) = files.first().expect("an example has files");
@@ -579,12 +588,23 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
 
 /// Run one [`Editor`] until stdin closes: every line is a command, and the
 /// answer is one line — the update as JSON, or `{"fatal": "..."}` if the
-/// command could not be read at all. A panic inside the kernel is reported
-/// the same way (the editor is then in an unknown state, so the process
-/// ends and the front end restarts it) rather than leaving the front end
-/// waiting for an answer that never comes.
+/// command could not be read at all. A panic inside the kernel is answered
+/// `{"crashed": "<what panicked, where>"}`, and the process ends: the editor
+/// is then in an unknown state. The front end starts another with the
+/// program it holds (`vscode-extension/src/server.ts`), rather than waiting
+/// for an answer that never comes.
 fn serve() -> GeopResult<()> {
     let io_err = |e: std::io::Error| GeopError::new(format!("serving: {e}"));
+    // What panicked and where, as the default hook prints it to stderr.
+    let panicked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let default_hook = std::panic::take_hook();
+    let noted = panicked.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut message) = noted.lock() {
+            *message = info.to_string();
+        }
+        default_hook(info);
+    }));
     let mut editor = Editor::<S>::new();
     let stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
@@ -598,10 +618,10 @@ fn serve() -> GeopResult<()> {
         let (reply, alive) = match answer {
             Ok(Ok(update)) => (update, true),
             Ok(Err(message)) => (serde_json::json!({ "fatal": message }).to_string(), true),
-            Err(_) => (
-                serde_json::json!({ "fatal": "the kernel panicked" }).to_string(),
-                false,
-            ),
+            Err(_) => {
+                let message = panicked.lock().map(|m| m.clone()).unwrap_or_default();
+                (serde_json::json!({ "crashed": message }).to_string(), false)
+            }
         };
         writeln!(stdout, "{reply}")
             .and_then(|()| stdout.flush())
@@ -731,7 +751,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "box_with_drill_hole")
             .unwrap()
-            .1;
+            .1();
         let path = dir.join("box.geop");
         std::fs::write(&path, program.to_json().unwrap()).unwrap();
         let compiled = compile(&CompileArgs {
@@ -762,7 +782,7 @@ mod tests {
         let dir = scratch("examples");
         for (name, program) in examples::all() {
             let path = dir.join(format!("{name}.geop"));
-            std::fs::write(&path, program.to_json().unwrap()).unwrap();
+            std::fs::write(&path, program().to_json().unwrap()).unwrap();
             let compiled = compile(&args(path)).unwrap();
             assert_eq!(compiled.output, dir.join(format!("{name}.stl")));
             assert!(compiled.triangles > 0, "{name}: no triangles");
@@ -790,7 +810,7 @@ mod tests {
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
         for (name, files) in examples::workspaces() {
-            for (file, _) in files {
+            for (file, _) in files() {
                 assert!(dir.join(name).join(file).is_file(), "{name}/{file}");
             }
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
@@ -807,6 +827,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "arm")
             .unwrap();
+        let files = files();
         for (file, program) in &files {
             std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
         }
@@ -843,6 +864,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "bolted_plate")
             .unwrap();
+        let files = files();
         for (file, program) in &files {
             std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
         }
@@ -875,6 +897,7 @@ mod tests {
             .into_iter()
             .find(|(name, _)| *name == "pin_in_plate")
             .unwrap();
+        let files = files();
         {
             for (file, program) in &files {
                 std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
@@ -962,6 +985,7 @@ mod tests {
             sheet: None,
             name: None,
             material: Some("6061-T6".into()),
+            bom: false,
             flat_pattern: None,
         };
         let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
@@ -998,6 +1022,7 @@ mod tests {
             sheet: None,
             name: None,
             material: None,
+            bom: false,
             flat_pattern: Some(String::new()),
         };
         let written = drawing(&args).unwrap();

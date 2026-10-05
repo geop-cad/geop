@@ -379,7 +379,8 @@ fn find_piercing_crossing<S: Scalar>(
                 // `min_subdivision_size`-wide one, and the vertex point
                 // evaluated from it would be just as wide. Polish it before
                 // anything downstream looks at it.
-                let (t, uv) = refine_crossing(&edge.curve, &face.surface, t, uv);
+                let (box_t, box_uv) = (t, uv);
+                let (t, _) = refine_crossing(&edge.curve, &face.surface, t, uv);
                 // Only a transversal crossing is a piercing. Where the curve
                 // runs along the surface's tangent plane the crossing is not
                 // regular, Newton cannot pin it down, and the box is what the
@@ -395,9 +396,21 @@ fn find_piercing_crossing<S: Scalar>(
                 // tangent branches' to handle. Where the surface has no normal
                 // to ask (a pole, whose parametrization collapses), nothing
                 // says the crossing is tangential, and it is kept.
-                if let (Ok(tangent), Ok(normal)) =
-                    (edge.curve.tangent(t), face.surface.normal(uv[0], uv[1]))
-                    && tangent.prod_dot(&normal).could_be_equal(S::ZERO)
+                //
+                // Asked over the box the search proved the crossing lies
+                // in, not over Newton's answer: at a tangential contact
+                // Newton converges only linearly, and stops beside the
+                // contact, where the curve and the surface are still a
+                // rounding apart and the tangent already leans off the
+                // plane. Two spheres touching at a point had each meridian
+                // through the contact "pierce" the other sphere 1e-8 from
+                // it, as soon as curve tangents came out a little tighter.
+                // A crossing is regular only if the curve is transversal
+                // all over the box its root may be in.
+                if let (Ok(tangent), Ok(normal)) = (
+                    edge.curve.tangent(box_t),
+                    face.surface.normal(box_uv[0], box_uv[1]),
+                ) && tangent.prod_dot(&normal).could_be_equal(S::ZERO)
                 {
                     continue;
                 }
