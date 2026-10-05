@@ -112,7 +112,7 @@ pub use part::{
     PlacedSketch, RefId, Sketch3dId, SketchId, validate_operation_id,
 };
 
-pub use operation::{Context, EntityRef, Operation, OperationInfo, Operations};
+pub use operation::{Context, EntityRef, Operation, OperationGroup, OperationInfo, Operations};
 pub use program::{
     Files, FilesMut, Library, NoFiles, Program, ProgramRunner, Step, StepResult, Workspace,
     is_program,

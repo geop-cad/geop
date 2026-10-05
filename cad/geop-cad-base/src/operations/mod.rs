@@ -115,130 +115,151 @@ mod view_tests;
 pub enum PartOperation {
     /// Draw a sketch on a plane of a coordinate system, a datum plane or a
     /// planar face.
-    #[operation(label = "Sketch")]
+    #[operation(label = "Sketch", group = Sketch, primary)]
     AddSketch(AddSketchArgs),
     /// Draw points, lines, arcs and splines in space: paths to sweep along.
-    #[operation(label = "3-D sketch")]
+    #[operation(label = "3-D sketch", group = Sketch)]
     AddSketch3d(AddSketch3dArgs),
     /// Add reference geometry — a point, an axis, a plane or a coordinate
     /// system — built from selected points, edges and planes.
-    #[operation(label = "Reference")]
+    #[operation(label = "Reference", group = Sketch)]
     AddDatum(AddDatumArgs),
     /// Sweep a sketch's area along its plane's normal into a solid, or its
     /// curves into faces.
+    #[operation(group = Features, primary)]
     Extrude(ExtrudeArgs),
     /// Sweep a sketch's area around one of its lines into a solid, or its
     /// curves into faces.
+    #[operation(group = Features, primary)]
     Revolve(RevolveArgs),
     /// Sweep a sketch's area along the curves of another sketch into a
     /// solid, or its curves into faces.
+    #[operation(group = Features)]
     Sweep(SweepArgs),
     /// Build a solid through the areas of several sketches, or faces
     /// through their curves.
+    #[operation(group = Features)]
     Loft(LoftArgs),
     /// Drill simple, counterbored, countersunk or tapped holes at points on
     /// a planar face, sized by ISO tables or by hand.
+    #[operation(group = Features, primary)]
     Hole(HoleArgs),
     /// Put an ISO metric thread on a cylindrical face: recorded as a
     /// cosmetic thread, or modelled.
+    #[operation(group = Features)]
     Thread(ThreadArgs),
     /// Grow a thin wall from an open sketch profile up to a solid's faces,
     /// and join it.
+    #[operation(group = Features)]
     Rib(RibArgs),
     /// Round a solid's straight and circular edges.
+    #[operation(group = Features, primary)]
     Fillet(FilletArgs),
     /// Bevel a solid's straight and circular edges.
+    #[operation(group = Features)]
     Chamfer(ChamferArgs),
     /// Hollow a solid out to walls of one thickness, open where faces are
     /// picked.
+    #[operation(group = Features)]
     Shell(ShellArgs),
+    /// Tilt planar faces about a neutral plane, so the part comes out of
     /// its mould.
+    #[operation(group = Features)]
     Draft(DraftArgs),
     /// Raise a lip along the rim of one half of an enclosure.
+    #[operation(group = Features)]
     Lip(LipArgs),
+    /// Cut the groove that takes a lip into the rim of the other half.
+    #[operation(group = Features)]
     Groove(GrooveArgs),
     /// Unite, intersect or subtract two solids.
+    #[operation(group = Bodies, primary)]
     Boolean(BooleanArgs),
     /// Cut a solid into pieces with a face standing on its own.
+    #[operation(group = Bodies)]
     Split(SplitArgs),
     /// Copy bodies in a row along a direction, or in a grid along two.
-    #[operation(label = "Linear pattern")]
+    #[operation(label = "Linear pattern", group = Bodies)]
     LinearPattern(LinearPatternArgs),
     /// Copy bodies turned around an axis.
-    #[operation(label = "Circular pattern")]
+    #[operation(label = "Circular pattern", group = Bodies)]
     CircularPattern(CircularPatternArgs),
     /// Mirror bodies in a plane.
+    #[operation(group = Bodies)]
     Mirror(MirrorArgs),
     /// Move bodies, or a copy of them, turned and shifted.
-    #[operation(label = "Move body")]
+    #[operation(label = "Move body", group = Bodies)]
     MoveBody(MoveBodyArgs),
     /// Delete solids, and faces standing on their own.
-    #[operation(label = "Delete body")]
+    #[operation(label = "Delete body", group = Bodies)]
     DeleteBody(DeleteBodyArgs),
     /// Span a face standing on its own between two edges, or fill a closed
     /// loop of edges — optionally tangent to the flat faces along them.
-    #[operation(label = "Boundary surface")]
+    #[operation(label = "Boundary surface", group = Surfaces)]
     BoundarySurface(BoundarySurfaceArgs),
     /// Copy faces a distance along their normals into a face standing on
     /// its own.
-    #[operation(label = "Offset surface")]
+    #[operation(label = "Offset surface", group = Surfaces)]
     OffsetSurface(OffsetSurfaceArgs),
     /// Make a solid of a face standing on its own, a thickness on either
     /// side of it or on both.
+    #[operation(group = Surfaces)]
     Thicken(ThickenArgs),
     /// Join faces standing on their own along the edges where they meet,
     /// into a solid once they close up.
+    #[operation(group = Surfaces)]
     Knit(KnitArgs),
     /// Cut a face standing on its own back to one side of another face.
-    #[operation(label = "Trim surface")]
+    #[operation(label = "Trim surface", group = Surfaces)]
     TrimSurface(TrimSurfaceArgs),
     /// Carry a face standing on its own on past one of its edges.
-    #[operation(label = "Extend surface")]
+    #[operation(label = "Extend surface", group = Surfaces)]
     ExtendSurface(ExtendSurfaceArgs),
     /// Copy a face out of its body into a face standing on its own.
-    #[operation(label = "Extract face")]
+    #[operation(label = "Extract face", group = Surfaces)]
     ExtractFace(ExtractFaceArgs),
     /// Project a sketch's curves onto a face, dividing the face along them.
-    #[operation(label = "Project curve")]
+    #[operation(label = "Project curve", group = Surfaces)]
     ProjectCurve(ProjectCurveArgs),
-    /// Tilt planar faces about a neutral plane, so the part comes out of
     /// Start a sheet-metal body: a plate from a sketch's area, or a bent
     /// strip from a chain of lines and arcs.
-    #[operation(label = "Base flange")]
+    #[operation(label = "Base flange", group = SheetMetal)]
     BaseFlange(BaseFlangeArgs),
     /// Bend a flange up from a straight edge of a sheet-metal body.
-    #[operation(label = "Edge flange")]
+    #[operation(label = "Edge flange", group = SheetMetal)]
     EdgeFlange(EdgeFlangeArgs),
     /// Cut holes and notches through a sheet-metal body along a sketch,
     /// across its bends as they lie unrolled.
-    #[operation(label = "Sheet-metal cut")]
+    #[operation(label = "Sheet-metal cut", group = SheetMetal)]
     SheetCut(SheetCutArgs),
     /// Fold an edge of a sheet-metal body right back over it.
+    #[operation(group = SheetMetal)]
     Hem(HemArgs),
     /// Unfold a sheet-metal body into its flat pattern.
-    #[operation(label = "Flat pattern")]
+    #[operation(label = "Flat pattern", group = SheetMetal)]
     FlatPattern(FlatPatternArgs),
-    /// Cut the groove that takes a lip into the rim of the other half.
     /// Shape a freeform body by dragging the vertices, edges and faces of a
     /// control cage, built as its smooth subdivision surface.
-    #[operation(label = "SubD")]
+    #[operation(label = "SubD", group = Surfaces)]
     Subd(SubdArgs),
     /// Place the part another program file builds, and mate it to what is
     /// already there.
-    #[operation(label = "Part")]
+    #[operation(label = "Part", group = Assembly, primary)]
     AddPart(AddPartArgs),
     /// Place copies of a placed part in a row along a line, or round an
     /// axis.
-    #[operation(label = "Part pattern")]
+    #[operation(label = "Part pattern", group = Assembly)]
     PartPattern(PartPatternArgs),
     /// Route a bundle of wires from a connector through clips to another
     /// connector, its bends checked and every wire's cut length reported.
+    #[operation(group = Assembly)]
     Route(RouteArgs),
     /// Describe a 2-D drawing of the part — views with hidden lines, a
     /// section, dimensions and a title block — to export as SVG or DXF.
+    #[operation(group = Output)]
     Drawing(DrawingArgs),
     /// Add the solids and sheets of a STEP file next to the program.
-    #[operation(label = "Import STEP")]
+    #[operation(label = "Import STEP", group = Bodies)]
     ImportStep(ImportStepArgs),
 }
 
