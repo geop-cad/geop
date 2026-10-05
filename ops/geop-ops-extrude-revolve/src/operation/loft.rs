@@ -27,7 +27,8 @@ use crate::{
 /// their own: through the sketches' loops, or through open chains of curves
 /// — between two curves, the ruled surface joining them.
 ///
-/// Consecutive profiles are joined by ruled walls (see [`crate::loft`]);
+/// Two profiles are joined by ruled walls, more by walls running smoothly
+/// through them all (see [`crate::loft`]);
 /// profiles of different numbers of curves are matched up by halving the
 /// longest curves of the ones with fewer. Sketch points on the profiles'
 /// loops picked among the [`LoftArgs::matches`] are lofted into each other:

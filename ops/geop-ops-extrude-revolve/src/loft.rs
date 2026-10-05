@@ -1,8 +1,10 @@
 //! Lofting: a body through two or more planar profiles — sections — each in
 //! a plane of its own, by skinning them (see [`crate::sweep::skin`]): a
 //! square on one plane and a circle on another give a solid running from
-//! one to the other. Each pair of consecutive sections is joined by ruled
-//! walls, straight lines between corresponding points of the two.
+//! one to the other. Two sections are joined by ruled walls, straight lines
+//! between corresponding points of the two; three or more by walls running
+//! smoothly through all of them, tangent across every section between (see
+//! [`through`]).
 //!
 //! To be skinned, the sections are made to correspond:
 //!
@@ -836,6 +838,65 @@ fn affine_through(q: &[[f64; 2]], d: &[V]) -> (V, [V; 2]) {
 /// the sections `K` and `L` when there are more than two — the curves at the
 /// sections `N(X,K)`, the edges between them `N(P)` or `N(P,K>L)`, the
 /// vertices `N(P,K)`, the caps `N(start)` and `N(end)`.
+/// The spans of a loft running smoothly through the sections `placed`, one
+/// cubic between each two: its inner control rows each a section and a
+/// third of its tangent there, so that the walls on either side of a
+/// section meet it with one tangent plane.
+///
+/// The tangent at a section is Bessel's, from the sections either side,
+/// each parametrized by how far apart their centres are; at the first and
+/// the last, the parabola's through the three there. Where the sections
+/// are spaced is a free choice of the loft's shape, as any spline through
+/// them is; spacing by their distances keeps a section far from the others
+/// from pulling the walls past it. Sections with their centres in one
+/// place are spaced evenly.
+fn through<S: Scalar>(placed: &[Placed<S>]) -> GeopResult<Vec<Span<S>>> {
+    let n = placed.len() - 1;
+    let centres = placed
+        .iter()
+        .map(|p| Ok(centre(&p.joints()?)))
+        .collect::<GeopResult<Vec<_>>>()?;
+    let mut d: Vec<f64> = (0..n)
+        .map(|j| distance_sq(centres[j], centres[j + 1]).sqrt())
+        .collect();
+    if d.iter().any(|&d| d <= 0.0) {
+        d = vec![1.0; n];
+    }
+    // Rows as coefficients of the sections: `unit(s)` is section `s`.
+    let unit = |s: usize| -> Vec<f64> { (0..=n).map(|k| if k == s { 1.0 } else { 0.0 }).collect() };
+    let combine = |a: &[f64], x: f64, b: &[f64], y: f64| -> Vec<f64> {
+        a.iter().zip(b).map(|(a, b)| x * a + y * b).collect()
+    };
+    // The chord of span `j`, per unit of its length.
+    let chord = |j: usize| combine(&unit(j + 1), 1.0 / d[j], &unit(j), -1.0 / d[j]);
+    let mut tangent: Vec<Vec<f64>> = vec![Vec::new(); n + 1];
+    for j in 1..n {
+        let w = d[j - 1] + d[j];
+        tangent[j] = combine(&chord(j - 1), d[j] / w, &chord(j), d[j - 1] / w);
+    }
+    tangent[0] = combine(&chord(0), 2.0, &tangent[1], -1.0);
+    tangent[n] = combine(&chord(n - 1), 2.0, &tangent[n - 1], -1.0);
+    let row = |coefficients: Vec<f64>| -> Vec<(usize, S)> {
+        coefficients
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, c)| c != 0.0)
+            .map(|(s, c)| (s, S::from_f64(c)))
+            .collect()
+    };
+    let (zero, one) = (S::ZERO, S::ONE);
+    Ok((0..n)
+        .map(|j| Span::Through {
+            degree: 3,
+            knots: vec![zero, zero, zero, zero, one, one, one, one],
+            middle: vec![
+                row(combine(&unit(j), 1.0, &tangent[j], d[j] / 3.0)),
+                row(combine(&unit(j + 1), 1.0, &tangent[j + 1], -d[j] / 3.0)),
+            ],
+        })
+        .collect())
+}
+
 pub fn loft<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
@@ -863,8 +924,16 @@ pub fn loft<S: Scalar>(
     let sections = sections.as_slice();
     let placed = correspond(sections).with_context(ctx)?;
     let spans = sections.len() - 1;
+    let through = if crossed.is_empty() && spans > 1 {
+        Some(through(&placed).with_context(ctx)?)
+    } else {
+        None
+    };
     let span_list = (0..spans)
         .map(|j| {
+            if let Some(through) = &through {
+                return Ok(through[j].clone());
+            }
             if crossed.is_empty() {
                 return Ok(Span::Line);
             }
@@ -1052,6 +1121,39 @@ mod tests {
     #[test]
     fn loft_through_three_sections() {
         for_all_scalars!(check_loft_through_three_sections);
+    }
+
+    /// Through three circles of different sizes, the walls either side of
+    /// the middle one meet it with one tangent plane: the loft has no crease
+    /// there, as ruled walls would.
+    fn check_loft_through_three_sections_is_smooth<S: Scalar>() {
+        let part = lofted::<S>(&[
+            section("a", level(0.0), circle(1.0)),
+            section("b", level(1.0), circle(1.5)),
+            section("c", level(3.0), circle(0.8)),
+        ]);
+        let model = part.topology();
+        let surface = |name: &str| &model.faces[&part.face_id(name).unwrap()].surface;
+        let (below, above) = (surface("loft(l,a,c0,a>b)"), surface("loft(l,a,c0,b>c)"));
+        for v in [0.1, 0.5, 0.9] {
+            let normal = |surface: &geop_core_geometry::nurb_surface::NurbSurface3D<S>, u: S| {
+                let (v0, v1) = surface.domain_v();
+                let v = S::from_f64(v0.to_f64() + (v1.to_f64() - v0.to_f64()) * v);
+                surface.normal(u, v).unwrap()
+            };
+            let (below, above) = (
+                normal(below, below.domain_u().1),
+                normal(above, above.domain_u().0),
+            );
+            assert!(
+                below.could_be_equal(&above),
+                "the walls meet the middle circle with the normals {below:?} below and {above:?} above"
+            );
+        }
+    }
+    #[test]
+    fn loft_through_three_sections_is_smooth() {
+        for_all_scalars!(check_loft_through_three_sections_is_smooth);
     }
 
     /// A triangle and a circle: the triangle's longest side is halved to

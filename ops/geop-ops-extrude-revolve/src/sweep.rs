@@ -100,6 +100,16 @@ pub enum Span<S: Scalar> {
         knots: Vec<S>,
         middle: Vec<[(Frame<S>, S); 2]>,
     },
+    /// Along a NURBS of `degree` on the clamped `knots` over `[0, 1]`, each
+    /// inner control row a sum of the sections at any stations — each
+    /// placed by its own station's frame, times its coefficient: a loft
+    /// running smoothly through its sections, its tangent at each taken
+    /// from its neighbours (see [`crate::loft`]).
+    Through {
+        degree: usize,
+        knots: Vec<S>,
+        middle: Vec<Vec<(usize, S)>>,
+    },
 }
 
 impl<S: Scalar> Span<S> {
@@ -124,20 +134,47 @@ enum Row<'a, S: Scalar> {
     /// The sum of the first section placed by one frame and the last placed
     /// by another, each times its weight.
     Both(&'a [(Frame<S>, S); 2]),
+    /// The sum of the sections at the stations given, each placed by its
+    /// own station's frame, times its coefficient.
+    Stations(&'a [(usize, S)]),
 }
 
 impl<S: Scalar> Row<'_, S> {
-    /// The row's control point for the homogeneous profile points `a` in
-    /// the first section and `b` in the last.
-    fn point(&self, a: &Vector3<S>, b: &Vector3<S>) -> Vector4<S> {
+    /// The row's control point for the homogeneous profile point `at[s]`
+    /// of the section at every station `s` of `stations`, in span `(a, b)`:
+    /// from station `a` to station `b`.
+    fn point(
+        &self,
+        stations: &[Frame<S>],
+        (a, b): (usize, usize),
+        at: &[Vector3<S>],
+    ) -> Vector4<S> {
         let place =
             |p: &Vector3<S>, frame: &Frame<S>| embed_point(p, &frame.origin, &frame.e1, &frame.e2);
         match self {
-            Row::First(frame, weight) => weighted(place(a, frame), *weight),
-            Row::Last(frame) => place(b, frame),
+            Row::First(frame, weight) => weighted(place(&at[a], frame), *weight),
+            Row::Last(frame) => place(&at[b], frame),
             Row::Both([(fa, wa), (fb, wb)]) => {
-                let (pa, pb) = (place(a, fa), place(b, fb));
+                let (pa, pb) = (place(&at[a], fa), place(&at[b], fb));
                 Vector4::from_array(std::array::from_fn(|k| pa[k].mul(*wa).add(pb[k].mul(*wb))))
+            }
+            Row::Stations(terms) => {
+                // A coefficient of one multiplies nothing, and the sum starts
+                // at the first term, not at zero: rounding by either would
+                // only widen the row.
+                let term = |&(s, coefficient): &(usize, S)| -> Vector4<S> {
+                    let p = place(&at[s], &stations[s]);
+                    if coefficient.is_subset_of(S::ONE) && S::ONE.is_subset_of(coefficient) {
+                        p
+                    } else {
+                        Vector4::from_array(std::array::from_fn(|k| p[k].mul(coefficient)))
+                    }
+                };
+                let mut terms = terms.iter().map(term);
+                let first = terms.next().expect("a row of at least one section");
+                terms.fold(first, |sum, t| {
+                    Vector4::from_array(std::array::from_fn(|k| sum[k].add(t[k])))
+                })
             }
         }
     }
@@ -181,6 +218,7 @@ impl<S: Scalar> Path<S> {
             Span::Line => Vec::new(),
             Span::Curve { middle, .. } => middle.iter().map(|(m, w)| Row::First(m, *w)).collect(),
             Span::Blend { middle, .. } => middle.iter().map(Row::Both).collect(),
+            Span::Through { middle, .. } => middle.iter().map(|m| Row::Stations(m)).collect(),
         };
         std::iter::once(Row::First(a, None))
             .chain(middle)
@@ -191,45 +229,54 @@ impl<S: Scalar> Path<S> {
     fn degree(&self, j: usize) -> usize {
         match &self.spans[j] {
             Span::Line => 1,
-            Span::Curve { degree, .. } | Span::Blend { degree, .. } => *degree,
+            Span::Curve { degree, .. }
+            | Span::Blend { degree, .. }
+            | Span::Through { degree, .. } => *degree,
         }
     }
 
     fn knots(&self, j: usize) -> Vec<S> {
         match &self.spans[j] {
             Span::Line => vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            Span::Curve { knots, .. } | Span::Blend { knots, .. } => knots.clone(),
+            Span::Curve { knots, .. } | Span::Blend { knots, .. } | Span::Through { knots, .. } => {
+                knots.clone()
+            }
         }
     }
 
-    /// The path along span `j` of a profile point: `a` in the span's first
-    /// station's section and `b` in its last one's (see [`skin`]).
-    fn lateral(&self, j: usize, a: &Vector2<S>, b: &Vector2<S>) -> GeopResult<NurbCurve3D<S>> {
-        let homogeneous = |p: &Vector2<S>| Vector3::from_array([p[0], p[1], S::ONE]);
-        let (a, b) = (homogeneous(a), homogeneous(b));
-        let control_points = self.rows(j).iter().map(|row| row.point(&a, &b)).collect();
-        NurbCurve::try_new(self.degree(j), control_points, self.knots(j))
+    /// The stations span `j` runs between.
+    fn ends(&self, j: usize) -> (usize, usize) {
+        (j, self.station(j + 1))
     }
 
-    /// The wall a profile curve sweeps through span `j`, `a` in the span's
-    /// first station's section and `b` in its last one's — compatible
-    /// curves: `u` along the span, `v` along the curve.
-    fn wall(
-        &self,
-        j: usize,
-        a: &NurbCurve2D<S>,
-        b: &NurbCurve2D<S>,
-    ) -> GeopResult<NurbSurface3D<S>> {
+    /// The path along span `j` of a profile point, `points[s]` in the
+    /// section at station `s` (see [`skin`]).
+    fn lateral(&self, j: usize, points: &[Vector2<S>]) -> GeopResult<NurbCurve3D<S>> {
+        let at: Vec<Vector3<S>> = points
+            .iter()
+            .map(|p| Vector3::from_array([p[0], p[1], S::ONE]))
+            .collect();
         let control_points = self
             .rows(j)
             .iter()
-            .flat_map(|row| {
-                a.control_points
-                    .iter()
-                    .zip(&b.control_points)
-                    .map(move |(pa, pb)| row.point(pa, pb))
-            })
+            .map(|row| row.point(&self.stations, self.ends(j), &at))
             .collect();
+        NurbCurve::try_new(self.degree(j), control_points, self.knots(j))
+    }
+
+    /// The wall a profile curve sweeps through span `j`, `curves[s]` in the
+    /// section at station `s` — compatible curves: `u` along the span, `v`
+    /// along the curve.
+    fn wall(&self, j: usize, curves: &[&NurbCurve2D<S>]) -> GeopResult<NurbSurface3D<S>> {
+        let a = curves[j];
+        let rows = self.rows(j);
+        let mut control_points = Vec::with_capacity(rows.len() * a.control_points.len());
+        for row in &rows {
+            for k in 0..a.control_points.len() {
+                let at: Vec<Vector3<S>> = curves.iter().map(|c| c.control_points[k]).collect();
+                control_points.push(row.point(&self.stations, self.ends(j), &at));
+            }
+        }
         NurbSurface::try_new(
             self.degree(j),
             a.degree,
@@ -615,8 +662,9 @@ pub fn skin<S: Scalar>(
                         spec.edges.push(EdgeSpec {
                             curve: path.lateral(
                                 j,
-                                &section(j).joint(i)?,
-                                &section(next).joint(i)?,
+                                &(0..stations)
+                                    .map(|s| section(s).joint(i))
+                                    .collect::<GeopResult<Vec<_>>>()?,
                             )?,
                             start: joints[i][j],
                             end: joints[i][next],
@@ -663,8 +711,10 @@ pub fn skin<S: Scalar>(
                 spec.faces.push(FaceSpec {
                     surface: path.wall(
                         j,
-                        &sections[j][l].profile.curves[i],
-                        &sections[last][l].profile.curves[i],
+                        &sections
+                            .iter()
+                            .map(|section| &section[l].profile.curves[i])
+                            .collect::<Vec<_>>(),
                     )?,
                     outer: vec![
                         at(j, Sense::Reversed, &first_back),
