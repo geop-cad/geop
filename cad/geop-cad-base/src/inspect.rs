@@ -207,6 +207,7 @@ impl<S: Scalar> MeasureTool<S> {
             focus: None,
             grab: false,
             prompt: None,
+            gizmo: None,
         }
     }
 }

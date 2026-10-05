@@ -920,6 +920,16 @@ button.inline {
 }
 
 /* Where the pointer snaps to: a point, a middle, a curve. */
+.gizmo-readout {
+  font: 12px system-ui, sans-serif;
+  color: #111;
+  background: #ffd84a;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .snap-marker {
   width: 12px;
   height: 12px;

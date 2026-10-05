@@ -8,7 +8,7 @@ use geop_core_math::{
 };
 use serde::Serialize;
 
-use super::Dialog;
+use super::{Dialog, GizmoView};
 use crate::operation::{EntityRef, Role};
 
 /// What a visual is.
@@ -180,4 +180,6 @@ pub struct Presentation<S: Scalar> {
     pub grab: bool,
     /// A value asked for in place.
     pub prompt: Option<Prompt<S>>,
+    /// The gizmo to move, turn or scale by, as drawn.
+    pub gizmo: Option<GizmoView<S>>,
 }

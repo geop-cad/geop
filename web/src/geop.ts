@@ -377,6 +377,24 @@ export type Style =
 
 export type Visual = { key: string; style: Style } & Shape;
 
+/** A part of a gizmo, by the index of its axis — see `geop_ops::ui::GizmoPart`. */
+export type GizmoPart = { part: "free" | "scale" } | { part: "move" | "plane" | "turn" | "stretch"; axis: number };
+
+/**
+ * A gizmo to move, turn or scale by, laid out in reaches (see
+ * `geop_ops::ui::gizmo::size`) — see `geop_ops::ui::GizmoView`.
+ */
+export interface GizmoView {
+  at: Vec3;
+  /** Unit and orthogonal: the world's, or what it stands on's own. */
+  axes: [Vec3, Vec3, Vec3];
+  modes: { translate: boolean; rotate: boolean; scale: boolean };
+  hover: GizmoPart | null;
+  active: GizmoPart | null;
+  /** What a drag under way has done so far. */
+  readout: string | null;
+}
+
 /** What the step being edited shows. */
 export interface Presentation {
   dialog: Field[];
@@ -391,6 +409,8 @@ export interface Presentation {
   grab: boolean;
   /** A value asked for in place, at `at`: what is typed goes to the field `key` as `text`. */
   prompt: Prompt | null;
+  /** A gizmo to move, turn or scale by. */
+  gizmo: GizmoView | null;
 }
 
 /** A value asked for in place in the viewport — see `geop_ops::ui::Prompt`. */

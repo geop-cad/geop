@@ -7,6 +7,7 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::GizmoDrag;
 use crate::operation::EntityRef;
 
 /// How far from its ray a [`Pointer`] reaches: what counts as under it, at
@@ -196,6 +197,11 @@ pub enum CanvasEvent<S: Scalar> {
         done: bool,
         shift: bool,
     },
+    /// A drag of the form's gizmo (see [`super::Gizmo`]): what it did
+    /// since it started, to apply to the step's arguments as they were
+    /// then — which they are again whenever this is sent. `done` on
+    /// release.
+    Gizmo { drag: GizmoDrag<S>, done: bool },
     /// A key, as the browser names it.
     Key { key: String },
 }

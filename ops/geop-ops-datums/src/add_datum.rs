@@ -658,8 +658,18 @@ impl Operation for AddDatum {
         Ok(part)
     }
 
+    /// An offset point moved by its gizmo: see [`crate::editor`].
+    fn event<S: Scalar>(
+        &self,
+        context: Context<'_, S>,
+        edit: geop_ops::ui::Edit<'_, AddDatumArgs, ()>,
+        event: &geop_ops::ui::CanvasEvent<S>,
+    ) {
+        editor::event(context.before, edit, event);
+    }
+
     /// Picking the selection, choosing among the constructions that fit
-    /// it, and offsets as handles: see [`crate::editor`].
+    /// it, and offsets as handles and a gizmo: see [`crate::editor`].
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -682,8 +692,8 @@ mod tests {
     use geop_ops::{
         NoFiles, ORIGIN, Operations,
         ui::{
-            Button, Control, PartView, Pointer, Presentation, Reach, Shape, StepEditEvent,
-            StepEditor, Tone, Value,
+            Button, Control, PartView, Pointer, Presentation, Reach, StepEditEvent, StepEditor,
+            Tone, Value,
         },
     };
 
@@ -819,10 +829,10 @@ mod tests {
         (args, editor.presentation(context, part, &view))
     }
 
-    /// Offsets are handles: dragging one along its direction edits the
-    /// construction's value.
+    /// An offset point is moved by a gizmo at it, along the axes its
+    /// offsets are measured along: its `z` arrow dragged edits `z`.
     #[test]
-    fn offsets_are_dragged() {
+    fn offset_points_are_dragged_by_a_gizmo() {
         let args = AddDatumArgs {
             selection: vec![origin()],
             construction: Construction::Point {
@@ -832,19 +842,31 @@ mod tests {
             },
         };
         let part = Part::<S>::new();
-        let handles = edited(&part, args.clone(), false, &[]).1.visuals;
-        let keys: Vec<&str> = handles.iter().map(|h| h.key.as_str()).collect();
-        assert_eq!(keys, ["x", "y", "z"]);
-        let Shape::Handle { at, direction } = handles[2].shape else {
-            panic!("a handle");
-        };
-        assert_eq!(direction, v([0.0, 0.0, 1.0]));
-        assert!(at.could_be_equal(&v([1.0, 2.0, 3.3])), "{at:?}");
-        // Seen from the side, dragged half a unit up.
+        let shown = edited(&part, args.clone(), false, &[]).1;
+        assert!(shown.visuals.is_empty(), "no handles: {:?}", shown.visuals);
+        let gizmo = shown.gizmo.expect("a gizmo");
+        assert!(
+            gizmo.at.could_be_equal(&v([1.0, 2.0, 3.0])),
+            "{:?}",
+            gizmo.at
+        );
+        assert!(gizmo.modes.translate && !gizmo.modes.rotate);
+        // Seen from the side, its `z` arrow dragged half a unit up — the
+        // grid a reach of 0.01 snaps to being a tenth.
         let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
+        let hover = StepEditEvent::Hover {
+            pointer: side(3.05),
+            shift: false,
+        };
+        let hovered = edited(&part, args.clone(), false, std::slice::from_ref(&hover)).1;
+        assert_eq!(
+            hovered.gizmo.and_then(|g| g.hover),
+            Some(geop_ops::ui::GizmoPart::Move(2))
+        );
+        assert!(hovered.grab);
         let drag = StepEditEvent::Drag {
-            from: side(3.3),
-            to: side(3.8),
+            from: side(3.05),
+            to: side(3.57),
             done: true,
             shift: false,
         };

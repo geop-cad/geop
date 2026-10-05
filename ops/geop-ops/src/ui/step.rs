@@ -7,8 +7,9 @@ use std::any::Any;
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 
 use super::{
-    Button, CanvasEvent, Control, Dialog, InHand, PartView, Pointer, Presentation, Reference,
-    Shape, StepEditEvent, Style, Tone, Value, Visual, hit::hit_visuals,
+    Action, Button, CanvasEvent, Control, Dialog, GizmoView, InHand, Orientation, PartView,
+    Pointer, Presentation, Reference, Shape, StepEditEvent, Style, Tone, Value, Visual,
+    gizmo::GizmoGrab, hit::hit_visuals,
 };
 use crate::{
     Part,
@@ -21,8 +22,13 @@ use crate::{
 /// exact values.
 pub const DRAG_SNAP: f64 = 0.01;
 
+/// The key of the field the editor adds to a dialog whose gizmo has an
+/// orientation of its own: the world's axes or its own, as
+/// [`Value::Choice`] `world` or `local`.
+pub const GIZMO_ORIENTATION: &str = "gizmo_orientation";
+
 /// What a drag holds, as it was grabbed.
-enum Grab<S: Scalar> {
+enum Grab<O, S: Scalar> {
     /// The handle of the number field `key`, and the value that had.
     Handle { key: String, value: f64 },
     /// A draggable visual of the operation's, dragged in the plane worked
@@ -34,6 +40,14 @@ enum Grab<S: Scalar> {
     },
     /// A stroke of the tool in hand, from where it went down.
     Stroke,
+    /// A part of the form's gizmo, with the step and the program's state
+    /// as they were when it was pressed — what every event of the drag
+    /// applies its change to — and what the drag has done so far, in words.
+    Gizmo {
+        grab: GizmoGrab<S>,
+        start: Box<(O, State)>,
+        readout: Option<String>,
+    },
 }
 
 /// A step being edited: the step with its arguments as they now are, and
@@ -59,6 +73,14 @@ enum Grab<S: Scalar> {
 ///   is none, in the plane through where it was grabbed, facing the eye —
 ///   as a [`CanvasEvent::Move`]. With a tool in hand that strokes, a drag
 ///   from anywhere else is the tool's, as a [`CanvasEvent::Stroke`].
+/// - The form's gizmo, if it has one, is drawn over everything and grabbed
+///   first: a drag of one of its parts is followed and snapped (see
+///   [`super::gizmo`]) and sent as a [`CanvasEvent::Gizmo`], with the step
+///   and the state put back as they were when it was pressed, so each
+///   event applies the whole drag once. A click on it does nothing, unless
+///   a field waits for a pick: then it picks what is under it. Where
+///   it has an orientation of its own, the dialog gets a
+///   [`GIZMO_ORIENTATION`] field to choose the world's axes or its own.
 ///
 /// Whatever else the pointer and the keys do goes to the operation as a
 /// [`CanvasEvent`]: clicks while it has a tool in hand, and those on
@@ -74,7 +96,9 @@ pub struct StepEditor<O, S: Scalar> {
     hover: Option<EntityRef>,
     /// Where the pointer last was, if over the viewport.
     pointer: Option<Pointer<S>>,
-    grab: Option<Grab<S>>,
+    grab: Option<Grab<O, S>>,
+    /// Which way the gizmo is turned, where it has a way of its own.
+    orientation: Orientation,
     /// The program's state as the step's edits leave it: what it is
     /// edited with, and what it is committed with.
     state: State,
@@ -185,6 +209,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             hover: None,
             pointer: None,
             grab: None,
+            orientation: Orientation::default(),
             state: context.state.clone(),
         }
     }
@@ -260,6 +285,13 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         self.follow_references(context, &references);
     }
 
+    /// The form's gizmo, turned as chosen.
+    fn gizmo(&self, form: &Form<S>) -> Option<GizmoView<S>> {
+        form.gizmo
+            .as_ref()
+            .map(|gizmo| GizmoView::of(gizmo, self.orientation))
+    }
+
     fn pass(&mut self, context: Context<'_, S>, event: CanvasEvent<S>) {
         let references = self.references(context);
         let state = self.state.clone();
@@ -323,6 +355,15 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         let form = self.form(context);
         if let StepEditEvent::Dialog { key, value } = event {
             self.dialog(context, &form.dialog, key, value.clone());
+            return;
+        }
+        // A click on the gizmo is no click on what is under it — unless a
+        // field waits for a pick, which a click is for, as for a handle.
+        if let (StepEditEvent::Click { pointer, .. }, Some(gizmo), None) =
+            (event, self.gizmo(&form), &self.armed)
+            && gizmo.hit(pointer).is_some()
+        {
+            self.pointer = Some(*pointer);
             return;
         }
         match event {
@@ -408,6 +449,14 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     /// The dialog field `key` used: a reference field armed, or an entity
     /// taken out of it, or all of them; any other field set.
     fn dialog(&mut self, context: Context<'_, S>, dialog: &Dialog<S>, key: &str, value: Value) {
+        if key == GIZMO_ORIENTATION {
+            match value {
+                Value::Choice(c) if c == "world" => self.orientation = Orientation::World,
+                Value::Choice(c) if c == "local" => self.orientation = Orientation::Local,
+                _ => {}
+            }
+            return;
+        }
         let Some(Control::Reference(reference)) = dialog.get(key) else {
             self.set(context, key, value);
             return;
@@ -495,6 +544,16 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         handles_only: bool,
     ) {
         let handles = handles(&form.dialog);
+        if self.grab.is_none()
+            && let Some(gizmo) = self.gizmo(form)
+            && let Some(part) = gizmo.hit(from)
+        {
+            self.grab = Some(Grab::Gizmo {
+                grab: GizmoGrab::new(gizmo, part, from),
+                start: Box::new((self.step.clone(), self.state.clone())),
+                readout: None,
+            });
+        }
         if self.grab.is_none() {
             let visuals: Vec<Visual<S>> = form.visuals.iter().chain(&handles).cloned().collect();
             let hit = hit_visuals(&visuals, from, Some(view), |v| {
@@ -585,6 +644,28 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                     );
                 }
             }
+            Grab::Gizmo { .. } => {
+                let Some(Grab::Gizmo {
+                    mut grab,
+                    start,
+                    mut readout,
+                }) = self.grab.take()
+                else {
+                    unreachable!("matched above");
+                };
+                if let Some((drag, text)) = grab.drag(from, to, shift) {
+                    (self.step, self.state) = (start.0.clone(), start.1.clone());
+                    self.pass(context, CanvasEvent::Gizmo { drag, done });
+                    readout = Some(text);
+                }
+                if !done {
+                    self.grab = Some(Grab::Gizmo {
+                        grab,
+                        start,
+                        readout,
+                    });
+                }
+            }
             Grab::Stroke => {
                 if done {
                     self.grab = None;
@@ -626,6 +707,34 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 pickable = reference.roles.clone();
             }
         }
+        let mut gizmo = self.gizmo(&form);
+        if form.gizmo.as_ref().is_some_and(|g| g.axes.is_some()) {
+            let choice = |value: &str, label: &str, orientation: Orientation, title: &str| {
+                Action::new(value, label)
+                    .group("Gizmo")
+                    .title(title)
+                    .active(self.orientation == orientation)
+            };
+            form.dialog.push(
+                GIZMO_ORIENTATION,
+                Control::Actions {
+                    actions: vec![
+                        choice(
+                            "world",
+                            "World",
+                            Orientation::World,
+                            "Move, turn and scale along the world's axes",
+                        ),
+                        choice(
+                            "local",
+                            "Local",
+                            Orientation::Local,
+                            "Move, turn and scale along its own axes",
+                        ),
+                    ],
+                },
+            );
+        }
         let mut visuals = form.visuals;
         visuals.extend(handles(&form.dialog));
         let tool = form.tool;
@@ -633,7 +742,17 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
         // takes one, so a press on it can only mean dragging it. Anything
         // else under the pointer is the field's to pick.
         let waiting = self.armed.is_some();
-        let hovered = self.pointer.and_then(|pointer| {
+        if let Some(gizmo) = &mut gizmo {
+            match &self.grab {
+                Some(Grab::Gizmo { grab, readout, .. }) => {
+                    gizmo.active = Some(grab.part);
+                    gizmo.readout = readout.clone();
+                }
+                _ => gizmo.hover = self.pointer.and_then(|pointer| gizmo.hit(&pointer)),
+            }
+        }
+        let on_gizmo = gizmo.as_ref().is_some_and(|g| g.hover.is_some());
+        let hovered = self.pointer.filter(|_| !on_gizmo).and_then(|pointer| {
             hit_visuals(&visuals, &pointer, Some(view), |v| {
                 if waiting {
                     is_handle(v)
@@ -671,9 +790,11 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
             },
             // A tool that strokes takes a press anywhere.
             grab: self.grab.is_some()
+                || on_gizmo
                 || hovered.is_some_and(|(_, grab)| grab)
                 || (tool == InHand::Strokes && self.armed.is_none()),
             prompt: form.prompt,
+            gizmo,
         }
     }
 }

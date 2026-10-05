@@ -72,6 +72,12 @@ below is what was missing then, and where each item stands now.
 - Web app and VS Code extension: every operation, inspect and BOM panels,
   joint values, every export; camera framing; a scrolling toolbar; the
   kernel restarted with the program after a crash.
+- A 3-D transform gizmo for every drag in space: arrows, plane squares and a
+  free ball to move, rings to turn, cubes to scale along an axis or evenly;
+  world or local axes, constant size on screen, snapping to round grid
+  steps and 15° (shift for none), the distance or angle shown while
+  dragging. SubD selections, 3-D sketch points, move body, offset datum
+  points and placed parts are dragged by it.
 - End-to-end checks: `npm run e2e` and `npm run e2e:vscode` in `web/`.
 
 ## Next

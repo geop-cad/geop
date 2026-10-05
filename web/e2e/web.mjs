@@ -4,7 +4,8 @@
 // preview` on a free port, and drives it in headless Chrome: every example
 // loads from the File menu and builds without an error; every operation
 // opens and cancels; a part is sketched and extruded by clicks; the inspect
-// panel weighs it; and every export of the File menu downloads a file.
+// panel weighs it; a subd face and a 3-D sketch point are dragged by their
+// gizmos; and every export of the File menu downloads a file.
 //
 // Flags: `--build` rebuilds even if `dist/` looks current; `--only <text>`
 // runs only the checks whose name contains the text; `--shots` saves a
@@ -12,7 +13,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { Checks, fileMenu, WEB, expect, launch, pixelAt, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
+import { Checks, fileMenu, OUT, WEB, expect, launch, pixelAt, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
@@ -319,6 +320,133 @@ await check("a kernel that crashes is restarted with the program", async () => {
   await fresh();
   await fileMenu(page, "Box with drill hole");
   return crashKernel(page, errors);
+});
+
+// ── gizmos ──────────────────────────────────────────────────────────────
+
+/** Where the scene's point `p` is on screen, in client coordinates. */
+const onScreen = (p) => page.evaluate((p) => window.geopView.project(p), p);
+/** How long a reach is at `p`, in world units: what a gizmo is laid out in. */
+const reachAt = (p) => page.evaluate((p) => window.geopView.reach(p), p);
+/** What the step being edited shows, as the kernel has it now. */
+const presented = () => page.evaluate(async () => (await window.geopCommand({ command: "show" }))?.step?.presentation);
+/** `p` moved `k` along `d`. */
+const along = (p, d, k) => p.map((c, i) => c + d[i] * k);
+/** The values of the number fields `keys` the step shows. */
+const numbers = (presentation, keys) => keys.map((key) => presentation.dialog.find((f) => f.key === key)?.value);
+/** `geop_ops::ui::gizmo::grid_step`: what a drag snaps to, a reach being `reach`. */
+function gridStep(reach) {
+  const least = (20 / 9) * reach;
+  const power = 10 ** Math.floor(Math.log10(least));
+  return [1, 2, 5, 10].map((m) => m * power).find((s) => s >= least);
+}
+const samePart = (a, b) => a != null && a.part === b.part && a.axis === b.axis;
+
+/** Hover, then click, the page at `x`, `y`. */
+async function clickAt([x, y]) {
+  await page.mouse.move(x, y);
+  await settle(page);
+  await page.mouse.click(x, y);
+  await settle(page);
+}
+
+/**
+ * Hover `from` — which must light the gizmo's `part`, drawn there in the
+ * highlight's yellow — then press there and drag to `to` in steps: the part
+ * is dragged, and says how far, on the way. A screenshot half way is saved
+ * as `e2e/out/gizmo-<name>.png` with `--shots`.
+ */
+async function dragGizmo(part, from, to, name) {
+  await page.mouse.move(...from);
+  await settle(page);
+  const hovered = (await presented()).gizmo;
+  expect(samePart(hovered?.hover, part), `hovering ${from} lit ${JSON.stringify(hovered?.hover)}, not ${JSON.stringify(part)}`);
+  await page.waitForTimeout(200);
+  const [r, g, b] = await pixelAt(page, Math.round(from[0]), Math.round(from[1]));
+  expect(r > 180 && g > 150 && b < 140, `the hovered ${part.part} is drawn rgb(${r}, ${g}, ${b}) at ${from}, not lit`);
+  await page.mouse.down();
+  const steps = 8;
+  for (let i = 1; i <= steps; i++) {
+    await page.mouse.move(from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps);
+    await page.waitForTimeout(30);
+  }
+  await settle(page);
+  const during = (await presented()).gizmo;
+  expect(samePart(during?.active, part), `dragging, ${JSON.stringify(during?.active)} is active`);
+  expect(during.readout, "the drag says nothing of how far it went");
+  if (process.argv.includes("--shots")) {
+    fs.mkdirSync(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, `gizmo-${name}.png`) });
+  }
+  await page.mouse.up();
+  await settle(page);
+  return during.readout;
+}
+
+await check("a subd cage face is moved up by the gizmo's arrow", async () => {
+  await fresh();
+  await operation("SubD").click();
+  await settle(page);
+  await page.locator("button.fit-view").click();
+  await page.waitForTimeout(1200);
+  // The cage's top face, near its middle: selected, a gizmo at its centre.
+  await clickAt(await onScreen([0.3, 0.2, 1]));
+  const selected = await presented();
+  const at = selected.gizmo?.at;
+  expect(at && Math.abs(at[2] - 1) < 1e-9, `no gizmo at the top face's centre: ${JSON.stringify(selected.gizmo)}`);
+  expect(!selected.visuals.some((v) => v.shape === "handle"), "the old handles are still drawn");
+  const reach = await reachAt(at);
+  const step = gridStep(reach);
+  const up = [0, 0, 1];
+  const readout = await dragGizmo(
+    { part: "move", axis: 2 },
+    await onScreen(along(at, up, 8.5 * reach)),
+    await onScreen(along(at, up, 8.5 * reach + 3 * step)),
+    "subd-face",
+  );
+  const [z] = numbers(await presented(), ["z"]);
+  expect(Math.abs(z - (1 + 3 * step)) < 1e-9, `the face's centre went to z = ${z}, not ${1 + 3 * step}`);
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  return `moved by ${readout}; ${stats}`;
+});
+
+await check("a 3-D sketch point is dragged along an axis by the gizmo", async () => {
+  await fresh();
+  await operation("3-D sketch").click();
+  await settle(page);
+  // A line: from the origin out, then put down — Escape ends it, Escape
+  // again takes up selecting — and its end clicked to select it.
+  await clickView(0, 0);
+  await clickView(-160, -120);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  await clickView(-160, -120);
+  const selected = await presented();
+  const at = selected.gizmo?.at;
+  expect(at, `the point selected has no gizmo: ${JSON.stringify(selected.dialog.map((f) => f.key))}`);
+  expect(selected.gizmo.modes.translate && !selected.gizmo.modes.rotate, "a point is only moved");
+  const before = numbers(selected, ["x", "y", "z"]);
+  const reach = await reachAt(at);
+  const step = gridStep(reach);
+  const x = [1, 0, 0];
+  const readout = await dragGizmo(
+    { part: "move", axis: 0 },
+    await onScreen(along(at, x, 8.5 * reach)),
+    await onScreen(along(at, x, 8.5 * reach + 4 * step)),
+    "sketch3d-point",
+  );
+  const after = numbers(await presented(), ["x", "y", "z"]);
+  const want = [before[0] + 4 * step, before[1], before[2]];
+  expect(
+    after.every((v, i) => Math.abs(v - want[i]) < 1e-6),
+    `the point went from ${before} to ${after}, not ${want}`,
+  );
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  return `moved by ${readout}; ${stats}`;
 });
 
 // ── exports ─────────────────────────────────────────────────────────────

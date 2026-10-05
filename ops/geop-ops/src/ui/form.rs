@@ -12,8 +12,8 @@
 use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar};
 
 use super::{
-    Action, Choice, Control, Dialog, ListItem, Number, Picked, Prompt, Reference, Tone, Value,
-    Visual,
+    Action, Choice, Control, Dialog, Gizmo, ListItem, Number, Picked, Prompt, Reference, Tone,
+    Value, Visual,
 };
 use crate::{
     assembly::Drag,
@@ -73,6 +73,9 @@ pub struct Form<'a, S: Scalar, A = (), T = ()> {
     pub holds: Vec<String>,
     /// A value asked for in place, in the viewport.
     pub prompt: Option<Prompt<S>>,
+    /// A gizmo to move, turn or scale something by: its drags are sent as
+    /// [`super::CanvasEvent::Gizmo`].
+    pub gizmo: Option<Gizmo<S>>,
     setters: Vec<(String, Setter<'a, A, T>)>,
 }
 
@@ -86,6 +89,7 @@ impl<S: Scalar, A, T> Default for Form<'_, S, A, T> {
             drags: Vec::new(),
             holds: Vec::new(),
             prompt: None,
+            gizmo: None,
             setters: Vec::new(),
         }
     }
@@ -115,6 +119,7 @@ impl<'a, S: Scalar, A, T> Form<'a, S, A, T> {
             drags: self.drags,
             holds: self.holds,
             prompt: self.prompt,
+            gizmo: self.gizmo,
             setters: Vec::new(),
         }
     }

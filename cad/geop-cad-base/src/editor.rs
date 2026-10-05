@@ -730,6 +730,7 @@ impl<S: Scalar> Editor<S> {
             focus: None,
             grab: lit.is_some(),
             prompt: None,
+            gizmo: None,
         })
     }
 
