@@ -20,6 +20,13 @@ crate can build a solid, rasterize it, and hand the mesh to JS end-to-end.
   Code build.
 - `src/App.tsx` — the editor: the program, the step being edited, and
   sending what the user does to `edit_step`.
+- `src/OperationRibbon.tsx` — the operations as a ribbon of the groups the
+  editor sends them in (`#[operation(group = ..., primary)]` on
+  `PartOperation`): big buttons for the primary ones, small stacked ones
+  for the rest, giving way to menus where the window is narrow; a section
+  per group on a phone. A new operation needs no change here.
+- `src/selection.ts` — a drag selects text only inside the dialog or panel
+  it starts in; the app's chrome is never selectable.
 - `src/DialogView.tsx` — renders a step's dialog from its primitives.
 - `src/SceneViewer.tsx` — renders a `Scene` with `three.js`, draws what the
   step being edited shows (`src/visuals3d.ts`, `src/planeGrid.ts`), and sends
@@ -56,11 +63,18 @@ npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
 
 - `npm run e2e` rebuilds `dist/` if any source is newer (`npm run build`),
   serves it with `vite preview` on a free port, and checks that every
+  operation is in reach of the toolbar — a button, or an entry of a menu of
+  it — at 1400, 1100 and 900 px wide, with nothing scrolled (screenshots
+  of the bar at 1400, 1100 and 800 px land in `e2e/out/toolbar-*.png`);
+  that a drag over the 3-D view selects no text, and one in a dialog or
+  the program panel selects only there; that every
   example of the File menu builds without an error shown or a failed step;
   that every operation opens on an empty part and on a part, and cancels;
   that a rectangle sketched by clicks extrudes, and the inspect panel weighs
   it; that a kernel that panics is restarted with the program, and says
-  so; and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
+  so; that a SubD face and a 3-D sketch point are dragged by their gizmos'
+  arrows, lit where the kernel says the pointer is (with `--shots`, a
+  screenshot half way through each drag, `gizmo-*.png`); and that STEP, STL, SVG, DXF, URDF and the BOM's CSV download as
   non-empty files of their kind.
 - `npm run e2e:vscode` builds the release CLI and the extension's page
   (`build:vscode`), writes example workspaces with `geop examples

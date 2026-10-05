@@ -1,10 +1,14 @@
 // End-to-end checks of the web app: `npm run e2e` (see README.md).
 //
 // Builds `dist/` if it is older than the sources, serves it with `vite
-// preview` on a free port, and drives it in headless Chrome: every example
-// loads from the File menu and builds without an error; every operation
-// opens and cancels; a part is sketched and extruded by clicks; the inspect
-// panel weighs it; and every export of the File menu downloads a file.
+// preview` on a free port, and drives it in headless Chrome: every
+// operation is in reach of the toolbar without scrolling, and a drag over
+// the view selects no text; every example loads from the File menu and
+// builds without an error; every operation opens and cancels; a part is
+// sketched and extruded by clicks; the inspect panel weighs it; a subd face
+// and a 3-D sketch point are dragged by their gizmos; every export of the
+// File menu downloads a file; and a drawing is dimensioned on its sheet and
+// downloaded from its dialog.
 //
 // Flags: `--build` rebuilds even if `dist/` looks current; `--only <text>`
 // runs only the checks whose name contains the text; `--shots` saves a
@@ -12,7 +16,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
-import { Checks, fileMenu, WEB, expect, launch, pixelAt, preview, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
+import { Checks, clickOperation, expect, fileMenu, launch, operationLabels, OUT, pixelAt, preview, run, settle, shownErrors, stale, watchErrors, WEB } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
@@ -66,27 +70,193 @@ async function builtCleanly() {
 
 // ── the toolbar ──────────────────────────────────────────────────────────
 
-await check("the toolbar fits the window, every operation scrolled to in it", async () => {
-  await fresh();
-  const problems = await page.evaluate(() => {
-    const inView = (el) => {
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.left >= 0 && r.right <= window.innerWidth;
-    };
-    const fixed = [".file-menu", ".stats", ".help-menu"].map((s) => document.querySelector(s));
-    const problems = [];
-    const buttons = [...document.querySelectorAll(".desktop-only .operation-tools button.op-button")];
-    for (const button of buttons) {
-      button.scrollIntoView({ inline: "nearest", block: "nearest" });
-      if (!inView(button)) problems.push(`${button.innerText} cannot be brought into view`);
-      // Brought into view by scrolling the operations, not the whole app.
-      if (document.querySelector(".app").getBoundingClientRect().left !== 0) problems.push(`showing ${button.innerText} moved the app`);
-      for (const el of fixed) if (!inView(el)) problems.push(`${el.className} is out of view with ${button.innerText} in view`);
-      if (problems.length > 0) break;
+/**
+ * What of the toolbar is in view with nothing scrolled: the labels of the
+ * operation buttons, and of the entries of every menu of the operations
+ * (each opened in turn); and what is out of the window or would scroll.
+ */
+async function toolbarReach() {
+  const inView = () =>
+    page.evaluate(() => {
+      const problems = [];
+      const fits = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.left >= 0 && r.right <= window.innerWidth && r.top >= 0 && r.bottom <= window.innerHeight;
+      };
+      for (const s of [".file-menu", "button[aria-label='Undo']", "button[aria-label='Redo']", ".stats", ".help-menu"]) {
+        const el = document.querySelector(s);
+        if (!el || !fits(el)) problems.push(`${s} is out of view`);
+      }
+      for (const el of [document.documentElement, document.querySelector(".toolbar"), document.querySelector(".operation-strip")]) {
+        if (el.scrollWidth > el.clientWidth) problems.push(`${el.className || el.tagName} scrolls: ${el.scrollWidth} > ${el.clientWidth}`);
+      }
+      const strip = document.querySelector(".operation-strip").getBoundingClientRect();
+      const labels = [];
+      for (const b of document.querySelectorAll(".operation-ribbon button.op-button")) {
+        const r = b.getBoundingClientRect();
+        if (!fits(b) || r.right > strip.right + 0.5) problems.push(`${b.innerText} is out of view`);
+        else labels.push(b.innerText.trim());
+      }
+      for (const b of document.querySelectorAll(".operation-ribbon .dropdown-trigger")) {
+        if (!fits(b) || b.getBoundingClientRect().right > strip.right + 0.5) problems.push(`the menu ${b.innerText} is out of view`);
+      }
+      return { labels, problems };
+    });
+  const { labels, problems } = await inView();
+  const triggers = page.locator(".operation-ribbon .dropdown-trigger");
+  const menus = await triggers.count();
+  for (let i = 0; i < menus; i++) {
+    await triggers.nth(i).click();
+    const items = await page.evaluate(() =>
+      [...document.querySelectorAll(".operation-ribbon .dropdown-menu .dropdown-item")].map((item) => {
+        const r = item.getBoundingClientRect();
+        const fits = r.width > 0 && r.left >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight;
+        return { label: item.querySelector(".dropdown-item-label").textContent, fits };
+      }),
+    );
+    await page.keyboard.press("Escape");
+    for (const { label, fits } of items) {
+      if (fits) labels.push(label);
+      else problems.push(`${label} runs out of the window in its menu`);
     }
-    return problems;
+  }
+  return { labels: new Set(labels), problems, menus };
+}
+
+for (const width of [1400, 1100, 900]) {
+  await check(`every operation is reachable in the toolbar at ${width} px, nothing scrolled`, async () => {
+    await page.setViewportSize({ width, height: 900 });
+    await fresh();
+    const all = await operationLabels(page);
+    expect(all.length > 40, `only ${all.length} operations offered`);
+    const { labels, problems, menus } = await toolbarReach();
+    const missing = all.filter((l) => !labels.has(l));
+    expect(missing.length === 0, `not reachable: ${missing.join(", ")}`);
+    expect(problems.length === 0, problems.join("; "));
+    const buttons = await page.locator(".operation-ribbon button.op-button").count();
+    return `${all.length} operations, ${buttons} as buttons, the rest in ${menus} menus`;
   });
-  expect(problems.length === 0, problems.join("; "));
+}
+await page.setViewportSize({ width: 1400, height: 900 });
+
+await check("the primary operations are big buttons at 1400 px", async () => {
+  await fresh();
+  const big = (await page.locator(".operation-ribbon button.op-button.big").allInnerTexts()).map((l) => l.trim());
+  const missing = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Part"].filter((l) => !big.includes(l));
+  expect(missing.length === 0, `not big: ${missing.join(", ")} (big: ${big.join(", ")})`);
+  return `big: ${big.join(", ")}`;
+});
+
+await check("the toolbar at 1400, 1100 and 800 px", async () => {
+  fs.mkdirSync(path.join(WEB, "e2e", "out"), { recursive: true });
+  for (const width of [1400, 1100, 800]) {
+    await page.setViewportSize({ width, height: 900 });
+    await fresh();
+    await page.screenshot({ path: path.join(WEB, "e2e", "out", `toolbar-${width}.png`) });
+    // On a phone the operations are a tab of their own, not in the bar.
+    const ribbon = await page.locator(".operation-strip").isVisible();
+    expect(ribbon === width > 860, `at ${width} px the ribbon is ${ribbon ? "shown" : "hidden"}`);
+    if (width <= 860) {
+      const grid = await page.locator(".mobile-bottom .operation-grid button.op-button").count();
+      expect(grid > 40, `the phone's tab offers ${grid} operations`);
+    }
+  }
+  await page.setViewportSize({ width: 1400, height: 900 });
+  return "screenshots in e2e/out/toolbar-*.png";
+});
+
+// ── text selection ───────────────────────────────────────────────────────
+
+/** Press at the first of `points`, move through the others, and let go there; the text then selected. */
+async function dragThrough(points) {
+  const [from, ...rest] = points;
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  for (const p of rest) await page.mouse.move(p.x, p.y, { steps: 8 });
+  await page.mouse.up();
+  return page.evaluate(() => window.getSelection().toString());
+}
+
+/** The centre of the first element `selector` finds. */
+async function centre(selector) {
+  const box = await page.locator(selector).first().boundingBox();
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+await check("a drag across the viewport selects no text", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await clickOperation(page, "Extrude");
+  await settle(page);
+  const view = await page.locator("main.viewport canvas").first().boundingBox();
+  const inView = { x: view.x + view.width / 3, y: view.y + view.height / 2 };
+  const dialog = await centre(".desktop-only .popup h2");
+  const toolbar = await centre(".operation-ribbon button.op-button");
+  const panel = await centre(".structure-panel");
+  const program = await centre(".timeline .step-box");
+  // From the view over the dialog, the toolbar, the panels, and back.
+  const selected = await dragThrough([inView, dialog, toolbar, panel, program, inView]);
+  expect(selected === "", `selected: ${JSON.stringify(selected.slice(0, 200))}`);
+  // From the view's edge, out over everything to the window's corner.
+  const corner = await dragThrough([{ x: view.x + 5, y: view.y + view.height - 5 }, { x: 2, y: 2 }]);
+  expect(corner === "", `selected: ${JSON.stringify(corner.slice(0, 200))}`);
+  // Across the view from the chrome around it: the tab strip's empty end,
+  // and the empty foot of the sidebar and of the explorer — where a press
+  // is no camera's, and nothing captures the pointer.
+  const tabs = await page.locator(".editor-tabs").boundingBox();
+  const sidebar = await page.locator(".sidebar").boundingBox();
+  const explorer = await page.locator(".explorer-bar").boundingBox();
+  for (const [where, from] of [
+    ["the tab strip", { x: tabs.x + tabs.width - 20, y: tabs.y + tabs.height / 2 }],
+    ["the sidebar", { x: sidebar.x + sidebar.width / 2, y: sidebar.y + sidebar.height - 10 }],
+    ["the explorer", { x: explorer.x + explorer.width / 2, y: explorer.y + explorer.height - 10 }],
+  ]) {
+    const crossed = await dragThrough([from, inView, toolbar]);
+    expect(crossed === "", `a drag from ${where} over the view selected: ${JSON.stringify(crossed.slice(0, 200))}`);
+  }
+  await page.locator(".desktop-only .popup .button-row button", { hasText: /^Cancel$/ }).click();
+  return builtCleanly();
+});
+
+await check("a drag within a dialog or the program panel selects its text, and only its", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await clickOperation(page, "Extrude");
+  await settle(page);
+  // Across the dialog's text, then on out over the view and the toolbar.
+  const popup = await page.locator(".desktop-only .popup").boundingBox();
+  const start = { x: popup.x + 12, y: popup.y + 40 };
+  const inside = await dragThrough([start, { x: popup.x + popup.width - 12, y: popup.y + popup.height / 2 }]);
+  expect(inside.trim().length > 0, "dragging across the dialog selected nothing");
+  const out = await dragThrough([start, { x: start.x, y: 40 }, { x: 300, y: 40 }]);
+  const toolbarText = (await page.locator(".toolbar").innerText()).split(/\s+/).filter((w) => w.length > 3);
+  const dialogText = await page.locator(".desktop-only .popup").innerText();
+  const leaked = toolbarText.filter((w) => out.includes(w) && !dialogText.includes(w));
+  expect(leaked.length === 0, `selected the toolbar's ${leaked.join(", ")}`);
+  await page.locator(".desktop-only .popup .button-row button", { hasText: /^Cancel$/ }).click();
+  await settle(page);
+  // The program panel: its parameters' text.
+  const panel = await page.locator(".panel.timeline").boundingBox();
+  const inPanel = await dragThrough([
+    { x: panel.x + 8, y: panel.y + 30 },
+    { x: panel.x + panel.width - 8, y: panel.y + 90 },
+  ]);
+  expect(inPanel.trim().length > 0, "dragging across the program panel selected nothing");
+  // On out of the panel, over the view and up into the toolbar: still only the panel's.
+  const view = await page.locator("main.viewport canvas").first().boundingBox();
+  const panelOut = await dragThrough([
+    { x: panel.x + 8, y: panel.y + 30 },
+    { x: view.x + view.width / 2, y: view.y + view.height / 2 },
+    { x: view.x + view.width / 2, y: 40 },
+    { x: 300, y: 40 },
+  ]);
+  const panelText = await page.locator(".panel.timeline").innerText();
+  const fromPanel = toolbarText.filter((w) => panelOut.includes(w) && !panelText.includes(w));
+  expect(fromPanel.length === 0, `a drag out of the panel selected the toolbar's ${fromPanel.join(", ")}`);
+  await page.mouse.click(5, 5);
+  return `${inside.trim().length} characters in the dialog, ${inPanel.trim().length} in the panel`;
 });
 
 // ── every example ────────────────────────────────────────────────────────
@@ -112,20 +282,17 @@ for (const label of [...parts, ...assemblies]) {
 
 // ── every operation opens, and cancels ──────────────────────────────────
 
-/** Click every operation button in turn: each opens its step (or says why not), and Cancel closes it again. */
+/** Click every operation in the toolbar in turn: each opens its step (or says why not), and Cancel closes it again. */
 async function everyOperation() {
-  const buttons = page.locator(".desktop-only .operation-tools button.op-button");
-  const n = await buttons.count();
-  expect(n > 10, `only ${n} operation buttons`);
+  const labels = await operationLabels(page);
+  const n = labels.length;
+  expect(n > 10, `only ${n} operations`);
   const refused = [];
   const times = [];
-  for (let i = 0; i < n; i++) {
+  for (const label of labels) {
     const start = Date.now();
-    const button = buttons.nth(i);
-    const label = (await button.innerText()).trim();
     if (label === "Drag") continue;
-    expect(await button.isEnabled(), `${label} is disabled with no step open`);
-    await button.click();
+    await clickOperation(page, label);
     await settle(page);
     if ((await page.locator(".desktop-only .popup").count()) === 0) {
       // Refused to open: it must say why.
@@ -178,7 +345,7 @@ async function crashKernel(page, errors) {
   const unexpected = errors.splice(logged).filter((e) => !/panicked|asked to crash|unreachable/.test(e));
   errors.push(...unexpected);
   // It still works: an operation opens, and the error is gone.
-  await operation("Sketch").click();
+  await clickOperation(page, "Sketch");
   await settle(page);
   expect((await popup.count()) === 1, "Sketch did not open after the crash");
   await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
@@ -187,8 +354,6 @@ async function crashKernel(page, errors) {
 
 // ── a part made by clicks ───────────────────────────────────────────────
 
-/** The operation button `label`. */
-const operation = (label) => page.locator(".desktop-only .operation-tools button.op-button", { hasText: new RegExp(`^${label}$`) });
 const popup = page.locator(".desktop-only .popup");
 
 /** Click the viewport `dx`, `dy` pixels from its centre. */
@@ -208,7 +373,7 @@ async function massRow(label) {
 
 await check("a rectangle is sketched and extruded by clicks, and weighed", async () => {
   await fresh();
-  await operation("Sketch").click();
+  await clickOperation(page, "Sketch");
   await settle(page);
   // The plane: the square of the origin's zx plane, below and right of its centre, seen from the default view.
   await clickView(8, 23);
@@ -221,7 +386,7 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   expect((await popup.innerText()).includes("1 region"), `the rectangle drew no region:\n${await popup.innerText()}`);
   await popup.locator(".button-row button.primary").click();
   await settle(page);
-  await operation("Extrude").click();
+  await clickOperation(page, "Extrude");
   await settle(page);
   expect((await popup.innerText()).includes("sketch: sketch1"), "the extrusion did not take the sketch");
   // Distance 2, typed into the field.
@@ -288,7 +453,7 @@ await check("a pattern picks a hole as a feature by a click on its wall", async 
   // row, out from its centre where the framed plate's holes are, until one
   // lands on a hole's wall — the plate's own faces are no feature, so
   // nothing else is picked.
-  await operation("Linear pattern").click();
+  await clickOperation(page, "Linear pattern");
   await settle(page);
   await popup.locator(".reference button", { hasText: "features:" }).click();
   await settle(page);
@@ -376,6 +541,133 @@ await check("a kernel that crashes is restarted with the program", async () => {
   return crashKernel(page, errors);
 });
 
+// ── gizmos ──────────────────────────────────────────────────────────────
+
+/** Where the scene's point `p` is on screen, in client coordinates. */
+const onScreen = (p) => page.evaluate((p) => window.geopView.project(p), p);
+/** How long a reach is at `p`, in world units: what a gizmo is laid out in. */
+const reachAt = (p) => page.evaluate((p) => window.geopView.reach(p), p);
+/** What the step being edited shows, as the kernel has it now. */
+const presented = () => page.evaluate(async () => (await window.geopCommand({ command: "show" }))?.step?.presentation);
+/** `p` moved `k` along `d`. */
+const along = (p, d, k) => p.map((c, i) => c + d[i] * k);
+/** The values of the number fields `keys` the step shows. */
+const numbers = (presentation, keys) => keys.map((key) => presentation.dialog.find((f) => f.key === key)?.value);
+/** `geop_ops::ui::gizmo::grid_step`: what a drag snaps to, a reach being `reach`. */
+function gridStep(reach) {
+  const least = (20 / 9) * reach;
+  const power = 10 ** Math.floor(Math.log10(least));
+  return [1, 2, 5, 10].map((m) => m * power).find((s) => s >= least);
+}
+const samePart = (a, b) => a != null && a.part === b.part && a.axis === b.axis;
+
+/** Hover, then click, the page at `x`, `y`. */
+async function clickAt([x, y]) {
+  await page.mouse.move(x, y);
+  await settle(page);
+  await page.mouse.click(x, y);
+  await settle(page);
+}
+
+/**
+ * Hover `from` — which must light the gizmo's `part`, drawn there in the
+ * highlight's yellow — then press there and drag to `to` in steps: the part
+ * is dragged, and says how far, on the way. A screenshot half way is saved
+ * as `e2e/out/gizmo-<name>.png` with `--shots`.
+ */
+async function dragGizmo(part, from, to, name) {
+  await page.mouse.move(...from);
+  await settle(page);
+  const hovered = (await presented()).gizmo;
+  expect(samePart(hovered?.hover, part), `hovering ${from} lit ${JSON.stringify(hovered?.hover)}, not ${JSON.stringify(part)}`);
+  await page.waitForTimeout(200);
+  const [r, g, b] = await pixelAt(page, Math.round(from[0]), Math.round(from[1]));
+  expect(r > 180 && g > 150 && b < 140, `the hovered ${part.part} is drawn rgb(${r}, ${g}, ${b}) at ${from}, not lit`);
+  await page.mouse.down();
+  const steps = 8;
+  for (let i = 1; i <= steps; i++) {
+    await page.mouse.move(from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps);
+    await page.waitForTimeout(30);
+  }
+  await settle(page);
+  const during = (await presented()).gizmo;
+  expect(samePart(during?.active, part), `dragging, ${JSON.stringify(during?.active)} is active`);
+  expect(during.readout, "the drag says nothing of how far it went");
+  if (process.argv.includes("--shots")) {
+    fs.mkdirSync(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, `gizmo-${name}.png`) });
+  }
+  await page.mouse.up();
+  await settle(page);
+  return during.readout;
+}
+
+await check("a subd cage face is moved up by the gizmo's arrow", async () => {
+  await fresh();
+  await operation("SubD").click();
+  await settle(page);
+  await page.locator("button.fit-view").click();
+  await page.waitForTimeout(1200);
+  // The cage's top face, near its middle: selected, a gizmo at its centre.
+  await clickAt(await onScreen([0.3, 0.2, 1]));
+  const selected = await presented();
+  const at = selected.gizmo?.at;
+  expect(at && Math.abs(at[2] - 1) < 1e-9, `no gizmo at the top face's centre: ${JSON.stringify(selected.gizmo)}`);
+  expect(!selected.visuals.some((v) => v.shape === "handle"), "the old handles are still drawn");
+  const reach = await reachAt(at);
+  const step = gridStep(reach);
+  const up = [0, 0, 1];
+  const readout = await dragGizmo(
+    { part: "move", axis: 2 },
+    await onScreen(along(at, up, 8.5 * reach)),
+    await onScreen(along(at, up, 8.5 * reach + 3 * step)),
+    "subd-face",
+  );
+  const [z] = numbers(await presented(), ["z"]);
+  expect(Math.abs(z - (1 + 3 * step)) < 1e-9, `the face's centre went to z = ${z}, not ${1 + 3 * step}`);
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  return `moved by ${readout}; ${stats}`;
+});
+
+await check("a 3-D sketch point is dragged along an axis by the gizmo", async () => {
+  await fresh();
+  await operation("3-D sketch").click();
+  await settle(page);
+  // A line: from the origin out, then put down — Escape ends it, Escape
+  // again takes up selecting — and its end clicked to select it.
+  await clickView(0, 0);
+  await clickView(-160, -120);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  await clickView(-160, -120);
+  const selected = await presented();
+  const at = selected.gizmo?.at;
+  expect(at, `the point selected has no gizmo: ${JSON.stringify(selected.dialog.map((f) => f.key))}`);
+  expect(selected.gizmo.modes.translate && !selected.gizmo.modes.rotate, "a point is only moved");
+  const before = numbers(selected, ["x", "y", "z"]);
+  const reach = await reachAt(at);
+  const step = gridStep(reach);
+  const x = [1, 0, 0];
+  const readout = await dragGizmo(
+    { part: "move", axis: 0 },
+    await onScreen(along(at, x, 8.5 * reach)),
+    await onScreen(along(at, x, 8.5 * reach + 4 * step)),
+    "sketch3d-point",
+  );
+  const after = numbers(await presented(), ["x", "y", "z"]);
+  const want = [before[0] + 4 * step, before[1], before[2]];
+  expect(
+    after.every((v, i) => Math.abs(v - want[i]) < 1e-6),
+    `the point went from ${before} to ${after}, not ${want}`,
+  );
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  return `moved by ${readout}; ${stats}`;
+});
+
 // ── exports ─────────────────────────────────────────────────────────────
 
 /** Do `action`, and return the file it downloads: its name and size. */
@@ -389,8 +681,6 @@ async function downloaded(action) {
 const exports = [
   ["Box with drill hole", "Download STEP", /\.step$/, (b) => b.toString().startsWith("ISO-10303-21;")],
   ["Box with drill hole", "Download STL", /\.stl$/, (b) => b.length > 84 && b.readUInt32LE(80) * 50 + 84 === b.length],
-  ["Box with drill hole", "Export drawing as SVG", /\.svg$/, (b) => b.toString().includes("<svg")],
-  ["Box with drill hole", "Export drawing as DXF", /\.dxf$/, (b) => b.toString().includes("ENTITIES")],
   ["Arm", "Export URDF", /\.zip$/, (b) => b.subarray(0, 2).toString() === "PK"],
 ];
 let loaded = null;
@@ -410,6 +700,67 @@ for (const [example, entry, name, valid] of exports) {
     return `${file.name}, ${file.size} bytes`;
   });
 }
+
+/** How many texts the SVG `text` writes on its dimension layer. */
+function dimensionTexts(text) {
+  const layer = text.slice(text.indexOf('<g class="DIMENSIONS"'));
+  return (layer.slice(0, layer.indexOf("</g>")).match(/<text/g) ?? []).length;
+}
+
+await check("a drawing is dimensioned on its sheet and downloaded from its dialog", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await operation("Drawing").click();
+  await settle(page);
+  // The sheet, framed head on: wait for the camera to glide there.
+  await page.waitForTimeout(1500);
+  const before = await downloaded(() => popup.locator("button", { hasText: "Download SVG" }).click());
+  expect(before.name.endsWith(".svg"), `downloaded ${before.name}`);
+  const dimensions = dimensionTexts(before.text.toString());
+
+  // Where a point of the sheet is on screen: it is framed whole, centred,
+  // from straight above (see `fitPose`).
+  const update = await page.evaluate(() => window.geopCommand({ command: "show" }));
+  const { sheet } = update.step.presentation;
+  const box = await page.locator("main.viewport canvas").first().boundingBox();
+  const half = (50 * Math.PI) / 360;
+  const narrowest = Math.min(half, Math.atan(Math.tan(half) * (box.width / box.height)));
+  const distance = sheet.size / 2 / Math.sin(narrowest);
+  const perMm = box.height / (2 * distance * Math.tan(half));
+  const screen = (p) => [
+    box.width / 2 + (p[0] - sheet.center[0]) * perMm,
+    box.height / 2 - (p[1] - sheet.center[1]) * perMm,
+  ];
+  // The ends of an edge the first view draws.
+  const edge = update.step.presentation.visuals.find(
+    (v) => v.key.startsWith("sheet/") && v.shape === "polyline" && v.style === "fixed" && v.points.length === 2,
+  );
+  expect(edge, "the sheet draws no edge");
+  const [a, b] = edge.points;
+  await popup.locator("button[aria-label^='Dimension']").click();
+  await settle(page);
+  for (const p of [a, b]) {
+    const [x, y] = screen(p);
+    await clickView(x - box.width / 2, y - box.height / 2);
+  }
+  // Its value, a little off the edge.
+  const along = [b[0] - a[0], b[1] - a[1]];
+  const length = Math.hypot(...along);
+  const out = [(a[0] + b[0]) / 2 - (12 * along[1]) / length, (a[1] + b[1]) / 2 + (12 * along[0]) / length];
+  const [x, y] = screen(out);
+  await clickView(x - box.width / 2, y - box.height / 2);
+  const listed = await popup.locator(".dialog-list li", { hasText: "Distance" }).count();
+  expect(listed === 1, `${listed} distances listed:\n${await popup.innerText()}`);
+
+  const after = await downloaded(() => popup.locator("button", { hasText: "Download SVG" }).click());
+  const added = dimensionTexts(after.text.toString()) - dimensions;
+  expect(added === 1, `the downloaded drawing has ${added} more dimensions, not one`);
+  const dxf = await downloaded(() => popup.locator("button", { hasText: "Download DXF" }).click());
+  expect(dxf.name.endsWith(".dxf") && dxf.text.toString().includes("ENTITIES"), `downloaded ${dxf.name}`);
+  // Left open: the screenshot (`--shots`) shows the sheet with its dimension.
+  return `${await builtCleanly()}, ${after.name}`;
+});
 
 await check("the bill of materials is saved as CSV", async () => {
   await fresh();

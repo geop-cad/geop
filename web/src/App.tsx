@@ -44,12 +44,13 @@ import { ParametersPanel } from "./ParametersPanel";
 import { JointsPanel } from "./JointsPanel";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
-import { Icon } from "./icons";
+import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
 import { Timeline, type TimelineStep } from "./Timeline";
 import { Toolbar } from "./Toolbar";
 import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
 import { MobileBottom, type MobileTab } from "./MobileBottom";
 import { useIsMobile } from "./useIsMobile";
+import { scopeTextSelection } from "./selection";
 
 /** Whether a key press belongs to a field being typed into rather than to the step. */
 function typing(e: KeyboardEvent): boolean {
@@ -115,6 +116,9 @@ function App() {
   /** What the inspect panel lights, beyond what the kernel does. */
   const [lights, setLights] = useState<EntityRef[]>([]);
 
+  // A drag selects text only within the dialog or panel it starts in (see selection.ts).
+  const appRef = useRef<HTMLDivElement>(null);
+  useEffect(() => (appRef.current ? scopeTextSelection(appRef.current) : undefined), []);
   /** Which panel the bottom half shows on a narrow (mobile) screen — irrelevant on desktop, where all three show at once. */
   const [mobileTab, setMobileTab] = useState<MobileTab>("buttons");
   const isMobile = useIsMobile();
@@ -272,7 +276,8 @@ function App() {
     if (plane) {
       beforePlaneRef.current ??= poseRef.current;
       const headOn = headOnPose(plane, poseRef.current);
-      if (frame) fitView(headOn);
+      // A sheet of its own is framed whole: it is drawn instead of the part.
+      if (frame || presentation?.sheet) fitView(headOn);
       else setFocus(headOn);
     } else if (beforePlaneRef.current) {
       const before = beforePlaneRef.current;
@@ -461,14 +466,15 @@ function App() {
     trackFile("saved");
   }
 
-  /** Export a drawing of the part, and save it: downloaded, or through VS Code. */
-  async function exportDrawing(format: "svg" | "dxf") {
+  /** The drawing being edited, written as `format` — dated today — and saved: downloaded, or through VS Code. */
+  async function exportDrawing(format: string) {
     const date = new Date().toISOString().slice(0, 10);
-    const update = await dispatch({ command: "export_drawing", format, date });
+    const update = await dispatch({ command: "export_drawing", format: format === "dxf" ? "dxf" : "svg", date });
     const file = update?.export;
     if (!file) return;
     if (host) host.saveFile(file);
-    else download(file.name, file.text ?? "", format === "svg" ? "image/svg+xml" : "application/dxf");
+    else download(file.name, file.text ?? "", format === "dxf" ? "application/dxf" : "image/svg+xml");
+    trackFile("saved");
   }
 
   /** Write the bill of materials of the part shown as a CSV file, and save it. */
@@ -575,31 +581,24 @@ function App() {
   }));
 
   const dragTool = program?.drag_tool ?? false;
-  const operationButtonsRow = (
-    <div className="operation-tools" role="toolbar" aria-label="Operations">
-      {infos.map((info) => (
-        <button
-          key={info.kind}
-          title={info.doc}
-          className={["op-button", step?.kind === info.kind && step.id == null ? "active" : ""].join(" ")}
-          disabled={!wasmReady || (step != null && step.kind !== info.kind)}
-          onClick={() => newStep(info)}
-        >
-          <Icon name={info.kind} />
-          <span>{info.label}</span>
-        </button>
-      ))}
-      <button
-        title="Drag placed parts as far as their mates let them"
-        className={["op-button", dragTool ? "active" : ""].join(" ")}
-        disabled={!wasmReady || step != null}
-        onClick={() => dispatch({ command: "drag_tool", on: !dragTool })}
-      >
-        <Icon name="drag" />
-        <span>Drag</span>
-      </button>
-    </div>
-  );
+  const tools: Tool[] = [
+    ...infos.map((info) => ({
+      ...info,
+      active: step?.kind === info.kind && step.id == null,
+      disabled: !wasmReady || (step != null && step.kind !== info.kind),
+      onSelect: () => newStep(info),
+    })),
+    {
+      kind: "drag",
+      label: "Drag",
+      doc: "Drag placed parts as far as their mates let them",
+      group: "Assembly",
+      primary: false,
+      active: dragTool,
+      disabled: !wasmReady || step != null,
+      onSelect: () => void dispatch({ command: "drag_tool", on: !dragTool }),
+    },
+  ];
 
   const programPanel = (
     <section className="panel timeline">
@@ -697,17 +696,17 @@ function App() {
       error={error}
       onCommit={() => void close({ command: "commit" })}
       onCancel={() => void close({ command: "cancel" })}
+      onDownload={(format) => void exportDrawing(format)}
     />
   );
 
   return (
-    <div className="app" aria-busy={!wasmReady || pending > 0}>
+    <div ref={appRef} className="app" aria-busy={!wasmReady || pending > 0}>
       <Toolbar
         busy={!wasmReady}
         hosted={host != null}
         hasSteps={stepCount > 0}
         onSave={() => downloadFile(workspace.active)}
-        onExportDrawing={(format) => void exportDrawing(format)}
         onExportUrdf={() => void exportUrdf()}
         onExportStep={() => void exportStep()}
         onExportFlatPattern={() => void exportFlatPattern()}
@@ -721,7 +720,7 @@ function App() {
         onUndo={() => dispatch({ command: "undo" })}
         canRedo={step ? step.can_redo : (program?.can_redo ?? false)}
         onRedo={() => dispatch({ command: "redo" })}
-        operationButtons={operationButtonsRow}
+        operationRibbon={<OperationRibbon tools={tools} />}
         badge={step && plane ? `${step.label}: working in its plane` : null}
         error={error}
         program={program?.program ?? { steps: [] }}
@@ -765,11 +764,13 @@ function App() {
                 instances={instances}
                 components={components}
                 visuals={presentation?.visuals}
+                gizmo={presentation?.gizmo ?? null}
                 highlights={[...(presentation?.highlights ?? []), ...lights]}
                 section={section && sectionPlane(section, scene.part.extent.center)}
                 pickable={presentation?.pickable}
                 hidden={scene.hidden}
                 plane={plane}
+                grid={presentation?.sheet == null}
                 grab={presentation?.grab ?? false}
                 prompt={presentation?.prompt ?? null}
                 onPrompt={(key, text) => event({ type: "dialog", key, value: { type: "text", value: text } })}
@@ -807,7 +808,7 @@ function App() {
         onTab={setMobileTab}
         detailAvailable={step != null}
         bugReportOpen={bugReportOpen}
-        operationButtons={operationButtonsRow}
+        operationButtons={<OperationGrid tools={tools} />}
         programPanel={programPanel}
         structurePanel={structurePanel}
         detailPanel={detailPanel}

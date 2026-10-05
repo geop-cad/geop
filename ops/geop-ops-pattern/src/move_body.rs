@@ -10,14 +10,13 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role},
-    ui::{Form, Number, Unit},
+    ui::{CanvasEvent, Change, Edit, Form, Gizmo, Number, Unit},
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
     axis, bodies_field, center, combine_instances, copy_seeds, newest_solid, seed_instances, seeds,
-    track,
 };
 
 /// Moves the bodies `bodies` — solids, and sheets by one of their faces —
@@ -101,9 +100,9 @@ impl Operation for MoveBody {
         }
     }
 
-    /// The bodies, picked; the shift along each axis, each dragged by a
-    /// handle; the axis to turn about and the angle; whether to copy; and
-    /// how to combine.
+    /// The bodies, picked; the shift along each axis, dragged by a gizmo
+    /// where the bodies' middle is moved to; the axis to turn about and the
+    /// angle; whether to copy; and how to combine.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -114,15 +113,13 @@ impl Operation for MoveBody {
         let before = context.before;
         let mut f = Form::<S, MoveBodyArgs>::new();
         bodies_field(&mut f, &args.bodies, |args| &mut args.bodies);
-        // Each handle sits where the bodies' middle is moved to, and slides
-        // along its own axis.
-        let at = center(before, &args.bodies)
-            .map(|c| c.add(&Vector3::from_array(args.translation.map(S::from_f64))));
+        f.gizmo = center(before, &args.bodies).map(|c| {
+            Gizmo::new(c.add(&Vector3::from_array(args.translation.map(S::from_f64)))).translate()
+        });
         for (k, (key, label)) in AXES.into_iter().enumerate() {
-            let handle = at.and_then(|at| track(at, Vector3::axis(k)));
             f.number(
                 key,
-                Number::new(label, args.translation[k], Unit::Length).handle(handle),
+                Number::new(label, args.translation[k], Unit::Length),
                 move |args, value| args.translation[k] = value,
             );
         }
@@ -146,6 +143,23 @@ impl Operation for MoveBody {
         f.checkbox("copy", "copy", args.copy, |args, b| args.copy = b);
         args.combine.show(&mut f, before, |args| &mut args.combine);
         f
+    }
+
+    /// The gizmo dragged: the shift, as it was when the drag started, moved
+    /// by as much.
+    fn event<S: Scalar>(
+        &self,
+        _: Context<'_, S>,
+        edit: Edit<'_, MoveBodyArgs, ()>,
+        event: &CanvasEvent<S>,
+    ) {
+        if let CanvasEvent::Gizmo { drag, .. } = event
+            && let Change::Translate(by) = &drag.change
+        {
+            for k in 0..3 {
+                edit.args.translation[k] += by[k].to_f64();
+            }
+        }
     }
 
     fn apply<S: Scalar>(

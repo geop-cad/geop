@@ -17,8 +17,12 @@ below is what was missing then, and where each item stands now.
   offset, mirror, linear and circular patterns tied to their source by
   constraints; auto-tangent; redundant but consistent constraints proven,
   conflicting ones named.
-- 3-D sketches: points, lines, 3-point arcs, splines; snapping to the model;
-  usable as sweep paths and rails.
+- 3-D sketches: points, lines, 3-point arcs, splines; snapping to the model,
+  along x, y and z and onto points; built as wires (edges and vertices
+  without faces), so every tool that picks curves or points takes their
+  lines and points, as it takes a planar sketch's: sweep paths and rails,
+  loft guides, boundary surfaces, datums, pattern directions, harness
+  routes, measuring, projecting.
 - Helices (exact on their cylinder) as thread and sweep paths.
 
 ### Part features
@@ -63,7 +67,9 @@ below is what was missing then, and where each item stands now.
 - Measure, mass properties from the exact B-rep, interference, section view.
 - Bills of materials, flat or indented, CSV, `geop bom`.
 - Drawings: projected views with hidden lines and silhouettes, sections,
-  dimensions, threads, title block; assembly drawings with balloons and a
+  threads, title block; annotated on the sheet in the editor, head on like a
+  sketch, with dimensions picked as a sketch's are, notes and centre marks;
+  downloaded from the dialog; assembly drawings with balloons and a
   BOM table; SVG and DXF.
 - STEP AP214 import and export; assemblies exported as product structure;
   318 of 361 public corpus files import valid (`scripts/fetch_corpus.sh`).
@@ -72,8 +78,16 @@ below is what was missing then, and where each item stands now.
 
 ### Editor and front ends
 - Web app and VS Code extension: every operation, inspect and BOM panels,
-  joint values, every export; camera framing; a scrolling toolbar; the
-  kernel restarted with the program after a crash.
+  joint values, every export; camera framing; a ribbon of the operations
+  by group that fits the window without scrolling; text selected only
+  inside a dialog or panel; the kernel restarted with the program after a
+  crash.
+- A 3-D transform gizmo for every drag in space: arrows, plane squares and a
+  free ball to move, rings to turn, cubes to scale along an axis or evenly;
+  world or local axes, constant size on screen, snapping to round grid
+  steps and 15° (shift for none), the distance or angle shown while
+  dragging. SubD selections, 3-D sketch points, move body, offset datum
+  points and placed parts are dragged by it.
 - End-to-end checks: `npm run e2e` and `npm run e2e:vscode` in `web/`.
 
 ## Next
@@ -88,7 +102,8 @@ below is what was missing then, and where each item stands now.
 - STEP: rebuild edges that disagree with their faces from the kernel's own
   intersections (most of the remaining corpus failures); assembly import as
   placed parts.
-- Drawings: exploded views; parts that pass through each other.
+- Drawings: exploded views; parts that pass through each other; annotating
+  the section view; ordinate dimensions and tolerances.
 - Assemblies: actuator effort and velocity for URDF; collision checks for
   harness routes.
 - Configurations, design tables beyond table parameters, PDM, rendering, CAM,

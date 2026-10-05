@@ -136,6 +136,10 @@ export interface OperationInfo {
   kind: string;
   label: string;
   doc: string;
+  /** The section of the toolbar it is in: `Features` (see `geop_ops::OperationGroup`). */
+  group: string;
+  /** Whether it is one of the few used most, shown big. */
+  primary: boolean;
 }
 
 /** A step of a program: an operation with its arguments, and its id. */
@@ -305,6 +309,8 @@ export type Control =
   /** Pressing one sends its value as a choice. */
   | { type: "actions"; actions: Action[] }
   | { type: "checkbox"; label: string; value: boolean }
+  /** Files the step can be saved as: pressing one downloads it in that format (see `export_drawing`). */
+  | { type: "download"; formats: Choice[] }
   /**
    * A slider over `range`, if given. A field that takes formulas has
    * `text`: the value as given — a number, or a formula of the parameters —
@@ -373,9 +379,29 @@ export type Style =
   /** Where what is drawn or dragged would snap to. */
   | "snap"
   /** What the tool in hand would remove. */
-  | "removed";
+  | "removed"
+  /** Text printed on a sheet of its own: a drawing's title block, parts list, captions. */
+  | "paper";
 
 export type Visual = { key: string; style: Style } & Shape;
+
+/** A part of a gizmo, by the index of its axis — see `geop_ops::ui::GizmoPart`. */
+export type GizmoPart = { part: "free" | "scale" } | { part: "move" | "plane" | "turn" | "stretch"; axis: number };
+
+/**
+ * A gizmo to move, turn or scale by, laid out in reaches (see
+ * `geop_ops::ui::gizmo::size`) — see `geop_ops::ui::GizmoView`.
+ */
+export interface GizmoView {
+  at: Vec3;
+  /** Unit and orthogonal: the world's, or what it stands on's own. */
+  axes: [Vec3, Vec3, Vec3];
+  modes: { translate: boolean; rotate: boolean; scale: boolean };
+  hover: GizmoPart | null;
+  active: GizmoPart | null;
+  /** What a drag under way has done so far. */
+  readout: string | null;
+}
 
 /** What the step being edited shows. */
 export interface Presentation {
@@ -387,10 +413,14 @@ export interface Presentation {
   pickable: Role[];
   /** A plane to work in, head on. */
   focus: Frame | null;
+  /** A sheet of its own the step is edited on, in `focus`, and how far it reaches: no part is drawn, and the view frames it. */
+  sheet: Extent | null;
   /** Whether a press where the pointer last hovered starts a drag. */
   grab: boolean;
   /** A value asked for in place, at `at`: what is typed goes to the field `key` as `text`. */
   prompt: Prompt | null;
+  /** A gizmo to move, turn or scale by. */
+  gizmo: GizmoView | null;
 }
 
 /** A value asked for in place in the viewport — see `geop_ops::ui::Prompt`. */

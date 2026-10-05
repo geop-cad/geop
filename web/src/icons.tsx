@@ -628,6 +628,29 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M8 14.6 L10 5" strokeWidth="1" />
     </>
   ),
+  // A drawing's note: lines of text, a leader down to what it points at.
+  note: (
+    <>
+      <path d="M9 5 L17 5 M9 8 L15 8" />
+      <path d="M9 8 L4 15" strokeWidth="1" />
+      {dot(4, 15, 1.2)}
+    </>
+  ),
+  // Centre lines across a circle.
+  center_mark: (
+    <>
+      <circle cx="10" cy="10" r="5" />
+      <path d="M2.5 10 L17.5 10 M10 2.5 L10 17.5" strokeWidth="1" strokeDasharray="3 1 1 1" />
+    </>
+  ),
+  // More of what there is no room for: three dots.
+  more: (
+    <>
+      {dot(4.5, 10)}
+      {dot(10, 10)}
+      {dot(15.5, 10)}
+    </>
+  ),
 };
 
 /** The icon `name` — or none, for a name there is no icon for. */

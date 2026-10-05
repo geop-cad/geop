@@ -325,7 +325,10 @@ fn sketch_curves_are_measured() {
     let d = geop_ops::Design::from_f64;
     let mut part = Part::<S>::new();
     let mut arc = Sketch::new();
-    let (a, b) = (arc.add_point(d(1.0), d(0.0)), arc.add_point(d(-1.0), d(0.0)));
+    let (a, b) = (
+        arc.add_point(d(1.0), d(0.0)),
+        arc.add_point(d(-1.0), d(0.0)),
+    );
     let half = arc.add_arc(a, b, d(PI));
     part.add_sketch(
         geop_ops::PlacedSketch {
@@ -337,7 +340,10 @@ fn sketch_curves_are_measured() {
     .unwrap();
     let mut line = Sketch3d::new();
     let at = |p: [f64; 3]| Vector3::from_array(p.map(d));
-    let (a, b) = (line.add_point(at([-1.0, 2.0, 0.0])), line.add_point(at([2.0, 2.0, 0.0])));
+    let (a, b) = (
+        line.add_point(at([-1.0, 2.0, 0.0])),
+        line.add_point(at([2.0, 2.0, 0.0])),
+    );
     line.add_line(a, b);
     part.add_sketch3d(line, "route").unwrap();
 
@@ -358,8 +364,23 @@ fn sketch_curves_are_measured() {
             .unwrap_or_else(|| panic!("no {label} in {measured:?}"))
             .value
     };
-    assert_near("half circle", value(&[curve.clone()], "Length"), PI, 1e-9);
-    assert_near("its radius", value(&[curve.clone()], "Radius"), 1.0, 1e-9);
-    assert_near("line", value(&[edge.clone()], "Length"), 3.0, 1e-9);
+    assert_near(
+        "half circle",
+        value(std::slice::from_ref(&curve), "Length"),
+        PI,
+        1e-9,
+    );
+    assert_near(
+        "its radius",
+        value(std::slice::from_ref(&curve), "Radius"),
+        1.0,
+        1e-9,
+    );
+    assert_near(
+        "line",
+        value(std::slice::from_ref(&edge), "Length"),
+        3.0,
+        1e-9,
+    );
     assert_near("between", value(&[curve, edge], "Distance"), 1.0, 1e-6);
 }

@@ -12,6 +12,8 @@ interface Props {
   error: string | null;
   onCommit: () => void;
   onCancel: () => void;
+  /** A file the step can be saved as was asked for, in `format`. */
+  onDownload: (format: string) => void;
 }
 
 /** The class a text of `tone` reads in. */
@@ -140,7 +142,7 @@ function referenced(c: Extract<Control, { type: "reference" }>): string {
  * gets its dialog without this knowing about it — and the controls every
  * step has: preview, OK, Cancel.
  */
-export function DialogView({ step, onDialog, setPreview, error, onCommit, onCancel }: Props) {
+export function DialogView({ step, onDialog, setPreview, error, onCommit, onCancel, onDownload }: Props) {
   function control(key: string, c: Control) {
     const send = (value: Value) => onDialog(key, value);
     switch (c.type) {
@@ -230,6 +232,16 @@ export function DialogView({ step, onDialog, setPreview, error, onCommit, onCanc
           </div>
         );
       }
+      case "download":
+        return (
+          <div className="button-grid download">
+            {c.formats.map((f) => (
+              <button key={f.value} title={`Download as ${f.label}`} onClick={() => onDownload(f.value)}>
+                <Icon name="save" /> Download {f.label}
+              </button>
+            ))}
+          </div>
+        );
       case "checkbox":
         return (
           <label className="row">

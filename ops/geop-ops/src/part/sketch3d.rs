@@ -138,7 +138,10 @@ fn wire_of<S: Scalar>(
         })
         .collect::<GeopResult<_>>()?;
     let names = BodyNames {
-        vertices: vertices.keys().map(|p| namer.name(&[&p.to_string()])).collect(),
+        vertices: vertices
+            .keys()
+            .map(|p| namer.name(&[&p.to_string()]))
+            .collect(),
         edges: drawn
             .iter()
             .map(|(id, _)| namer.name(&[&id.to_string()]))

@@ -96,7 +96,13 @@ pub fn parts_list<S: Scalar>(
 
 /// What the measure tool picks: points, edges, faces — and datums, by their
 /// points, lines and planes.
-const PICKS: [Role; 5] = [Role::Point, Role::Curve, Role::Face, Role::Line, Role::Plane];
+const PICKS: [Role; 5] = [
+    Role::Point,
+    Role::Curve,
+    Role::Face,
+    Role::Line,
+    Role::Plane,
+];
 
 /// The measure tool, in hand: what the pointer is over, what is picked, and
 /// what that measures.
@@ -205,8 +211,10 @@ impl<S: Scalar> MeasureTool<S> {
             highlights,
             pickable: PICKS.to_vec(),
             focus: None,
+            sheet: None,
             grab: false,
             prompt: None,
+            gizmo: None,
         }
     }
 }

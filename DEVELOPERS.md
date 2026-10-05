@@ -23,7 +23,8 @@ core/geop-core-math          scalars, interval arithmetic, linear algebra,
 core/geop-core-geometry       NURBS curves/surfaces, helices, compatible
                                curves for lofts, Coons and Gordon patches,
                                containment, intersection
-core/geop-core-topology       B-rep structures, Euler operators, edit/validation
+core/geop-core-topology       B-rep structures, Euler operators, edit/validation;
+                               wires: edges and vertices bounding no face
 core/geop-core-solve          the constraint solver every system shares:
                                parameters, residuals, pulls, enclosure;
                                rigid bodies and mates, joints with limits
@@ -31,12 +32,14 @@ core/geop-core-solve          the constraint solver every system shares:
                                groups no mate ties together
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
-                               made from geometry (mirror, patterns, offset)
+                               made from geometry (mirror, patterns, offset),
+                               how a dimension is drawn in a plane
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                and their mates, the features their steps
                                combined, every entity with a stable
                                name), what an operation is and how it is
-                               edited (events, dialogs, visuals, hit tests),
+                               edited (events, dialogs, visuals, hit tests,
+                               the gizmo every drag in space goes by),
                                parameters and the formulas reading them —
                                a sketch dimension, an operation's length,
                                angle or count — programs, the
@@ -60,8 +63,10 @@ ops/geop-ops-extrude-revolve  extrude/revolve; sweeps along paths, with guide
 ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
                                as STL, and renders it for debugging
 ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
-                               and splines in space, placed on the part and
-                               constrained — paths and rails for sweeps
+                               and splines in space, placed on the part,
+                               snapped along x, y, z and onto points, and
+                               constrained — built as a wire whose edges and
+                               vertices are picked like any; paths and rails
 ops/geop-ops-fillet           fillets and chamfers on straight and circular
                                edges, rolling-ball fillets of any other edge
                                and tangent chain, radius varying along them,
@@ -87,9 +92,11 @@ ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
                                trim and extend of faces standing on their
                                own
 ops/geop-ops-drawing          2-D drawings: projected views with hidden
-                               lines and silhouettes, sections, dimensions,
-                               title block, bill of materials, SVG and DXF;
-                               the drawing step
+                               lines and silhouettes, sections, title block,
+                               bill of materials, SVG and DXF; dimensions,
+                               notes and centre marks picked on the sheet
+                               (drawn like a sketch's, `geop_core_sketch::
+                               dimension`); the drawing step
 ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
                                the editor, built as its Catmull-Clark limit
                                surface, a solid of B-spline faces; the subd

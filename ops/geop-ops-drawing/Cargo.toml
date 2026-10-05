@@ -7,6 +7,8 @@ edition.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
+# How a dimension is drawn: shared with the sketch editor.
+geop-core-sketch.workspace = true
 geop-ops.workspace = true
 geop-ops-booleans.workspace = true
 # Entities of placed parts, resolved where they are placed.
@@ -16,3 +18,4 @@ serde.workspace = true
 
 [dev-dependencies]
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }
+serde_json.workspace = true

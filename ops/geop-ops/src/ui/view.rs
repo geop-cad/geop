@@ -377,6 +377,24 @@ pub(crate) fn solid_bounded_by<S: Scalar>(part: &Part<S>, entity: &EntityRef) ->
 }
 
 impl<S: Scalar> PartView<S> {
+    /// Nothing drawn, reaching as far as `extent`: what a viewer is sent
+    /// while a step is edited on a sheet of its own (see
+    /// [`crate::ui::Form::sheet`]), which it frames.
+    pub fn blank(extent: Extent<S>) -> Self {
+        Self {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+            sketches: Vec::new(),
+            datums: Vec::new(),
+            threads: Vec::new(),
+            solids: Vec::new(),
+            instances: Vec::new(),
+            extent,
+            color: None,
+        }
+    }
+
     /// `part` as drawn.
     pub fn of(part: &Part<S>) -> GeopResult<Self> {
         let model = part.topology();
@@ -870,7 +888,13 @@ impl<S: Scalar> PartView<S> {
                 let entity = EntityRef::Vertex {
                     name: v.name.clone(),
                 };
-                let entity = taken(l, entity, &[Role::Point], v.solid.as_ref(), v.sketch.as_ref());
+                let entity = taken(
+                    l,
+                    entity,
+                    &[Role::Point],
+                    v.solid.as_ref(),
+                    v.sketch.as_ref(),
+                );
                 (entity, v.at, &v.faces[..])
             });
             let sketch_points = l.view.sketches.iter().flat_map(|sketch| {
@@ -924,7 +948,8 @@ impl<S: Scalar> PartView<S> {
                 let entity = EntityRef::Edge {
                     name: e.name.clone(),
                 };
-                if let Some(entity) = taken(l, entity, &e.roles, e.solid.as_ref(), e.sketch.as_ref())
+                if let Some(entity) =
+                    taken(l, entity, &e.roles, e.solid.as_ref(), e.sketch.as_ref())
                 {
                     let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
                     polyline_hit(entity, &e.faces, &mut segments);

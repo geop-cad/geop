@@ -26,6 +26,7 @@
 mod dialog;
 mod event;
 mod form;
+pub mod gizmo;
 pub mod hit;
 mod step;
 pub mod view;
@@ -36,6 +37,7 @@ pub use dialog::{
 };
 pub use event::{Button, CanvasEvent, Pointer, Reach, StepEditEvent, Value};
 pub use form::{Edit, Form, InHand};
-pub use step::{DRAG_SNAP, StepEditor};
+pub use gizmo::{Change, Gizmo, GizmoDrag, GizmoPart, GizmoView, Orientation};
+pub use step::{DRAG_SNAP, GIZMO_ORIENTATION, StepEditor};
 pub use view::{EMPTY_EXTENT, Extent, PartHit, PartView, ViewInstance, ViewThread};
 pub use visual::{Presentation, Prompt, Shape, Style, TRIAD, Visual};

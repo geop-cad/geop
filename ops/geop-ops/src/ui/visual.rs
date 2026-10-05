@@ -8,7 +8,7 @@ use geop_core_math::{
 };
 use serde::Serialize;
 
-use super::Dialog;
+use super::{Dialog, Extent, GizmoView};
 use crate::operation::{EntityRef, Role};
 
 /// What a visual is.
@@ -110,6 +110,9 @@ pub enum Style {
     Snap,
     /// What the tool in hand would remove.
     Removed,
+    /// Text printed on a sheet of its own: a drawing's title block, its
+    /// parts list, its views' captions.
+    Paper,
 }
 
 /// A value asked for in place, at `at` in the viewport: a field of the
@@ -184,9 +187,15 @@ pub struct Presentation<S: Scalar> {
     /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
     /// stops orbiting, and draws a grid on it.
     pub focus: Option<CoordinateSystem<S>>,
+    /// A sheet of its own the step is edited on, in `focus`, and how far
+    /// it reaches: the viewer shows the visuals alone, framed to it, and
+    /// is sent no part to draw (see [`super::Form::sheet`]).
+    pub sheet: Option<Extent<S>>,
     /// Whether a press where the pointer last hovered starts a drag (sent
     /// as [`super::StepEditEvent::Drag`]) rather than moving the camera.
     pub grab: bool,
     /// A value asked for in place.
     pub prompt: Option<Prompt<S>>,
+    /// The gizmo to move, turn or scale by, as drawn.
+    pub gizmo: Option<GizmoView<S>>,
 }

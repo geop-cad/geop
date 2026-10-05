@@ -4,13 +4,16 @@
 //! struct implementing `geop_ops::Operation` with `Args = NameArgs`, it
 //! implements `geop_ops::Operations` — dispatching every method to `Name` —
 //! and `From<NameArgs>` for the enum. A variant's doc comment describes the
-//! operation, and `#[operation(label = "...")]` gives its short name if that
-//! is not the variant's.
+//! operation; `#[operation(...)]` gives its short name if that is not the
+//! variant's (`label = "..."`), the group an editor files it in, which every
+//! operation names (`group = Features`, an `OperationGroup`), and whether it
+//! is one of the few shown big (`primary`).
 
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Expr, Fields, LitStr, Meta, parse_macro_input, spanned::Spanned,
+    Attribute, Data, DeriveInput, Expr, Fields, Ident, LitStr, Meta, parse_macro_input,
+    spanned::Spanned,
 };
 
 /// The text of `attrs`' doc comments, one line each, with the space
@@ -85,6 +88,8 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 .into();
         };
         let mut label = op.to_string();
+        let mut group: Option<Ident> = None;
+        let mut primary = false;
         for attr in variant
             .attrs
             .iter()
@@ -94,19 +99,41 @@ pub fn derive_operations(input: TokenStream) -> TokenStream {
                 if meta.path.is_ident("label") {
                     label = meta.value()?.parse::<LitStr>()?.value();
                     Ok(())
+                } else if meta.path.is_ident("group") {
+                    group = Some(meta.value()?.parse::<Ident>()?);
+                    Ok(())
+                } else if meta.path.is_ident("primary") {
+                    primary = true;
+                    Ok(())
                 } else {
-                    Err(meta.error("expected `label = \"...\"`"))
+                    Err(meta.error(
+                        "expected `label = \"...\"`, `group = <OperationGroup>` or `primary`",
+                    ))
                 }
             });
             if let Err(e) = parsed {
                 return e.to_compile_error().into();
             }
         }
+        let Some(group) = group else {
+            return syn::Error::new(
+                variant.span(),
+                "every operation names its group: `#[operation(group = <OperationGroup>)]`",
+            )
+            .to_compile_error()
+            .into();
+        };
         let kind = snake_case(&op.to_string());
         let doc = doc_of(&variant.attrs);
         let operation = quote!(::geop_ops::operation::Operation);
         infos.push(quote! {
-            ::geop_ops::operation::OperationInfo { kind: #kind, label: #label, doc: #doc }
+            ::geop_ops::operation::OperationInfo {
+                kind: #kind,
+                label: #label,
+                doc: #doc,
+                group: ::geop_ops::operation::OperationGroup::#group,
+                primary: #primary,
+            }
         });
         new_arms.push(quote! {
             #kind => ::std::result::Result::Ok(#name::#op(#operation::new_args(&#op, before))),

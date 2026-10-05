@@ -1,6 +1,7 @@
 //! Editing a datum step: picking what it is built from, choosing how among
 //! the constructions that fit that, setting the values the construction
-//! takes — and dragging offsets as handles.
+//! takes — and dragging offsets: a plane's by a handle, a point's by a
+//! gizmo.
 
 use std::collections::BTreeMap;
 
@@ -9,7 +10,7 @@ use geop_ops::{
     Part,
     operation::Role,
     parameters::Formula,
-    ui::{Action, Form, Number, Tone, Track},
+    ui::{Action, CanvasEvent, Change, Edit, Form, Gizmo, Number, Tone, Track},
 };
 
 use crate::{
@@ -28,10 +29,6 @@ const SELECTION_ROLES: &[Role] = &[
     Role::Round,
 ];
 
-/// How far out along its axis an offset point's handle sits, in world
-/// units, so the three of one point can each be grabbed.
-const POINT_HANDLE_OUT: f64 = 0.3;
-
 /// What a group of constructions is called: by what they build.
 fn group(result: DatumKind) -> &'static str {
     match result {
@@ -48,29 +45,84 @@ fn needs(construction: &ConstructionSchema) -> String {
     roles.join(" and ")
 }
 
+/// What `args` builds in `part`, its numbers as the form shows them.
+fn built<S: Scalar>(
+    part: &Part<S>,
+    args: &AddDatumArgs,
+) -> Option<geop_core_math::primitives::CoordinateSystem<S>> {
+    args.inputs(part)
+        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.inputs())))
+        .ok()
+}
+
 /// Where the offsets of what `args` builds in `part` are dragged, by the
 /// name of their value: an offset plane's distance on the plane, along its
-/// normal; an offset point's `x`, `y`, `z` a little out along each axis,
-/// along it. None for a step that does not build.
+/// normal. None for a step that does not build.
 fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<S>> {
-    let Ok(built) = args
-        .inputs(part)
-        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.inputs())))
-    else {
-        return BTreeMap::new();
-    };
-    let track = |d: &Vector3<S>, out: f64| Track {
-        at: built.origin().add(&d.prod_scalar(S::from_f64(out))),
-        direction: *d,
-    };
-    match args.construction {
-        Construction::Offset { .. } => BTreeMap::from([("distance", track(built.w(), 0.0))]),
-        Construction::Point { .. } => BTreeMap::from([
-            ("x", track(built.u(), POINT_HANDLE_OUT)),
-            ("y", track(built.v(), POINT_HANDLE_OUT)),
-            ("z", track(built.w(), POINT_HANDLE_OUT)),
-        ]),
+    match (&args.construction, built(part, args)) {
+        (Construction::Offset { .. }, Some(built)) => BTreeMap::from([(
+            "distance",
+            Track {
+                at: *built.origin(),
+                direction: *built.w(),
+            },
+        )]),
         _ => BTreeMap::new(),
+    }
+}
+
+/// The unit axes of `frame`.
+fn unit_axes<S: Scalar>(
+    frame: &geop_core_math::primitives::CoordinateSystem<S>,
+) -> Option<[Vector3<S>; 3]> {
+    Some([
+        frame.u().normalize().ok()?,
+        frame.v().normalize().ok()?,
+        frame.w().normalize().ok()?,
+    ])
+}
+
+/// The gizmo an offset point is moved by: at the point, along the axes its
+/// offsets are measured along — while they are plain numbers, not
+/// formulas, which a drag would overwrite.
+fn gizmo<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Option<Gizmo<S>> {
+    let Construction::Point { x, y, z } = &args.construction else {
+        return None;
+    };
+    [x, y, z]
+        .iter()
+        .all(|f| f.plain().is_some())
+        .then_some(())?;
+    let built = built(part, args)?;
+    Some(
+        Gizmo::new(*built.origin())
+            .translate()
+            .local(unit_axes(&built)?),
+    )
+}
+
+/// The gizmo dragged: an offset point's offsets, as they were when the drag
+/// started, moved by as much along their axes.
+pub(crate) fn event<S: Scalar>(
+    part: &Part<S>,
+    edit: Edit<'_, AddDatumArgs, ()>,
+    event: &CanvasEvent<S>,
+) {
+    let CanvasEvent::Gizmo { drag, .. } = event else {
+        return;
+    };
+    let (Change::Translate(by), Some(axes)) = (
+        &drag.change,
+        built(part, edit.args).as_ref().and_then(unit_axes),
+    ) else {
+        return;
+    };
+    if let Construction::Point { x, y, z } = &mut edit.args.construction {
+        for (offset, axis) in [x, y, z].into_iter().zip(&axes) {
+            if let Some(v) = offset.plain() {
+                *offset = Formula::Plain(v + by.prod_dot(axis).to_f64());
+            }
+        }
     }
 }
 
@@ -139,6 +191,7 @@ pub(crate) fn form<'a, S: Scalar>(
         );
     }
     let mut handles = handles(part, args);
+    f.gizmo = gizmo(part, args);
     for param in chosen.params {
         let name = param.name;
         let set = move |args: &mut AddDatumArgs, value: serde_json::Value| {

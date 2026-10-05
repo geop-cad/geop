@@ -188,6 +188,35 @@ export async function fileMenu(page, label) {
     .click();
 }
 
+/** `text`, matched literally in a regular expression. */
+const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The labels of every operation (and editor tool) the app offers, as the phone's tab of them lists them all. */
+export async function operationLabels(page) {
+  return (await page.locator(".mobile-bottom .operation-grid button.op-button").allInnerTexts()).map((l) => l.trim());
+}
+
+/**
+ * Click the operation `label` in the desktop toolbar: its button, or — where
+ * the window has no room for one — its entry in the menu of its group, or
+ * of the overflow.
+ */
+export async function clickOperation(page, label) {
+  const button = page.locator(".operation-ribbon button.op-button", { hasText: new RegExp(`^${literal(label)}$`) });
+  if ((await button.count()) > 0) return button.click();
+  const triggers = page.locator(".operation-ribbon .dropdown-trigger");
+  const n = await triggers.count();
+  for (let i = 0; i < n; i++) {
+    await triggers.nth(i).click();
+    const item = page.locator(".operation-ribbon .dropdown-menu .dropdown-item", {
+      has: page.locator(`.dropdown-item-label:text-is("${label}")`),
+    });
+    if ((await item.count()) > 0) return item.click();
+    await page.keyboard.press("Escape");
+  }
+  throw new Error(`${label} is nowhere in the toolbar`);
+}
+
 /** Where a check's screenshot goes: `e2e/out/<prefix><name>.png`. */
 function shotPath(prefix, name) {
   fs.mkdirSync(OUT, { recursive: true });

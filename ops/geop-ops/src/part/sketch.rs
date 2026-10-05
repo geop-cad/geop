@@ -1,12 +1,12 @@
 //! A [`Part`]'s sketches: named like any other entity, and stored with the
 //! plane they were placed on.
 
+use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
     scalars::Scalar,
 };
-use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_sketch::{CurveId, Enclosure, Sketch, profile::curve_nurbs};
 
 use super::Part;

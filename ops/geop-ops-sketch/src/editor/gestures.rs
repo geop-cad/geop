@@ -735,6 +735,8 @@ impl<S: Scalar> Editing<'_, S> {
                     self.stroke(from, to, *done);
                 }
             }
+            // A planar sketch asks for no gizmo: it is dragged in its plane.
+            CanvasEvent::Gizmo { .. } => {}
         }
     }
 }

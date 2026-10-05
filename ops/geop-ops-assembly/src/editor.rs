@@ -5,7 +5,10 @@
 //! fields set it, and the editor solves the program's mates from there
 //! after every edit (see `geop_cad_base::editor`). A drag is the step's to
 //! ask for, the solving the editor's: while the part is dragged, the form
-//! says what point of it is pulled where ([`Form::drags`]).
+//! says what point of it is pulled where ([`Form::drags`]). It is dragged
+//! by a gizmo at its origin — moved along or turned about its own axes or
+//! the world's — or grabbed anywhere and dragged in the plane facing the
+//! eye.
 //!
 //! A joint's coordinates are parameters of the program too: set in the
 //! dialog, they are held there while the step is edited ([`Form::holds`]),
@@ -21,8 +24,8 @@ use geop_ops::{
     parameters::{COLOR, ParameterKind, validate_color},
     part::{ParamValue, State, pose_parameter},
     ui::{
-        Action, CanvasEvent, Choice, Control, Edit, Form, ListItem, Number, Shape, Style, Tone,
-        Unit, Value, Visual,
+        Action, CanvasEvent, Choice, Control, Edit, Form, Gizmo, ListItem, Number, Shape, Style,
+        Tone, Unit, Value, Visual,
     },
 };
 
@@ -151,8 +154,8 @@ pub struct PartSession {
     pub selected: Option<String>,
     /// While the part is dragged: what is pulled where — the point grabbed
     /// kept from the press on, so every event of the drag is measured from
-    /// it.
-    drag: Option<Drag<Design>>,
+    /// it; for a turn by the gizmo, three points of its frame.
+    drags: Vec<Drag<Design>>,
     /// Whether the drag was released: it pulls once more — for the editor
     /// to solve with where it was let go — and is gone at the next event.
     released: bool,
@@ -748,7 +751,7 @@ pub(crate) fn form<'a, S: Scalar>(
     // A fixed part is moved by the event itself; nothing is solved for it.
     f.drags.extend(
         session
-            .drag
+            .drags
             .iter()
             .filter(|_| !args.fixed)
             .map(|drag| Drag {
@@ -763,9 +766,20 @@ pub(crate) fn form<'a, S: Scalar>(
         };
         f.visuals
             .push(Visual::new(PART, shape, Style::Free).draggable());
+        if let Ok(axes) = pose.rotation().rotation_columns() {
+            let axes = axes.map(|a| a.map(|c| c.cast::<S>()));
+            if let (Ok(x), Ok(y), Ok(z)) = (
+                axes[0].normalize(),
+                axes[1].normalize(),
+                axes[2].normalize(),
+            ) {
+                let at = position.map(|c| c.cast::<S>());
+                f.gizmo = Some(Gizmo::new(at).translate().rotate().local([x, y, z]));
+            }
+        }
         f.text(
             "drag_hint",
-            "Drag the part to move it as far as its mates let it.",
+            "Drag the part, or the gizmo at its origin, to move it as far as its mates let it.",
             Tone::Hint,
         );
     }
@@ -786,7 +800,7 @@ pub(crate) fn event<S: Scalar>(
         ..
     } = edit;
     if std::mem::take(&mut session.released) {
-        session.drag = None;
+        session.drags.clear();
     }
     match event {
         CanvasEvent::Move {
@@ -799,7 +813,7 @@ pub(crate) fn event<S: Scalar>(
             let pose = pose_of(context);
             // Where the pointer is: a free choice, made by whoever moved it.
             let target: Vector3<Design> = to.map(|c| c.cast()).sharpen();
-            let local = match &session.drag {
+            let local = match session.drags.first() {
                 Some(drag) => drag.local,
                 None => pose.inverse().apply(&from.map(|c| c.cast())).sharpen(),
             };
@@ -811,11 +825,36 @@ pub(crate) fn event<S: Scalar>(
             }
             // A drag moves the joints set in the dialog too.
             session.held.clear();
-            session.drag = Some(Drag {
+            session.drags = vec![Drag {
                 parameter: pose_parameter(context.id),
                 local,
                 target,
-            });
+            }];
+            session.released = *done;
+        }
+        // Moved or turned by the gizmo, from where it was when the drag
+        // started — which the state is again: its origin and the ends of
+        // two of its axes pulled to where the gizmo takes them.
+        CanvasEvent::Gizmo { drag, done } => {
+            let Some(motion) = drag.turn() else {
+                return;
+            };
+            let pose = pose_of(context);
+            let moved = motion.cast::<Design>().compose(&pose).map(|c| c.sharpen());
+            if args.fixed {
+                state.insert(pose_parameter(context.id), ParamValue::Pose(moved));
+            }
+            session.held.clear();
+            session.drags = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+                .map(|p| {
+                    let local = Vector3::from_array(p.map(Design::from_f64));
+                    Drag {
+                        parameter: pose_parameter(context.id),
+                        local,
+                        target: moved.apply(&local).sharpen(),
+                    }
+                })
+                .to_vec();
             session.released = *done;
         }
         CanvasEvent::Key { key } if key == "Escape" => session.selected = None,

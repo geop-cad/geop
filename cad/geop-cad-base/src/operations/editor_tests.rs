@@ -1519,8 +1519,8 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 /// A new SubD step starts from a box cage, its vertices, edges and faces
 /// drawn to click. Clicked from above, the cage's top face is selected —
 /// not the bottom one behind it — and its centre's coordinates shown;
-/// Extrude pulls it out; dragged by its `z` handle and then by the face
-/// itself, it moves; and the limit body the editor shows is the solid the
+/// Extrude pulls it out; dragged by its gizmo's `z` arrow and then by the
+/// face itself, it moves; and the limit body the editor shows is the solid the
 /// step builds.
 #[test]
 fn subd_cage_is_shaped_in_the_viewport() {
@@ -1567,18 +1567,9 @@ fn subd_cage_is_shaped_in_the_viewport() {
     assert_eq!(step.error, None);
     assert_eq!(number(&step, "z"), 1.5);
 
-    // The `z` handle, seen from the side, pulled up by a quarter.
-    let at = step
-        .presentation
-        .visuals
-        .iter()
-        .find_map(|v| match v.shape {
-            geop_ops::ui::Shape::Handle { at, .. } if v.key == "z" => Some(at),
-            _ => None,
-        })
-        .expect("z has a handle");
-    let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
-    let side = |dz: f64| pointer([x, y - 10.0, z + dz], [0.0, 1.0, 0.0]);
+    // The gizmo's `z` arrow, seen from the side, pulled up by a quarter —
+    // shift held, so not snapped.
+    let side = |dz: f64| pointer([0.0, -10.0, 1.55 + dz], [0.0, 1.0, 0.0]);
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
             pointer: side(0.0),
@@ -1591,7 +1582,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
             from: side(0.0),
             to: side(0.25),
             done: true,
-            shift: false,
+            shift: true,
         },
     });
     let step = update.step.expect("the subd is edited");
@@ -1728,52 +1719,265 @@ fn measure_tool_measures_what_is_clicked() {
     assert_eq!(*editor.program(), before);
 }
 
-/// A drawing step, the way the front end makes one: started, its views
-/// chosen, a distance dimensioned by clicking two corners of the box, the
-/// title block's name typed, committed — then exported as SVG and DXF.
+/// Where the vertices of the drawing being edited are on its sheet, in the
+/// view `view`, as the front end shows them: by name.
+fn sheet_vertices(
+    editor: &Editor<S>,
+    view: geop_ops_drawing::DrawnView,
+) -> Vec<(String, [f64; 2])> {
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing is edited");
+    };
+    let layout = geop_ops_drawing::layout(editor.part(), args, "", &[]).unwrap();
+    layout
+        .candidates
+        .into_iter()
+        .filter(|c| c.view == view)
+        .filter_map(|c| match c.what {
+            geop_ops_drawing::Pickable::Point {
+                target: geop_ops_drawing::Target::Vertex { name },
+                at,
+            } => Some((name, at)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The drilled hole's diameter dimensioned on the drawing's sheet by
+/// clicking its rim from above, and a centre mark put on it; the diameter,
+/// selected in the list, removed with Delete.
 #[test]
-fn a_drawing_is_made_and_exported() {
+fn a_hole_is_dimensioned_on_a_drawing_and_a_dimension_removed() {
+    use geop_ops_drawing::{Annotation, DrawnView, EdgeShape, Pickable, ViewKind};
     let (mut editor, _) = editor();
-    let started = editor.handle(Command::New {
+    editor.handle(Command::New {
         kind: "drawing".into(),
     });
-    assert!(started.error.is_none(), "{:?}", started.error);
-    editor.handle(dialog("view:iso", Value::Bool(false)));
-    editor.handle(dialog("title:name", Value::Text("Drilled box".into())));
-    // The box's two top right corners, from above.
-    editor.handle(dialog("distance", Value::Press));
-    let above = |x: f64, y: f64| pointer([x, y, 10.0], [0.0, 0.0, -1.0]);
-    let click = |pointer| Command::Event {
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing is edited");
+    };
+    let layout = geop_ops_drawing::layout(editor.part(), args, "", &[]).unwrap();
+    let rim = layout
+        .candidates
+        .iter()
+        .filter(|c| c.view == DrawnView::View(ViewKind::Top))
+        .find_map(|c| match &c.what {
+            Pickable::Edge {
+                points,
+                shape: EdgeShape::Circle { .. },
+                ..
+            } => Some(points[points.len() / 2]),
+            _ => None,
+        })
+        .expect("the hole's rim, seen round from above");
+    let click = |p: [f64; 2]| Command::Event {
         event: StepEditEvent::Click {
-            pointer,
+            pointer: pointer([p[0], p[1], 10.0], [0.0, 0.0, -1.0]),
             button: Button::Primary,
             double: false,
             shift: false,
         },
     };
-    let first = editor.handle(click(above(2.0, 2.0))).step.unwrap();
-    let Some(Control::Reference(picked)) = first.presentation.dialog.get("distance") else {
-        panic!("the distance field");
+    let key = |key: &str| Command::Event {
+        event: StepEditEvent::Key { key: key.into() },
     };
-    assert_eq!(picked.value.len(), 1, "{picked:?}");
-    let update = editor.handle(click(above(2.0, 0.0)));
-    let step = update.step.unwrap();
-    let Some(Control::List { items, .. }) = step.presentation.dialog.get("dimensions") else {
-        panic!("the dimensions are listed");
+    editor.handle(dialog("tools", Value::Choice("diameter".into())));
+    editor.handle(click(rim));
+    let placed = editor.handle(click([rim[0] + 15.0, rim[1] + 15.0]));
+    let step = placed.step.unwrap();
+    let Some(Control::List { items, .. }) = step.presentation.dialog.get("annotations") else {
+        panic!("the annotations are listed");
     };
-    assert_eq!(items.len(), 1, "{items:?}");
-    assert!(items[0].label.starts_with("Distance"), "{}", items[0].label);
-    let committed = editor.handle(Command::Commit);
-    assert!(committed.error.is_none(), "{:?}", committed.error);
-    let PartOperation::Drawing(args) = &editor.program().steps.last().unwrap().operation else {
-        panic!("a drawing step");
+    let detail = items[0].detail.clone().unwrap_or_default();
+    assert!(
+        detail.starts_with('⌀') && detail.ends_with("top"),
+        "{items:?}"
+    );
+    editor.handle(dialog("tools", Value::Choice("center_mark".into())));
+    editor.handle(click(rim));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
     };
-    assert_eq!(args.views.len(), 3);
-    assert_eq!(args.name, "Drilled box");
+    assert!(matches!(
+        args.annotations.as_slice(),
+        [
+            Annotation::Radius { diameter: true, .. },
+            Annotation::CenterMark { .. }
+        ]
+    ));
 
+    editor.handle(key("Escape"));
+    editor.handle(dialog("annotation:0", Value::Press));
+    let update = editor.handle(key("Delete"));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    assert!(
+        matches!(args.annotations.as_slice(), [Annotation::CenterMark { .. }]),
+        "{:?}",
+        args.annotations
+    );
+}
+
+/// A drawing step, the way the front end makes one: started — its sheet
+/// shown head on, no part drawn — its views chosen and the title block's
+/// name typed; a diagonal of the box's top dimensioned by clicking two of
+/// its corners in the top view and then where the value goes, the value
+/// dragged further out, a note added pointing at a corner; then
+/// downloaded from the dialog as SVG and DXF, and committed.
+#[test]
+fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
+    use geop_ops_drawing::{Annotation, DrawnView, Format, ViewKind};
+    let (mut editor, _) = editor();
+    let started = editor.handle(Command::New {
+        kind: "drawing".into(),
+    });
+    assert!(started.error.is_none(), "{:?}", started.error);
+    let step = started.step.unwrap();
+    // The sheet, in the world's xy plane, and nothing of the part.
+    let sheet = step.presentation.sheet.expect("the sheet is shown");
+    assert!(step.presentation.focus.is_some());
+    assert!(sheet.size.to_f64() > 400.0, "an A3 sheet");
+    let scene = started.scene.expect("a scene");
+    assert!(scene.part.faces.is_empty() && scene.part.datums.is_empty());
+    assert!(matches!(
+        step.presentation.dialog.get("download"),
+        Some(Control::Download { formats }) if formats.len() == 2
+    ));
+    editor.handle(dialog("view:iso", Value::Bool(false)));
+    editor.handle(dialog("title:name", Value::Text("Drilled box".into())));
+
+    // Two opposite corners of the box's top, seen from above.
+    let top = DrawnView::View(ViewKind::Top);
+    let corners = sheet_vertices(&editor, top);
+    let (low, high) = {
+        let by = |f: fn(f64, f64) -> bool| {
+            corners
+                .iter()
+                .cloned()
+                .reduce(|a, b| {
+                    if f(b.1[0] + b.1[1], a.1[0] + a.1[1]) {
+                        b
+                    } else {
+                        a
+                    }
+                })
+                .unwrap()
+        };
+        (by(|a, b| a < b), by(|a, b| a > b))
+    };
+    let at = |p: [f64; 2]| pointer([p[0], p[1], 10.0], [0.0, 0.0, -1.0]);
+    let event = |event| Command::Event { event };
+    let click = |p: [f64; 2]| {
+        event(StepEditEvent::Click {
+            pointer: at(p),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        })
+    };
+    let hover = |p: [f64; 2]| {
+        event(StepEditEvent::Hover {
+            pointer: at(p),
+            shift: false,
+        })
+    };
+    editor.handle(dialog("tools", Value::Choice("distance".into())));
+    let hovered = editor.handle(hover(low.1)).step.unwrap();
+    assert!(
+        hovered
+            .presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "hover"),
+        "the corner under the pointer is lit"
+    );
+    editor.handle(click(low.1));
+    editor.handle(click(high.1));
+    // The dimension follows the pointer, and goes down where clicked.
+    let middle = [(low.1[0] + high.1[0]) / 2.0, (low.1[1] + high.1[1]) / 2.0];
+    let out = [middle[0] - 10.0, middle[1] + 10.0];
+    let placing = editor.handle(hover(out)).step.unwrap();
+    assert!(
+        placing
+            .presentation
+            .visuals
+            .iter()
+            .any(|v| v.key == "placing"),
+        "the dimension being placed is shown"
+    );
+    editor.handle(click(out));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    let [
+        Annotation::Distance {
+            from, to, label, ..
+        },
+    ] = args.annotations.as_slice()
+    else {
+        panic!("one distance: {:?}", args.annotations);
+    };
+    assert_eq!(
+        (from.to_string(), to.to_string()),
+        (low.0.clone(), high.0.clone())
+    );
+    assert!(
+        (label[0] + 10.0).abs() < 1e-9 && (label[1] - 10.0).abs() < 1e-9,
+        "{label:?}"
+    );
+
+    // Put down, the tool lets its value be dragged.
+    editor.handle(event(StepEditEvent::Key {
+        key: "Escape".into(),
+    }));
+    let update = editor.handle(event(StepEditEvent::Key {
+        key: "Escape".into(),
+    }));
+    let step = update.step.unwrap();
+    let Some(Control::List { items, .. }) = step.presentation.dialog.get("annotations") else {
+        panic!("the annotations are listed");
+    };
+    assert_eq!(items[0].detail.as_deref(), Some("2.83 · top"), "{items:?}");
+    editor.handle(hover(out));
+    let dragged = editor.handle(event(StepEditEvent::Drag {
+        from: at(out),
+        to: at([out[0] - 5.0, out[1] + 5.0]),
+        done: true,
+        shift: false,
+    }));
+    assert!(dragged.error.is_none(), "{:?}", dragged.error);
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    let label = match &args.annotations[0] {
+        Annotation::Distance { label, .. } => *label,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        (label[0] + 15.0).abs() < 1e-9 && (label[1] - 15.0).abs() < 1e-9,
+        "{label:?}"
+    );
+
+    // A note, pointing at a corner.
+    editor.handle(dialog("tools", Value::Choice("note".into())));
+    editor.handle(dialog("note_text", Value::Text("DEBURR".into())));
+    editor.handle(click(low.1));
+    editor.handle(click([low.1[0] - 20.0, low.1[1] - 20.0]));
+    let Some(PartOperation::Drawing(args)) = editor.editing() else {
+        panic!("a drawing");
+    };
+    assert!(
+        matches!(&args.annotations[1], Annotation::Note { text, leader: Some(_), .. } if text == "DEBURR"),
+        "{:?}",
+        args.annotations
+    );
+
+    // Downloaded from the dialog, as it now is.
     let exported = editor.handle(Command::ExportDrawing {
         id: None,
-        format: geop_ops_drawing::Format::Svg,
+        format: Format::Svg,
         date: "2026-10-04".into(),
     });
     assert!(exported.error.is_none(), "{:?}", exported.error);
@@ -1781,18 +1985,29 @@ fn a_drawing_is_made_and_exported() {
     assert_eq!(file.name, "drawing.svg");
     let svg = file.text().unwrap();
     assert!(svg.starts_with("<svg"));
-    assert!(svg.contains("Drilled box") && svg.contains(">2<"));
+    for text in ["Drilled box", ">2.83<", ">DEBURR<"] {
+        assert!(svg.contains(text), "{text} is not on the sheet");
+    }
     // The blind hole, seen from the front, is hidden.
-    assert!(svg.contains(r#"<g class="HIDDEN""#));
     let hidden = &svg[svg.find(r#"<g class="HIDDEN""#).unwrap()..];
     assert!(hidden[..hidden.find("</g>").unwrap()].contains("<line"));
-
     let dxf = editor.handle(Command::ExportDrawing {
-        id: Some("drawing1".into()),
-        format: geop_ops_drawing::Format::Dxf,
+        id: None,
+        format: Format::Dxf,
         date: String::new(),
     });
-    assert!(dxf.export.unwrap().text().unwrap().ends_with("EOF\n"));
+    let dxf = dxf.export.unwrap();
+    assert!(dxf.text().unwrap().ends_with("EOF\n") && dxf.text().unwrap().contains("DEBURR"));
+
+    let committed = editor.handle(Command::Commit);
+    assert!(committed.error.is_none(), "{:?}", committed.error);
+    // Back to the part: the scene draws its faces again.
+    assert!(!committed.scene.expect("a scene").part.faces.is_empty());
+    let PartOperation::Drawing(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a drawing step");
+    };
+    assert_eq!((args.views.len(), args.annotations.len()), (3, 2));
+    assert_eq!(args.name, "Drilled box");
 }
 
 /// The arm, exported as a URDF robot the way the front end asks — the
@@ -2572,7 +2787,26 @@ fn an_assembly_drawing_lists_its_parts() {
         step.presentation.dialog.get("bom"),
         Some(Control::Checkbox { value: false, .. })
     ));
-    editor.handle(dialog("bom", Value::Bool(true)));
+    let ticked = editor.handle(dialog("bom", Value::Bool(true)));
+    // The sheet shown is the one downloaded: its parts list, given by the
+    // editor, and the balloons pointing at the parts.
+    let shown: Vec<String> = ticked
+        .step
+        .expect("a drawing is edited")
+        .presentation
+        .visuals
+        .into_iter()
+        .filter_map(|v| match v.shape {
+            geop_ops::ui::Shape::Label { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    for text in ["ITEM", "ISO 4762 M4x12", "ISO 4032 M4"] {
+        assert!(
+            shown.iter().any(|t| t == text),
+            "{text} is not shown: {shown:?}"
+        );
+    }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
 
@@ -2707,6 +2941,436 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
     assert!(copied >= 3, "the copies' faces are the pattern's: {copied}");
 }
 
+/// What the step being edited shows after `event`, as the front end sends
+/// it.
+fn event(editor: &mut Editor<S>, event: StepEditEvent<S>) -> crate::editor::StepState<S> {
+    let update = editor.handle(Command::Event { event });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    update.step.expect("a step is edited")
+}
+
+/// Hovers `at`, which must be over `part` of the gizmo — a press there
+/// grabs — and drags it to `to`: once on the way, half way, saying what
+/// the drag has done so far, then released there.
+fn drag_gizmo(
+    editor: &mut Editor<S>,
+    part: geop_ops::ui::GizmoPart,
+    at: Pointer<S>,
+    to: Pointer<S>,
+    halfway: Pointer<S>,
+    shift: bool,
+) -> crate::editor::StepState<S> {
+    let step = event(
+        editor,
+        StepEditEvent::Hover {
+            pointer: at,
+            shift: false,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("a gizmo");
+    assert_eq!(gizmo.hover, Some(part), "{gizmo:?}");
+    assert!(step.presentation.grab, "a press on the gizmo grabs");
+    let step = event(
+        editor,
+        StepEditEvent::Drag {
+            from: at,
+            to: halfway,
+            done: false,
+            shift,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("a gizmo while dragged");
+    assert_eq!(gizmo.active, Some(part));
+    assert!(gizmo.readout.is_some(), "{gizmo:?}");
+    event(
+        editor,
+        StepEditEvent::Drag {
+            from: at,
+            to,
+            done: true,
+            shift,
+        },
+    )
+}
+
+/// The subd cage's top face, selected, moved up by its gizmo's `z` arrow,
+/// turned by its ring about `z` and stretched along `x` by the cube beyond
+/// the `x` arrow — about the face's centre, each snapped: to the grid, to
+/// 15 degrees, to a tenth.
+#[test]
+fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
+    use geop_ops::ui::GizmoPart;
+
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    let step = event(
+        &mut editor,
+        StepEditEvent::Click {
+            pointer: pointer([0.3, 0.2, 10.0], [0.0, 0.0, -1.0]),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("the selection has a gizmo");
+    assert!(gizmo.modes.translate && gizmo.modes.rotate && gizmo.modes.scale);
+    assert_eq!(
+        [0, 1, 2].map(|k| gizmo.at[k].to_f64()),
+        [0.0, 0.0, 1.0],
+        "at the face's centre"
+    );
+    // A face has an orientation of its own; the world's is chosen.
+    assert!(
+        step.presentation
+            .dialog
+            .get(geop_ops::ui::GIZMO_ORIENTATION)
+            .is_some()
+    );
+    editor.handle(dialog(
+        geop_ops::ui::GIZMO_ORIENTATION,
+        Value::Choice("world".into()),
+    ));
+    // No handles any more: the gizmo is what drags.
+    assert!(
+        !step
+            .presentation
+            .visuals
+            .iter()
+            .any(|v| matches!(v.shape, geop_ops::ui::Shape::Handle { .. }))
+    );
+
+    // Seen from the side, the `z` arrow pulled up by 0.31: a reach of
+    // 0.009 snaps to fiftieths.
+    let side = |z: f64| pointer([0.0, -10.0, z], [0.0, 1.0, 0.0]);
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(2),
+        side(1.05),
+        side(1.355),
+        side(1.2),
+        false,
+    );
+    // From above, the ring about `z` turned from 45 to 90 degrees round.
+    let reach = 0.009;
+    let round = |degrees: f64| {
+        let (s, c) = degrees.to_radians().sin_cos();
+        let r = 7.0 * reach;
+        pointer([r * c, r * s, 10.0], [0.0, 0.0, -1.0])
+    };
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Turn(2),
+        round(45.0),
+        round(92.0),
+        round(60.0),
+        false,
+    );
+    // The cube beyond the `x` arrow pulled out to twice as far.
+    let along = |x: f64| pointer([x, 0.0, 10.0], [0.0, 0.0, -1.0]);
+    let step = drag_gizmo(
+        &mut editor,
+        GizmoPart::Stretch(0),
+        along(12.5 * reach),
+        along(25.0 * reach),
+        along(20.0 * reach),
+        false,
+    );
+    assert_eq!(step.error, None);
+
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let last = editor.program().steps.last().unwrap().clone();
+    let PartOperation::Subd(args) = &last.operation else {
+        panic!("{:?}", last.operation);
+    };
+    // The top's corners `(±1, ±1)`, turned by 45 degrees, lie on the axes
+    // √2 out; stretched along `x`, twice that along it.
+    let r = 2f64.sqrt();
+    let mut corners: Vec<[f64; 3]> = args
+        .cage
+        .face(9)
+        .unwrap()
+        .vertices
+        .iter()
+        .map(|&v| args.cage.vertex(v).unwrap().at)
+        .collect();
+    corners.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    let want = [
+        [-2.0 * r, 0.0, 1.3],
+        [0.0, -r, 1.3],
+        [0.0, r, 1.3],
+        [2.0 * r, 0.0, 1.3],
+    ];
+    for (got, want) in corners.iter().zip(want) {
+        assert!(
+            (0..3).all(|k| (got[k] - want[k]).abs() < 1e-9),
+            "{corners:?}"
+        );
+    }
+}
+
+/// A point of a 3-D sketch, selected, is moved by its gizmo along `x`
+/// only: the `x` arrow dragged up and off to the side moves it along
+/// `x`, as far as the pointer went along it.
+#[test]
+fn a_3d_sketch_point_is_dragged_along_an_axis() {
+    use geop_ops::ui::GizmoPart;
+
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let click = |editor: &mut Editor<S>, origin: [f64; 3], dir: [f64; 3]| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: pointer(origin, dir),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    // A line from the origin to (2, 0, 2), seen from the front.
+    click(&mut editor, [0.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
+    click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let key = |editor: &mut Editor<S>| {
+        event(
+            editor,
+            StepEditEvent::Key {
+                key: "Escape".into(),
+            },
+        )
+    };
+    key(&mut editor);
+    let step = key(&mut editor);
+    assert!(step.presentation.gizmo.is_none(), "nothing selected");
+    let step = click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let gizmo = step.presentation.gizmo.expect("the point has a gizmo");
+    assert!(gizmo.modes.translate && !gizmo.modes.rotate && !gizmo.modes.scale);
+
+    // Its `x` arrow, grabbed from the front, dragged by 0.7 along `x` —
+    // and up, which an arrow does not follow.
+    let front = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
+    let step = drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(0),
+        front(2.05, 2.0),
+        front(2.75, 2.4),
+        front(2.4, 2.2),
+        false,
+    );
+    assert_eq!(step.error, None);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch3d(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a 3-D sketch");
+    };
+    let mut points: Vec<[f64; 3]> = args
+        .sketch
+        .points
+        .values()
+        .map(|p| [0, 1, 2].map(|k| p.at[k].to_f64()))
+        .collect();
+    points.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let moved = points.last().unwrap();
+    assert!(
+        (moved[0] - 2.7).abs() < 1e-9 && moved[1].abs() < 1e-9 && (moved[2] - 2.0).abs() < 1e-9,
+        "{points:?}"
+    );
+    assert!(points[0].iter().all(|c| c.abs() < 1e-9), "{points:?}");
+}
+
+/// Move body shifts the body by a gizmo where its middle goes: its `y`
+/// arrow dragged, then the square of the `x`–`z` plane.
+#[test]
+fn a_body_is_moved_by_its_gizmo() {
+    use geop_ops::ui::GizmoPart;
+
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::New {
+        kind: "move_body".into(),
+    });
+    let step = update.step.expect("move body is edited");
+    let gizmo = step.presentation.gizmo.expect("a gizmo");
+    assert!(gizmo.modes.translate && !gizmo.modes.rotate);
+    let at = [0, 1, 2].map(|k| gizmo.at[k].to_f64());
+    // Looking down `x`, the `y` arrow dragged 0.3 along.
+    let side = |y: f64, z: f64| pointer([at[0] - 10.0, y, z], [1.0, 0.0, 0.0]);
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(1),
+        side(at[1] + 0.05, at[2]),
+        side(at[1] + 0.35, at[2]),
+        side(at[1] + 0.2, at[2]),
+        false,
+    );
+    // Looking down `y` at the moved gizmo, its `x`–`z` square — the one
+    // normal to `y` — dragged by (0.2, -0.4).
+    let at = [at[0], at[1] + 0.3, at[2]];
+    let front = |x: f64, z: f64| pointer([x, at[1] - 10.0, z], [0.0, 1.0, 0.0]);
+    let corner = 0.03;
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Plane(1),
+        front(at[0] + corner, at[2] + corner),
+        front(at[0] + corner + 0.2, at[2] + corner - 0.4),
+        front(at[0] + corner + 0.1, at[2] + corner),
+        false,
+    );
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::MoveBody(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a move");
+    };
+    let want = [0.2, 0.3, -0.4];
+    assert!(
+        (0..3).all(|k| (args.translation[k] - want[k]).abs() < 1e-9),
+        "{:?}",
+        args.translation
+    );
+}
+
+/// Placed parts are moved by a gizmo at their origin: a fixed rail turned
+/// a quarter about `z` by its ring, and a carriage on it slid along the
+/// rail by its `z` arrow — the slider joint solved as it is dragged.
+#[test]
+fn placed_parts_are_moved_and_turned_by_the_gizmo() {
+    use geop_ops::part::{ParamValue, pose_parameter};
+    use geop_ops::ui::GizmoPart;
+
+    let (rail, carriage) = ("std:linear_rail.geop", "std:linear_carriage.geop");
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("guide.geop".into()),
+    });
+    editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    editor.handle(dialog("file", Value::Choice(rail.into())));
+    editor.handle(dialog("fixed", Value::Bool(true)));
+    editor.handle(dialog("parameter:size", Value::Choice("MGN9".into())));
+    assert!(editor.handle(Command::Commit).error.is_none());
+    editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    editor.handle(dialog("file", Value::Choice(carriage.into())));
+    editor.handle(dialog("parameter:size", Value::Choice("MGN9H".into())));
+    editor.handle(dialog("add_mate", Value::Choice("slider".into())));
+    editor.handle(dialog(
+        "mate:m1:entities",
+        Value::Entities(vec![
+            EntityRef::datum("part1/axis"),
+            EntityRef::datum("part2/axis"),
+        ]),
+    ));
+    assert!(editor.handle(Command::Commit).error.is_none());
+    let pose = |editor: &Editor<S>, id: &str| match editor.program().state.get(&pose_parameter(id))
+    {
+        Some(ParamValue::Pose(pose)) => *pose,
+        other => panic!("{id}: {other:?}"),
+    };
+    let apply = |pose: &geop_core_math::primitives::Pose<geop_ops::Design>, p: [f64; 3]| {
+        let at = pose.apply(&Vector3::from_array(p.map(geop_ops::Design::from_f64)));
+        [0, 1, 2].map(|k| at[k].to_f64())
+    };
+    let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
+
+    // The carriage, slid 10 along the rail by its `z` arrow, seen from the
+    // side.
+    let start = apply(&pose(&editor, "part2"), [0.0; 3]);
+    let update = editor.handle(Command::Open { id: "part2".into() });
+    let step = update.step.expect("the carriage is edited");
+    let gizmo = step.presentation.gizmo.expect("a placed part has a gizmo");
+    assert!(gizmo.modes.translate && gizmo.modes.rotate);
+    assert!(
+        step.presentation
+            .dialog
+            .get(geop_ops::ui::GIZMO_ORIENTATION)
+            .is_some()
+    );
+    let side = |z: f64| pointer([start[0], start[1] - 100.0, z], [0.0, 1.0, 0.0]);
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(2),
+        side(start[2] + 0.05),
+        side(start[2] + 10.055),
+        side(start[2] + 5.0),
+        false,
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
+    let slid = apply(&pose(&editor, "part2"), [0.0; 3]);
+    assert!(
+        close(slid, [start[0], start[1], start[2] + 10.0]),
+        "{start:?} slid to {slid:?}"
+    );
+
+    // The rail, fixed, turned a quarter about `z` by its ring, seen from
+    // above: it goes where it is turned, and the carriage turns with it.
+    editor.handle(Command::Open { id: "part1".into() });
+    let reach = 0.009;
+    let round = |degrees: f64| {
+        let (s, c) = degrees.to_radians().sin_cos();
+        let r = 7.0 * reach;
+        pointer([r * c, r * s, 100.0], [0.0, 0.0, -1.0])
+    };
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Turn(2),
+        round(45.0),
+        round(137.0),
+        round(90.0),
+        false,
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
+    let turned = pose(&editor, "part1");
+    assert!(
+        close(apply(&turned, [1.0, 0.0, 0.0]), [0.0, 1.0, 0.0]),
+        "{turned:?}"
+    );
+    assert!(editor.part().check_mates(|_| true).unwrap().converged);
+}
+
+/// The toolbar's sections are the editor's: it sends the operations group
+/// by group, in the groups' order, every operation in one, with the few
+/// used most marked to be shown big.
+#[test]
+fn operations_are_offered_by_group() {
+    use geop_ops::{OperationGroup, Operations};
+    let (_, update) = editor();
+    let operations = update.program.expect("the program is sent").operations;
+    assert_eq!(operations.len(), PartOperation::infos().len());
+    let groups: Vec<OperationGroup> = operations.iter().map(|o| o.group).collect();
+    assert!(
+        groups.is_sorted(),
+        "the groups are not one after another: {groups:?}"
+    );
+    let primary: Vec<&str> = operations
+        .iter()
+        .filter(|o| o.primary)
+        .map(|o| o.kind)
+        .collect();
+    assert_eq!(
+        primary,
+        [
+            "add_sketch",
+            "extrude",
+            "revolve",
+            "hole",
+            "fillet",
+            "boolean",
+            "add_part"
+        ]
+    );
+    let json = serde_json::to_value(&operations[0]).unwrap();
+    assert_eq!(json["group"], "Sketch");
+    let sheet = operations.iter().find(|o| o.kind == "hem").unwrap();
+    assert_eq!(serde_json::to_value(sheet).unwrap()["group"], "Sheet metal");
+}
+
 /// A click of the primary button with `pointer`.
 fn click_at(pointer: Pointer<S>) -> Command<S> {
     Command::Event {
@@ -2833,10 +3497,7 @@ fn a_3d_sketch_point_and_line_are_picked() {
     assert!(highlights.contains(&corner), "{highlights:?}");
     editor.handle(click_at(from_above(3.004, 1.0)));
     editor.handle(click_at(from_above(2.0, 1.005)));
-    editor.handle(dialog(
-        "construction",
-        Value::Choice("parallel".into()),
-    ));
+    editor.handle(dialog("construction", Value::Choice("parallel".into())));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let PartOperation::AddDatum(datum) = &editor.program().steps.last().unwrap().operation else {
@@ -3029,4 +3690,62 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
         .unwrap();
     let p = part.topology().get_vertex(corner).unwrap().point;
     assert!(p.could_be_equal(&Vector3::from_array([2.0, 1.5, 1.0].map(S::from_f64))));
+}
+
+/// The default view of an empty part, as the browser sends it — 1920 x
+/// 1080, the camera at `(66, 44, 88)` looking at the origin: a line's
+/// first click on the origin, its second 160 px right of and 90 px above
+/// it. Both place a point, and the line between them is drawn. (Reported
+/// as placing nothing: in a 1400 x 900 window that spot lies under the
+/// step's dialog, and the viewer sends no click there at all.)
+#[test]
+fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
+    let mut editor = editing(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let eye = |dir: [f64; 3]| {
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        Pointer {
+            ray: Ray::try_new(
+                v([65.90889047678681, 43.93926031785788, 87.87852063571576]),
+                v(dir),
+            )
+            .unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.00838515269409588),
+            },
+        }
+    };
+    for dir in [
+        [
+            -0.5570860145310995,
+            -0.3713906763541206,
+            -0.7427813527082412,
+        ],
+        [
+            -0.4499813577124772,
+            -0.2893350678973743,
+            -0.8448680347817981,
+        ],
+    ] {
+        let hover = editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: eye(dir),
+                shift: false,
+            },
+        });
+        let visuals = hover.step.unwrap().presentation.visuals;
+        assert!(
+            visuals.iter().any(|v| v.key == "snap"),
+            "where the click goes is shown: {visuals:?}"
+        );
+        editor.handle(click_at(eye(dir)));
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch3d(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a 3-D sketch");
+    };
+    assert_eq!(args.sketch.curves.len(), 1, "{:?}", args.sketch);
 }

@@ -19,6 +19,7 @@ use crate::{AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3d, Sketch3dSession
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
 #[serde(tag = "operation", content = "args", rename_all = "snake_case")]
 enum Ops {
+    #[operation(group = Sketch)]
     AddSketch3d(AddSketch3dArgs),
 }
 
