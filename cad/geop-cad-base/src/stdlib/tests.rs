@@ -204,24 +204,29 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
         program
     };
     // A gear's module and tooth count are tables of their own: every
-    // module, each with another tooth count, from the fewest to the most.
-    let teeth = [12, 17, 25, 33, 42, 60, 80, 120];
-    let gear = part.program.parameters.get(TEETH).is_some();
+    // module with 20 teeth, and module 1 with each of a range of counts.
+    let gear = matches!(
+        part.program.parameters.get(TEETH).map(|p| &p.kind),
+        Some(ParameterKind::Table { .. })
+    );
     match part.program.parameters.get(SIZE).map(|p| &p.kind) {
-        Some(ParameterKind::Table { rows, .. }) => rows
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                let mut program = with(SIZE, ParamValue::Text(r.name.clone()));
-                if !gear {
-                    return (r.name.clone(), program);
-                }
-                let z = format!("z{}", teeth[i % teeth.len()]);
+        Some(ParameterKind::Table { rows, .. }) if gear => {
+            let geared = |module: &str, teeth: usize| {
+                let mut program = with(SIZE, ParamValue::Text(module.into()));
+                let z = format!("z{teeth}");
                 program
                     .state
                     .insert(TEETH.into(), ParamValue::Text(z.clone()));
-                (format!("{} {z}", r.name), program)
-            })
+                (format!("{module} {z}"), program)
+            };
+            rows.iter()
+                .map(|r| geared(&r.name, 20))
+                .chain(GEAR_TEETH.into_iter().map(|z| geared("m1", z)))
+                .collect()
+        }
+        Some(ParameterKind::Table { rows, .. }) => rows
+            .iter()
+            .map(|r| (r.name.clone(), with(SIZE, ParamValue::Text(r.name.clone()))))
             .collect(),
         _ => [20.0, 333.3, 1000.0]
             .into_iter()
@@ -233,41 +238,74 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
     }
 }
 
+/// The tooth counts a gear of module 1 is built with by
+/// [`every_size_of_every_family_builds_to_its_table`].
+const GEAR_TEETH: [usize; 8] = [12, 17, 25, 33, 42, 60, 80, 120];
+
+/// The sizes of the family `part` builds to its table — every one but
+/// those of a gear, of which a range (see [`every_size`]) — fully validated
+/// at the first and last length of each size, by a fast check at the
+/// lengths between: what is wrong, one line per size. Prints how long the
+/// family took to build, per size.
+fn build_every_size(part: &StandardPart) -> Vec<String> {
+    let mut failures = Vec::new();
+    let sizes = every_size(part);
+    let size_of = |name: &str| name.split('x').next().unwrap_or(name).to_string();
+    let start = std::time::Instant::now();
+    let mut slowest = (String::new(), 0.0);
+    for (i, (name, program)) in sizes.iter().enumerate() {
+        let first = i == 0 || size_of(&sizes[i - 1].0) != size_of(name);
+        let last = i + 1 == sizes.len() || size_of(&sizes[i + 1].0) != size_of(name);
+        let one = std::time::Instant::now();
+        // A panic is one size's failure too, by its name, not the sweep's.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            built(part, program, first || last)
+        }));
+        match result {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => failures.push(format!("{} {name} {e}", part.file)),
+            Err(panic) => {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                failures.push(format!("{} {name} panics: {message}", part.file));
+            }
+        }
+        let took = one.elapsed().as_secs_f64();
+        if took > slowest.1 {
+            slowest = (name.clone(), took);
+        }
+    }
+    let total = start.elapsed().as_secs_f64();
+    println!(
+        "{:<45} {:>3} sizes {total:>8.2} s, {:>6.2} s each, slowest {} {:.2} s",
+        part.file,
+        sizes.len(),
+        total / sizes.len() as f64,
+        slowest.0,
+        slowest.1
+    );
+    failures
+}
+
 /// Every size of every family builds one solid reaching where its table
-/// says — fully validated at the shortest and longest length of each
-/// size, by a fast check at the lengths between. Prints how long each
-/// family took to build, per size, with `--nocapture`.
+/// says (see [`build_every_size`]). Prints how long each family took to
+/// build, per size, with `--nocapture`.
 #[test]
 #[ignore = "slow: every size of every standard part — run with `cargo test -- --ignored`"]
 fn every_size_of_every_family_builds_to_its_table() {
-    let mut failures = Vec::new();
-    for part in parts().unwrap() {
-        let sizes = every_size(part);
-        let size_of = |name: &str| name.split('x').next().unwrap_or(name).to_string();
-        let start = std::time::Instant::now();
-        let mut slowest = (String::new(), 0.0);
-        for (i, (name, program)) in sizes.iter().enumerate() {
-            let first = i == 0 || size_of(&sizes[i - 1].0) != size_of(name);
-            let last = i + 1 == sizes.len() || size_of(&sizes[i + 1].0) != size_of(name);
-            let one = std::time::Instant::now();
-            if let Err(e) = built(part, program, first || last) {
-                failures.push(format!("{} {name} {e}", part.file));
-            }
-            let took = one.elapsed().as_secs_f64();
-            if took > slowest.1 {
-                slowest = (name.clone(), took);
-            }
-        }
-        let total = start.elapsed().as_secs_f64();
-        println!(
-            "{:<45} {:>3} sizes {total:>8.2} s, {:>6.2} s each, slowest {} {:.2} s",
-            part.file,
-            sizes.len(),
-            total / sizes.len() as f64,
-            slowest.0,
-            slowest.1
-        );
-    }
+    let failures: Vec<String> = parts().unwrap().flat_map(build_every_size).collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The spur gears of [`every_size_of_every_family_builds_to_its_table`]
+/// alone: every module, and a range of tooth counts.
+#[test]
+#[ignore = "slow: sixteen gears, up to 120 teeth — run with `cargo test -- --ignored`"]
+fn every_spur_gear_builds_to_its_table() {
+    let failures = build_every_size(super::part("std:spur_gear.geop").unwrap());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
