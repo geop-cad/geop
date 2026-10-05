@@ -298,6 +298,8 @@ pub struct ProgramRunner<S: Scalar, O> {
     /// How many steps the last run built, rather than took from the parts
     /// earlier runs built.
     built_anew: usize,
+    /// How many steps every run so far built, together.
+    steps_built: usize,
 }
 
 /// A library that notes the files of every part it gives out: what a step
@@ -337,6 +339,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             reads: Vec::new(),
             ran: 0,
             built_anew: 0,
+            steps_built: 0,
         }
     }
 
@@ -422,6 +425,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
                 Err(e) => (before.clone(), Some(e.to_string())),
             };
             self.built_anew += 1;
+            self.steps_built += 1;
             self.steps.push(step.clone());
             self.parts.push(part);
             self.reads.push(recording.read.into_inner());
@@ -466,6 +470,12 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
     /// parameter, cost.
     pub fn built_anew(&self) -> usize {
         self.built_anew
+    }
+
+    /// How many steps every run so far built, together: what a sequence
+    /// of edits cost, however many runs each made.
+    pub fn steps_built(&self) -> usize {
+        self.steps_built
     }
 }
 

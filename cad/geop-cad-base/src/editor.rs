@@ -1274,10 +1274,13 @@ impl<S: Scalar> Editor<S> {
         program
     }
 
-    /// Solves the program's mates — the whole program's, the steps after the
-    /// one being edited included — from where its state puts its parts,
-    /// and keeps where they put them: the program's state, which every step
-    /// then sees (see [`geop_ops::part::State`]).
+    /// Solves the program's mates from where its state puts its parts, and
+    /// keeps where they put them: the program's state, which every step
+    /// then sees (see [`geop_ops::part::State`]). While a step that moves
+    /// no placed part is edited, only the program up to it runs: the steps
+    /// after it are built again once the edit is done, not on every move of
+    /// the pointer — editing a sketch early in a long program would
+    /// otherwise rebuild everything after it each time.
     ///
     /// A drag the step being edited asks for pulls first, every part that is
     /// not fixed free to give way — a linkage follows the link dragged.
@@ -1288,7 +1291,7 @@ impl<S: Scalar> Editor<S> {
     /// those declared but not given are kept at what the steps took for
     /// them.
     ///
-    /// It leaves the runner having run the whole program, not what is
+    /// It may leave the runner having run the whole program, not what is
     /// shown: [`Self::rerun`] runs that.
     fn settle(&mut self) {
         let library = library(&self.workspace, self.path.as_deref());
@@ -1296,10 +1299,13 @@ impl<S: Scalar> Editor<S> {
             Some(open) => self.with_open(open),
             None => self.program.clone(),
         };
-        self.runner.run(&program, None, &library);
-        let complete = self.runner.results().len() == program.steps.len()
-            && self.runner.results().iter().all(|r| r.error.is_none());
-        let part = self.runner.part();
+        // Up to the step edited first: what it drags or holds is known
+        // from the part it is applied to.
+        self.runner.run(
+            &program,
+            self.open.as_ref().map(|open| open.index + 1),
+            &library,
+        );
         let (drags, holds, own) = match &self.open {
             Some(open) => {
                 let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
@@ -1317,6 +1323,21 @@ impl<S: Scalar> Editor<S> {
             }
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
+        // The whole program, when the parts it places may move: with no
+        // step edited, or while the step edited drags placed parts or holds
+        // joints, which carry the parts placed after it along. Otherwise —
+        // a sketch, a feature — the steps after it are built again once the
+        // edit is done.
+        let whole = self.open.is_none() || !drags.is_empty() || !holds.is_empty();
+        if whole && self.open.is_some() {
+            self.runner.run(&program, None, &library);
+        }
+        // Which state the program declares is only known once all of it
+        // has run: until then, none is dropped.
+        let complete = whole
+            && self.runner.results().len() == program.steps.len()
+            && self.runner.results().iter().all(|r| r.error.is_none());
+        let part = self.runner.part();
         let hold = || {
             part.check_mates(|_| true)
                 .is_ok_and(|report| report.converged)

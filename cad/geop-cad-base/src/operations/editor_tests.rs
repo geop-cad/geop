@@ -3431,7 +3431,7 @@ fn operations_are_offered_by_group() {
             "fillet",
             "boolean",
             "linear_pattern",
-            "boundary_surface",
+            "subd",
             "base_flange",
             "add_part",
             "drawing",
@@ -3826,4 +3826,65 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
         panic!("a 3-D sketch");
     };
     assert_eq!(args.sketch.curves.len(), 1, "{:?}", args.sketch);
+}
+
+/// Editing the first sketch of a program builds only up to it, however
+/// many steps follow: a point of the handle's outline dragged rebuilds the
+/// sketch, not the sweep, hole and boolean after it, on every move of the
+/// pointer. Put away, the whole program is built again.
+#[test]
+fn editing_an_early_sketch_builds_only_up_to_it() {
+    let mut editor = Editor::<S>::new();
+    let update = editor.handle(Command::LoadExample {
+        name: "handle_with_hole".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let steps = editor.program().steps.len();
+    assert!(steps >= 3, "{steps}");
+    let update = editor.handle(Command::Open {
+        id: "outline".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let crate::PartOperation::AddSketch(args) = editor.editing().unwrap().clone() else {
+        panic!("a sketch")
+    };
+    let corner = args
+        .sketch
+        .points
+        .values()
+        .find(|p| !p.fixed)
+        .expect("a point of the outline")
+        .xy();
+    let corner = [corner[0].to_f64(), corner[1].to_f64()];
+    let down = |[x, y]: [f64; 2]| pointer([x, y, 10.0], [0.0, 0.0, -1.0]);
+    editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: down(corner),
+            shift: false,
+        },
+    });
+    for (k, d) in [0.05, 0.1, 0.15].into_iter().enumerate() {
+        let before = editor.runner.steps_built();
+        let update = editor.handle(Command::Event {
+            event: StepEditEvent::Drag {
+                from: down(corner),
+                to: down([corner[0] + d, corner[1] + d]),
+                done: k == 2,
+                shift: true,
+            },
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        // Counted, not timed: the sketch at most, never what follows it.
+        let built = editor.runner.steps_built() - before;
+        assert!(built <= 1, "a drag in the first sketch built {built} steps");
+        assert_eq!(editor.runner.results().len(), 1);
+    }
+    let crate::PartOperation::AddSketch(dragged) = editor.editing().unwrap() else {
+        panic!("a sketch")
+    };
+    assert_ne!(dragged.sketch, args.sketch, "the drag changed nothing");
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(editor.runner.results().len(), steps);
+    assert!(editor.runner.results().iter().all(|r| r.error.is_none()));
 }
