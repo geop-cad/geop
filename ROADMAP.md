@@ -41,6 +41,8 @@ below is what was missing then, and where each item stands now.
   orientation; lofts with up to three guide curves.
 - Ruled, boundary (Coons, tangent to adjacent planes) and N-sided fill
   surfaces, offset surface, thicken, knit into solids, trim, extend.
+- UV surfaces (Gordon) through a network of u and v curves — edges, 2-D
+  and 3-D sketch curves, picked in any order and direction.
 - Subdivision surfaces: Catmull–Clark cage editing with creases and mirror,
   converted to a valid NURBS solid.
 

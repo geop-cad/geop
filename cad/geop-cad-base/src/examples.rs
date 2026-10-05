@@ -37,6 +37,7 @@ use geop_ops_sketch::{
 };
 use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d};
 use geop_ops_subd::{Cage, Mirror, SubdArgs};
+use geop_ops_surface::NetworkSurfaceArgs;
 
 use crate::Program;
 
@@ -2125,6 +2126,59 @@ pub fn motor_flange() -> Program {
     program
 }
 
+/// A doubly curved panel, a saddle: a UV surface through three ribs
+/// along `x` and three spines along `y`, each a spline of a 3-D sketch
+/// through points of the saddle — the ribs' and the spines' meeting where
+/// they cross.
+pub fn curved_panel() -> Program {
+    let height = |x: f64, y: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (y - 1.5).powi(2);
+    let mut program = Program::new();
+    let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<EntityRef> {
+        let mut sketch = Sketch3d::new();
+        let mut curves = Vec::new();
+        for line in lines {
+            let points = line
+                .iter()
+                .map(|&[x, y]| sketch.add_point(Vector3::from_array([x, y, height(x, y)].map(n))))
+                .collect();
+            let curve = sketch.add_spline(points);
+            curves.push(EntityRef::Edge {
+                name: format!("sketch3d({name},{curve})"),
+            });
+        }
+        program.push(
+            name,
+            AddSketch3dArgs {
+                sketch,
+                references: Vec::new(),
+            },
+        );
+        curves
+    };
+    let ribs = splines(
+        "ribs",
+        [0.0, 1.5, 3.0]
+            .iter()
+            .map(|&y| [0.0, 1.0, 2.0, 3.0, 4.0].map(|x| [x, y]).to_vec())
+            .collect(),
+    );
+    let spines = splines(
+        "spines",
+        [0.0, 2.0, 4.0]
+            .iter()
+            .map(|&x| [0.0, 0.75, 1.5, 2.25, 3.0].map(|y| [x, y]).to_vec())
+            .collect(),
+    );
+    program.push(
+        "panel",
+        NetworkSurfaceArgs {
+            u_curves: ribs,
+            v_curves: spines,
+        },
+    );
+    program
+}
+
 /// Every example, by name, each with what makes its program: listing them
 /// builds nothing — an editor lists them when it starts, and making one
 /// may solve sketches, or build a part to name its faces.
@@ -2150,6 +2204,7 @@ pub fn all() -> Vec<Example<Program>> {
         ("hole_plate", hole_plate),
         ("rounded_box", rounded_box),
         ("motor_flange", motor_flange),
+        ("curved_panel", curved_panel),
     ]
 }
 
@@ -2544,6 +2599,28 @@ mod tests {
     /// The motor flange is a ring with six bolt holes through it: solid in
     /// its wall, open in its bore and in every hole, the copies round the
     /// bolt circle as much as the first.
+    /// The curved panel is one valid face, through the middle of its
+    /// middle rib and spine, where they cross.
+    #[test]
+    fn curved_panel_round_trips() {
+        let part = build_and_round_trip("curved_panel", &curved_panel());
+        let description = PartDescription::of(&part).unwrap();
+        assert!(description.solids.is_empty());
+        let face = part.face_id("network(panel)").unwrap();
+        let surface = &part.topology().get_face(face).unwrap().surface;
+        let middle = Vector3::from_array([2.0, 1.5, 0.6].map(S::from_f64));
+        assert!(
+            geop_core_geometry::contains::surface::surface_could_contain(
+                surface,
+                &middle,
+                10_000,
+                S::from_f64(1e-7)
+            )
+            .unwrap()
+            .is_some()
+        );
+    }
+
     #[test]
     fn motor_flange_round_trips() {
         let part = build_and_round_trip("motor_flange", &motor_flange());
