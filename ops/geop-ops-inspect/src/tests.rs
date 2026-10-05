@@ -364,8 +364,23 @@ fn sketch_curves_are_measured() {
             .unwrap_or_else(|| panic!("no {label} in {measured:?}"))
             .value
     };
-    assert_near("half circle", value(&[curve.clone()], "Length"), PI, 1e-9);
-    assert_near("its radius", value(&[curve.clone()], "Radius"), 1.0, 1e-9);
-    assert_near("line", value(&[edge.clone()], "Length"), 3.0, 1e-9);
+    assert_near(
+        "half circle",
+        value(std::slice::from_ref(&curve), "Length"),
+        PI,
+        1e-9,
+    );
+    assert_near(
+        "its radius",
+        value(std::slice::from_ref(&curve), "Radius"),
+        1.0,
+        1e-9,
+    );
+    assert_near(
+        "line",
+        value(std::slice::from_ref(&edge), "Length"),
+        3.0,
+        1e-9,
+    );
     assert_near("between", value(&[curve, edge], "Distance"), 1.0, 1e-6);
 }
