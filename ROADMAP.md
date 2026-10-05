@@ -25,7 +25,9 @@ below is what was missing then, and where each item stands now.
 - Holes: simple, counterbore, countersink, tapped; ISO 273/261/2306 tables;
   blind with drill point, up to next, through all.
 - Threads: cosmetic (drawn in the view and in drawings) and modelled.
-- Linear and circular patterns, mirror, move/copy body.
+- Linear and circular patterns and mirrors of bodies and of features (cuts,
+  bosses, holes with their threads, picked by a face they made), move/copy
+  body.
 - Rib, lip and groove, draft on planar faces.
 - Fillets on any edge (rolling ball), tangent chains, variable radius,
   rounded corners where three fillets meet; chamfers on any edge.

@@ -35,21 +35,12 @@ use geop_core_topology::{
     },
 };
 use geop_ops::{Namer, Part};
-use serde::{Deserialize, Serialize};
 
 use crate::remesh::remesh::{RemeshParams, remesh};
 
-/// Which boolean to perform.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BooleanOp {
-    /// Everything in either solid.
-    Union,
-    /// Only what is in both.
-    Intersection,
-    /// `solid_a` with `solid_b` removed.
-    Difference,
-}
+/// Which boolean to perform — defined with the features that record it
+/// (see [`geop_ops::Feature`]).
+pub use geop_ops::BooleanOp;
 
 /// Where one solid's face sits relative to the *other* solid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,63 +69,61 @@ enum Keep {
     Drop,
 }
 
-impl BooleanOp {
-    /// Whether to keep a face classified as `class`, and with which
-    /// orientation. `from_a` says which solid the face came from, because the
-    /// two are not symmetric for [`BooleanOp::Difference`], and because a
-    /// coincident patch must be kept exactly once rather than from both.
-    ///
-    /// The coincident rules are the only subtle ones. A patch shared by both
-    /// solids with **matching** normals bounds the same material on the same
-    /// side, so union and intersection each keep exactly one copy (`a`'s, by
-    /// convention) and difference deletes it — the material behind it is
-    /// removed from both sides at once. A patch shared with **opposing**
-    /// normals is the reverse: it separates the two solids, so union and
-    /// intersection drop it (it is interior to the result) while difference
-    /// keeps `a`'s copy, since that is exactly the surface where `a` is left
-    /// open by removing `b`.
-    fn keeps(self, class: FaceClassification, from_a: bool) -> Keep {
-        use FaceClassification::*;
-        match (self, class) {
-            // Union: the result is bounded by whatever is outside the other.
-            (BooleanOp::Union, Outside) => Keep::AsIs,
-            (BooleanOp::Union, Inside) => Keep::Drop,
-            (BooleanOp::Union, OnSameNormal) => {
-                if from_a {
-                    Keep::AsIs
-                } else {
-                    Keep::Drop
-                }
+/// Whether to keep a face classified as `class`, and with which
+/// orientation. `from_a` says which solid the face came from, because the
+/// two are not symmetric for [`BooleanOp::Difference`], and because a
+/// coincident patch must be kept exactly once rather than from both.
+///
+/// The coincident rules are the only subtle ones. A patch shared by both
+/// solids with **matching** normals bounds the same material on the same
+/// side, so union and intersection each keep exactly one copy (`a`'s, by
+/// convention) and difference deletes it — the material behind it is
+/// removed from both sides at once. A patch shared with **opposing**
+/// normals is the reverse: it separates the two solids, so union and
+/// intersection drop it (it is interior to the result) while difference
+/// keeps `a`'s copy, since that is exactly the surface where `a` is left
+/// open by removing `b`.
+fn keeps(op: BooleanOp, class: FaceClassification, from_a: bool) -> Keep {
+    use FaceClassification::*;
+    match (op, class) {
+        // Union: the result is bounded by whatever is outside the other.
+        (BooleanOp::Union, Outside) => Keep::AsIs,
+        (BooleanOp::Union, Inside) => Keep::Drop,
+        (BooleanOp::Union, OnSameNormal) => {
+            if from_a {
+                Keep::AsIs
+            } else {
+                Keep::Drop
             }
-            (BooleanOp::Union, OnOppositeNormal) => Keep::Drop,
+        }
+        (BooleanOp::Union, OnOppositeNormal) => Keep::Drop,
 
-            // Intersection: bounded by whatever is inside the other.
-            (BooleanOp::Intersection, Inside) => Keep::AsIs,
-            (BooleanOp::Intersection, Outside) => Keep::Drop,
-            (BooleanOp::Intersection, OnSameNormal) => {
-                if from_a {
-                    Keep::AsIs
-                } else {
-                    Keep::Drop
-                }
+        // Intersection: bounded by whatever is inside the other.
+        (BooleanOp::Intersection, Inside) => Keep::AsIs,
+        (BooleanOp::Intersection, Outside) => Keep::Drop,
+        (BooleanOp::Intersection, OnSameNormal) => {
+            if from_a {
+                Keep::AsIs
+            } else {
+                Keep::Drop
             }
-            (BooleanOp::Intersection, OnOppositeNormal) => Keep::Drop,
+        }
+        (BooleanOp::Intersection, OnOppositeNormal) => Keep::Drop,
 
-            // Difference (a - b) = a intersected with the complement of b, so
-            // `a`'s faces behave as for intersection-with-the-outside, and
-            // `b`'s surviving faces are the ones inside `a`, turned around to
-            // face into the cavity they now bound.
-            (BooleanOp::Difference, Outside) if from_a => Keep::AsIs,
-            (BooleanOp::Difference, Inside) if from_a => Keep::Drop,
-            (BooleanOp::Difference, Inside) => Keep::Reversed,
-            (BooleanOp::Difference, Outside) => Keep::Drop,
-            (BooleanOp::Difference, OnSameNormal) => Keep::Drop,
-            (BooleanOp::Difference, OnOppositeNormal) => {
-                if from_a {
-                    Keep::AsIs
-                } else {
-                    Keep::Drop
-                }
+        // Difference (a - b) = a intersected with the complement of b, so
+        // `a`'s faces behave as for intersection-with-the-outside, and
+        // `b`'s surviving faces are the ones inside `a`, turned around to
+        // face into the cavity they now bound.
+        (BooleanOp::Difference, Outside) if from_a => Keep::AsIs,
+        (BooleanOp::Difference, Inside) if from_a => Keep::Drop,
+        (BooleanOp::Difference, Inside) => Keep::Reversed,
+        (BooleanOp::Difference, Outside) => Keep::Drop,
+        (BooleanOp::Difference, OnSameNormal) => Keep::Drop,
+        (BooleanOp::Difference, OnOppositeNormal) => {
+            if from_a {
+                Keep::AsIs
+            } else {
+                Keep::Drop
             }
         }
     }
@@ -310,7 +299,7 @@ fn combine<S: Scalar>(
                 .with_context(&|e: GeopError| {
                     e.with_context(format!("classifying face {face_id}"))
                 })?;
-            decisions.insert(face_id, (class, op.keeps(class, from_a)));
+            decisions.insert(face_id, (class, keeps(op, class, from_a)));
         }
     }
     if let Some(UpToNext { start, end, alone }) = up_to_next {

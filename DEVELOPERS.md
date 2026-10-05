@@ -32,7 +32,8 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
                                made from geometry (mirror, patterns, offset)
 ops/geop-ops                  parts (topology, sketches, datums, placed parts
-                               and their mates, every entity with a stable
+                               and their mates, the features their steps
+                               combined, every entity with a stable
                                name), what an operation is and how it is
                                edited (events, dialogs, visuals, hit tests),
                                parameters and the formulas reading them —
@@ -69,7 +70,10 @@ ops/geop-ops-shell            shelling: a solid hollowed to walls of one
                                operation
 ops/geop-ops-pattern          linear and circular patterns, mirrors and
                                moves of bodies, copied as new bodies or
-                               combined with a solid; their operations
+                               combined with a solid; patterns and mirrors
+                               of features (a cut, a boss, a hole and its
+                               thread) from the tools their steps recorded;
+                               their operations
 ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
                                countersink, tapped) and threads, cosmetic or
                                modelled along a helix; the hole and thread

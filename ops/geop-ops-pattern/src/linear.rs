@@ -17,14 +17,18 @@ use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    Spacing, bodies_field, center, combine_instances, copy_seeds, count_field, direction,
-    newest_solid, seed_instances, seeds, track, whole_count,
+    Seeds, Spacing, count_field, direction, newest_solid, seed_fields, track, whole_count,
 };
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
-/// in a row along a direction, or in a grid along two: `count` instances
-/// along each, the bodies themselves the first, each `Spacing::Step` from
-/// the last or spread evenly over `Spacing::Extent`.
+/// or the features `features` in a row along a direction, or in a grid
+/// along two: `count` instances along each, the bodies or features
+/// themselves the first, each `Spacing::Step` from the last or spread
+/// evenly over `Spacing::Extent`.
+///
+/// A feature — a cut, a boss, a hole — is done again at each instance:
+/// its tools copied and combined with the solid it lies on as it combined
+/// them (see [`crate::features`]), its cosmetic threads copied with it.
 ///
 /// The copies are kept as new bodies, or combined as [`Combine`] says:
 /// joined to, cut from or intersected with the target, the bodies
@@ -61,13 +65,28 @@ pub struct Direction {
 pub struct LinearPatternArgs {
     /// The bodies to copy: solids, or a face of each sheet.
     pub bodies: Vec<EntityRef>,
+    /// Or the features to do again (see [`EntityRef::Feature`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<EntityRef>,
     pub first: Direction,
     /// A second direction, making a grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub second: Option<Direction>,
-    /// Keep the copies as new bodies, or combine them with a solid.
+    /// Keep the copies of bodies as new bodies, or combine them with a
+    /// solid.
     #[serde(default)]
     pub combine: Combine,
+}
+
+impl LinearPatternArgs {
+    /// What it repeats.
+    fn seeds(&self) -> Seeds<'_> {
+        Seeds {
+            bodies: &self.bodies,
+            features: &self.features,
+            combine: &self.combine,
+        }
+    }
 }
 
 impl Direction {
@@ -214,15 +233,16 @@ impl Operation for LinearPattern {
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> LinearPatternArgs {
         LinearPatternArgs {
             bodies: newest_solid(before),
+            features: Vec::new(),
             first: Direction::along(FrameAxis::X),
             second: None,
             combine: Combine::NewBody,
         }
     }
 
-    /// The bodies, picked; each direction — the second turned on or off —
-    /// with its count and spacing, both dragged by handles; and how to
-    /// combine.
+    /// The bodies or the features, picked; each direction — the second
+    /// turned on or off — with its count and spacing, both dragged by
+    /// handles; and how to combine copies of bodies.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -232,8 +252,10 @@ impl Operation for LinearPattern {
     ) -> Form<'a, S, LinearPatternArgs> {
         let before = context.before;
         let mut f = Form::<S, LinearPatternArgs>::new();
-        bodies_field(&mut f, &args.bodies, |args| &mut args.bodies);
-        let at = center(before, &args.bodies);
+        seed_fields(&mut f, &args.bodies, &args.features, |args| {
+            (&mut args.bodies, &mut args.features)
+        });
+        let at = args.seeds().center(before);
         args.first
             .show(&mut f, before, at, "", |args| &mut args.first);
         f.checkbox(
@@ -250,7 +272,9 @@ impl Operation for LinearPattern {
                     .get_or_insert_with(|| Direction::along(FrameAxis::Y))
             });
         }
-        args.combine.show(&mut f, before, |args| &mut args.combine);
+        if args.features.is_empty() {
+            args.combine.show(&mut f, before, |args| &mut args.combine);
+        }
         f
     }
 
@@ -263,7 +287,6 @@ impl Operation for LinearPattern {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("linear_pattern({operation_id}, {args:?})");
         let namer = Namer::new("linear_pattern", operation_id)?;
-        let seeds = seeds(&part, &args.bodies).with_context(ctx)?;
         let first = args.first.unit(&part).with_context(ctx)?;
         let (first_count, first_step) = args
             .first
@@ -287,7 +310,7 @@ impl Operation for LinearPattern {
             }
         };
         let rows = second.as_ref().map_or(1, |(count, ..)| *count);
-        let mut instances = seed_instances(&seeds, if second.is_some() { "0.0" } else { "0" });
+        let mut placements = Vec::new();
         for i in 0..first_count {
             for j in 0..rows {
                 let along = Direction::offset(&first, first_step, i).with_context(ctx)?;
@@ -305,19 +328,19 @@ impl Operation for LinearPattern {
                     Some(_) => format!("{i}.{j}"),
                     None => i.to_string(),
                 };
-                instances.extend(
-                    copy_seeds(
-                        &mut part,
-                        &seeds,
-                        &Motion::translation(offset),
-                        &label,
-                        |name| namer.name(&[&label, name]),
-                    )
-                    .with_context(ctx)?,
-                );
+                placements.push((label, Motion::translation(offset)));
             }
         }
-        combine_instances(&mut part, &namer, operation_id, &args.combine, &instances)
+        let seed_label = if second.is_some() { "0.0" } else { "0" };
+        args.seeds()
+            .repeat(
+                &mut part,
+                &namer,
+                operation_id,
+                seed_label,
+                &placements,
+                |label, name| namer.name(&[label, name]),
+            )
             .with_context(ctx)?;
         Ok(part)
     }

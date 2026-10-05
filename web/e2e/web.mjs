@@ -249,6 +249,47 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   return `${stats}, volume ${volume} mm³`;
 });
 
+await check("a pattern picks a hole as a feature by a click on its wall", async () => {
+  await fresh();
+  await fileMenu(page, "Patterned plate");
+  await builtCleanly();
+  // The example's own pattern lists the hole it repeats.
+  await page.locator(".timeline .step-box").last().click();
+  await settle(page);
+  const opened = await popup.innerText();
+  expect(/features[\s\S]*\bhole\b/.test(opened), `the pattern lists no feature:\n${opened}`);
+  await popup.locator(".button-row button", { hasText: "Cancel" }).click();
+  await settle(page);
+  // A new pattern: its features picked by clicking along the view's middle
+  // row, out from its centre where the framed plate's holes are, until one
+  // lands on a hole's wall — the plate's own faces are no feature, so
+  // nothing else is picked.
+  await operation("Linear pattern").click();
+  await settle(page);
+  await popup.locator(".reference button", { hasText: "features:" }).click();
+  await settle(page);
+  const features = popup.locator(".reference", { has: page.locator("button", { hasText: "features:" }) });
+  let picked = "";
+  let dx = 0;
+  for (let k = 0; k < 120 && !picked; k++) {
+    dx = (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * 6;
+    await clickView(dx, 0);
+    picked = (await features.locator(".item-label").allInnerTexts()).join(", ");
+  }
+  expect(/^holes?$/.test(picked), `no hole was picked: "${picked}"`);
+  // The wall clicked is drawn lit, as a face of the feature picked.
+  const box = await page.locator("main.viewport canvas").first().boundingBox();
+  const [r, g, b] = await pixelAt(page, box.x + box.width / 2 + dx, box.y + box.height / 2);
+  expect(r > b + 60 && g > b, `the wall clicked is rgb(${r}, ${g}, ${b}), not lit`);
+  const text = await popup.innerText();
+  expect(text.includes("bodies: pick"), `the bodies were not emptied:\n${text}`);
+  await popup.locator(".button-row button.primary").click();
+  const stats = await builtCleanly();
+  const solids = await page.locator(".structure-panel").innerText();
+  expect(/linear_pattern\(linear_pattern\d+\)/.test(solids), `the plate is not the new pattern's:\n${solids}`);
+  return `picked ${picked}; ${stats}`;
+});
+
 await check("a parameter renamed is renamed where it is read, and removing one read warns", async () => {
   await fresh();
   await fileMenu(page, "Parametric plate");

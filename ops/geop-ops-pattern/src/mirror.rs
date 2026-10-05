@@ -14,12 +14,10 @@ use geop_ops::{
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{
-    bodies_field, combine_instances, copy_seeds, newest_solid, seed_instances, seeds,
-};
+use crate::common::{Seeds, newest_solid, seed_fields};
 
 /// Mirrors the bodies `bodies` — solids, and sheets by one of their faces —
-/// in a plane: a planar face, a datum plane, a frame's plane. The mirror
+/// or does the features `features` again mirrored, in a plane: a planar face, a datum plane, a frame's plane. The mirror
 /// image is a valid body of its own, its faces turned around so that they
 /// face out again; the bodies themselves stay.
 ///
@@ -35,6 +33,9 @@ pub struct Mirror;
 pub struct MirrorArgs {
     /// The bodies to mirror: solids, or a face of each sheet.
     pub bodies: Vec<EntityRef>,
+    /// Or the features to do again mirrored (see [`EntityRef::Feature`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<EntityRef>,
     /// The plane to mirror in; none, for a step that has not picked it.
     pub plane: Option<EntityRef>,
     /// Keep the image as new bodies, or combine it with a solid.
@@ -51,6 +52,7 @@ impl Operation for Mirror {
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> MirrorArgs {
         MirrorArgs {
             bodies: newest_solid(before),
+            features: Vec::new(),
             plane: Some(EntityRef::datum_component(
                 ORIGIN,
                 DatumComponent::Plane(FrameAxis::X),
@@ -59,7 +61,8 @@ impl Operation for Mirror {
         }
     }
 
-    /// The bodies and the plane, picked, and how to combine.
+    /// The bodies or the features, and the plane, picked, and how to
+    /// combine an image of bodies.
     fn form<'a, S: Scalar>(
         &self,
         context: Context<'a, S>,
@@ -68,7 +71,9 @@ impl Operation for Mirror {
         _: &[String],
     ) -> Form<'a, S, MirrorArgs> {
         let mut f = Form::<S, MirrorArgs>::new();
-        bodies_field(&mut f, &args.bodies, |args| &mut args.bodies);
+        seed_fields(&mut f, &args.bodies, &args.features, |args| {
+            (&mut args.bodies, &mut args.features)
+        });
         f.reference(
             "plane",
             "plane",
@@ -78,8 +83,10 @@ impl Operation for Mirror {
             false,
             |edit, picked| edit.args.plane = picked.into_iter().next(),
         );
-        args.combine
-            .show(&mut f, context.before, |args| &mut args.combine);
+        if args.features.is_empty() {
+            args.combine
+                .show(&mut f, context.before, |args| &mut args.combine);
+        }
         f
     }
 
@@ -92,7 +99,6 @@ impl Operation for Mirror {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("mirror({operation_id}, {args:?})");
         let namer = Namer::new("mirror", operation_id)?;
-        let seeds = seeds(&part, &args.bodies).with_context(ctx)?;
         let Some(plane_ref) = &args.plane else {
             return Err(GeopError::new("pick a plane to mirror in")).with_context(ctx);
         };
@@ -102,14 +108,20 @@ impl Operation for Mirror {
             .ok_or_else(|| GeopError::new(format!("{plane_ref} is not planar")))
             .with_context(ctx)?;
         let motion = Motion::mirror(plane.origin(), plane.w()).with_context(ctx)?;
-        let mut instances = seed_instances(&seeds, "seed");
-        instances.extend(
-            copy_seeds(&mut part, &seeds, &motion, "image", |name| {
-                namer.name(&[name])
-            })
-            .with_context(ctx)?,
-        );
-        combine_instances(&mut part, &namer, operation_id, &args.combine, &instances)
+        let seeds = Seeds {
+            bodies: &args.bodies,
+            features: &args.features,
+            combine: &args.combine,
+        };
+        seeds
+            .repeat(
+                &mut part,
+                &namer,
+                operation_id,
+                "seed",
+                &[("image".to_string(), motion)],
+                |_, name| namer.name(&[name]),
+            )
             .with_context(ctx)?;
         Ok(part)
     }

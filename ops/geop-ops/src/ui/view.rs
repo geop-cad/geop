@@ -103,6 +103,11 @@ pub struct ViewFace<S: Scalar> {
     pub name: String,
     /// The solid the face bounds.
     pub solid: Option<String>,
+    /// The step whose feature made it, if one did (see
+    /// [`crate::part::FeatureFaces::of`]): what picking it as a feature
+    /// picks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature: Option<String>,
     pub triangles: Vec<[Vector3<S>; 3]>,
     pub normals: Vec<[Vector3<S>; 3]>,
     /// What it can be picked as: a plane if it is flat, round if it turns
@@ -528,6 +533,7 @@ impl<S: Scalar> PartView<S> {
             }
             faces_of_edge.insert(id, faces);
         }
+        let features = part.feature_faces();
         let mut view = PartView {
             vertices: vertices
                 .into_iter()
@@ -557,6 +563,7 @@ impl<S: Scalar> PartView<S> {
                     let face = name(id.into());
                     ViewFace {
                         roles: roles_of(&EntityRef::Face { name: face.clone() }, part),
+                        feature: features.of(&face).map(str::to_string),
                         name: face,
                         solid: solid_of_face(model, id).map(|s| name(s.into())),
                         triangles: tris.iter().map(|t| [t.a, t.b, t.c]).collect(),
@@ -986,10 +993,13 @@ impl<S: Scalar> PartView<S> {
                 name: f.name.clone(),
             };
             let solid = f.solid.clone().map(|name| EntityRef::Solid { name });
+            let feature = f.feature.clone().map(|name| EntityRef::Feature { name });
             let entity = if accept_of(l, &face, &f.roles, f.solid.as_ref()) {
                 Some(face)
             } else {
-                solid.filter(|solid| accept(l, solid, &[Role::Solid]))
+                solid
+                    .filter(|solid| accept(l, solid, &[Role::Solid]))
+                    .or_else(|| feature.filter(|feature| accept(l, feature, &[Role::Feature])))
             };
             hits.extend(entity.map(|entity| {
                 l.hit(PartHit {

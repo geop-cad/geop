@@ -64,6 +64,8 @@ mod edit_tests;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
+mod feature_pattern_tests;
+#[cfg(test)]
 mod fillet_tests;
 #[cfg(test)]
 mod harness_tests;

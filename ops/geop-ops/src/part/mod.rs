@@ -21,6 +21,7 @@ mod datum;
 mod describe;
 mod edit;
 mod euler;
+mod feature;
 mod ids;
 mod instance;
 mod mesh;
@@ -36,10 +37,11 @@ pub use describe::{
     EdgeDescription, FaceDescription, InstanceDescription, PartDescription, ThreadDescription,
 };
 pub use edit::BodyNames;
+pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool};
 pub use ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId};
 pub use instance::{Component, Instance};
 pub use mesh::SolidMeshes;
-pub use names::{NameRegistry, Namer, validate_operation_id};
+pub use names::{NameRegistry, Namer, operation_of, validate_operation_id};
 pub use sketch::PlacedSketch;
 pub use state::{ParamValue, State, pose_parameter};
 pub use thread::CosmeticThread;
@@ -77,6 +79,9 @@ pub struct Part<S: Scalar> {
     pub(crate) cables: BTreeMap<String, Cable<S>>,
     /// Its cosmetic threads, by name (see [`CosmeticThread`]).
     pub(crate) threads: BTreeMap<String, CosmeticThread<S>>,
+    /// What each step that combined tools with a solid did, by the step's
+    /// id, in the order the steps ran (see [`Feature`]).
+    features: Vec<(String, Arc<Feature<S>>)>,
     /// The parameter values the part is built with (see [`Part::pose_parameter`]).
     pub(crate) inputs: State,
     /// The parameters its steps declared, with the values they read.
@@ -106,6 +111,7 @@ impl<S: Scalar> Part<S> {
             mates: BTreeMap::new(),
             cables: BTreeMap::new(),
             threads: BTreeMap::new(),
+            features: Vec::new(),
             inputs: State::new(),
             declared: State::new(),
             parameters: crate::parameters::Parameters::default(),
