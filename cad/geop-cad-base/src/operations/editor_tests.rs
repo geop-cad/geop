@@ -1519,8 +1519,8 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 /// A new SubD step starts from a box cage, its vertices, edges and faces
 /// drawn to click. Clicked from above, the cage's top face is selected —
 /// not the bottom one behind it — and its centre's coordinates shown;
-/// Extrude pulls it out; dragged by its `z` handle and then by the face
-/// itself, it moves; and the limit body the editor shows is the solid the
+/// Extrude pulls it out; dragged by its gizmo's `z` arrow and then by the
+/// face itself, it moves; and the limit body the editor shows is the solid the
 /// step builds.
 #[test]
 fn subd_cage_is_shaped_in_the_viewport() {
@@ -1567,18 +1567,9 @@ fn subd_cage_is_shaped_in_the_viewport() {
     assert_eq!(step.error, None);
     assert_eq!(number(&step, "z"), 1.5);
 
-    // The `z` handle, seen from the side, pulled up by a quarter.
-    let at = step
-        .presentation
-        .visuals
-        .iter()
-        .find_map(|v| match v.shape {
-            geop_ops::ui::Shape::Handle { at, .. } if v.key == "z" => Some(at),
-            _ => None,
-        })
-        .expect("z has a handle");
-    let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
-    let side = |dz: f64| pointer([x, y - 10.0, z + dz], [0.0, 1.0, 0.0]);
+    // The gizmo's `z` arrow, seen from the side, pulled up by a quarter —
+    // shift held, so not snapped.
+    let side = |dz: f64| pointer([0.0, -10.0, 1.55 + dz], [0.0, 1.0, 0.0]);
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
             pointer: side(0.0),
@@ -1591,7 +1582,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
             from: side(0.0),
             to: side(0.25),
             done: true,
-            shift: false,
+            shift: true,
         },
     });
     let step = update.step.expect("the subd is edited");
@@ -2623,4 +2614,397 @@ fn an_assembly_drawing_lists_its_parts() {
         "the screw's product"
     );
     assert!(text.contains("PRODUCT('plate'"), "the plate's product");
+}
+
+/// What the step being edited shows after `event`, as the front end sends
+/// it.
+fn event(editor: &mut Editor<S>, event: StepEditEvent<S>) -> crate::editor::StepState<S> {
+    let update = editor.handle(Command::Event { event });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    update.step.expect("a step is edited")
+}
+
+/// Hovers `at`, which must be over `part` of the gizmo — a press there
+/// grabs — and drags it to `to`: once on the way, half way, saying what
+/// the drag has done so far, then released there.
+fn drag_gizmo(
+    editor: &mut Editor<S>,
+    part: geop_ops::ui::GizmoPart,
+    at: Pointer<S>,
+    to: Pointer<S>,
+    halfway: Pointer<S>,
+    shift: bool,
+) -> crate::editor::StepState<S> {
+    let step = event(
+        editor,
+        StepEditEvent::Hover {
+            pointer: at,
+            shift: false,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("a gizmo");
+    assert_eq!(gizmo.hover, Some(part), "{gizmo:?}");
+    assert!(step.presentation.grab, "a press on the gizmo grabs");
+    let step = event(
+        editor,
+        StepEditEvent::Drag {
+            from: at,
+            to: halfway,
+            done: false,
+            shift,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("a gizmo while dragged");
+    assert_eq!(gizmo.active, Some(part));
+    assert!(gizmo.readout.is_some(), "{gizmo:?}");
+    event(
+        editor,
+        StepEditEvent::Drag {
+            from: at,
+            to,
+            done: true,
+            shift,
+        },
+    )
+}
+
+/// The subd cage's top face, selected, moved up by its gizmo's `z` arrow,
+/// turned by its ring about `z` and stretched along `x` by the cube beyond
+/// the `x` arrow — about the face's centre, each snapped: to the grid, to
+/// 15 degrees, to a tenth.
+#[test]
+fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
+    use geop_ops::ui::GizmoPart;
+
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    let step = event(
+        &mut editor,
+        StepEditEvent::Click {
+            pointer: pointer([0.3, 0.2, 10.0], [0.0, 0.0, -1.0]),
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("the selection has a gizmo");
+    assert!(gizmo.modes.translate && gizmo.modes.rotate && gizmo.modes.scale);
+    assert_eq!(
+        [0, 1, 2].map(|k| gizmo.at[k].to_f64()),
+        [0.0, 0.0, 1.0],
+        "at the face's centre"
+    );
+    // A face has an orientation of its own; the world's is chosen.
+    assert!(
+        step.presentation
+            .dialog
+            .get(geop_ops::ui::GIZMO_ORIENTATION)
+            .is_some()
+    );
+    editor.handle(dialog(
+        geop_ops::ui::GIZMO_ORIENTATION,
+        Value::Choice("world".into()),
+    ));
+    // No handles any more: the gizmo is what drags.
+    assert!(
+        !step
+            .presentation
+            .visuals
+            .iter()
+            .any(|v| matches!(v.shape, geop_ops::ui::Shape::Handle { .. }))
+    );
+
+    // Seen from the side, the `z` arrow pulled up by 0.33: a reach of
+    // 0.009 snaps to tenths.
+    let side = |z: f64| pointer([0.0, -10.0, z], [0.0, 1.0, 0.0]);
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(2),
+        side(1.05),
+        side(1.38),
+        side(1.2),
+        false,
+    );
+    // From above, the ring about `z` turned from 45 to 90 degrees round.
+    let reach = 0.009;
+    let round = |degrees: f64| {
+        let (s, c) = degrees.to_radians().sin_cos();
+        let r = 7.0 * reach;
+        pointer([r * c, r * s, 10.0], [0.0, 0.0, -1.0])
+    };
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Turn(2),
+        round(45.0),
+        round(92.0),
+        round(60.0),
+        false,
+    );
+    // The cube beyond the `x` arrow pulled out to twice as far.
+    let along = |x: f64| pointer([x, 0.0, 10.0], [0.0, 0.0, -1.0]);
+    let step = drag_gizmo(
+        &mut editor,
+        GizmoPart::Stretch(0),
+        along(12.5 * reach),
+        along(25.0 * reach),
+        along(20.0 * reach),
+        false,
+    );
+    assert_eq!(step.error, None);
+
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let last = editor.program().steps.last().unwrap().clone();
+    let PartOperation::Subd(args) = &last.operation else {
+        panic!("{:?}", last.operation);
+    };
+    // The top's corners `(±1, ±1)`, turned by 45 degrees, lie on the axes
+    // √2 out; stretched along `x`, twice that along it.
+    let r = 2f64.sqrt();
+    let mut corners: Vec<[f64; 3]> = args
+        .cage
+        .face(9)
+        .unwrap()
+        .vertices
+        .iter()
+        .map(|&v| args.cage.vertex(v).unwrap().at)
+        .collect();
+    corners.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    let want = [
+        [-2.0 * r, 0.0, 1.3],
+        [0.0, -r, 1.3],
+        [0.0, r, 1.3],
+        [2.0 * r, 0.0, 1.3],
+    ];
+    for (got, want) in corners.iter().zip(want) {
+        assert!(
+            (0..3).all(|k| (got[k] - want[k]).abs() < 1e-9),
+            "{corners:?}"
+        );
+    }
+}
+
+/// A point of a 3-D sketch, selected, is moved by its gizmo along `x`
+/// only: the `x` arrow dragged up and off to the side moves it along
+/// `x`, as far as the pointer went along it.
+#[test]
+fn a_3d_sketch_point_is_dragged_along_an_axis() {
+    use geop_ops::ui::GizmoPart;
+
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let click = |editor: &mut Editor<S>, origin: [f64; 3], dir: [f64; 3]| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: pointer(origin, dir),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    // A line from the origin to (2, 0, 2), seen from the front.
+    click(&mut editor, [0.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
+    click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let key = |editor: &mut Editor<S>| {
+        event(
+            editor,
+            StepEditEvent::Key {
+                key: "Escape".into(),
+            },
+        )
+    };
+    key(&mut editor);
+    let step = key(&mut editor);
+    assert!(step.presentation.gizmo.is_none(), "nothing selected");
+    let step = click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let gizmo = step.presentation.gizmo.expect("the point has a gizmo");
+    assert!(gizmo.modes.translate && !gizmo.modes.rotate && !gizmo.modes.scale);
+
+    // Its `x` arrow, grabbed from the front, dragged by 0.7 along `x` —
+    // and up, which an arrow does not follow.
+    let front = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
+    let step = drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(0),
+        front(2.05, 2.0),
+        front(2.75, 2.4),
+        front(2.4, 2.2),
+        false,
+    );
+    assert_eq!(step.error, None);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::AddSketch3d(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a 3-D sketch");
+    };
+    let mut points: Vec<[f64; 3]> = args
+        .sketch
+        .points
+        .values()
+        .map(|p| [0, 1, 2].map(|k| p.at[k].to_f64()))
+        .collect();
+    points.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let moved = points.last().unwrap();
+    assert!(
+        (moved[0] - 2.7).abs() < 1e-9 && moved[1].abs() < 1e-9 && (moved[2] - 2.0).abs() < 1e-9,
+        "{points:?}"
+    );
+    assert!(points[0].iter().all(|c| c.abs() < 1e-9), "{points:?}");
+}
+
+/// Move body shifts the body by a gizmo where its middle goes: its `y`
+/// arrow dragged, then the square of the `x`–`z` plane.
+#[test]
+fn a_body_is_moved_by_its_gizmo() {
+    use geop_ops::ui::GizmoPart;
+
+    let (mut editor, _) = editor();
+    let update = editor.handle(Command::New {
+        kind: "move_body".into(),
+    });
+    let step = update.step.expect("move body is edited");
+    let gizmo = step.presentation.gizmo.expect("a gizmo");
+    assert!(gizmo.modes.translate && !gizmo.modes.rotate);
+    let at = [0, 1, 2].map(|k| gizmo.at[k].to_f64());
+    // Looking down `x`, the `y` arrow dragged 0.3 along.
+    let side = |y: f64, z: f64| pointer([at[0] - 10.0, y, z], [1.0, 0.0, 0.0]);
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(1),
+        side(at[1] + 0.05, at[2]),
+        side(at[1] + 0.35, at[2]),
+        side(at[1] + 0.2, at[2]),
+        false,
+    );
+    // Looking down `y` at the moved gizmo, its `x`–`z` square — the one
+    // normal to `y` — dragged by (0.2, -0.4).
+    let at = [at[0], at[1] + 0.3, at[2]];
+    let front = |x: f64, z: f64| pointer([x, at[1] - 10.0, z], [0.0, 1.0, 0.0]);
+    let corner = 0.03;
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Plane(1),
+        front(at[0] + corner, at[2] + corner),
+        front(at[0] + corner + 0.2, at[2] + corner - 0.4),
+        front(at[0] + corner + 0.1, at[2] + corner),
+        false,
+    );
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let PartOperation::MoveBody(args) = &editor.program().steps.last().unwrap().operation else {
+        panic!("a move");
+    };
+    let want = [0.2, 0.3, -0.4];
+    assert!(
+        (0..3).all(|k| (args.translation[k] - want[k]).abs() < 1e-9),
+        "{:?}",
+        args.translation
+    );
+}
+
+/// Placed parts are moved by a gizmo at their origin: a fixed rail turned
+/// a quarter about `z` by its ring, and a carriage on it slid along the
+/// rail by its `z` arrow — the slider joint solved as it is dragged.
+#[test]
+fn placed_parts_are_moved_and_turned_by_the_gizmo() {
+    use geop_ops::part::{ParamValue, pose_parameter};
+    use geop_ops::ui::GizmoPart;
+
+    let (rail, carriage) = ("std:linear_rail.geop", "std:linear_carriage.geop");
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("guide.geop".into()),
+    });
+    editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    editor.handle(dialog("file", Value::Choice(rail.into())));
+    editor.handle(dialog("fixed", Value::Bool(true)));
+    editor.handle(dialog("parameter:size", Value::Choice("MGN9".into())));
+    assert!(editor.handle(Command::Commit).error.is_none());
+    editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    editor.handle(dialog("file", Value::Choice(carriage.into())));
+    editor.handle(dialog("parameter:size", Value::Choice("MGN9H".into())));
+    editor.handle(dialog("add_mate", Value::Choice("slider".into())));
+    editor.handle(dialog(
+        "mate:m1:entities",
+        Value::Entities(vec![
+            EntityRef::datum("part1/axis"),
+            EntityRef::datum("part2/axis"),
+        ]),
+    ));
+    assert!(editor.handle(Command::Commit).error.is_none());
+    let pose = |editor: &Editor<S>, id: &str| match editor.program().state.get(&pose_parameter(id))
+    {
+        Some(ParamValue::Pose(pose)) => *pose,
+        other => panic!("{id}: {other:?}"),
+    };
+    let apply = |pose: &geop_core_math::primitives::Pose<geop_ops::Design>, p: [f64; 3]| {
+        let at = pose.apply(&Vector3::from_array(p.map(geop_ops::Design::from_f64)));
+        [0, 1, 2].map(|k| at[k].to_f64())
+    };
+    let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
+
+    // The carriage, slid 10 along the rail by its `z` arrow, seen from the
+    // side.
+    let start = apply(&pose(&editor, "part2"), [0.0; 3]);
+    let update = editor.handle(Command::Open { id: "part2".into() });
+    let step = update.step.expect("the carriage is edited");
+    let gizmo = step.presentation.gizmo.expect("a placed part has a gizmo");
+    assert!(gizmo.modes.translate && gizmo.modes.rotate);
+    assert!(
+        step.presentation
+            .dialog
+            .get(geop_ops::ui::GIZMO_ORIENTATION)
+            .is_some()
+    );
+    let side = |z: f64| pointer([start[0], start[1] - 100.0, z], [0.0, 1.0, 0.0]);
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(2),
+        side(start[2] + 0.05),
+        side(start[2] + 10.03),
+        side(start[2] + 5.0),
+        false,
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
+    let slid = apply(&pose(&editor, "part2"), [0.0; 3]);
+    assert!(
+        close(slid, [start[0], start[1], start[2] + 10.0]),
+        "{start:?} slid to {slid:?}"
+    );
+
+    // The rail, fixed, turned a quarter about `z` by its ring, seen from
+    // above: it goes where it is turned, and the carriage turns with it.
+    editor.handle(Command::Open { id: "part1".into() });
+    let reach = 0.009;
+    let round = |degrees: f64| {
+        let (s, c) = degrees.to_radians().sin_cos();
+        let r = 7.0 * reach;
+        pointer([r * c, r * s, 100.0], [0.0, 0.0, -1.0])
+    };
+    drag_gizmo(
+        &mut editor,
+        GizmoPart::Turn(2),
+        round(45.0),
+        round(137.0),
+        round(90.0),
+        false,
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
+    let turned = pose(&editor, "part1");
+    assert!(
+        close(apply(&turned, [1.0, 0.0, 0.0]), [0.0, 1.0, 0.0]),
+        "{turned:?}"
+    );
+    assert!(editor.part().check_mates(|_| true).unwrap().converged);
 }
