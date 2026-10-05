@@ -3493,11 +3493,13 @@ fn edge_gap<S: Scalar>(
                 fy = gap_at(y, k)?;
             }
         }
-        // The ends are the domain's own. Which of the three is nearest is
-        // told on the curve's enclosure, which is what the gap is measured
-        // against: its midpoints can call an interior point next to an end
-        // as near as the end, where the enclosure there holds the point
-        // and the end's does not.
+        // The ends are the domain's own. The pcurve's own ends are pinned
+        // where the edge ends, at its vertices: they are measured against
+        // the curve's nearer end, never a point next to it — which can be
+        // as near to a rounding, its enclosure holding the point where the
+        // end's does not, while the validation's clipping, tight at an
+        // end, holds to the end's. Which is nearest is told on the curve's
+        // enclosure, which the gap is measured against.
         let candidates = [
             (c0f, c0),
             (c1f, c1),
@@ -3506,14 +3508,21 @@ fn edge_gap<S: Scalar>(
         let exact_gap_at = |t: f64| -> GeopResult<f64> {
             Ok(distance(super::geometry::point_at(curve, t)?, target))
         };
-        let mut s = candidates[2].1;
-        let mut best = exact_gap_at(candidates[2].0)?;
-        for &(t, exact) in &candidates[..2] {
+        let pinned = i == 0 || i == GAP_SAMPLES;
+        let choices = if pinned {
+            &candidates[..2]
+        } else {
+            &candidates[..]
+        };
+        // The first of the nearest: an end where one is as near.
+        let mut nearest: Option<(S, f64)> = None;
+        for &(t, exact) in choices {
             let d = exact_gap_at(t)?;
-            if d < best {
-                (s, best) = (exact, d);
+            if nearest.is_none_or(|(_, best)| d < best) {
+                nearest = Some((exact, d));
             }
         }
+        let (s, _) = nearest.expect("candidates");
         let near = curve.evaluate(s)?;
         // How far the point lies outside the curve's enclosure: what the
         // curve must widen by to reach it.
