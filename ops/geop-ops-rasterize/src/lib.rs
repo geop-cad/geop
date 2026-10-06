@@ -24,7 +24,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::TriangleFace,
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::Vector3,
 };
 use geop_core_topology::{EdgeId, Face, FaceId, Model, VertexId};
 

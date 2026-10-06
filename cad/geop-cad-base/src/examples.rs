@@ -1688,11 +1688,11 @@ pub fn horn() -> Program {
         "horn",
         SweepArgs {
             profile: "mouth".into(),
-            path: "axis".into(),
+            path: Some(EntityRef::sketch("axis")),
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,
-            rails: vec!["flare".into()],
+            rails: vec![EntityRef::sketch("flare")],
             face: false,
             combine: Combine::NewBody,
         },
@@ -1951,7 +1951,7 @@ pub fn pipe() -> Program {
         "pipe",
         SweepArgs {
             profile: "section".into(),
-            path: "route".into(),
+            path: Some(EntityRef::sketch3d("route")),
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,

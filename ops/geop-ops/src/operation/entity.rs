@@ -3,6 +3,7 @@
 //! placed in it, by its name there behind the instance's
 //! ([`INSTANCE_SEPARATOR`]).
 
+use super::{Chain, piece_names};
 use crate::Part;
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
@@ -12,7 +13,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_sketch::{CurveId, PointId};
+use geop_core_sketch::{CurveId, PointId, Shape};
 use geop_core_topology::Body;
 use serde::{Deserialize, Serialize};
 
@@ -280,6 +281,16 @@ pub fn frame_along<S: Scalar>(
 }
 
 impl EntityRef {
+    /// The sketch `name`.
+    pub fn sketch(name: impl Into<String>) -> Self {
+        EntityRef::Sketch { name: name.into() }
+    }
+
+    /// The 3-D sketch `name`.
+    pub fn sketch3d(name: impl Into<String>) -> Self {
+        EntityRef::Sketch3d { name: name.into() }
+    }
+
     /// The datum it refers to in `part` — for a component of a frame, that
     /// component as a datum of its own. Fails if it is no datum of the
     /// part.
@@ -340,72 +351,165 @@ impl EntityRef {
         }
     }
 
-    /// The curve it refers to in `part` — an edge, of a face or of a wire,
-    /// or a planar sketch's curve, in space — with names for it and its
-    /// ends: an edge's own and its vertices', a sketch curve `c3`'s of
-    /// sketch `K` `K,c3`, and its ends' `K,p1` after the points there — a
-    /// closed one's `K,c3,seam`. Fails for anything else.
-    pub fn resolve_curve<S: Scalar>(&self, part: &Part<S>) -> GeopResult<NamedCurve<S>> {
-        let ctx = with_context!("resolving the curve of {self}");
+    /// The curves it refers to in `part`, as a path, a rail or a guide runs
+    /// along them: an edge, of a face or of a wire, or a planar sketch's
+    /// curve, a chain of its own; a sketch's or a 3-D sketch's one open
+    /// chain of curves, or its one loop. In space, named after the entities
+    /// they are: an edge's own and its vertices', a sketch curve `c3` of
+    /// sketch `K` `K,c3`, its ends' `K,p1` after the points there, and a
+    /// closed one's `K,c3,seam`; a sketch's pieces and joints the same, as
+    /// a profile's are. Fails for anything else.
+    pub fn resolve_chain<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Chain<S>> {
+        let ctx = with_context!("resolving the curves of {self}");
         if let Some((name, inner)) = self.split_instance() {
             let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
-            let curve = inner.resolve_curve(instance.part()).with_context(ctx)?;
+            let chain = inner.resolve_chain(instance.part()).with_context(ctx)?;
             let motion = instance.pose.motion();
-            let prefix = |n: String| format!("{name}{INSTANCE_SEPARATOR}{n}");
-            return Ok(NamedCurve {
-                name: prefix(curve.name),
-                curve: curve.curve.transform(&motion),
-                start: (prefix(curve.start.0), motion.apply(&curve.start.1)),
-                end: (prefix(curve.end.0), motion.apply(&curve.end.1)),
+            let prefix = |n: &String| format!("{name}{INSTANCE_SEPARATOR}{n}");
+            return Ok(Chain {
+                name: prefix(&chain.name),
+                curves: chain.curves.iter().map(|c| c.transform(&motion)).collect(),
+                curve_names: chain.curve_names.iter().map(prefix).collect(),
+                joint_names: chain.joint_names.iter().map(prefix).collect(),
             });
         }
         match self {
             EntityRef::Edge { name } => {
                 let model = part.topology();
                 let edge = model.get_edge(part.edge_id(name).with_context(ctx)?)?;
-                let end = |v| -> GeopResult<(String, Vector3<S>)> {
-                    let vertex_name = part.name_of(v).ok_or_else(|| {
+                let end = |v| {
+                    part.name_of(v).map(str::to_string).ok_or_else(|| {
                         GeopError::new(format!("{v}, an end of edge {name:?}, has no name"))
-                    })?;
-                    Ok((vertex_name.to_string(), model.get_vertex(v)?.point))
+                    })
                 };
-                Ok(NamedCurve {
+                Ok(Chain {
                     name: name.clone(),
-                    curve: edge.curve.clone(),
-                    start: end(edge.start_vertex).with_context(ctx)?,
-                    end: end(edge.end_vertex).with_context(ctx)?,
+                    curves: vec![edge.curve.clone()],
+                    curve_names: vec![name.clone()],
+                    joint_names: vec![
+                        end(edge.start_vertex).with_context(ctx)?,
+                        end(edge.end_vertex).with_context(ctx)?,
+                    ],
                 })
             }
             EntityRef::SketchCurve { sketch, curve } => {
                 let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
                 let geometry = placed.sketch.enclose::<S>().with_context(ctx)?;
                 let class = placed.sketch.point_classes();
-                let end = |p: PointId| {
-                    (
-                        format!("{sketch},{}", class[&p]),
-                        placed.plane.uv_to_xyz(&geometry.points[&p]),
-                    )
-                };
                 let in_space = placed.curve_in_space(*curve, &geometry).with_context(ctx)?;
-                let (start, end) = match placed.sketch.curve(*curve)?.endpoints() {
-                    Some((s, e)) => (end(s), end(e)),
-                    None => {
-                        let seam = in_space.evaluate(in_space.domain().0)?;
-                        let name = format!("{sketch},{curve},seam");
-                        ((name.clone(), seam), (name, seam))
+                let joint_names = match placed.sketch.curve(*curve)?.endpoints() {
+                    Some((s, e)) => vec![
+                        format!("{sketch},{}", class[&s]),
+                        format!("{sketch},{}", class[&e]),
+                    ],
+                    None => vec![format!("{sketch},{curve},seam")],
+                };
+                Ok(Chain {
+                    name: format!("{sketch},{curve}"),
+                    curves: vec![in_space],
+                    curve_names: vec![format!("{sketch},{curve}")],
+                    joint_names,
+                })
+            }
+            EntityRef::Sketch { name } => {
+                let placed = part.sketch(part.sketch_id(name).with_context(ctx)?)?;
+                let sketch = &placed.sketch;
+                let geometry = sketch.enclose::<S>().with_context(ctx)?;
+                let (lp, closed) = match sketch.shape().with_context(ctx)? {
+                    Shape::Chain(chain) => (chain, false),
+                    Shape::Region(region) if region.holes.is_empty() => (region.outer, true),
+                    Shape::Region(_) => {
+                        return Err(GeopError::new(format!(
+                            "the sketch {name:?} has more than one loop: a path or a rail is one chain of curves, or one loop"
+                        )))
+                        .with_context(ctx);
                     }
                 };
-                Ok(NamedCurve {
-                    name: format!("{sketch},{curve}"),
-                    curve: in_space,
-                    start,
-                    end,
+                let pieces = lp.to_nurbs(sketch, &geometry).with_context(ctx)?;
+                let plane = &placed.plane;
+                let (curve_names, joint_names) = piece_names(
+                    name,
+                    &pieces
+                        .iter()
+                        .map(|p| (p.name(), p.start.to_string(), p.end.to_string()))
+                        .collect::<Vec<_>>(),
+                    closed,
+                );
+                Ok(Chain {
+                    name: name.clone(),
+                    curves: pieces
+                        .iter()
+                        .map(|p| p.curve.embed(plane.origin(), plane.u(), plane.v()))
+                        .collect::<GeopResult<_>>()
+                        .with_context(ctx)?,
+                    curve_names,
+                    joint_names,
+                })
+            }
+            EntityRef::Sketch3d { name } => {
+                let sketch = part.sketch3d(part.sketch3d_id(name).with_context(ctx)?)?;
+                let chains = sketch.chains().with_context(ctx)?;
+                let [chain] = chains.as_slice() else {
+                    return Err(GeopError::new(format!(
+                        "the 3-D sketch {name:?} has {} chains of curves: a path is one chain of curves, or one loop",
+                        chains.len()
+                    )))
+                    .with_context(ctx);
+                };
+                let pieces = chain
+                    .to_nurbs(sketch, &sketch.enclose::<S>().with_context(ctx)?)
+                    .with_context(ctx)?;
+                let (curve_names, joint_names) = piece_names(
+                    name,
+                    &pieces
+                        .iter()
+                        .map(|p| (p.name(), p.start.to_string(), p.end.to_string()))
+                        .collect::<Vec<_>>(),
+                    chain.closed,
+                );
+                Ok(Chain {
+                    name: name.clone(),
+                    curves: pieces.into_iter().map(|p| p.curve).collect(),
+                    curve_names,
+                    joint_names,
                 })
             }
             other => Err(GeopError::new(format!(
-                "{other} is no curve: pick an edge or a sketch's curve"
+                "{other} has no curves: pick an edge, a sketch's curve, or a sketch"
             ))),
         }
+    }
+
+    /// The one curve it refers to in `part` — an edge, of a face or of a
+    /// wire, or a planar sketch's curve, in space — with names for it and
+    /// its ends (see [`EntityRef::resolve_chain`]). Fails for anything
+    /// else, and for a sketch of more than one curve.
+    pub fn resolve_curve<S: Scalar>(&self, part: &Part<S>) -> GeopResult<NamedCurve<S>> {
+        let ctx = with_context!("resolving the curve of {self}");
+        let chain = self.resolve_chain(part).with_context(ctx)?;
+        let [curve] = chain.curves.as_slice() else {
+            return Err(GeopError::new(format!(
+                "{self} is {} curves, not one",
+                chain.curves.len()
+            )))
+            .with_context(ctx);
+        };
+        let joints = chain.joints().with_context(ctx)?;
+        let (start, end) = (joints[0], *joints.last().expect("a chain has joints"));
+        let (start_name, end_name) = (
+            chain.joint_names[0].clone(),
+            chain
+                .joint_names
+                .last()
+                .expect("a chain has joints")
+                .clone(),
+        );
+        Ok(NamedCurve {
+            name: chain.curve_names[0].clone(),
+            curve: curve.clone(),
+            start: (start_name, start),
+            end: (end_name, end),
+        })
     }
 
     /// The body it refers to in `part`: a solid by its name, a sheet —

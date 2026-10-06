@@ -42,10 +42,12 @@
 //! "extrude", "args": {...}}`.
 
 mod aspects;
+mod chain;
 mod entity;
 mod frame;
 
 pub use aspects::{Aspects, Role, describe_roles};
+pub use chain::{Chain, end_of, piece_names, start_of};
 pub use entity::{EntityRef, INSTANCE_SEPARATOR, NamedCurve, frame_along};
 
 pub use geop_ops_derive::Operations;

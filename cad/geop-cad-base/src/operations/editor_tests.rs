@@ -1108,8 +1108,8 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
         panic!("a sweep");
     };
     assert_eq!(
-        (sweep.profile.as_str(), sweep.path.as_str()),
-        ("section", route.id.as_str())
+        (sweep.profile.as_str(), sweep.path.as_ref()),
+        ("section", Some(&EntityRef::sketch3d(route.id.as_str())))
     );
     let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
     assert_eq!(part.solid_names().len(), 1);
@@ -3697,7 +3697,7 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     let PartOperation::Sweep(args) = &editor.program().steps.last().unwrap().operation else {
         panic!("a sweep");
     };
-    assert_eq!(args.rails, ["flare"]);
+    assert_eq!(args.rails, [EntityRef::sketch3d("flare")]);
     let part = editor.program().build::<S>(&geop_ops::NoFiles).unwrap();
     assert_eq!(part.solid_names().len(), 1);
     let params = geop_core_topology::validation::ValidationParameters::default();

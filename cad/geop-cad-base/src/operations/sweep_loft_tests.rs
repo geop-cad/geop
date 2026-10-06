@@ -101,7 +101,7 @@ fn bend() -> Sketch {
 fn swept(profile: &str, path: &str) -> SweepArgs {
     SweepArgs {
         profile: profile.into(),
-        path: path.into(),
+        path: Some(EntityRef::sketch(path)),
         orientation: Orientation::FollowPath,
         twist: 0.0,
         end_scale: 1.0,
@@ -813,7 +813,7 @@ fn sweep_along_a_rail_tapers() {
     program.push(
         "cone",
         SweepArgs {
-            rails: vec!["rail".into()],
+            rails: vec![EntityRef::sketch("rail")],
             ..swept("profile", "path")
         },
     );
@@ -869,7 +869,7 @@ fn loft_along_a_guide() {
     program.push(
         "bulge",
         LoftArgs {
-            guides: vec!["guide".into()],
+            guides: vec![EntityRef::sketch("guide")],
             ..lofted(&["bottom", "top"])
         },
     );
@@ -898,7 +898,7 @@ fn rails_and_guides_round_trip() {
     program.push(
         "cone",
         SweepArgs {
-            rails: vec!["rail".into()],
+            rails: vec![EntityRef::sketch("rail")],
             orientation: Orientation::FixedNormal,
             ..swept("profile", "path")
         },
@@ -914,12 +914,15 @@ fn rails_and_guides_round_trip() {
     program.push(
         "skin",
         LoftArgs {
-            guides: vec!["rail".into()],
+            guides: vec![EntityRef::sketch("rail")],
             ..lofted(&["profile", "path"])
         },
     );
     let json = serde_json::to_string(&program).unwrap();
-    assert!(json.contains("\"rails\":[\"rail\"]"), "{json}");
+    assert!(
+        json.contains("\"rails\":[{\"type\":\"Sketch\",\"name\":\"rail\"}]"),
+        "{json}"
+    );
     assert!(json.contains("\"fixed_normal\""), "{json}");
     let back: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(back, program);
@@ -947,7 +950,7 @@ fn loft_along_a_3d_sketch_guide() {
     program.push(
         "bulge",
         LoftArgs {
-            guides: vec!["guide".into()],
+            guides: vec![EntityRef::sketch3d("guide")],
             ..lofted(&["bottom", "top"])
         },
     );
@@ -957,4 +960,87 @@ fn loft_along_a_3d_sketch_guide() {
     let curve = &part.topology().edges[&edge].curve;
     let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
     assert!(middle[0].to_f64() > 1.2, "{middle:?}");
+}
+
+/// A sketch's curves are named as one chain the same as each is named on
+/// its own (`K,c3` for a curve and `K,p1` for a point), so a path or a rail
+/// is spoken of in the names everything else uses.
+#[test]
+fn a_sketchs_chain_is_named_as_its_curves_are() {
+    let mut program = Program::new();
+    program.push("path", sketch(base(FrameAxis::Z), bend()));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    let chain = EntityRef::sketch("path").resolve_chain(&part).unwrap();
+    assert!(!chain.is_closed());
+    let sketch = &part.sketch(part.sketch_id("path").unwrap()).unwrap().sketch;
+    assert_eq!(chain.curves.len(), sketch.curves.len());
+    for (k, id) in sketch.curves.keys().enumerate() {
+        let alone = EntityRef::SketchCurve {
+            sketch: "path".into(),
+            curve: *id,
+        }
+        .resolve_curve(&part)
+        .unwrap();
+        assert_eq!(chain.curve_names[k], alone.name);
+        let mut joints = [&chain.joint_names[k], &chain.joint_names[k + 1]];
+        let mut ends = [&alone.start.0, &alone.end.0];
+        joints.sort();
+        ends.sort();
+        assert_eq!(joints, ends, "the joints of {}", alone.name);
+    }
+}
+
+/// A sweep runs along an edge of a solid as along a sketch: here the edge a
+/// block's front stands on, under a round profile at its start.
+#[test]
+fn sweep_along_an_edge() {
+    let mut program = Program::new();
+    let mut footprint = Sketch::new();
+    polygon(
+        &mut footprint,
+        &[[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]],
+    );
+    program.push("footprint", sketch(base(FrameAxis::Z), footprint));
+    program.push(
+        "block",
+        ExtrudeArgs {
+            sketch: "footprint".into(),
+            extent: Extents::blind(1.0),
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push("profile", sketch(base(FrameAxis::X), circle(0.0, 0.0, 0.1)));
+    let part = program.build::<S>(&NoFiles).unwrap();
+    let model = part.topology();
+    let along_x = model
+        .edges
+        .iter()
+        .find(|(_, e)| {
+            let (a, b) = (
+                model.vertices[&e.start_vertex].point,
+                model.vertices[&e.end_vertex].point,
+            );
+            let near = |p: [f64; 3], q: [f64; 3]| (0..3).all(|k| (p[k] - q[k]).abs() < 1e-9);
+            let (a, b) = (
+                [a[0].to_f64(), a[1].to_f64(), a[2].to_f64()],
+                [b[0].to_f64(), b[1].to_f64(), b[2].to_f64()],
+            );
+            let (o, x) = ([0.0, 0.0, 0.0], [2.0, 0.0, 0.0]);
+            (near(a, o) && near(b, x)) || (near(a, x) && near(b, o))
+        })
+        .map(|(id, _)| part.name_of(*id).unwrap().to_string())
+        .expect("the block has an edge from the origin to (2, 0, 0)");
+    program.push(
+        "rod",
+        SweepArgs {
+            path: Some(EntityRef::Edge { name: along_x }),
+            ..swept("profile", "unused")
+        },
+    );
+    let part = program.build::<S>(&NoFiles).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().solids.len(), 2);
+    assert!(part.face_id("sweep(rod,start)").is_ok());
+    assert!(part.face_id("sweep(rod,end)").is_ok());
 }

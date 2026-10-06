@@ -7,10 +7,9 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_sketch::{Shape, space::Sketch3d};
 use geop_ops::{
-    Context, Design, Library, Namer, Part,
-    operation::Operation,
+    Context, Library, Namer, Part,
+    operation::{Chain, EntityRef, Operation},
     ui::{Choice, Form, Number, Unit},
 };
 use geop_ops_booleans::{Combine, Tool};
@@ -21,7 +20,7 @@ use super::{
     path_field, paths_field, sketch_field,
 };
 use crate::{
-    path_sweep::{Control, Guide, Orientation, PathChain, sweep_along},
+    path_sweep::{Control, Orientation, sweep_along},
     sweep::SweepLoop,
 };
 
@@ -65,8 +64,9 @@ pub struct Sweep;
 pub struct SweepArgs {
     /// The sketch to sweep.
     pub profile: String,
-    /// The sketch or 3-D sketch whose curves it is swept along.
-    pub path: String,
+    /// What it is swept along: a sketch's or a 3-D sketch's one chain of
+    /// curves, or one loop, or an edge.
+    pub path: Option<EntityRef>,
     /// Whether the profile turns with the path or keeps facing one way.
     #[serde(default)]
     pub orientation: Orientation,
@@ -77,10 +77,10 @@ pub struct SweepArgs {
     /// The profile's size at the end, as a multiple of its size where drawn.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub end_scale: f64,
-    /// Sketches or 3-D sketches whose curves guide the profile — one or
-    /// two.
+    /// What guides the profile — one or two, each a path as the sweep's
+    /// own is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rails: Vec<String>,
+    pub rails: Vec<EntityRef>,
     /// Sweep the profile's curves into faces standing on their own, rather
     /// than its area into a solid.
     #[serde(default)]
@@ -128,8 +128,10 @@ impl Operation for Sweep {
             .filter_map(|(id, _)| Some((id.0, before.name_of(id)?.to_string())))
             .last();
         let path = match newest_3d {
-            Some((id, name)) if sketches.last().is_none_or(|(newest, _)| *newest < id) => name,
-            _ => sketches.pop().map(|(_, name)| name).unwrap_or_default(),
+            Some((id, name)) if sketches.last().is_none_or(|(newest, _)| *newest < id) => {
+                Some(EntityRef::Sketch3d { name })
+            }
+            _ => sketches.pop().map(|(_, name)| EntityRef::Sketch { name }),
         };
         SweepArgs {
             profile: sketches.pop().map(|(_, name)| name).unwrap_or_default(),
@@ -214,7 +216,15 @@ impl Operation for Sweep {
     ) -> GeopResult<Part<S>> {
         let ctx = with_context!("sweep({operation_id}, {args:?})");
         let namer = Namer::new("sweep", operation_id)?;
-        if args.profile == args.path {
+        let profile = EntityRef::Sketch {
+            name: args.profile.clone(),
+        };
+        let path = args
+            .path
+            .as_ref()
+            .ok_or_else(|| GeopError::new("sweep: pick the path to sweep along"))
+            .with_context(ctx)?;
+        if *path == profile {
             return Err(GeopError::new(
                 "sweep: the profile and the path are two different sketches",
             ))
@@ -242,20 +252,17 @@ impl Operation for Sweep {
         }
         .with_context(ctx)?;
         let plane = &placed.plane;
-        let chain = path_chain(&part, &args.path).with_context(ctx)?;
+        let chain = path.resolve_chain(&part).with_context(ctx)?;
         let chain = starting_near(chain, &profile_centre(plane, &loops)?)?;
         let mut rails = Vec::new();
-        for name in &args.rails {
-            if *name == args.profile || *name == args.path {
+        for rail in &args.rails {
+            if *rail == profile || rail == path {
                 return Err(GeopError::new(format!(
-                    "sweep: the rail {name:?} is the profile or the path: a rail is a sketch of its own"
+                    "sweep: the rail {rail} is the profile or the path: a rail is a curve of its own"
                 )))
                 .with_context(ctx);
             }
-            rails.push(Guide {
-                name: name.clone(),
-                chain: path_chain(&part, name).with_context(ctx)?,
-            });
+            rails.push(rail.resolve_chain(&part).with_context(ctx)?);
         }
         let control = Control {
             orientation: args.orientation,
@@ -292,69 +299,6 @@ impl Operation for Sweep {
     }
 }
 
-/// The curves of the sketch or 3-D sketch `name` of `part` as a path or a
-/// rail: its one open chain, or its one loop, in space, named after the sketch's
-/// elements as a profile is (see [`sketch_profile`]): `L,c3` for a piece,
-/// `L,p2` for a joint.
-pub fn path_chain<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<PathChain<S>> {
-    if let Ok(id) = part.sketch3d_id(name) {
-        return chain_in_space(part.sketch3d(id)?, name);
-    }
-    let placed = part.sketch(part.sketch_id(name)?)?;
-    let sketch = &placed.sketch;
-    let geometry = sketch.enclose::<S>()?;
-    let (lp, closed) = match sketch.shape()? {
-        Shape::Chain(chain) => (chain, false),
-        Shape::Region(region) if region.holes.is_empty() => (region.outer, true),
-        Shape::Region(_) => {
-            return Err(GeopError::new(format!(
-                "sweep: the sketch {name:?} has more than one loop: a path or a rail is one chain of curves, or one loop"
-            )));
-        }
-    };
-    let profile = sketch_profile(name, lp.to_nurbs(sketch, &geometry)?, closed);
-    let plane = &placed.plane;
-    Ok(PathChain {
-        curves: profile
-            .curves
-            .iter()
-            .map(|c| c.embed(plane.origin(), plane.u(), plane.v()))
-            .collect::<GeopResult<_>>()?,
-        curve_names: profile.curve_names,
-        joint_names: profile.joint_names,
-    })
-}
-
-/// The one chain of curves of the 3-D sketch `name`, as a path (see
-/// [`path_chain`]).
-fn chain_in_space<S: Scalar>(sketch: &Sketch3d<Design>, name: &str) -> GeopResult<PathChain<S>> {
-    let chains = sketch.chains()?;
-    let [chain] = chains.as_slice() else {
-        return Err(GeopError::new(format!(
-            "sweep: the 3-D sketch {name:?} has {} chains of curves: a path is one chain of curves, or one loop",
-            chains.len()
-        )));
-    };
-    let pieces = chain.to_nurbs(sketch, &sketch.enclose::<S>()?)?;
-    let mut joint_names: Vec<String> = pieces
-        .iter()
-        .map(|p| format!("{name},{}", p.start))
-        .collect();
-    if !chain.closed
-        && let Some(last) = pieces.last()
-    {
-        joint_names.push(format!("{name},{}", last.end));
-    }
-    Ok(PathChain {
-        curve_names: pieces
-            .iter()
-            .map(|p| format!("{name},{}", p.name()))
-            .collect(),
-        joint_names,
-        curves: pieces.into_iter().map(|p| p.curve).collect(),
-    })
-}
-
 /// Where the profile `loops`, drawn in `plane`, is: the centre of its outer
 /// loop's joints — a point to find the nearest end of the path from.
 fn profile_centre<S: Scalar>(
@@ -378,7 +322,7 @@ fn profile_centre<S: Scalar>(
 /// `chain` starting where it comes nearest to `centre`: an open one at its
 /// nearer end, a closed one at its nearest joint. Which is a free choice of
 /// where to start; the nearest is what the profile is drawn at.
-fn starting_near<S: Scalar>(chain: PathChain<S>, centre: &[f64; 3]) -> GeopResult<PathChain<S>> {
+fn starting_near<S: Scalar>(chain: Chain<S>, centre: &[f64; 3]) -> GeopResult<Chain<S>> {
     let distance =
         |p: &Vector3<S>| -> f64 { (0..3).map(|k| (p[k].to_f64() - centre[k]).powi(2)).sum() };
     let joints = chain.joints()?;

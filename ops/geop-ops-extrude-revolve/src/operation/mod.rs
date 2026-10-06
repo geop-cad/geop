@@ -17,7 +17,7 @@ mod sweep;
 pub use extrude::{Extrude, ExtrudeArgs, reach_past, shape_loops};
 pub use loft::{Loft, LoftArgs};
 pub use revolve::{Revolve, RevolveArgs};
-pub use sweep::{Sweep, SweepArgs, path_chain};
+pub use sweep::{Sweep, SweepArgs};
 
 use std::collections::HashSet;
 
@@ -81,86 +81,56 @@ fn sketch_field<'a, S: Scalar, A: 'a>(
     );
 }
 
-/// The path field `key` of a form, labelled the same: a sketch or a 3-D
-/// sketch whose curves something runs along, `set` given its name (none
-/// when the field is cleared) — or, before there is any, a hint to draw
-/// one.
+/// The path field `key` of a form, labelled the same: something curves
+/// run along — a sketch, a 3-D sketch or an edge — `set` given it (none
+/// when the field is cleared) — or, before there is any sketch, a hint to
+/// draw one.
 fn path_field<'a, S: Scalar, A: 'a>(
     form: &mut Form<'a, S, A>,
     before: &Part<S>,
     key: &str,
-    path: &str,
-    set: impl Fn(&mut A, String) + 'a,
+    path: &Option<EntityRef>,
+    set: impl Fn(&mut A, Option<EntityRef>) + 'a,
 ) {
     if before.sketches().next().is_none() && before.sketches3d().next().is_none() {
         form.text(key, "No sketch yet — add one first.", Tone::Hint);
         return;
     }
-    let value = if path.is_empty() {
-        Vec::new()
-    } else {
-        vec![path_ref(before, path)]
-    };
     form.reference(
         key,
         key,
-        value,
+        path.iter().cloned().collect(),
         &[Role::Path],
         None,
         false,
-        move |edit, picked| {
-            let name = match picked.as_slice() {
-                [entity] => path_name(entity).unwrap_or_default(),
-                _ => String::new(),
-            };
-            set(edit.args, name);
-        },
+        move |edit, picked| set(edit.args, picked.into_iter().next()),
     );
 }
 
-/// The paths field `key` of a form, labelled `label`: sketches or 3-D
-/// sketches whose curves something runs along — a sweep's rails, a loft's
-/// guides — `set` given their names. Nothing before there is any sketch.
+/// The paths field `key` of a form, labelled `label`: what curves run along
+/// — a sweep's rails, a loft's guides — `set` given them. Nothing before
+/// there is any sketch.
 fn paths_field<'a, S: Scalar, A: 'a>(
     form: &mut Form<'a, S, A>,
     before: &Part<S>,
     key: &str,
     label: &str,
-    paths: &[String],
-    set: impl Fn(&mut A, Vec<String>) + 'a,
+    paths: &[EntityRef],
+    set: impl Fn(&mut A, Vec<EntityRef>) + 'a,
 ) {
     if before.sketches().next().is_none() && before.sketches3d().next().is_none() {
         return;
     }
-    let value = paths.iter().map(|name| path_ref(before, name)).collect();
     form.reference(
         key,
         label,
-        value,
+        paths.to_vec(),
         &[Role::Path],
         None,
         true,
-        move |edit, picked| set(edit.args, picked.iter().filter_map(path_name).collect()),
+        move |edit, picked| set(edit.args, picked),
     );
     form.optional(key);
-}
-
-/// The sketch or 3-D sketch `name` of `before`, as a reference.
-fn path_ref<S: Scalar>(before: &Part<S>, name: &str) -> EntityRef {
-    let name = name.to_string();
-    if before.sketch3d_id(&name).is_ok() {
-        EntityRef::Sketch3d { name }
-    } else {
-        EntityRef::Sketch { name }
-    }
-}
-
-/// The name of the sketch or 3-D sketch `entity` is, if it is one.
-fn path_name(entity: &EntityRef) -> Option<String> {
-    match entity {
-        EntityRef::Sketch { name } | EntityRef::Sketch3d { name } => Some(name.clone()),
-        _ => None,
-    }
 }
 
 /// How far one side of an extrude or revolve goes: a length — an angle, in

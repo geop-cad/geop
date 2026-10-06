@@ -54,11 +54,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{Namer, Part};
+use geop_ops::{Namer, Part, operation::Chain};
 
 use crate::{
     common::{Profile, bilinear, end_point, start_point},
-    path_sweep::{Guide, PathChain},
     plain::{Plain, V, add, scale, sub},
     sweep::{Frame, Path, Span, SweepLoop, skin},
 };
@@ -471,7 +470,7 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
 /// A loft's guide, run from the first section to the last, and where it
 /// crosses each section: a curve of its chain and a parameter along it.
 struct Crossed<S: Scalar> {
-    chain: PathChain<S>,
+    chain: Chain<S>,
     at: Vec<(usize, S)>,
 }
 
@@ -483,9 +482,9 @@ const GUIDE_MIN_SUBDIVISION: f64 = 1e-7;
 /// the first one's plane — run the other way if it ends there — ending on
 /// the last one's, and crossing every plane between exactly once. An error,
 /// naming the guide and the section, otherwise.
-fn crossings<S: Scalar>(sections: &[Section<S>], guide: &Guide<S>) -> GeopResult<Crossed<S>> {
+fn crossings<S: Scalar>(sections: &[Section<S>], guide: &Chain<S>) -> GeopResult<Crossed<S>> {
     let name = &guide.name;
-    if guide.chain.is_closed() {
+    if guide.is_closed() {
         return Err(GeopError::new(format!(
             "loft: the guide {name} is a closed loop: a guide runs from the first profile to the last"
         )));
@@ -493,15 +492,15 @@ fn crossings<S: Scalar>(sections: &[Section<S>], guide: &Guide<S>) -> GeopResult
     let (first, last) = (&sections[0], &sections[sections.len() - 1]);
     let on =
         |section: &Section<S>, p: &Vector3<S>| section.plane.to_uvw(p)[2].could_be_equal(S::ZERO);
-    let ends = |chain: &PathChain<S>| -> GeopResult<(Vector3<S>, Vector3<S>)> {
+    let ends = |chain: &Chain<S>| -> GeopResult<(Vector3<S>, Vector3<S>)> {
         let joints = chain.joints()?;
         Ok((joints[0], joints[joints.len() - 1]))
     };
-    let (start, _) = ends(&guide.chain)?;
+    let (start, _) = ends(guide)?;
     let chain = if on(first, &start) {
-        guide.chain.clone()
+        guide.clone()
     } else {
-        guide.chain.reversed()
+        guide.reversed()
     };
     let (start, end) = ends(&chain)?;
     if !on(first, &start) || !on(last, &end) {
@@ -564,7 +563,7 @@ fn crossings<S: Scalar>(sections: &[Section<S>], guide: &Guide<S>) -> GeopResult
 /// on every side — a search domain, nothing more.
 fn plane_patch<S: Scalar>(
     plane: &CoordinateSystem<S>,
-    chain: &PathChain<S>,
+    chain: &Chain<S>,
 ) -> GeopResult<geop_core_geometry::nurb_surface::NurbSurface3D<S>> {
     let mut lo = [f64::INFINITY; 2];
     let mut hi = [f64::NEG_INFINITY; 2];
@@ -600,7 +599,7 @@ type Guided<S> = (Vec<Section<S>>, Vec<Crossed<S>>);
 /// them in the order of the guides — the joint named `K,G` for the section
 /// `K` and the guide `G`, unless one is there already — and the guides as
 /// crossed. Guides take the place of matching points: the two do not mix.
-fn guided<S: Scalar>(sections: &[Section<S>], guides: &[Guide<S>]) -> GeopResult<Guided<S>> {
+fn guided<S: Scalar>(sections: &[Section<S>], guides: &[Chain<S>]) -> GeopResult<Guided<S>> {
     if guides.len() > MAX_GUIDES {
         return Err(GeopError::new(format!(
             "loft: {} guides given, but a loft follows at most {MAX_GUIDES}",
@@ -902,7 +901,7 @@ pub fn loft<S: Scalar>(
     namer: &Namer,
     solid: Option<&str>,
     sections: &[Section<S>],
-    guides: &[Guide<S>],
+    guides: &[Chain<S>],
 ) -> GeopResult<BuiltBody> {
     let ctx = with_context!(
         "loft({}, through {:?})",
@@ -1241,7 +1240,7 @@ mod tests {
     }
 
     /// The quadratic Bézier guide `name` through the control points `points`.
-    fn guide<S: Scalar>(name: &str, points: [[f64; 3]; 3]) -> Guide<S> {
+    fn guide<S: Scalar>(name: &str, points: [[f64; 3]; 3]) -> Chain<S> {
         let f = S::from_f64;
         let curve = NurbCurve::try_new(
             2,
@@ -1254,19 +1253,17 @@ mod tests {
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
         .unwrap();
-        Guide {
+        Chain {
             name: name.into(),
-            chain: PathChain {
-                curves: vec![curve],
-                curve_names: vec![format!("{name},c")],
-                joint_names: vec![format!("{name},s"), format!("{name},e")],
-            },
+            curves: vec![curve],
+            curve_names: vec![format!("{name},c")],
+            joint_names: vec![format!("{name},s"), format!("{name},e")],
         }
     }
 
     /// Lofts `sections` along `guides` into a solid in a fresh part, and
     /// checks it is valid.
-    fn guided_loft<S: Scalar>(sections: &[Section<S>], guides: &[Guide<S>]) -> Part<S> {
+    fn guided_loft<S: Scalar>(sections: &[Section<S>], guides: &[Chain<S>]) -> Part<S> {
         let mut part = Part::<S>::new();
         let namer = Namer::new("loft", "l").unwrap();
         loft(&mut part, &namer, Some(&namer.root()), sections, guides).unwrap();
@@ -1277,14 +1274,14 @@ mod tests {
 
     /// The edge `name` of `part` runs along `guide`: one point for one at
     /// every parameter — the walls' edge there is the guide itself.
-    fn assert_follows<S: Scalar>(part: &Part<S>, name: &str, guide: &Guide<S>) {
+    fn assert_follows<S: Scalar>(part: &Part<S>, name: &str, guide: &Chain<S>) {
         let edge = part.edge_id(name).unwrap();
         let curve = &part.topology().edges[&edge].curve;
         for i in 0..=8 {
             let t = S::from_f64(i as f64 / 8.0);
             let (a, b) = (
                 curve.evaluate(t).unwrap(),
-                guide.chain.curves[0].evaluate(t).unwrap(),
+                guide.curves[0].evaluate(t).unwrap(),
             );
             // The edge's inner control points are the guide's, but for the
             // rounding of the shape between, a free choice in plain numbers.
@@ -1393,7 +1390,7 @@ mod tests {
             section("a", level(0.0), square::<S>(1.0)),
             section("b", level(2.0), square(1.0)),
         ];
-        let refused = |sections: &[Section<S>], guides: &[Guide<S>], says: &str| {
+        let refused = |sections: &[Section<S>], guides: &[Chain<S>], says: &str| {
             let mut part = Part::<S>::new();
             let namer = Namer::new("loft", "l").unwrap();
             let error = loft(&mut part, &namer, Some("loft(l)"), sections, guides).unwrap_err();
@@ -1421,7 +1418,7 @@ mod tests {
             "use one or the other",
         );
         // Four guides.
-        let four: Vec<Guide<S>> = (0..4)
+        let four: Vec<Chain<S>> = (0..4)
             .map(|k| {
                 let (x, y) = [(1., 1.), (-1., 1.), (-1., -1.), (1., -1.)][k];
                 guide(

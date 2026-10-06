@@ -46,62 +46,16 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{Namer, Part};
+use geop_ops::{
+    Namer, Part,
+    operation::{Chain, end_of, start_of},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     plain::{Plain, V, add, cross, dot, plain, scale, sub, unit},
     sweep::{Frame, Path, Span, SweepLoop, sweep},
 };
-
-/// A path to sweep along: a chain of 3-D curves, each on `[0, 1]` and
-/// starting where the one before ends, named like a [`crate::common::Profile`]
-/// — `joint_names[i]` where `curves[i]` starts; a closed path, ending where
-/// it starts, has one joint per curve, an open one also its end.
-#[derive(Clone, Debug)]
-pub struct PathChain<S: Scalar> {
-    pub curves: Vec<NurbCurve3D<S>>,
-    pub curve_names: Vec<String>,
-    pub joint_names: Vec<String>,
-}
-
-impl<S: Scalar> PathChain<S> {
-    pub fn is_closed(&self) -> bool {
-        self.joint_names.len() == self.curves.len()
-    }
-
-    /// The open chain run the other way; every name stays with its curve
-    /// or joint.
-    pub fn reversed(&self) -> Self {
-        Self {
-            curves: self.curves.iter().rev().map(|c| c.reverse()).collect(),
-            curve_names: self.curve_names.iter().rev().cloned().collect(),
-            joint_names: self.joint_names.iter().rev().cloned().collect(),
-        }
-    }
-
-    /// The closed chain starting at its joint `k`.
-    pub fn starting_at(&self, k: usize) -> Self {
-        let mut out = self.clone();
-        out.curves.rotate_left(k);
-        out.curve_names.rotate_left(k);
-        out.joint_names.rotate_left(k);
-        out
-    }
-
-    /// The joints, where they are.
-    pub fn joints(&self) -> GeopResult<Vec<Vector3<S>>> {
-        let mut joints = self
-            .curves
-            .iter()
-            .map(start_of)
-            .collect::<GeopResult<Vec<_>>>()?;
-        if !self.is_closed() {
-            joints.push(end_of(self.curves.last().expect("a chain has curves"))?);
-        }
-        Ok(joints)
-    }
-}
 
 /// Which way the profile faces as it travels along the path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,16 +68,6 @@ pub enum Orientation {
     /// Facing the way it is drawn all along: moved along the path, never
     /// turned — the path has to keep running through its plane.
     FixedNormal,
-}
-
-/// A guide curve: an open chain of curves a point of the profile follows —
-/// a sweep's rail, starting on the profile's plane (see [`Control::rails`]),
-/// or a loft's guide, running from the first profile through every other
-/// (see [`crate::loft`]) — and what it is called in errors.
-#[derive(Clone, Debug)]
-pub struct Guide<S: Scalar> {
-    pub name: String,
-    pub chain: PathChain<S>,
 }
 
 /// How the profile changes as it travels, besides being carried along the
@@ -146,7 +90,7 @@ pub struct Control<S: Scalar> {
     pub orientation: Orientation,
     pub twist: f64,
     pub end_scale: f64,
-    pub rails: Vec<Guide<S>>,
+    pub rails: Vec<Chain<S>>,
 }
 
 impl<S: Scalar> Default for Control<S> {
@@ -245,20 +189,6 @@ fn projected<S: Scalar>(
     })
 }
 
-/// The point a clamped curve starts at: its first control point.
-fn start_of<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<Vector3<S>> {
-    let cp = curve.control_points[0];
-    Ok(Vector3::from_array([
-        cp[0].div(cp[3])?,
-        cp[1].div(cp[3])?,
-        cp[2].div(cp[3])?,
-    ]))
-}
-
-fn end_of<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<Vector3<S>> {
-    start_of(&curve.reverse())
-}
-
 /// What a path curve is, as far as sweeping along it goes.
 enum Kind<S: Scalar> {
     Line,
@@ -343,7 +273,7 @@ fn is_smooth<S: Scalar>(arriving: &Vector3<S>, leaving: &Vector3<S>) -> GeopResu
 /// station where it is drawn, carried along from there. Its stations are
 /// named after the chain's joints, its spans after its curves.
 pub fn along_chain<S: Scalar>(
-    chain: &PathChain<S>,
+    chain: &Chain<S>,
     plane: &CoordinateSystem<S>,
     control: &Control<S>,
 ) -> GeopResult<Path<S>> {
@@ -489,7 +419,7 @@ pub fn along_chain<S: Scalar>(
 /// since a NURBS of positive weights varies no more than its control
 /// polygon.
 fn translated<S: Scalar>(
-    chain: &PathChain<S>,
+    chain: &Chain<S>,
     drawn: &Frame<S>,
     along_normal: bool,
 ) -> GeopResult<Path<S>> {
@@ -841,26 +771,26 @@ fn in_plane(frame: &Plain, x: V) -> [f64; 2] {
 /// A rail followed along the sweep: where along it the last section
 /// crossed it, as a parameter running `0..n` over its `n` curves.
 struct Tracked<'a, S: Scalar> {
-    rail: &'a Guide<S>,
-    chain: PathChain<S>,
+    rail: &'a Chain<S>,
+    chain: Chain<S>,
     tau: f64,
 }
 
 impl<'a, S: Scalar> Tracked<'a, S> {
     /// `rail`, run from its end on the profile's `plane` — an error if
     /// neither end could be on it.
-    fn new(rail: &'a Guide<S>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
-        let joints = rail.chain.joints()?;
+    fn new(rail: &'a Chain<S>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
+        let joints = rail.joints()?;
         let on_plane = |p: &Vector3<S>| plane.to_uvw(p)[2].could_be_equal(S::ZERO);
-        let chain = if rail.chain.is_closed() {
+        let chain = if rail.is_closed() {
             return Err(GeopError::new(format!(
                 "path sweep: the rail {} is a closed loop: a rail is an open chain of curves, starting on the profile's plane",
                 rail.name
             )));
         } else if on_plane(&joints[0]) {
-            rail.chain.clone()
+            rail.clone()
         } else if on_plane(&joints[joints.len() - 1]) {
-            rail.chain.reversed()
+            rail.reversed()
         } else {
             return Err(GeopError::new(format!(
                 "path sweep: the rail {} starts on the profile's plane at neither end: draw it from a point of the profile",
@@ -1140,7 +1070,7 @@ fn carried_samples<S: Scalar>(
 /// the frames along a spline: the swept body is defined by it, every edge
 /// and face built from the same frames.
 fn controlled<S: Scalar>(
-    chain: &PathChain<S>,
+    chain: &Chain<S>,
     kinds: &[Kind<S>],
     plane: &CoordinateSystem<S>,
     rigid: &Path<S>,
@@ -1387,7 +1317,7 @@ fn controlled<S: Scalar>(
 /// enough that a profile is only refused where it comes within a hair of
 /// the axis.
 fn clear_of_bends<S: Scalar>(
-    chain: &PathChain<S>,
+    chain: &Chain<S>,
     path: &Path<S>,
     loops: &[SweepLoop<S>],
 ) -> GeopResult<()> {
@@ -1450,7 +1380,7 @@ pub fn sweep_along<S: Scalar>(
     part: &mut Part<S>,
     namer: &Namer,
     solid: Option<&str>,
-    chain: &PathChain<S>,
+    chain: &Chain<S>,
     plane: &CoordinateSystem<S>,
     loops: &[SweepLoop<S>],
     control: &Control<S>,
@@ -1530,9 +1460,10 @@ mod tests {
         plane(origin, v3(0., 1., 0.), v3(0., 0., 1.))
     }
 
-    fn chain<S: Scalar>(curves: Vec<NurbCurve3D<S>>, closed: bool) -> PathChain<S> {
+    fn chain<S: Scalar>(curves: Vec<NurbCurve3D<S>>, closed: bool) -> Chain<S> {
         let n = curves.len();
-        PathChain {
+        Chain {
+            name: "path".to_string(),
             curve_names: (0..n).map(|i| format!("k{i}")).collect(),
             joint_names: (0..n + usize::from(!closed))
                 .map(|i| format!("j{i}"))
@@ -1556,7 +1487,7 @@ mod tests {
     fn swept<S: Scalar>(
         outer: Vec<NurbCurve2D<S>>,
         plane: &CoordinateSystem<S>,
-        path: &PathChain<S>,
+        path: &Chain<S>,
     ) -> Part<S> {
         let mut part = Part::<S>::new();
         let namer = Namer::new("sweep", "s").unwrap();
@@ -1861,7 +1792,7 @@ mod tests {
     fn swept_with<S: Scalar>(
         outer: Vec<NurbCurve2D<S>>,
         plane: &CoordinateSystem<S>,
-        path: &PathChain<S>,
+        path: &Chain<S>,
         control: &Control<S>,
     ) -> Part<S> {
         let mut part = Part::<S>::new();
@@ -1881,14 +1812,14 @@ mod tests {
         part
     }
 
-    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Guide<S> {
-        Guide {
+    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Chain<S> {
+        Chain {
             name: name.into(),
-            chain: chain(curves, false),
+            ..chain(curves, false)
         }
     }
 
-    fn with_rails<S: Scalar>(rails: Vec<Guide<S>>) -> Control<S> {
+    fn with_rails<S: Scalar>(rails: Vec<Chain<S>>) -> Control<S> {
         Control {
             rails,
             ..Control::default()
@@ -1896,7 +1827,7 @@ mod tests {
     }
 
     /// The straight path along `x` from the origin to `(length, 0, 0)`.
-    fn along_x<S: Scalar>(length: f64) -> PathChain<S> {
+    fn along_x<S: Scalar>(length: f64) -> Chain<S> {
         chain(
             vec![line3(v3::<S>(0., 0., 0.), v3(length, 0., 0.)).unwrap()],
             false,
@@ -2172,7 +2103,7 @@ mod tests {
 
     /// What a controlled sweep refuses, by name.
     fn check_controlled_sweeps_refuse_what_they_cannot_build<S: Scalar>() {
-        let refused = |path: &PathChain<S>, control: Control<S>, says: &str| {
+        let refused = |path: &Chain<S>, control: Control<S>, says: &str| {
             let error = along_chain(path, &yz(Vector3::zero()), &control).unwrap_err();
             assert!(error.root_message().contains(says), "{error:?}");
         };

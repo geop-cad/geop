@@ -60,7 +60,8 @@ pub struct Aspects<S: Scalar> {
     pub sheet: bool,
     /// A sketch, as a whole: its regions, to sweep.
     pub sketch: bool,
-    /// Curves to run along: a planar or a 3-D sketch's.
+    /// Curves to run along: a planar or a 3-D sketch's, or an edge of a
+    /// solid or a face.
     pub path: bool,
     /// A feature: what a step did by combining tools with a solid.
     pub feature: bool,
@@ -95,6 +96,8 @@ impl<S: Scalar> Aspects<S> {
                 g.round = g.arc.as_ref().map(|arc| arc.circle.axis());
                 g.curve = Some(curve);
                 g.edge = part.topology().wire_of_edge(id).is_none();
+                // A 3-D sketch's wire is picked as a whole (see `Sketch3d`).
+                g.path = g.edge;
             }
             EntityRef::Face { name } => {
                 let id = part.face_id(name).with_context(ctx)?;
@@ -316,7 +319,7 @@ impl Role {
             Role::Solid => "a solid",
             Role::Sheet => "a face on its own",
             Role::Sketch => "a sketch",
-            Role::Path => "a sketch or a 3-D sketch",
+            Role::Path => "a sketch, a 3-D sketch or an edge",
             Role::Feature => "a feature, by a face it made",
             Role::Frame => "a face, an edge, a point or a datum",
         }

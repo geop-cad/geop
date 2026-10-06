@@ -59,12 +59,9 @@ use geop_core_math::{
 };
 use geop_ops::{
     Part,
-    operation::{Aspects, EntityRef},
+    operation::{Aspects, Chain, EntityRef},
 };
-use geop_ops_extrude_revolve::{
-    common::{arc3, line3},
-    path_sweep::PathChain,
-};
+use geop_ops_extrude_revolve::common::{arc3, line3};
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]
@@ -130,7 +127,7 @@ impl<S: Scalar> Waypoint<S> {
 /// the arc from `m{i}` on.
 #[derive(Clone, Debug)]
 pub struct RoutePath<S: Scalar> {
-    pub chain: PathChain<S>,
+    pub chain: Chain<S>,
     /// Where each curve of the chain lies, as the route says it:
     /// `between point 1 (…) and point 2 (…)`.
     pub places: Vec<String>,
@@ -187,7 +184,8 @@ impl<S: Scalar> RoutePath<S> {
         }
         let tangents = tangents(waypoints)?;
         let label = |i: usize| &waypoints[i].label;
-        let mut chain = PathChain {
+        let mut chain = Chain {
+            name: "route".to_string(),
             curves: Vec::new(),
             curve_names: Vec::new(),
             joint_names: Vec::new(),

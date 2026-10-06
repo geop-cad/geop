@@ -14,11 +14,8 @@ use geop_ops::{
 use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
-use super::{extrude::sketch_profile, paths_field, sweep::path_chain};
-use crate::{
-    loft::{Section, loft, mark},
-    path_sweep::Guide,
-};
+use super::{extrude::sketch_profile, paths_field};
+use crate::loft::{Section, loft, mark};
 
 /// Lofts through the profiles of two or more sketches, in order, into a
 /// solid named `loft(L)` for the operation `L` — each sketch's one area, a
@@ -68,7 +65,7 @@ pub struct LoftArgs {
     /// Sketches or 3-D sketches whose curves guide the loft from the first
     /// profile to the last — at most three — instead of matching points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub guides: Vec<String>,
+    pub guides: Vec<EntityRef>,
     /// Loft into faces standing on their own, rather than a solid.
     #[serde(default)]
     pub face: bool,
@@ -179,16 +176,15 @@ impl Operation for Loft {
         let guides = args
             .guides
             .iter()
-            .map(|name| {
-                if args.profiles.contains(name) {
+            .map(|guide| {
+                if let EntityRef::Sketch { name } = guide
+                    && args.profiles.contains(name)
+                {
                     return Err(GeopError::new(format!(
-                        "loft: the guide {name:?} is one of the profiles: a guide is a sketch of its own"
+                        "loft: the guide {name:?} is one of the profiles: a guide is a curve of its own"
                     )));
                 }
-                Ok(Guide {
-                    name: name.clone(),
-                    chain: path_chain(&part, name)?,
-                })
+                guide.resolve_chain(&part)
             })
             .collect::<GeopResult<Vec<_>>>()
             .with_context(ctx)?;

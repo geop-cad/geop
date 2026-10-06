@@ -74,7 +74,7 @@ fn piped(r: f64, route: Sketch3d) -> Program {
         "pipe",
         SweepArgs {
             profile: "section".into(),
-            path: "route".into(),
+            path: Some(EntityRef::sketch3d("route")),
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,
