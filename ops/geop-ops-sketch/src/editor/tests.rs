@@ -8,7 +8,7 @@ use geop_core_math::{
 use geop_ops::{
     Context, EntityRef, NoFiles, ORIGIN, Operations, Part,
     part::{ParamValue, State},
-    ui::{Control, PartView, Presentation, Reach, StepEditEvent, StepEditor},
+    ui::{Button, Control, PartView, Presentation, Reach, StepEditEvent, StepEditor},
 };
 use serde::{Deserialize, Serialize};
 

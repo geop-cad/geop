@@ -896,8 +896,8 @@ pub(crate) fn event<S: Scalar>(
                 .to_vec();
             session.released = *done;
         }
-        CanvasEvent::Key { key } if key == "Escape" => session.selected = None,
-        CanvasEvent::Key { key } if key == "Delete" || key == "Backspace" => {
+        CanvasEvent::Cancel => session.selected = None,
+        CanvasEvent::Delete => {
             if let Some(id) = session.selected.take() {
                 args.mates.remove(&id);
             }

@@ -46,8 +46,8 @@ use geop_ops::{
     Design, Part,
     operation::Role,
     ui::{
-        Action, Button, CanvasEvent, Edit, Form, InHand, ListItem, Pointer, Shape, Style, Tone,
-        Value, Visual, hit::hit_visuals,
+        Action, CanvasEvent, Edit, Form, InHand, ListItem, Pointer, Shape, Style, Tone, Value,
+        Visual, hit::hit_visuals,
     },
 };
 

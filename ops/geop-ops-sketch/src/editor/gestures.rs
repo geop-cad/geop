@@ -625,43 +625,46 @@ impl<S: Scalar> Editing<'_, S> {
         self.commit(next);
     }
 
+    /// Escape: close the prompt, else finish the draft, else put the tool
+    /// down.
+    fn cancel(&mut self) {
+        if self.s.prompt.take().is_some() {
+            self.s.error = None;
+        } else if !self.s.draft.placed.is_empty() {
+            self.finish_draft();
+        } else {
+            self.s.tool = Tool::Select;
+            self.s.stroke = Stroke::default();
+        }
+    }
+
+    /// Enter and a secondary click: apply the constraint tool in hand, if
+    /// what it needs is picked, else finish the draft.
+    fn confirm(&mut self) {
+        match self.s.tool {
+            Tool::Constrain(tool) => {
+                let (picks, _) = selected(self.sketch(), self.selection);
+                if tool.fit(self.sketch(), &picks).complete {
+                    self.apply_constraint(tool, None);
+                }
+            }
+            _ => self.finish_draft(),
+        }
+    }
+
+    /// A key that is a tool's shortcut, lowercased.
     fn key(&mut self, key: &str) {
-        match key {
-            "Escape" => {
-                if self.s.prompt.take().is_some() {
-                    self.s.error = None;
-                } else if !self.s.draft.placed.is_empty() {
-                    self.finish_draft();
-                } else {
-                    self.s.tool = Tool::Select;
-                    self.s.stroke = Stroke::default();
-                }
-            }
-            "Enter" => match self.s.tool {
-                Tool::Constrain(tool) => {
-                    let (picks, _) = selected(self.sketch(), self.selection);
-                    if tool.fit(self.sketch(), &picks).complete {
-                        self.apply_constraint(tool, None);
-                    }
-                }
-                _ => self.finish_draft(),
-            },
-            "Delete" | "Backspace" => self.delete_selection(),
-            "x" | "X" => self.toggle_construction(),
-            other => {
-                let other = other.to_lowercase();
-                let shortcut = |s: Option<&str>| s == Some(other.as_str());
-                if shortcut(Some(TRIM_SHORTCUT)) {
-                    self.take(Tool::Trim);
-                } else if let Some(info) = DrawTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
-                    self.take(Tool::Draw(info.tool));
-                } else if let Some(info) = ModifyTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
-                    self.take(Tool::Modify(info.tool));
-                } else if let Some(info) = ConstraintTool::ALL.iter().find(|i| shortcut(i.shortcut))
-                {
-                    self.press_constraint(info.tool);
-                }
-            }
+        let shortcut = |s: Option<&str>| s == Some(key);
+        if key == "x" {
+            self.toggle_construction();
+        } else if shortcut(Some(TRIM_SHORTCUT)) {
+            self.take(Tool::Trim);
+        } else if let Some(info) = DrawTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
+            self.take(Tool::Draw(info.tool));
+        } else if let Some(info) = ModifyTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
+            self.take(Tool::Modify(info.tool));
+        } else if let Some(info) = ConstraintTool::ALL.iter().find(|i| shortcut(i.shortcut)) {
+            self.press_constraint(info.tool);
         }
     }
 
@@ -686,6 +689,9 @@ impl<S: Scalar> Editing<'_, S> {
     pub(super) fn event(&mut self, event: &CanvasEvent<S>) {
         match event {
             CanvasEvent::Key { key } => self.key(key),
+            CanvasEvent::Cancel => self.cancel(),
+            CanvasEvent::Confirm => self.confirm(),
+            CanvasEvent::Delete => self.delete_selection(),
             CanvasEvent::Hover { pointer, shift } => self.hover(pointer, *shift),
             CanvasEvent::Leave => {
                 self.s.cursor = None;
@@ -696,22 +702,20 @@ impl<S: Scalar> Editing<'_, S> {
             }
             CanvasEvent::Click {
                 pointer,
-                button,
                 double,
                 shift,
-            } => match (button, self.s.tool) {
-                (Button::Secondary, _) => self.finish_draft(),
-                (Button::Primary, Tool::Select) if *double => self.double_click(pointer),
-                (Button::Primary, Tool::Select) => {}
-                (Button::Primary, Tool::Constrain(tool)) => self.pick_for(tool, pointer),
-                (Button::Primary, Tool::Modify(tool)) => self.modify_click(tool, pointer),
-                (Button::Primary, Tool::Trim) => {
+            } => match self.s.tool {
+                Tool::Select if *double => self.double_click(pointer),
+                Tool::Select => {}
+                Tool::Constrain(tool) => self.pick_for(tool, pointer),
+                Tool::Modify(tool) => self.modify_click(tool, pointer),
+                Tool::Trim => {
                     let met: Vec<_> = self.meets(pointer).into_iter().collect();
                     self.trim(&met);
                     // What is under the pointer now.
                     self.hover(pointer, *shift);
                 }
-                (Button::Primary, Tool::Draw(tool)) => {
+                Tool::Draw(tool) => {
                     if *double {
                         self.finish_draft();
                     } else if let Some((p, t)) = self.in_plane(pointer) {

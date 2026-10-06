@@ -169,14 +169,22 @@ pub enum CanvasEvent<S: Scalar> {
     Hover { pointer: Pointer<S>, shift: bool },
     /// The pointer left the viewport.
     Leave,
-    /// A click that selected nothing: a secondary one, a double one, one
-    /// while the operation has a tool in hand, one on nothing selectable.
+    /// A primary click that selected nothing: a double one, one while the
+    /// operation has a tool in hand, one on nothing selectable.
     Click {
         pointer: Pointer<S>,
-        button: Button,
         double: bool,
         shift: bool,
     },
+    /// What Escape does: end what is in progress — a chain being drawn,
+    /// the points picked for a tool — and, with nothing in progress, put
+    /// the tool in hand down. The selection is cleared already.
+    Cancel,
+    /// What Enter and a secondary click do: finish what is in progress, a
+    /// chain being drawn, a constraint to apply; the tool stays in hand.
+    Confirm,
+    /// What Delete and Backspace do: delete the selection.
+    Delete,
     /// The draggable visual `key` dragged in the plane worked in, from
     /// where it was grabbed to where the pointer is now — `pointer`, with
     /// `shift` held or not. `done` on release.
@@ -202,6 +210,7 @@ pub enum CanvasEvent<S: Scalar> {
     /// then — which they are again whenever this is sent. `done` on
     /// release.
     Gizmo { drag: GizmoDrag<S>, done: bool },
-    /// A key, as the browser names it.
+    /// Any other key, as the browser names it, a letter lowercased: a
+    /// tool's shortcut.
     Key { key: String },
 }

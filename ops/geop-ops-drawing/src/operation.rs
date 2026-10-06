@@ -1061,7 +1061,6 @@ impl Operation for Drawing {
             }
             CanvasEvent::Click {
                 pointer,
-                button: geop_ops::ui::Button::Primary,
                 double: false,
                 ..
             } if s.tool != Tool::Select => {
@@ -1072,10 +1071,7 @@ impl Operation for Drawing {
                 s.click(args, part, layout, at, hit);
                 s.hover = under(layout, pointer, s.tool, &s.picks).cloned();
             }
-            CanvasEvent::Click {
-                button: geop_ops::ui::Button::Secondary,
-                ..
-            } => s.picks.clear(),
+            CanvasEvent::Confirm => s.picks.clear(),
             CanvasEvent::Move {
                 key,
                 from,
@@ -1108,7 +1104,7 @@ impl Operation for Drawing {
                     s.drag = None;
                 }
             }
-            CanvasEvent::Key { key } if key == "Escape" => {
+            CanvasEvent::Cancel => {
                 s.refused = None;
                 if s.picks.is_empty() {
                     s.tool = Tool::Select;
@@ -1116,7 +1112,7 @@ impl Operation for Drawing {
                 s.picks.clear();
                 s.hover = None;
             }
-            CanvasEvent::Key { key } if key == "Delete" || key == "Backspace" => {
+            CanvasEvent::Delete => {
                 let mut gone: Vec<usize> =
                     selection.iter().filter_map(|k| annotation_of(k)).collect();
                 gone.sort_unstable();

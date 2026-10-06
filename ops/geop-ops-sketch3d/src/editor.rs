@@ -36,8 +36,8 @@ use geop_ops::{
     Context, Design, Part,
     operation::{Aspects, EntityRef, Role},
     ui::{
-        Action, Button, CanvasEvent, Edit, Form, Gizmo, InHand, ListItem, Number, Pointer, Shape,
-        Style, Tone, Unit, Value, Visual, hit::hit_visuals,
+        Action, CanvasEvent, Edit, Form, Gizmo, InHand, ListItem, Number, Pointer, Shape, Style,
+        Tone, Unit, Value, Visual, hit::hit_visuals,
     },
 };
 
@@ -518,26 +518,17 @@ pub(crate) fn event<S: Scalar>(
                 .flatten();
         }
         CanvasEvent::Leave => s.hover = None,
-        CanvasEvent::Click {
-            button: Button::Primary,
-            double: true,
-            ..
-        } if tool.draws() => finish(before, args, s),
-        CanvasEvent::Click {
-            pointer,
-            button: Button::Primary,
-            shift,
-            ..
-        } if tool.draws() => {
+        CanvasEvent::Click { double: true, .. } if tool.draws() => finish(before, args, s),
+        CanvasEvent::Click { pointer, shift, .. } if tool.draws() => {
             if let Some(located) = locate(&context, args, s, tool, pointer, *shift) {
                 click(before, args, s, tool, located);
             }
             s.hover = None;
         }
-        CanvasEvent::Click {
-            button: Button::Secondary,
-            ..
-        } => finish(before, args, s),
+        CanvasEvent::Confirm => finish(before, args, s),
+        CanvasEvent::Cancel if !s.placed.is_empty() => finish(before, args, s),
+        CanvasEvent::Cancel => take_up(before, args, s, Tool::Select),
+        CanvasEvent::Delete => remove_selected(before, args, selection),
         CanvasEvent::Move { key, to, .. } => {
             let point = args
                 .sketch
@@ -562,17 +553,11 @@ pub(crate) fn event<S: Scalar>(
                 .collect();
             solve(before, args, &drags);
         }
-        CanvasEvent::Key { key } => match key.as_str() {
-            "Escape" if !s.placed.is_empty() => finish(before, args, s),
-            "Escape" => take_up(before, args, s, Tool::Select),
-            "Enter" => finish(before, args, s),
-            "Delete" | "Backspace" => remove_selected(before, args, selection),
-            key => {
-                if let Some(&(tool, ..)) = Tool::ALL.iter().find(|t| t.3 == key) {
-                    take_up(before, args, s, tool);
-                }
+        CanvasEvent::Key { key } => {
+            if let Some(&(tool, ..)) = Tool::ALL.iter().find(|t| t.3 == key) {
+                take_up(before, args, s, tool);
             }
-        },
+        }
         _ => {}
     }
 }

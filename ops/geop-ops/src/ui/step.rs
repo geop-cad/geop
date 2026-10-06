@@ -82,6 +82,11 @@ enum Grab<O, S: Scalar> {
 ///   it has an orientation of its own, the dialog gets a
 ///   [`GIZMO_ORIENTATION`] field to choose the world's axes or its own.
 ///
+/// - Escape, Enter, Delete and a secondary click mean the same in every
+///   tool, and reach it as [`CanvasEvent::Cancel`], [`CanvasEvent::Confirm`]
+///   and [`CanvasEvent::Delete`]; any other key, lowercased, is a tool's
+///   shortcut.
+///
 /// Whatever else the pointer and the keys do goes to the operation as a
 /// [`CanvasEvent`]: clicks while it has a tool in hand, and those on
 /// nothing, hovers, keys.
@@ -420,17 +425,17 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 let hit = (*button == Button::Primary && !*double && !in_hand)
                     .then(|| hit_visuals(&form.visuals, pointer, Some(view), selectable))
                     .flatten();
-                match hit {
-                    Some(hit) => toggle(&mut self.selection, hit.visual.key.clone()),
-                    None => {
-                        if *button == Button::Primary && !*shift && !in_hand {
+                match (hit, button) {
+                    (_, Button::Secondary) => self.pass(context, CanvasEvent::Confirm),
+                    (Some(hit), _) => toggle(&mut self.selection, hit.visual.key.clone()),
+                    (None, _) => {
+                        if !*shift && !in_hand {
                             self.selection.clear();
                         }
                         self.pass(
                             context,
                             CanvasEvent::Click {
                                 pointer: *pointer,
-                                button: *button,
                                 double: *double,
                                 shift: *shift,
                             },
@@ -444,12 +449,20 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 done,
                 shift,
             } => self.drag(context, view, &form, from, to, *done, *shift, false),
-            StepEditEvent::Key { key } => {
-                if key == "Escape" {
+            StepEditEvent::Key { key } => match key.as_str() {
+                "Escape" => {
                     self.selection.clear();
+                    self.pass(context, CanvasEvent::Cancel);
                 }
-                self.pass(context, CanvasEvent::Key { key: key.clone() });
-            }
+                "Enter" => self.pass(context, CanvasEvent::Confirm),
+                "Delete" | "Backspace" => self.pass(context, CanvasEvent::Delete),
+                _ => self.pass(
+                    context,
+                    CanvasEvent::Key {
+                        key: key.to_lowercase(),
+                    },
+                ),
+            },
         }
     }
 

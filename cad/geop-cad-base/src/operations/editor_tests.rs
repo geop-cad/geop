@@ -4010,3 +4010,145 @@ fn a_sketch_is_copied_and_pasted() {
     });
     assert!(refused.error.unwrap().contains("pasting"));
 }
+
+/// A gesture of the key and pointer grammar every tool shares.
+#[derive(Clone, Copy, Debug)]
+enum Gesture {
+    Enter,
+    SecondaryClick,
+    Escape,
+}
+
+impl Gesture {
+    fn send(self, editor: &mut Editor<S>) {
+        let pointer = from_above(0.0, 0.0);
+        let sent = match self {
+            Gesture::Enter => StepEditEvent::Key {
+                key: "Enter".into(),
+            },
+            Gesture::Escape => StepEditEvent::Key {
+                key: "Escape".into(),
+            },
+            Gesture::SecondaryClick => StepEditEvent::Click {
+                pointer,
+                button: Button::Secondary,
+                double: false,
+                shift: false,
+            },
+        };
+        event(editor, sent);
+    }
+}
+
+/// The curves of the sketch the step being edited is, once committed, as
+/// text: what was drawn, for a failed count to say — not the axes a new
+/// sketch starts with.
+fn drawn_curves(editor: &mut Editor<S>) -> Vec<String> {
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    match &editor.program().steps.last().unwrap().operation {
+        PartOperation::AddSketch(args) => args
+            .sketch
+            .curves
+            .values()
+            .filter(|c| !c.construction)
+            .map(|c| format!("{c:?}"))
+            .collect(),
+        PartOperation::AddSketch3d(args) => args
+            .sketch
+            .curves
+            .values()
+            .map(|c| format!("{c:?}"))
+            .collect(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Enter, a secondary click and Escape all end the chain being drawn, in the
+/// planar sketch and the 3-D sketch alike: two lines drawn after one, not a
+/// chain of three. A second Escape puts the tool down, so that the next
+/// click draws nothing; and a tool's key is the same typed with shift.
+#[test]
+fn every_drawing_tool_ends_its_chain_the_same_way() {
+    for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
+        // The planar sketch, on the origin's xy plane seen from above.
+        let mut editor = Editor::<S>::new();
+        editor.handle(Command::New {
+            kind: "add_sketch".into(),
+        });
+        let click = |editor: &mut Editor<S>, x: f64, y: f64| {
+            editor.handle(click_at(from_above(x, y)));
+        };
+        click(&mut editor, 0.04, 0.04);
+        editor.handle(dialog("tool", Value::Choice("line".into())));
+        click(&mut editor, 0.0, 0.0);
+        click(&mut editor, 1.0, 0.0);
+        gesture.send(&mut editor);
+        click(&mut editor, 0.0, 1.0);
+        click(&mut editor, 1.0, 1.0);
+        let curves = drawn_curves(&mut editor);
+        assert_eq!(curves.len(), 2, "planar, {gesture:?}: {curves:#?}");
+
+        // The 3-D sketch: its line tool by its key, in either case.
+        for key in ["l", "L"] {
+            let mut editor = Editor::<S>::new();
+            editor.handle(Command::New {
+                kind: "add_sketch3d".into(),
+            });
+            event(&mut editor, StepEditEvent::Key { key: key.into() });
+            let click = |editor: &mut Editor<S>, x: f64, y: f64| {
+                editor.handle(click_at(pointer([x, y, 10.0], [0.0, 0.0, -1.0])));
+            };
+            click(&mut editor, 0.0, 0.0);
+            click(&mut editor, 1.0, 0.0);
+            gesture.send(&mut editor);
+            click(&mut editor, 0.0, 1.0);
+            click(&mut editor, 1.0, 1.0);
+            let curves = drawn_curves(&mut editor);
+            assert_eq!(curves.len(), 2, "3-D, {gesture:?}, {key:?}: {curves:#?}");
+        }
+    }
+}
+
+/// A second Escape puts the drawing tool down: the next click draws nothing.
+#[test]
+fn a_second_escape_puts_the_drawing_tool_down() {
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let click = |editor: &mut Editor<S>, x: f64, y: f64| {
+        editor.handle(click_at(from_above(x, y)));
+    };
+    click(&mut editor, 0.04, 0.04);
+    editor.handle(dialog("tool", Value::Choice("line".into())));
+    click(&mut editor, 0.0, 0.0);
+    click(&mut editor, 1.0, 0.0);
+    Gesture::Escape.send(&mut editor);
+    Gesture::Escape.send(&mut editor);
+    click(&mut editor, 0.0, 1.0);
+    click(&mut editor, 1.0, 1.0);
+    let curves = drawn_curves(&mut editor);
+    assert_eq!(curves.len(), 1, "{curves:#?}");
+}
+
+/// A tool's key is the same typed with shift or caps lock: in the 3-D
+/// sketch, `A` takes the arc tool as `a` does.
+#[test]
+fn a_tools_key_is_the_same_typed_in_capitals() {
+    for key in ["a", "A"] {
+        let mut editor = Editor::<S>::new();
+        editor.handle(Command::New {
+            kind: "add_sketch3d".into(),
+        });
+        event(&mut editor, StepEditEvent::Key { key: key.into() });
+        for (x, y) in [(0.0, 0.0), (1.0, 1.0), (2.0, 0.0)] {
+            editor.handle(click_at(pointer([x, y, 10.0], [0.0, 0.0, -1.0])));
+        }
+        let curves = drawn_curves(&mut editor);
+        assert!(
+            curves.len() == 1 && curves[0].contains("Arc"),
+            "{key:?}: {curves:#?}"
+        );
+    }
+}

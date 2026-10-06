@@ -595,7 +595,7 @@ impl Operation for Subd {
                     .transform(&vertices, args.mirror, |p| drag.apply_f64(p));
                 session.relative = None;
             }
-            CanvasEvent::Key { key } if key == "Delete" || key == "Backspace" => {
+            CanvasEvent::Delete => {
                 let (_, faces) = selected(selection);
                 if !faces.is_empty() {
                     args.cage.delete_faces(&faces);
