@@ -430,7 +430,10 @@ button.inline {
 .timeline li.step-box.disabled {
   cursor: default;
 }
+/* The name takes the room, its buttons at the box's end. */
 .timeline li.step-box .step-name {
+  flex: 1;
+  min-width: 0;
   font-family: ui-monospace, monospace;
   overflow: hidden;
   text-overflow: ellipsis;

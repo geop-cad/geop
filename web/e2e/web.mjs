@@ -28,10 +28,17 @@ const checks = new Checks(page, errors);
 
 const check = (name, body) => checks.check(name, body);
 
-/** The app as a new visitor sees it: no files kept from before, one empty part. */
-async function fresh() {
+/**
+ * The app as a new visitor sees it — no files kept from before, one empty
+ * part — but offering every operation: the checks reach the experimental
+ * ones too. `reduced` leaves reduced mode on, as a visitor has it.
+ */
+async function fresh({ reduced = false } = {}) {
   await page.goto(server.url);
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate((reduced) => {
+    localStorage.clear();
+    if (!reduced) localStorage.setItem("geop.reducedMode", "off");
+  }, reduced);
   await page.reload();
   await settle(page);
 }
@@ -138,18 +145,22 @@ for (const width of [1625, 1400, 1100, 900]) {
   });
 }
 
+// As a visitor sees it, in reduced mode: with every operation shown, the
+// experimental ones take room the others then find in their menus.
 await check("at 1625 px the big operations are big, the small ones small, and every group's caption shows whole", async () => {
   await page.setViewportSize({ width: 1625, height: 900 });
-  await fresh();
+  await fresh({ reduced: true });
   const operations = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.operations);
-  const tier = (t) => operations.filter((o) => o.tier === t).map((o) => o.label);
+  const tier = (t) => operations.filter((o) => o.tier === t && !o.experimental).map((o) => o.label);
   const labels = async (selector) => (await page.locator(selector).allInnerTexts()).map((l) => l.replace(/\s+/g, " ").trim());
   const big = await labels(".operation-ribbon button.op-button.big");
   const small = await labels(".operation-ribbon button.op-button.small");
   const wantBig = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Linear pattern", "SubD", "Base flange", "Part", "Drawing"];
   expect(JSON.stringify(tier("Big")) === JSON.stringify(wantBig), `the editor's big operations: ${tier("Big").join(", ")}`);
-  expect(JSON.stringify(big) === JSON.stringify(wantBig), `big: ${big.join(", ")}`);
-  const wantSmall = [...tier("Small"), "Drag"];
+  // Drag is the editor's own tool, not an operation, and big beside Part.
+  const wantRibbon = [...wantBig.slice(0, -1), "Drag", "Drawing"];
+  expect(JSON.stringify(big) === JSON.stringify(wantRibbon), `big: ${big.join(", ")}`);
+  const wantSmall = tier("Small");
   const notSmall = wantSmall.filter((l) => !small.includes(l));
   expect(notSmall.length === 0, `not shown small: ${notSmall.join(", ")}`);
   const shownMenu = tier("Menu").filter((l) => big.includes(l) || small.includes(l));
@@ -171,20 +182,44 @@ await check("at 1625 px the big operations are big, the small ones small, and ev
 
 await check("the toolbar at 1625, 1400, 1100, 900 and 800 px", async () => {
   fs.mkdirSync(path.join(WEB, "e2e", "out"), { recursive: true });
-  for (const width of [1625, 1400, 1100, 900, 800]) {
-    await page.setViewportSize({ width, height: 900 });
-    await fresh();
-    await page.screenshot({ path: path.join(WEB, "e2e", "out", `toolbar-${width}.png`) });
-    // On a phone the operations are a tab of their own, not in the bar.
-    const ribbon = await page.locator(".operation-strip").isVisible();
-    expect(ribbon === width > 860, `at ${width} px the ribbon is ${ribbon ? "shown" : "hidden"}`);
-    if (width <= 860) {
-      const grid = await page.locator(".mobile-bottom .operation-grid button.op-button").count();
-      expect(grid > 40, `the phone's tab offers ${grid} operations`);
+  try {
+    for (const width of [1625, 1400, 1100, 900, 800]) {
+      await page.setViewportSize({ width, height: 900 });
+      await fresh();
+      await page.screenshot({ path: path.join(WEB, "e2e", "out", `toolbar-${width}.png`) });
+      // On a phone the operations are a tab of their own, not in the bar.
+      const ribbon = await page.locator(".operation-strip").isVisible();
+      expect(ribbon === width > 860, `at ${width} px the ribbon is ${ribbon ? "shown" : "hidden"}`);
+      if (width <= 860) {
+        const grid = await page.locator(".mobile-bottom .operation-grid button.op-button").count();
+        expect(grid > 40, `the phone's tab offers ${grid} operations`);
+      }
     }
+  } finally {
+    // Every check after this one is on a desktop's window, whatever failed.
+    await page.setViewportSize({ width: 1400, height: 900 });
   }
-  await page.setViewportSize({ width: 1400, height: 900 });
   return "screenshots in e2e/out/toolbar-*.png";
+});
+
+await check("reduced mode, as a visitor has it, offers the robust operations, and Help shows all", async () => {
+  await fresh({ reduced: true });
+  const operations = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.operations);
+  const experimental = operations.filter((o) => o.experimental).map((o) => o.label);
+  expect(experimental.length > 0, "no operation is experimental");
+  const offered = await operationLabels(page);
+  const shown = experimental.filter((l) => offered.includes(l));
+  expect(shown.length === 0, `offered in reduced mode, though experimental: ${shown.join(", ")}`);
+  for (const label of ["Sketch", "Extrude", "Hole", "Fillet", "Thread", "Chamfer", "Shell", "SubD", "Flat pattern", "Part", "Drag", "Drawing", "Import STEP"]) {
+    expect(offered.includes(label), `${label} is not offered in reduced mode`);
+  }
+  await page.locator(".help-menu .dropdown-trigger").click();
+  await page.locator(".help-menu .dropdown-item", { hasText: "Show all operations" }).click();
+  await settle(page);
+  const all = await operationLabels(page);
+  const missing = experimental.filter((l) => !all.includes(l));
+  expect(missing.length === 0, `not offered with every operation shown: ${missing.join(", ")}`);
+  return `${offered.length} operations in reduced mode, ${all.length} with every one shown`;
 });
 
 // ── text selection ───────────────────────────────────────────────────────
