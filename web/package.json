@@ -10,6 +10,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "node --test \"test/*.test.ts\"",
     "preview": "vite preview",
     "build:vscode": "vite build --mode vscode",
     "e2e": "node e2e/web.mjs",

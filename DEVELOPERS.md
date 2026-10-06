@@ -171,5 +171,8 @@ File menu, opens and cancels every operation, sketches and extrudes a
 part by clicks, weighs it, and downloads every export; `npm run
 e2e:vscode` opens generated example workspaces in the VS Code
 extension's page against a real `geop serve` and checks that edits are
-written back. A bug they find in Rust gets a Rust test as well (see
-`set_tests.rs`, `editor_tests.rs`).
+written back. Logic of the front end that needs no browser lives in a
+module of its own and is unit tested with `npm test` in `web/` (Node's
+own runner, `web/test/`), as the click and double-click rules are
+(`web/src/gestures.ts`). A bug they find in Rust gets a Rust test as well
+(see `set_tests.rs`, `editor_tests.rs`).

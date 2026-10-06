@@ -27,11 +27,7 @@ import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 import { GizmoLayer } from "./gizmo3d";
-
-/** How far, in pixels, a press may move and still be a click. */
-const CLICK_PX = 4;
-/** How soon, in milliseconds, a second click makes a double click. */
-const DOUBLE_MS = 350;
+import { isDoubleClick, movedFromPress } from "./gestures";
 
 /** The kinds of datum a click can pick something of, looking for `roles`: a frame's origin, axes and planes are points, lines and planes too. */
 function datumKinds(roles: Role[]): DatumKind[] {
@@ -504,7 +500,7 @@ export function SceneViewer({
       shift = e.shiftKey;
       if (press) {
         if (e.pointerId !== press.id) return;
-        if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_PX) press.moved = true;
+        if (movedFromPress(press, { x: e.clientX, y: e.clientY })) press.moved = true;
         if (press.grabbed && press.moved) pendingDrag = { x: e.clientX, y: e.clientY };
         return;
       }
@@ -531,10 +527,8 @@ export function SceneViewer({
       }
       if (done.moved || (done.button !== 0 && done.button !== 2)) return;
       const now = performance.now();
-      const double =
-        lastClick != null &&
-        now - lastClick.time < DOUBLE_MS &&
-        Math.hypot(e.clientX - lastClick.x, e.clientY - lastClick.y) <= CLICK_PX;
+      const at = { x: e.clientX, y: e.clientY };
+      const double = isDoubleClick(lastClick, at, now);
       lastClick = double ? null : { x: e.clientX, y: e.clientY, time: now };
       send({
         type: "click",
