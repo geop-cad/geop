@@ -19,25 +19,6 @@ use crate::{
     rolling::Radii,
 };
 
-/// Edges by name, as a reference field holds them.
-fn edge_refs(names: &[String]) -> Vec<EntityRef> {
-    names
-        .iter()
-        .map(|name| EntityRef::Edge { name: name.clone() })
-        .collect()
-}
-
-/// The names of the edges a reference field holds.
-fn edge_names(picked: &[EntityRef]) -> Vec<String> {
-    picked
-        .iter()
-        .filter_map(|e| match e {
-            EntityRef::Edge { name } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The edges field of both operations.
 fn edges_field<'a, S: Scalar, A: 'a>(
     form: &mut Form<'a, S, A>,
@@ -47,11 +28,11 @@ fn edges_field<'a, S: Scalar, A: 'a>(
     form.reference(
         "edges",
         "edges",
-        edge_refs(edges),
+        EntityRef::of_names(EntityRef::edge, edges),
         &[Role::Edge],
         None,
         true,
-        move |e, picked| *set(e.args) = edge_names(&picked),
+        move |e, picked| *set(e.args) = EntityRef::names_of(EntityRef::edge, &picked),
     );
 }
 

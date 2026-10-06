@@ -17,8 +17,6 @@ use geop_ops_booleans::{imprint::imprint_on_face, remesh::remesh::RemeshParams};
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
 use serde::{Deserialize, Serialize};
 
-use crate::{face_name, face_ref};
-
 /// Projects the curves of the sketch named `sketch` along its plane's
 /// normal onto the face named `face`, and divides the face along what they
 /// project to: each curve the face is divided along becomes an edge of it,
@@ -96,11 +94,15 @@ impl Operation for ProjectCurve {
         f.reference(
             "face",
             "onto face",
-            face_ref(&args.face),
+            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
             &[Role::Face],
             None,
             false,
-            |e, p| e.args.face = face_name(&p),
+            |e, p| {
+                e.args.face = EntityRef::names_of(EntityRef::face, &p)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         f
     }

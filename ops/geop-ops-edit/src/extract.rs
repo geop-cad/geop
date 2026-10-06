@@ -7,13 +7,11 @@ use geop_core_math::{
     with_context,
 };
 use geop_ops::{
-    Context, Library, Namer, Part,
+    Context, EntityRef, Library, Namer, Part,
     operation::{Operation, Role},
     ui::Form,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::{face_name, face_ref};
 
 /// Copies the face named `face` — of a solid, or of a sheet — into a sheet
 /// of its own: a face standing on its own, on the same surface and within
@@ -52,11 +50,15 @@ impl Operation for ExtractFace {
         f.reference(
             "face",
             "face",
-            face_ref(&args.face),
+            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
             &[Role::Face],
             None,
             false,
-            |e, p| e.args.face = face_name(&p),
+            |e, p| {
+                e.args.face = EntityRef::names_of(EntityRef::face, &p)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         f
     }

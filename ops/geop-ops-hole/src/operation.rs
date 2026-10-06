@@ -273,23 +273,6 @@ fn centres<S: Scalar>(
     Ok(found)
 }
 
-/// The faces of a reference field, by name: none, if it holds no face.
-fn face_name(picked: &[EntityRef]) -> String {
-    match picked {
-        [EntityRef::Face { name }] => name.clone(),
-        _ => String::new(),
-    }
-}
-
-/// A face by name, as a reference field holds it.
-fn face_ref(name: &str) -> Vec<EntityRef> {
-    if name.is_empty() {
-        Vec::new()
-    } else {
-        vec![EntityRef::Face { name: name.into() }]
-    }
-}
-
 /// The circle of `diameter` around `centre` in the plane normal to
 /// `normal`, as a polyline: what a hole looks like on its face.
 fn circle<S: Scalar>(centre: Vector3<S>, normal: &Vector3<S>, diameter: f64) -> Option<Shape<S>> {
@@ -351,11 +334,15 @@ impl Operation for Hole {
         f.reference(
             "face",
             "face",
-            face_ref(&args.face),
+            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
             &[Role::Plane],
             None,
             false,
-            |e, picked| e.args.face = face_name(&picked),
+            |e, picked| {
+                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         f.reference(
             "points",
@@ -857,11 +844,15 @@ impl Operation for Thread {
         f.reference(
             "face",
             "face",
-            face_ref(&args.face),
+            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
             &[Role::Round],
             None,
             false,
-            |e, picked| e.args.face = face_name(&picked),
+            |e, picked| {
+                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         f.select(
             "size",

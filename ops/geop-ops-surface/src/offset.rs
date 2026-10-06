@@ -8,13 +8,11 @@ use geop_core_math::{
 };
 use geop_ops::{
     Context, Library, Namer, Part,
-    operation::{Operation, Role},
+    operation::{EntityRef, Operation, Role},
     ui::{Form, Number, Unit},
 };
 use geop_ops_shell::shell::offset_faces;
 use serde::{Deserialize, Serialize};
-
-use crate::{face, picked_names, refs};
 
 /// Copies the faces named `faces` — of a solid or standing on their own —
 /// `distance` along their normals, against them for a negative distance,
@@ -60,11 +58,11 @@ impl Operation for OffsetSurface {
         f.reference(
             "faces",
             "faces",
-            refs(&args.faces, face),
+            EntityRef::of_names(EntityRef::face, &args.faces),
             &[Role::Face],
             None,
             true,
-            |e, picked| e.args.faces = picked_names(&picked),
+            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
         );
         f.number(
             "distance",

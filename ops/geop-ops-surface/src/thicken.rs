@@ -9,13 +9,13 @@ use geop_core_math::{
 use geop_core_topology::Body;
 use geop_ops::{
     Context, Library, Namer, Part,
-    operation::{Operation, Role},
+    operation::{EntityRef, Operation, Role},
     ui::{Choice, Form, Number, Unit},
 };
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
 
-use crate::{face, picked_names, refs, sheet_of};
+use crate::sheet_of;
 
 /// Which side of a sheet a [`Thicken`] adds its material on, as the sheet's
 /// faces' normals point.
@@ -104,11 +104,15 @@ impl Operation for Thicken {
         f.reference(
             "face",
             "sheet",
-            refs(&picked, face),
+            EntityRef::of_names(EntityRef::face, &picked),
             &[Role::Sheet],
             None,
             false,
-            |e, picked| e.args.face = picked_names(&picked).pop().unwrap_or_default(),
+            |e, picked| {
+                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         f.number(
             "thickness",

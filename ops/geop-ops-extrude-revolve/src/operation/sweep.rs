@@ -16,7 +16,7 @@ use geop_ops_booleans::{Combine, Tool};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    extrude::{region_loops, shape_loops, sketch_profile},
+    extrude::{region_loops, shape_loops},
     path_field, paths_field, sketch_field,
 };
 use crate::{

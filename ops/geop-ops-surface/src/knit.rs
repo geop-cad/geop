@@ -36,12 +36,12 @@ use geop_core_topology::{
 };
 use geop_ops::{
     BodyNames, Context, Library, Namer, Part,
-    operation::{Operation, Role},
+    operation::{EntityRef, Operation, Role},
     ui::Form,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, face, min_subdivision_size, name_of, picked_names, refs, sheet_of};
+use crate::{MAX_NODES, min_subdivision_size, name_of, sheet_of};
 
 /// Joins the sheets the faces named `faces` stand in into one, along the
 /// edges where they meet, for the operation `K` — see the module docs.
@@ -84,11 +84,11 @@ impl Operation for Knit {
         f.reference(
             "faces",
             "sheets",
-            refs(&args.faces, face),
+            EntityRef::of_names(EntityRef::face, &args.faces),
             &[Role::Sheet],
             None,
             true,
-            |e, picked| e.args.faces = picked_names(&picked),
+            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
         );
         f.checkbox("solid", "close into a solid", args.solid, |args, solid| {
             args.solid = solid

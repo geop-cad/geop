@@ -24,25 +24,6 @@ use crate::{
     rib::{Growth, rib},
 };
 
-/// Faces by name, as a reference field holds them.
-fn face_refs(names: &[String]) -> Vec<EntityRef> {
-    names
-        .iter()
-        .map(|name| EntityRef::Face { name: name.clone() })
-        .collect()
-}
-
-/// The names of the faces a reference field holds.
-fn face_names(picked: &[EntityRef]) -> Vec<String> {
-    picked
-        .iter()
-        .filter_map(|e| match e {
-            EntityRef::Face { name } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// Tilts the planar faces `faces` of a solid by `angle` degrees about the
 /// plane `neutral`, so the part comes out of a mould pulled along the
 /// neutral plane's normal — into the solid, for a face of it picked as the
@@ -93,11 +74,11 @@ impl Operation for Draft {
         f.reference(
             "faces",
             "faces",
-            face_refs(&args.faces),
+            EntityRef::of_names(EntityRef::face, &args.faces),
             &[Role::Plane],
             None,
             true,
-            |e, picked| e.args.faces = face_names(&picked),
+            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
         );
         f.reference(
             "neutral",
@@ -179,7 +160,9 @@ fn rim_fields<'a, S: Scalar, A: 'a>(
         false,
         move |e, picked| {
             let (face, edges) = rim(e.args);
-            let name = face_names(&picked).pop().unwrap_or_default();
+            let name = EntityRef::names_of(EntityRef::face, &picked)
+                .pop()
+                .unwrap_or_default();
             if name != *face {
                 edges.clear();
             }

@@ -37,7 +37,7 @@ use geop_ops::{
 use geop_ops_extrude_revolve::common::line2;
 use serde::{Deserialize, Serialize};
 
-use crate::{edge, name_of, picked_names, refs, sheet_of};
+use crate::{name_of, sheet_of};
 
 /// Carries the face standing on its own that the edge named `edge` bounds
 /// on past that edge by `distance` (see the module docs). The face, its
@@ -82,12 +82,14 @@ impl Operation for ExtendSurface {
         f.reference(
             "edge",
             "edge",
-            refs(&picked, edge),
+            EntityRef::of_names(EntityRef::edge, &picked),
             &[Role::Edge],
             None,
             false,
             |e, picked: Vec<EntityRef>| {
-                e.args.edge = picked_names(&picked).pop().unwrap_or_default()
+                e.args.edge = EntityRef::names_of(EntityRef::edge, &picked)
+                    .pop()
+                    .unwrap_or_default()
             },
         );
         f.number(

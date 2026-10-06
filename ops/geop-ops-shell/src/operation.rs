@@ -36,14 +36,6 @@ pub struct ShellArgs {
     pub thickness: Formula,
 }
 
-/// The faces a reference field holds, by name.
-fn face_refs(names: &[String]) -> Vec<EntityRef> {
-    names
-        .iter()
-        .map(|name| EntityRef::Face { name: name.clone() })
-        .collect()
-}
-
 impl Operation for Shell {
     type Args = ShellArgs;
     type Session = ();
@@ -97,19 +89,11 @@ impl Operation for Shell {
         f.reference(
             "faces",
             "open faces",
-            face_refs(&args.faces),
+            EntityRef::of_names(EntityRef::face, &args.faces),
             &[Role::Plane, Role::Round],
             solid,
             true,
-            |e, picked| {
-                e.args.faces = picked
-                    .into_iter()
-                    .filter_map(|entity| match entity {
-                        EntityRef::Face { name } => Some(name),
-                        _ => None,
-                    })
-                    .collect();
-            },
+            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
         );
         f.optional("faces");
         f.formula(

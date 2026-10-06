@@ -20,13 +20,13 @@ use geop_core_math::{
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
 use geop_ops::{
     Context, Library, Namer, Part,
-    operation::{Operation, Role},
+    operation::{EntityRef, Operation, Role},
     ui::{Choice, Form},
 };
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, face, min_subdivision_size, name_of, picked_names, refs, sheet_of};
+use crate::{MAX_NODES, min_subdivision_size, name_of, sheet_of};
 
 /// Which side of the cutting face a [`TrimSurface`] keeps, as its normal
 /// points.
@@ -77,29 +77,31 @@ impl Operation for TrimSurface {
         _: &[String],
     ) -> Form<'a, S, TrimSurfaceArgs> {
         let mut f = Form::<S, TrimSurfaceArgs>::new();
-        let one = |name: &String| -> Vec<String> {
-            (!name.is_empty())
-                .then(|| name.clone())
-                .into_iter()
-                .collect()
-        };
         f.reference(
             "face",
             "sheet",
-            refs(&one(&args.face), face),
+            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
             &[Role::Sheet],
             None,
             false,
-            |e, picked| e.args.face = picked_names(&picked).pop().unwrap_or_default(),
+            |e, picked| {
+                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         f.reference(
             "tool",
             "cut with",
-            refs(&one(&args.tool), face),
+            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.tool)),
             &[Role::Face],
             None,
             false,
-            |e, picked| e.args.tool = picked_names(&picked).pop().unwrap_or_default(),
+            |e, picked| {
+                e.args.tool = EntityRef::names_of(EntityRef::face, &picked)
+                    .pop()
+                    .unwrap_or_default()
+            },
         );
         let key = |k: TrimKeep| match k {
             TrimKeep::Front => "front",

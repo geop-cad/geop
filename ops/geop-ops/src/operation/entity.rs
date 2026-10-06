@@ -281,6 +281,51 @@ pub fn frame_along<S: Scalar>(
 }
 
 impl EntityRef {
+    /// The edge `name`.
+    pub fn edge(name: impl Into<String>) -> Self {
+        EntityRef::Edge { name: name.into() }
+    }
+
+    /// The face `name`.
+    pub fn face(name: impl Into<String>) -> Self {
+        EntityRef::Face { name: name.into() }
+    }
+
+    /// The name of what it refers to, if that is one thing named by one.
+    fn plain_name(&self) -> Option<&str> {
+        match self {
+            EntityRef::Vertex { name }
+            | EntityRef::Edge { name }
+            | EntityRef::Face { name }
+            | EntityRef::Solid { name }
+            | EntityRef::Sketch { name }
+            | EntityRef::Sketch3d { name }
+            | EntityRef::Feature { name } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// `names` as the references `kind` ([`EntityRef::edge`], say) makes of
+    /// them, as a reference field holds them: an empty name is none.
+    pub fn of_names(kind: fn(String) -> Self, names: &[String]) -> Vec<Self> {
+        names
+            .iter()
+            .filter(|name| !name.is_empty())
+            .cloned()
+            .map(kind)
+            .collect()
+    }
+
+    /// The names of those of `picked` that are of the kind `kind` makes.
+    pub fn names_of(kind: fn(String) -> Self, picked: &[Self]) -> Vec<String> {
+        let kind = std::mem::discriminant(&kind(String::new()));
+        picked
+            .iter()
+            .filter(|e| std::mem::discriminant(*e) == kind)
+            .filter_map(|e| e.plain_name().map(str::to_string))
+            .collect()
+    }
+
     /// The sketch `name`.
     pub fn sketch(name: impl Into<String>) -> Self {
         EntityRef::Sketch { name: name.into() }
@@ -530,5 +575,22 @@ impl EntityRef {
                 "{other} is no body: pick a solid or a face standing on its own"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reference field's names come and go as the kind of entity they
+    /// name: others picked into it are left out, and an empty name is none.
+    #[test]
+    fn names_make_references_of_one_kind_and_back() {
+        let names = vec!["a".to_string(), String::new(), "b".to_string()];
+        let faces = EntityRef::of_names(EntityRef::face, &names);
+        assert_eq!(faces, [EntityRef::face("a"), EntityRef::face("b")]);
+        let mixed = [faces[0].clone(), EntityRef::edge("e"), faces[1].clone()];
+        assert_eq!(EntityRef::names_of(EntityRef::face, &mixed), ["a", "b"]);
+        assert_eq!(EntityRef::names_of(EntityRef::edge, &mixed), ["e"]);
     }
 }

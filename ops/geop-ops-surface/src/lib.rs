@@ -41,7 +41,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_topology::{Body, FaceId, ShellId};
-use geop_ops::{EntityRef, Part, RefId};
+use geop_ops::{Part, RefId};
 
 /// Bounds how hard a containment search or a pcurve fit tries: effort, not
 /// what an answer means.
@@ -59,31 +59,6 @@ fn name_of<S: Scalar>(part: &Part<S>, id: impl Into<RefId>) -> GeopResult<String
         .map(str::to_string)
         .ok_or_else(|| GeopError::new(format!("{id} has no name")))
 }
-
-/// Entities by name, as a reference field holds them: faces or edges.
-fn refs(names: &[String], make: fn(String) -> EntityRef) -> Vec<EntityRef> {
-    names.iter().cloned().map(make).collect()
-}
-
-fn face(name: String) -> EntityRef {
-    EntityRef::Face { name }
-}
-
-fn edge(name: String) -> EntityRef {
-    EntityRef::Edge { name }
-}
-
-/// The names of the faces or edges a reference field holds.
-fn picked_names(picked: &[EntityRef]) -> Vec<String> {
-    picked
-        .iter()
-        .filter_map(|e| match e {
-            EntityRef::Face { name } | EntityRef::Edge { name } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The sheet the face named `name` stands in — an error, naming it, if it
 /// is a solid's face.
 fn sheet_of<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<(FaceId, ShellId)> {
