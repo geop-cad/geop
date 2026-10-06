@@ -38,18 +38,21 @@ fn cst<S: Scalar>(v: &Vector3<S>) -> V<S> {
 }
 
 /// Two unit directions square to the unit vector `axis` and to each other:
-/// of the axes `x`, `y`, `z`, the one that runs least along `axis`, made
-/// square to it — a free choice, and the well-conditioned one — and `axis`
-/// crossed with that.
-pub(crate) fn across<S: Scalar>(axis: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
-    let size = |k: usize| axis[k].abs().sharpen();
-    let least = (1..3).fold(0, |best, k| {
-        if size(k).definitely_less(size(best)) {
-            k
-        } else {
-            best
-        }
-    });
+/// of the axes `x`, `y`, `z`, the first that could run least along `axis` —
+/// not one a component of `axis` is definitely smaller than — made square to
+/// it, a free choice, and a well-conditioned one, and `axis` crossed with
+/// that.
+///
+/// The first of those, not the smallest of the midpoints: `axis` along `z`
+/// is a hair off it in `x` and in `y` alike, which is the least is noise,
+/// and so two bodies drawn the same way round, mated on the same axis of
+/// each, would turn from one another by a quarter turn or none as the noise
+/// fell. Where it does not tie, the smallest is the first.
+pub fn across<S: Scalar>(axis: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
+    let size = |k: usize| axis[k].abs();
+    let least = (0..3)
+        .find(|&k| !(0..3).any(|j| size(j).definitely_less(size(k))))
+        .expect("the smallest of three is not definitely more than another");
     let reference = Vector3::axis(least);
     let first = reference
         .sub(&axis.prod_scalar(axis.prod_dot(&reference)))

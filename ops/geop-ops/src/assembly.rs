@@ -9,6 +9,12 @@
 //! placed part — named behind the instance's name — moves with that
 //! instance; an entity of the part itself is ground, and never moves.
 //!
+//! A joint is made between two frames, one on each part, which a click puts
+//! on whatever is picked — a face, an edge, a point or a datum (see
+//! [`EntityRef::Frame`] and [`Aspects::frame_on`]): it turns about, or slides
+//! along, their common `z` axis, the second part's frame moving on the
+//! first's.
+//!
 //! A joint's coordinates — how far it is turned and slid — are parameters of
 //! the part's state, like the poses of its placed parts: named after the
 //! mate, `add_part(arm2,m1).angle` (see [`joint_parameter`]). Solving sets
@@ -140,7 +146,7 @@ impl Mate {
             MateKind::Constraint(Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. }) => {
                 "a line or a plane"
             }
-            MateKind::Joint(_) => "a circular edge, a sketch circle or a datum",
+            MateKind::Joint(_) => "a face, an edge, a point or a datum: where it is picked, a frame is put",
             MateKind::Coupling(CouplingKind::Gear { .. }) => "two joints that turn",
             MateKind::Coupling(_) => "a joint that turns, then one that slides",
         }
@@ -181,11 +187,11 @@ impl Mate {
         }
     }
 
-    /// The connector `aspects` gives a joint — an axis through a point it
-    /// defines: a circular edge's center and normal, a sketch circle's, or a
-    /// datum's origin and `z` axis, turns measured from its `x` axis. A
-    /// round face or a straight edge has an axis, but no point of it the
-    /// joint could sit at.
+    /// The connector `aspects` gives a joint where it is made of what the
+    /// entity is — an axis through a point it defines: a circular edge's
+    /// center and normal, a sketch circle's, or the origin and `z` axis of
+    /// a frame, turns measured from its `x` axis. Of anything else, there is
+    /// none: it is used by the frame it gives (see [`Aspects::frame_on`]).
     fn connector<S: Scalar>(aspects: &Aspects<S>) -> Option<GeopResult<Connector<S>>> {
         if let Some(arc) = &aspects.arc {
             return Some(Connector::new(arc.circle.center, arc.circle.normal, None));
@@ -250,6 +256,9 @@ pub struct JointInfo {
     /// The mate it is, by name.
     pub name: String,
     pub kind: &'static str,
+    /// What it joins, as the entities its frames are on read: the part it
+    /// holds, then the part it moves.
+    pub between: Vec<String>,
     pub values: Vec<JointValue>,
 }
 
@@ -307,6 +316,10 @@ pub struct PlacedBody<'p, S: Scalar> {
     /// Where it is in the part.
     pub world: Pose<S>,
 }
+
+/// An entity of a mate, resolved: the body it moves with, what it is there,
+/// itself as that body's part names it, and the part.
+type Resolved<'p, S> = (Option<usize>, Aspects<S>, EntityRef, &'p Part<S>);
 
 /// The rigid bodies of a part and the mates between them: the assembly,
 /// the bodies as placed — in the order of [`Assembly::bodies`] — and the
@@ -478,7 +491,7 @@ impl<S: Scalar> Part<S> {
             let ctx = with_context!("mate {name:?}");
             // The body an entity moves with — the innermost one it is of —
             // and what it is there.
-            let resolve = |entity: &EntityRef| -> GeopResult<(Option<usize>, Aspects<S>)> {
+            let resolve = |entity: &EntityRef| -> GeopResult<Resolved<'_, S>> {
                 let mut body: Option<usize> = None;
                 let mut rest = entity.clone();
                 while let Some((instance, inner)) = rest.split_instance() {
@@ -492,16 +505,17 @@ impl<S: Scalar> Part<S> {
                     body = Some(found);
                     rest = inner;
                 }
-                let aspects = match body {
-                    Some(b) => Aspects::of(&rest, bodies_of[b].instance.part())?,
-                    None => Aspects::of(entity, self)?,
+                let (part, local) = match body {
+                    Some(b) => (bodies_of[b].instance.part(), rest),
+                    None => (self, entity.clone()),
                 };
-                Ok((body, aspects))
+                let aspects = Aspects::of(&local, part)?;
+                Ok((body, aspects, local, part))
             };
             match mate.kind {
                 MateKind::Constraint(kind) => {
                     let feature = |entity: &EntityRef| -> GeopResult<Feature<S>> {
-                        let (body, aspects) = resolve(entity)?;
+                        let (body, aspects, ..) = resolve(entity)?;
                         let geometry = Mate::geometry(&kind, &aspects).ok_or_else(|| {
                             GeopError::new(format!("{entity} is not {}", mate.needs()))
                         })?;
@@ -519,13 +533,15 @@ impl<S: Scalar> Part<S> {
                 }
                 MateKind::Joint(kind) => {
                     let end = |entity: &EntityRef| -> GeopResult<JointEnd<S>> {
-                        let (body, aspects) = resolve(entity)?;
-                        let connector = Mate::connector(&aspects).ok_or_else(|| {
-                            GeopError::new(format!(
-                                "{entity} is not {}: a joint needs an axis through a point it defines",
-                                mate.needs()
-                            ))
-                        })??;
+                        let (body, aspects, local, part) = resolve(entity)?;
+                        let connector = match Mate::connector(&aspects) {
+                            Some(connector) => connector?,
+                            // Anything else is used by the frame it gives.
+                            None => {
+                                let frame = Aspects::frame_on(&local, None, part)?;
+                                Connector::new(*frame.origin(), *frame.w(), Some(*frame.u()))?
+                            }
+                        };
                         Ok(JointEnd { body, connector })
                     };
                     let [a, b] = mate.pair().expect("complete");
@@ -733,6 +749,7 @@ impl<S: Scalar> Part<S> {
     /// where its coordinates are and their limits.
     pub fn joints(&self) -> GeopResult<Vec<JointInfo>> {
         let mechanism = self.assembly(None, &[], &|_| true)?;
+        let mates = self.all_mates(&mechanism.bodies);
         Ok(mechanism
             .assembly
             .joints
@@ -755,9 +772,15 @@ impl<S: Scalar> Part<S> {
                         }
                     })
                     .collect();
+                let between = mates
+                    .iter()
+                    .find(|(mate, _)| *mate == name)
+                    .map(|(_, mate)| mate.entities.iter().map(EntityRef::label).collect())
+                    .unwrap_or_default();
                 JointInfo {
                     name,
                     kind: joint.kind.label(),
+                    between,
                     values,
                 }
             })

@@ -992,17 +992,29 @@ pub fn link_rim(instance: &str, hole: usize, cap: &str) -> EntityRef {
     }
 }
 
+/// The frame a circular edge gives: at its center, its `z` along its axis —
+/// what a click on the rim of a hole picks.
+fn frame_on(entity: EntityRef) -> EntityRef {
+    EntityRef::Frame {
+        on: Box::new(entity),
+        at: None,
+    }
+}
+
 /// The [`link`] placed as `link` turns on the one placed as `on`: a
-/// revolute joint from the rim of `on`'s far hole on its top to the rim of
-/// `link`'s near hole on its bottom — so it lies on it, pinned there —
-/// turning from `min` to `max` degrees.
+/// revolute joint from the frame on the rim of `on`'s far hole on its top
+/// to the frame on the rim of `link`'s near hole on its bottom — so it lies
+/// on it, pinned there — turning from `min` to `max` degrees.
 fn hinged(link: &str, on: &str, min: f64, max: f64) -> Mate {
     Mate::joint(
         JointKind::Revolute {
             min: Some(n(min)),
             max: Some(n(max)),
         },
-        vec![link_rim(on, 1, "end"), link_rim(link, 0, "start")],
+        vec![
+            frame_on(link_rim(on, 1, "end")),
+            frame_on(link_rim(link, 0, "start")),
+        ],
     )
 }
 

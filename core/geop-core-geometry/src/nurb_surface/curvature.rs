@@ -1,4 +1,4 @@
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
 use super::NurbSurface;
 
@@ -51,6 +51,44 @@ impl<S: Scalar> NurbSurface<S, 4> {
             kappa_v
         };
 
+        if kappa.could_be_equal(S::ZERO) {
+            Ok(None)
+        } else {
+            Ok(Some(S::ONE.div(kappa)?.abs()))
+        }
+    }
+
+    /// A radius of curvature at `(u, v)` along the tangent direction
+    /// `along` — a unit vector in the tangent plane, the way a curve on the
+    /// surface runs — or `None` if the surface runs straight that way: the
+    /// normal curvature `κ = (L a² + 2 M a b + N b²)`, where `along = a Su +
+    /// b Sv` and `L, M, N` are the second fundamental form (`Suu·n`,
+    /// `Suv·n`, `Svv·n`). Exact for any parametrization.
+    ///
+    /// A curve on the surface turns, as far as the surface makes it, by this
+    /// — where [`Self::curvature_radius`], the tightest bend in *any*
+    /// direction, says how a curve circling there would. At a cone's apex the
+    /// tightest bend has the radius of the circle round the axis, which goes
+    /// to nothing; a generator running into the apex does not bend at all.
+    ///
+    /// An error where `Su × Sv` vanishes (a pole), and where `along` leaves
+    /// the tangent plane's reach.
+    pub fn curvature_radius_along(&self, u: S, v: S, along: &Vector3<S>) -> GeopResult<Option<S>> {
+        let (su, sv) = self.derivatives(u, v)?;
+        let [suu, suv, svv] = self.second_derivatives(u, v)?;
+        let n = su.prod_cross(&sv).normalize()?;
+        let (e, f, g) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
+        let det = e.mul(g).sub(f.mul(f));
+        let (t_u, t_v) = (along.prod_dot(&su), along.prod_dot(&sv));
+        let a = g.mul(t_u).sub(f.mul(t_v)).div(det)?;
+        let b = e.mul(t_v).sub(f.mul(t_u)).div(det)?;
+        let kappa = suu
+            .prod_dot(&n)
+            .mul(a)
+            .mul(a)
+            .add(S::TWO.mul(suv.prod_dot(&n)).mul(a).mul(b))
+            .add(svv.prod_dot(&n).mul(b).mul(b))
+            .abs();
         if kappa.could_be_equal(S::ZERO) {
             Ok(None)
         } else {
@@ -176,5 +214,55 @@ mod tests {
     #[test]
     fn cylinder_mean_curvature() {
         for_all_scalars!(check_cylinder_mean_curvature);
+    }
+
+    /// A rational quarter cylinder of radius 2 bends round its axis with
+    /// radius 2 and runs straight along it — and every direction between
+    /// bends with a radius of `2 / sin² θ` — where the tightest bend, by
+    /// [`NurbSurface::curvature_radius`], is the one round it.
+    fn check_a_cylinder_bends_as_its_direction_says<S: Scalar>() {
+        use geop_core_math::vector::Vector3;
+        let f = S::from_f64;
+        let (r, w) = (2.0, std::f64::consts::FRAC_1_SQRT_2);
+        let mut cps = Vec::new();
+        for (x, y, wi) in [(1., 0., 1.), (1., 1., w), (0., 1., 1.)] {
+            for z in [0., 1.] {
+                cps.push(pt(x * r * wi, y * r * wi, z * wi, wi));
+            }
+        }
+        let s = NurbSurface::try_new(
+            2,
+            1,
+            cps,
+            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
+            vec![f(0.), f(0.), f(1.), f(1.)],
+        )
+        .unwrap();
+        let (u, v) = (f(0.5), f(0.5));
+        // At u = 1/2 the surface point is at 45 degrees: round is along
+        // (-sin, cos, 0), the axis along z.
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let direction = |x: f64, y: f64, z: f64| Vector3::from_array([f(x), f(y), f(z)]);
+        let axis = s
+            .curvature_radius_along(u, v, &direction(0.0, 0.0, 1.0))
+            .unwrap();
+        assert!(axis.is_none(), "{axis:?}");
+        let round = s
+            .curvature_radius_along(u, v, &direction(-h, h, 0.0))
+            .unwrap()
+            .expect("a bend");
+        assert!(round.could_be_equal(f(r)), "{round:?}");
+        // Halfway between: sin² of 45 degrees is one half.
+        let between = s
+            .curvature_radius_along(u, v, &direction(-0.5, 0.5, h))
+            .unwrap()
+            .expect("a bend");
+        assert!(between.could_be_equal(f(2.0 * r)), "{between:?}");
+        let tightest = s.curvature_radius(u, v).unwrap().expect("a bend");
+        assert!(tightest.could_be_equal(f(r)), "{tightest:?}");
+    }
+    #[test]
+    fn a_cylinder_bends_as_its_direction_says() {
+        for_all_scalars!(check_a_cylinder_bends_as_its_direction_says);
     }
 }

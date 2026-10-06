@@ -127,12 +127,22 @@ const STEPS_PER_REVOLUTION: usize = 64;
 /// one lies on it (see [`candidate_within`]).
 const STEPS_ACROSS_PATCH: usize = 16;
 
-/// The marching step to use at `(u_a, v_a)` / `(u_b, v_b)`: a
-/// [`STEPS_ACROSS_PATCH`]th of the smaller surface, shortened so a full
-/// turn of whichever surface is curving harder there would take
-/// [`STEPS_PER_REVOLUTION`] steps. A surface that's locally flat reports no
-/// curvature radius and so imposes no limit. Sharp: where a stride lands is
-/// a free choice.
+/// The marching step to use at `(u_a, v_a)` / `(u_b, v_b)`, marching along
+/// `dir`: a [`STEPS_ACROSS_PATCH`]th of the smaller surface, shortened so a
+/// full turn of whichever surface is curving harder there would take
+/// [`STEPS_PER_REVOLUTION`] steps. A surface that's locally flat — or runs
+/// straight the way the curve does — reports no curvature radius and so
+/// imposes no limit. Sharp: where a stride lands is a free choice.
+///
+/// A surface that runs straight the way the curve does bends it by nothing,
+/// however it bends the other way. Limited by that other bend, a trace
+/// running along a generator into the apex of a cone took a step a fraction
+/// of its distance to the apex — the circle round the axis shrinks with it —
+/// and never arrived: 359 steps, spaced geometrically, for a straight line.
+/// Where a surface does bend the curve, if only a little, the tightest bend
+/// still limits the step, not the bend along the curve here: a curve that
+/// bends a little here may bend sharply a stride on (the blades of
+/// `turbine_blade`, whose pattern's trace left its patch).
 fn adaptive_step_size<S: Scalar>(
     surf_a: &NurbSurface3D<S>,
     surf_b: &NurbSurface3D<S>,
@@ -140,6 +150,7 @@ fn adaptive_step_size<S: Scalar>(
     v_a: S,
     u_b: S,
     v_b: S,
+    dir: &Vector3<S>,
 ) -> GeopResult<S> {
     let arc = S::TWO
         .mul(S::PI)
@@ -149,9 +160,19 @@ fn adaptive_step_size<S: Scalar>(
         .min(surf_b.size()?)
         .div(S::from_i64(STEPS_ACROSS_PATCH as i64))?
         .sharpen();
+    // A surface that runs straight the way the curve does bends it by
+    // nothing, however it bends the other way; any other bends it, and is
+    // limited by its tightest bend, as ever: a curve whose surfaces bend it
+    // a little here may bend sharply a stride on.
+    let radius_along = |surface: &NurbSurface3D<S>, u: S, v: S| -> GeopResult<Option<S>> {
+        match surface.curvature_radius_along(u, v, dir) {
+            Ok(None) => Ok(None),
+            _ => surface.curvature_radius(u, v),
+        }
+    };
     for radius in [
-        surf_a.curvature_radius(u_a, v_a)?,
-        surf_b.curvature_radius(u_b, v_b)?,
+        radius_along(surf_a, u_a, v_a)?,
+        radius_along(surf_b, u_b, v_b)?,
     ]
     .into_iter()
     .flatten()
@@ -1405,8 +1426,8 @@ fn trace_one_side<S: Scalar>(
     // domain — a distinction the raw domain bounds can't make. Once a
     // direction is committed the march just follows the curve; re-testing
     // containment every step would only re-derive the same answer.
-    let first_step =
-        adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0).with_context(&ctx)?;
+    let first_step = adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0, &axis)
+        .with_context(&ctx)?;
     let mut chosen = None;
     let mut last_rejection: Option<(PointClassification, PointClassification)> = None;
     // The trial step that decides the direction must not overshoot the curve.
@@ -1547,7 +1568,8 @@ fn trace_one_side<S: Scalar>(
     // along `dir` that the corrector lands it on (see `candidate_within`).
     let mut hit_vertex = None;
     for _ in 0..max_trace_steps {
-        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b).with_context(&ctx)?;
+        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, &dir)
+            .with_context(&ctx)?;
         let reached = |radius: S| {
             candidate_within(
                 model,
@@ -1619,10 +1641,21 @@ fn trace_one_side<S: Scalar>(
     // fitted curve's endpoint and the edge's `end_vertex` agree.
     let hit_point = model.get_vertex(hit_vertex).with_context(&ctx)?.point;
     *points.last_mut().expect("points is never empty") = hit_point;
+    // Which marched point is the widest, and how wide: a trace that ends
+    // wide went wrong somewhere along it, and this says where.
+    let widest = points
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (i, (0..3).map(|k| p[k].width().to_f64()).fold(0.0, f64::max)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("points is never empty");
     let ctx = |e: GeopError| {
         ctx(e).with_context(format!(
-            "traced {} step(s) to vertex {hit_vertex} at {hit_point:?}",
-            points.len()
+            "traced {} step(s) to vertex {hit_vertex} at {hit_point:?}; its widest point is {} at {:?}, {:e} wide",
+            points.len(),
+            widest.0,
+            points[widest.0],
+            widest.1,
         ))
     };
 
@@ -1665,6 +1698,12 @@ fn trace_one_side<S: Scalar>(
         // arbitrarily would make remesh depend on hash order.
         .min_by_key(|id| id.0);
 
+    // The widest point of the branch located between the marched ones —
+    // leg, fraction, point, width — of the last attempt to fit it: the curve
+    // is widened to hold it, so one that is wide makes the whole curve wide,
+    // and this says which.
+    let mut widest_between: Option<(usize, usize, Vector3<S>, f64)> = None;
+    let mut fitted = String::new();
     let edge_id = match duplicate {
         Some(id) => id,
         None => {
@@ -1750,10 +1789,14 @@ fn trace_one_side<S: Scalar>(
                 for i in 0..legs {
                     let fractions = true_point_fractions(i, legs);
                     let mut inside = Vec::with_capacity(fractions.len());
-                    for &(a, b) in fractions {
+                    for (k, &(a, b)) in fractions.iter().enumerate() {
                         let frac = S::from_ratio(a, b).with_context(&ctx)?;
                         let (p, _) = on_branch(points[i], params[i], points[i + 1], frac)
                             .with_context(&ctx)?;
+                        let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
+                        if widest_between.as_ref().is_none_or(|w| width > w.3) {
+                            widest_between = Some((i, k, p, width));
+                        }
                         inside.push(p);
                     }
                     between.push(inside);
@@ -1782,6 +1825,19 @@ fn trace_one_side<S: Scalar>(
                 best = Some((curve, width));
                 pieces *= 2;
             };
+            let widest = curve
+                .control_points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (i, (0..4).map(|k| p[k].width().to_f64()).fold(0.0, f64::max)))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .expect("a curve has control points");
+            fitted = format!(
+                "{} control points, the widest {} of them, {:e} wide",
+                curve.control_points.len(),
+                widest.0,
+                widest.1
+            );
             let edge = part
                 .insert_edge(
                     Edge {
@@ -1795,6 +1851,13 @@ fn trace_one_side<S: Scalar>(
             naming.trace(edge, face_a, face_b, [v, hit_vertex])?;
             edge
         }
+    };
+
+    let ctx = |e: GeopError| {
+        ctx(e).with_context(format!(
+            "the curve fitted through {} marched points is {fitted}; its widest true point between marched ones: {widest_between:?}",
+            points.len()
+        ))
     };
 
     // Common to both: whichever edge carries this curve, each face needs a

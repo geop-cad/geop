@@ -43,6 +43,7 @@
 
 mod aspects;
 mod entity;
+mod frame;
 
 pub use aspects::{Aspects, Role, describe_roles};
 pub use entity::{EntityRef, INSTANCE_SEPARATOR, NamedCurve, frame_along};

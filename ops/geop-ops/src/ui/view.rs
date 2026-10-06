@@ -49,6 +49,27 @@ const RESOLUTION: usize = 24;
 /// viewer.
 pub const FRAME: f64 = 10.0;
 
+/// What a pick for a [`Role::Frame`] takes something of: anything that gives
+/// one (see [`Aspects::frame_on`]) — the roles of the entities it is
+/// picked among are what they can be, not what a frame is.
+const MOUNTABLE: [Role; 6] = [
+    Role::Frame,
+    Role::Point,
+    Role::Line,
+    Role::Circle,
+    Role::Round,
+    Role::Plane,
+];
+
+/// How near an end of a straight edge a pick for a frame is taken to be at
+/// it: that part of its length from it.
+const END_OF_A_LINE: f64 = 0.2;
+
+/// How near a corner of a face, in reaches of the pointer, a pick for a
+/// frame on it is taken to be at it, and how near a side: the corner first.
+const NEAR_CORNER: f64 = 4.0;
+const NEAR_SIDE: f64 = 3.0;
+
 /// An entity a pointer is over, where, and how far along its ray.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PartHit<S: Scalar> {
@@ -96,6 +117,9 @@ pub struct ViewEdge<S: Scalar> {
     /// the whole sketch where a path is asked for.
     pub sketch: Option<String>,
     pub polyline: Vec<Vector3<S>>,
+    /// The vertices it runs between, by name.
+    #[serde(skip)]
+    pub ends: [String; 2],
     /// What it can be picked as: a curve, an edge of a face, and a line or
     /// a circle if it is one.
     #[serde(skip)]
@@ -530,7 +554,12 @@ impl<S: Scalar> PartView<S> {
                 .into_iter()
                 .map(|(&id, polyline)| {
                     let edge = name(id.into());
+                    let ends = model
+                        .get_edge(id)
+                        .map(|e| [e.start_vertex, e.end_vertex].map(|v| name(v.into())))
+                        .unwrap_or_default();
                     ViewEdge {
+                        ends,
                         solid: solid_of_edge(model, id).map(|s| name(s.into())),
                         faces: faces_of_edge.get(&id).cloned().unwrap_or_default(),
                         sketch: sketch_of.get(&id.into()).cloned(),
@@ -805,13 +834,46 @@ impl<S: Scalar> PartView<S> {
     /// sketches and other datums hit. The parts placed in the part count
     /// alike, each where it is (see [`PartView::layers`]): a vertex of one is
     /// hidden behind a face of another.
+    ///
+    /// For a [`Role::Frame`], it is a frame that is picked, which what is
+    /// under the pointer decides where it sits (see [`Aspects::frame_on`]): a
+    /// face under the pointer gives its own, at the corner or the middle of
+    /// the side the pointer is near — and in the middle of the face if it is
+    /// near neither; a straight edge, at its middle, or at the end the
+    /// pointer is near; a circular edge, a point or a datum, its own.
     pub fn pick(
         &self,
         pointer: &Pointer<S>,
         roles: &[Role],
         scope: Option<&EntityRef>,
     ) -> Option<PartHit<S>> {
+        let mount = roles.contains(&Role::Frame);
+        let hit = self.pick_entity(pointer, if mount { &MOUNTABLE } else { roles }, scope)?;
+        // Whatever it is, a frame is picked: on it, if not already.
+        Some(match hit.entity {
+            EntityRef::Frame { .. } => hit,
+            entity if mount => PartHit {
+                entity: EntityRef::Frame {
+                    on: Box::new(entity),
+                    at: None,
+                },
+                ..hit
+            },
+            _ => hit,
+        })
+    }
+
+    /// [`PartView::pick`], for what can be picked as one of `roles`: of a
+    /// pick for a frame, the entities near it and the frames put at the
+    /// corner or side of a face, or at the end of a straight edge.
+    fn pick_entity(
+        &self,
+        pointer: &Pointer<S>,
+        roles: &[Role],
+        scope: Option<&EntityRef>,
+    ) -> Option<PartHit<S>> {
         let layers = self.layers(pointer).ok()?;
+        let mount = roles.contains(&Role::Frame);
         // What `layer` names `entity`, as the part drawn names it, can take
         // — `solid`, the name of the solid it bounds in `layer`, if any.
         let accept_of =
@@ -911,6 +973,24 @@ impl<S: Scalar> PartView<S> {
                 if let Some(entity) = entity
                     && let Some(t) = near(ray.distance_to_point(&at), faces)
                 {
+                    // A corner of a face the pointer is over is a frame of
+                    // that face, there.
+                    let entity = match (&face, &entity) {
+                        (Some((_, fl, f)), EntityRef::Vertex { .. })
+                            if mount
+                                && fl.instance == l.instance
+                                && faces.contains(&f.name)
+                                && f.roles.contains(&Role::Frame) =>
+                        {
+                            EntityRef::Frame {
+                                on: Box::new(EntityRef::Face {
+                                    name: f.name.clone(),
+                                }),
+                                at: Some(Box::new(entity)),
+                            }
+                        }
+                        _ => entity,
+                    };
                     points.push(l.hit(PartHit {
                         entity,
                         point: at,
@@ -929,16 +1009,19 @@ impl<S: Scalar> PartView<S> {
             let near = |(dist, t): (S, S), faces: &[String]| {
                 (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
             };
+            // `entity`, hit by the polyline at its point `at`: as it is, or,
+            // for a frame, where `at` puts it.
             let mut polyline_hit =
                 |entity: EntityRef,
                  faces: &[String],
-                 polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>| {
+                 polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>,
+                 frame: &dyn Fn(EntityRef, Vector3<S>) -> EntityRef| {
                     let t = polyline
                         .filter_map(|(a, b)| near(ray.distance_to_segment(&a, &b), faces))
                         .min_by(|&a, &b| nearer(a, b));
                     if let Some(t) = t {
                         curves.push(l.hit(PartHit {
-                            entity,
+                            entity: frame(entity, ray.at(t)),
                             point: ray.at(t),
                             t,
                         }));
@@ -952,7 +1035,34 @@ impl<S: Scalar> PartView<S> {
                     taken(l, entity, &e.roles, e.solid.as_ref(), e.sketch.as_ref())
                 {
                     let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
-                    polyline_hit(entity, &e.faces, &mut segments);
+                    // Near one end of a straight edge, the frame is there.
+                    let frame = |entity: EntityRef, at: Vector3<S>| -> EntityRef {
+                        let (Some(first), Some(last)) = (e.polyline.first(), e.polyline.last())
+                        else {
+                            return entity;
+                        };
+                        if !mount
+                            || !matches!(entity, EntityRef::Edge { .. })
+                            || !e.roles.contains(&Role::Line)
+                        {
+                            return entity;
+                        }
+                        let reach = last.sub(first).norm().mul(S::from_f64(END_OF_A_LINE));
+                        let end = if at.sub(first).norm().definitely_less(reach) {
+                            0
+                        } else if at.sub(last).norm().definitely_less(reach) {
+                            1
+                        } else {
+                            return entity;
+                        };
+                        EntityRef::Frame {
+                            on: Box::new(entity),
+                            at: Some(Box::new(EntityRef::Vertex {
+                                name: e.ends[end].clone(),
+                            })),
+                        }
+                    };
+                    polyline_hit(entity, &e.faces, &mut segments, &frame);
                 }
             }
             for sketch in &l.view.sketches {
@@ -965,7 +1075,7 @@ impl<S: Scalar> PartView<S> {
                         let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
                         let mut segments =
                             c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
-                        polyline_hit(entity, &[], &mut segments);
+                        polyline_hit(entity, &[], &mut segments, &|entity, _| entity);
                     }
                 }
             }
@@ -987,6 +1097,16 @@ impl<S: Scalar> PartView<S> {
                 solid
                     .filter(|solid| accept(l, solid, &[Role::Solid]))
                     .or_else(|| feature.filter(|feature| accept(l, feature, &[Role::Feature])))
+            };
+            let entity = match entity {
+                Some(EntityRef::Face { name }) if mount => {
+                    let at = l.view.corner_or_side_near(&l.pointer, &name);
+                    Some(EntityRef::Frame {
+                        on: Box::new(EntityRef::Face { name }),
+                        at: at.map(Box::new),
+                    })
+                }
+                other => other,
             };
             hits.extend(entity.map(|entity| {
                 l.hit(PartHit {
@@ -1048,6 +1168,40 @@ impl<S: Scalar> PartView<S> {
             }),
             _ => false,
         }
+    }
+
+    /// The corner of the face `face` the pointer is near, or else the side —
+    /// the vertex or the edge — within [`NEAR_CORNER`] and [`NEAR_SIDE`]
+    /// reaches of it, whichever is nearer its ray.
+    fn corner_or_side_near(&self, pointer: &Pointer<S>, face: &str) -> Option<EntityRef> {
+        let ray = &pointer.ray;
+        let corner = self
+            .vertices
+            .iter()
+            .filter(|v| v.faces.iter().any(|f| f == face))
+            .map(|v| (v, ray.distance_to_point(&v.at)))
+            .filter(|(_, (dist, t))| pointer.within(*dist, *t, NEAR_CORNER))
+            .min_by(|a, b| nearer(a.1.0, b.1.0))
+            .map(|(v, _)| EntityRef::Vertex {
+                name: v.name.clone(),
+            });
+        corner.or_else(|| {
+            self.edges
+                .iter()
+                .filter(|e| e.faces.iter().any(|f| f == face))
+                .filter_map(|e| {
+                    e.polyline
+                        .windows(2)
+                        .map(|w| ray.distance_to_segment(&w[0], &w[1]))
+                        .filter(|(dist, t)| pointer.within(*dist, *t, NEAR_SIDE))
+                        .min_by(|a, b| nearer(a.0, b.0))
+                        .map(|(dist, _)| (e, dist))
+                })
+                .min_by(|a, b| nearer(a.1, b.1))
+                .map(|(e, _)| EntityRef::Edge {
+                    name: e.name.clone(),
+                })
+        })
     }
 
     /// The nearest face the ray enters.

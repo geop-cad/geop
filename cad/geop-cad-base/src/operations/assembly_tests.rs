@@ -1343,3 +1343,167 @@ fn a_kept_build_is_placed_without_building_its_file() {
         "written, the file is built again"
     );
 }
+
+/// A joint is made from frames, picked on the two parts: the pin's wall
+/// and the hole's wall each give one on their axis, half way along it, and
+/// a revolute joint between them puts the pin in the hole, free to turn
+/// and, as the frames are half way along, no lower than its middle at the
+/// hole's — where the editor's dialog lists it with its coordinate.
+#[test]
+fn a_joint_between_frames_on_two_walls_puts_the_pin_in_the_hole() {
+    let mut program = examples::pin_in_plate_assembly();
+    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
+        panic!("the pin is placed");
+    };
+    let mates = std::mem::take(&mut pin.mates);
+    program
+        .state
+        .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
+    let mut editor = editor_on(program);
+    editor.handle(Command::Open { id: "pin".into() });
+    editor.handle(dialog("add_mate", Value::Choice("revolute".into())));
+    let frames = mates["m1"]
+        .entities
+        .iter()
+        .map(|entity| EntityRef::Frame {
+            on: Box::new(entity.clone()),
+            at: None,
+        })
+        .collect();
+    let update = editor.handle(dialog("mate:m1:entities", Value::Entities(frames)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = editor.handle(dialog("mate:m1", Value::Press)).step.unwrap();
+    assert!(
+        matches!(
+            step.presentation.dialog.get("mate:m1:angle"),
+            Some(Control::Number(_))
+        ),
+        "a revolute joint has its angle to set"
+    );
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    // On the hole's axis: the pin's frame is 1 up its 2, the hole's 0.75
+    // up the plate, so the pin's origin is 0.25 below the plate's.
+    assert_close(
+        position(&pose_of(editor.program(), "pin")),
+        [1.0, 1.0, -0.25],
+        1e-7,
+    );
+}
+
+/// A coupling is made of joints already made, and offers those that do what
+/// it needs — a gear two that turn — each said by what it joins; with none
+/// that does, it says to add one first.
+#[test]
+fn a_coupling_offers_the_joints_that_move_as_it_needs() {
+    let files = BTreeMap::from([(
+        "link.geop".to_string(),
+        Some(examples::link().to_json().unwrap()),
+    )]);
+    let mut editor = Editor::<S>::new();
+    editor.handle(Command::Files { files });
+    let update = editor.handle(Command::Load {
+        program: examples::arm_assembly(),
+        path: Some("arm.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::Open { id: "hand".into() });
+    let step = editor
+        .handle(dialog("add_mate", Value::Choice("gear".into())))
+        .step
+        .unwrap();
+    let dialog_of = &step.presentation.dialog;
+    for field in ["mate:m2:joint0", "mate:m2:joint1"] {
+        let Some(Control::Select { options, .. }) = dialog_of.get(field) else {
+            panic!("{field} is chosen from a list");
+        };
+        let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels.len(), 3, "{labels:?}");
+        assert!(
+            labels[1].contains("Revolute") && labels[1].contains('↔'),
+            "{labels:?}"
+        );
+    }
+    // A rack and its pinion needs one that slides: there is none.
+    let step = editor
+        .handle(dialog("add_mate", Value::Choice("rack_pinion".into())))
+        .step
+        .unwrap();
+    let Some(Control::Text { text, .. }) = step.presentation.dialog.get("mate:m3:no_joint1") else {
+        panic!("it says there is no joint that slides");
+    };
+    assert!(text.contains("Slider"), "{text}");
+}
+
+/// Clicking the way the front end does: with a joint's frames to pick, a
+/// hover over a face lights it and draws the frame a click would put there,
+/// as three arrows; a click picks it. A revolute joint between the frames
+/// on the pin's top and the plate's top then stands the pin on its head in
+/// the middle of the plate, its top at the plate's top.
+#[test]
+fn a_joint_is_made_by_clicking_where_its_frames_go() {
+    let mut program = examples::pin_in_plate_assembly();
+    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
+        panic!("the pin is placed");
+    };
+    pin.mates.clear();
+    program
+        .state
+        .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
+    let mut editor = editor_on(program);
+    editor.handle(Command::Open { id: "pin".into() });
+    editor.handle(dialog("add_mate", Value::Choice("revolute".into())));
+    // The frames to pick are waited for: nothing to press first.
+    let armed = editor.handle(Command::Event {
+        event: StepEditEvent::Leave,
+    });
+    assert_eq!(
+        armed.step.unwrap().presentation.pickable,
+        [geop_ops::operation::Role::Frame]
+    );
+    let event = |event| Command::Event { event };
+
+    // Not through the pin's origin, a frame datum that is picked first.
+    let update = editor.handle(event(StepEditEvent::Hover {
+        pointer: down(3.6, 1.0),
+        shift: false,
+    }));
+    let presentation = update.step.unwrap().presentation;
+    let pin_top = EntityRef::Face {
+        name: "pin/extrude(pin,end)".into(),
+    };
+    assert!(presentation.highlights.contains(&pin_top), "{:?}", presentation.highlights);
+    let triad = presentation
+        .visuals
+        .iter()
+        .find_map(|v| match &v.shape {
+            geop_ops::ui::Shape::Triad { at, axes } => Some((at, axes)),
+            _ => None,
+        })
+        .expect("the frame a click would put is drawn");
+    assert_close(
+        [0, 1, 2].map(|k| triad.0[k].to_f64()),
+        [3.5, 1.0, 2.0],
+        1e-9,
+    );
+    assert!((triad.1[2][2].to_f64().abs() - 1.0).abs() < 1e-9, "z up");
+
+    for (x, y) in [(3.6, 1.0), (0.3, 0.3)] {
+        let click = StepEditEvent::Click {
+            pointer: down(x, y),
+            button: geop_ops::ui::Button::Primary,
+            double: false,
+            shift: false,
+        };
+        let update = editor.handle(event(click));
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_close(
+        position(&pose_of(editor.program(), "pin")),
+        [1.0, 1.0, -1.0],
+        1e-7,
+    );
+}

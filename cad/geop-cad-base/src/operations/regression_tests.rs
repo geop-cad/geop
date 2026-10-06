@@ -788,3 +788,116 @@ fn torus_up_to_next_partly_stopped_every_way() {
     torus_up_to_next(&PARTLY_STOPPED, false);
     torus_up_to_next(&PARTLY_STOPPED, true);
 }
+
+/// The box of the user's conebox part, and a spindle revolved a full turn
+/// about an axis in a plane through the box's top edge, turned 45 degrees
+/// from the top (see [`conebox`]): the axis crosses that edge at its
+/// middle. Reported (2026-10-06) as the join failing in `splice_edge_into_face`
+/// ("cannot tell whether an edge leaving ... runs into the corner"): "New
+/// part" built, "Join" did not.
+fn conebox(combine: Combine) -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    frame_axes(&mut outline);
+    let (x, y) = (20.416121033435203, 17.42175661519803);
+    let corners = [
+        outline.add_point(n(x), n(y)),
+        outline.add_point(n(-x), n(y)),
+        outline.add_point(n(-x), n(-y)),
+        outline.add_point(n(x), n(-y)),
+    ];
+    let sides: Vec<_> = (0..4)
+        .map(|i| outline.add_line(corners[i], corners[(i + 1) % 4]))
+        .collect();
+    for (i, &line) in sides.iter().enumerate() {
+        outline.constrain(if i % 2 == 0 {
+            Constraint::Horizontal { line }
+        } else {
+            Constraint::Vertical { line }
+        });
+    }
+    let diagonal = outline.add_line(corners[0], corners[2]);
+    outline.set_construction(diagonal, true);
+    outline.constrain(Constraint::Midpoint {
+        point: geop_core_sketch::PointId(0),
+        curve: diagonal,
+    });
+    program.push(
+        "sketch1",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: outline,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "extrude1",
+        ExtrudeArgs {
+            sketch: "sketch1".into(),
+            extent: Extents {
+                symmetric: true,
+                ..Extents::blind(27.240000000000002)
+            },
+            face: false,
+            combine: Combine::NewBody,
+        },
+    );
+    program.push(
+        "reference1",
+        AddDatumArgs {
+            selection: vec![
+                EntityRef::Edge {
+                    name: format!("extrude(extrude1,sketch1,{},end)", sides[3]),
+                },
+                EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            ],
+            construction: Construction::Angle { angle: 45.0.into() },
+        },
+    );
+    let mut spindle = Sketch::new();
+    frame_axes(&mut spindle);
+    let apex = geop_core_sketch::PointId(0);
+    let tip = spindle.add_point(n(-22.390558010610484), n(0.0));
+    let axis = spindle.add_line(apex, tip);
+    let belly = spindle.add_point(n(-12.732689325241626), n(-9.735061404254687));
+    spindle.add_line(tip, belly);
+    spindle.add_line(belly, apex);
+    spindle.constrain(Constraint::Horizontal { line: axis });
+    program.push(
+        "sketch2",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum("reference1")),
+            sketch: spindle,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: "sketch2".into(),
+            axis: Some(EntityRef::SketchCurve {
+                sketch: "sketch2".into(),
+                curve: axis,
+            }),
+            extent: Extents::blind(360.0),
+            face: false,
+            combine,
+        },
+    );
+    program
+}
+
+#[test]
+fn spindle_revolved_about_an_axis_through_the_middle_of_a_box_edge_as_a_new_body() {
+    assert_builds_valid(&conebox(Combine::NewBody));
+}
+
+#[test]
+fn spindle_revolved_about_an_axis_through_the_middle_of_a_box_edge_and_joined() {
+    assert_builds_valid(&conebox(Combine::Union {
+        target: "extrude(extrude1)".into(),
+    }));
+}

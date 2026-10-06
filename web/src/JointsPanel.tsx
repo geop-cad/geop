@@ -33,7 +33,7 @@ export function JointsPanel({ joints, freedom, enabled, onSet }: Props) {
             <div
               className="parameter-row"
               key={v.parameter}
-              title={`${joint.kind} joint ${joint.name}: ${v.motion}`}
+              title={`${joint.kind} joint ${joint.name}: ${v.motion}${joint.between.length > 0 ? ` — ${joint.between.join(" ↔ ")}` : ""}`}
             >
               <span className="parameter-name">{label(joint.name)}</span>
               {v.min != null && v.max != null && (

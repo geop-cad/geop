@@ -415,3 +415,44 @@ fn pocketed_block_fillet_all_but_upright_edges() {
     }
     assert_corner_balls(&built, r, &centers);
 }
+
+/// A 4 x 4 x 1 base with a plate 1 thick and 2 high standing on it, flush
+/// with its sides: the union leaves each side two faces in one plane.
+fn plate_on_base() -> Part<S> {
+    let mut part = Part::new();
+    let base = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(4.0, 4.0, 1.0)).unwrap();
+    let plate = cube_solid(&mut part, "p", v(0.0, 0.0, 1.0), v(1.0, 4.0, 3.0)).unwrap();
+    let namer = Namer::new("join", "J").unwrap();
+    boolean(
+        &mut part,
+        &namer,
+        base,
+        plate,
+        BooleanOp::Union,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part
+}
+
+/// The edge where the plate meets the base's top, rounded: it ends at the
+/// flush sides, at corners of four faces, two of them one plane (reported
+/// 2026-10-06 on a plate whose side was flush with the part it stands on:
+/// "the edge ends at vertex ..., where 2 more faces meet"). The two faces
+/// are one wall, and the fillet runs flush up to it.
+#[test]
+fn fillet_up_to_a_wall_two_faces_make() {
+    let part = plate_on_base();
+    let edges = edges_where(&part, |p| {
+        (p[0] - 1.0).abs() < 1e-9 && (p[1] - 2.0).abs() < 1e-9 && (p[2] - 1.0).abs() < 1e-9
+    });
+    assert_eq!(edges.len(), 1, "{edges:?}");
+    let edges: Vec<&str> = edges.iter().map(String::as_str).collect();
+    let part = blended(part, &edges, BlendShape::round(0.2));
+    // Where the fillet meets the sides it ends flush: its corners are at
+    // the sides' planes.
+    for y in [0.0, 4.0] {
+        assert!(has_vertex(&part, [1.2, y, 1.0]), "no vertex at x 1.2, y {y}");
+    }
+}

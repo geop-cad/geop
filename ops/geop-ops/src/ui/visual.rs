@@ -47,11 +47,13 @@ pub enum Shape<S: Scalar> {
     Instance {
         name: String,
     },
-    /// The world's `x`, `y` and `z` as three arrows from `at`, drawn at a
-    /// constant size on screen ([`TRIAD`] reaches long): what lines are
-    /// drawn along, to see them by. Hit by nothing.
+    /// Three arrows from `at`, along `axes` — the world's `x`, `y` and `z`,
+    /// or a frame's — drawn at a constant size on screen ([`TRIAD`] reaches
+    /// long): what lines are drawn along, to see them by, or the frame a
+    /// mate would put. Hit by nothing.
     Triad {
         at: Vector3<S>,
+        axes: [Vector3<S>; 3],
     },
 }
 

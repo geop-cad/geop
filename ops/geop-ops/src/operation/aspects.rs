@@ -137,6 +137,11 @@ impl<S: Scalar> Aspects<S> {
                 part.feature(name).with_context(ctx)?;
                 g.feature = true;
             }
+            EntityRef::Frame { on, at } => {
+                let frame = Aspects::frame_on(on, at.as_deref(), part).with_context(ctx)?;
+                g.point = Some(*frame.origin());
+                g.frame = Some(frame);
+            }
             EntityRef::SketchPoint { sketch, point } => {
                 let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
                 placed.sketch.point(*point).with_context(ctx)?;
@@ -248,10 +253,14 @@ pub enum Role {
     /// What a step did by combining tools with a solid, picked by a face
     /// it made.
     Feature,
+    /// A reference frame — what a mate's joint turns about or slides along:
+    /// where a face, an edge, a point or a datum is picked, a frame is put
+    /// (see [`Aspects::frame_on`]).
+    Frame,
 }
 
 impl Role {
-    pub const ALL: [Role; 13] = [
+    pub const ALL: [Role; 14] = [
         Role::Point,
         Role::Line,
         Role::Plane,
@@ -265,6 +274,7 @@ impl Role {
         Role::Sketch,
         Role::Path,
         Role::Feature,
+        Role::Frame,
     ];
 
     pub fn fits<S: Scalar>(self, aspects: &Aspects<S>) -> bool {
@@ -282,6 +292,13 @@ impl Role {
             Role::Sketch => aspects.sketch,
             Role::Path => aspects.path,
             Role::Feature => aspects.feature,
+            Role::Frame => {
+                aspects.point.is_some()
+                    || aspects.line.is_some()
+                    || aspects.plane.is_some()
+                    || aspects.round.is_some()
+                    || aspects.frame.is_some()
+            }
         }
     }
 
@@ -301,6 +318,7 @@ impl Role {
             Role::Sketch => "a sketch",
             Role::Path => "a sketch or a 3-D sketch",
             Role::Feature => "a feature, by a face it made",
+            Role::Frame => "a face, an edge, a point or a datum",
         }
     }
 
@@ -320,6 +338,7 @@ impl Role {
             Role::Sketch => "sketch",
             Role::Path => "path",
             Role::Feature => "feature",
+            Role::Frame => "frame",
         }
     }
 }

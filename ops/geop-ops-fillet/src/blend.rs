@@ -397,9 +397,36 @@ pub(crate) fn tool_end<S: Scalar>(
             others.push(coedge.face);
         }
     }
+    // A face a union left in two — a plate standing flush with the side of
+    // what it stands on — is one wall: what is told of the third face is
+    // told of the plane they share.
+    let mut walls: Vec<FaceId> = Vec::new();
+    for &face in &others {
+        let plane = model.get_face(face)?.surface.as_plane()?;
+        let flush = |wall: &FaceId| -> GeopResult<bool> {
+            let (Some(a), Some(b)) = (&plane, model.get_face(*wall)?.surface.as_plane()?) else {
+                return Ok(false);
+            };
+            let (na, nb) = (a.normal.normalize()?, b.normal.normalize()?);
+            Ok(na.prod_dot(&nb).definitely_greater(S::ZERO)
+                && na.prod_cross(&nb).norm_sq().could_be_equal(S::ZERO)
+                && a.signed_distance(&b.point).could_be_equal(S::ZERO))
+        };
+        let mut flush_with_one = false;
+        for wall in &walls {
+            if flush(wall)? {
+                flush_with_one = true;
+                break;
+            }
+        }
+        if !flush_with_one {
+            walls.push(face);
+        }
+    }
+    let others = walls;
     let unsupported = |why: &str| {
         Err(GeopError::new(format!(
-            "the edge ends at vertex {vertex}, where {why}: only an edge ending at a corner of exactly three faces, the third a plane, is blended"
+            "the edge ends at vertex {vertex}, where {why}: only an edge ending at a corner of exactly three faces, the third a plane, is blended — or a plane in two flush faces"
         )))
     };
     let [other] = others.as_slice() else {
@@ -1237,6 +1264,37 @@ fn mirrored<S: Scalar>(plans: &[(Plan<S>, ToolProfile<S>)], joint: &Joint) -> Ge
     }
 }
 
+/// Which faces meet at each end of `edge`, by name: what a blend that
+/// cannot be built at one of them (see [`tool_end`]) says about it.
+fn corners_of<S: Scalar>(part: &Part<S>, edge: EdgeId) -> String {
+    let model = part.topology();
+    let name = |face: FaceId| part.name_of(face).map_or(format!("{face}"), String::from);
+    let Ok(e) = model.get_edge(edge) else {
+        return format!("edge {edge}");
+    };
+    [e.start_vertex, e.end_vertex]
+        .into_iter()
+        .map(|vertex| {
+            let mut faces: Vec<FaceId> = Vec::new();
+            for (&id, coedge) in &model.coedges {
+                if coedge.edge().is_ok()
+                    && model.coedge_start_vertex_id(id).is_ok_and(|v| v == vertex)
+                    && !faces.contains(&coedge.face)
+                {
+                    faces.push(coedge.face);
+                }
+            }
+            faces.sort_by_key(|f| f.0);
+            format!(
+                "vertex {} meets faces {}",
+                part.name_of(vertex).map_or(format!("{vertex}"), String::from),
+                faces.into_iter().map(name).collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// Blends the edges named `edges`, all of one solid, into `shape` (see the
 /// module docs), as the step whose names `namer` builds. The result is
 /// named `namer`'s root, and the solid is consumed.
@@ -1287,7 +1345,10 @@ pub fn blend<S: Scalar>(
         if covered.contains(&edge) {
             continue;
         }
-        match plan_edge(part, name, shape).with_context(ctx)? {
+        let planned = plan_edge(part, name, shape)
+            .map_err(|e| e.with_context(corners_of(part, edge)))
+            .with_context(ctx)?;
+        match planned {
             Planned::Swept(plan, blended) => {
                 let profile = tool_profile(&plan.section, shape).with_context(ctx)?;
                 check_touches(part.topology(), &plan.section, &profile).with_context(ctx)?;

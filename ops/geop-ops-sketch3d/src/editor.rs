@@ -948,7 +948,11 @@ fn visuals<S: Scalar>(
     if let Some(at) = anchor.filter(|_| s.tool(args).draws()) {
         out.push(Visual::new(
             "triad",
-            Shape::Triad { at: cast(&at) },
+            Shape::Triad {
+                at: cast(&at),
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+                    .map(|axis| Vector3::from_array(axis.map(S::from_f64))),
+            },
             Style::Guide,
         ));
     }

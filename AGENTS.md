@@ -816,3 +816,55 @@ solved for, with points far from where they were drawn, can be sent off
 to infinity. A sketch every point of which a formula places — lines,
 Béziers, arcs whose sweep does not change — is placed in one step for any
 size.
+
+## A step sized by the tightest bend never arrives
+
+`adaptive_step_size` shortened every marching step so a full turn of the
+tighter surface would take 64 of them. At a cone's apex the tightest bend is
+the circle round the axis, which shrinks with the distance to the apex. A
+curve running along a generator into it, a straight line, took a step a
+fraction of its distance to the apex each time, and never got there: 359
+steps, spaced geometrically, for a line. The interpolation through those
+points then widened exponentially along the chain, to 111 in the control
+points, and the splice failed on a "corner" it could not decide.
+
+A surface that runs straight the way the curve does (`curvature_radius_along`
+reports none) bends it by nothing, and no longer limits the step. Going
+further, and sizing the step by the bend along the curve for every surface,
+was tried and is wrong: where the surfaces bend a curve a little here it may
+bend sharply a stride on, and the pattern of `turbine_blade` left its patch
+(the slow `example_mass_properties_are_consistent` caught it). Look at the
+number of steps a trace took: a line that took hundreds went wrong before it
+was fitted. A trace that records its widest marched point and its widest
+true point between them (see the context in `trace_one_side`) tells where a
+wide curve got wide.
+
+## A pole is one vertex at many `(u, v)`
+
+A face's loop passes a pole once at each corner of its collapsed row, and
+along the row (a `CoedgeGeometry::Vertex` coedge), each at a `(u, v)` of its
+own. Which pass an edge arrives at is told by *its* `(u, v)`, not by the way
+it leaves the vertex, and not by pinning its end to the first coedge that
+arrives there: that is a corner at the row's end, and the edge is bent to it.
+`splice_edge_into_face` leaves the end of an edge at a pole unpinned, cuts
+the row where the edge's pcurve ends and splices after the first half
+(`split_pole_row`).
+
+## Faces a union leaves in two are one wall
+
+A plate standing flush with the side of what it stands on is two faces in
+one plane, and a corner on that side has four faces, not three. What the
+fillet needs of the third face — a plane, square to the edge — is true of
+both. `tool_end` counts faces of one plane as one wall. A refusal says which
+faces meet where (`corners_of`), so the next corner it cannot take is named.
+
+## A reference direction is not left to noise
+
+A joint measures its turns from a direction square to its axis, chosen from
+the world's axes as the one the axis runs least along. An axis along `z` is
+a hair off it in `x` and in `y` alike, so which of the two is the least was
+decided by noise, differently for the two ends of a joint: a quarter turn
+or none. `across` takes the first axis that no other component is
+definitely less than. A frame put on a face or an edge gives the same
+direction as the joint would have chosen for it (`axis_frame`), so frames
+and the entities they are on are at a turn of zero alike.

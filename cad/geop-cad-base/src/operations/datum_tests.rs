@@ -155,7 +155,7 @@ fn sketch_points_and_lines() {
     )
     .unwrap()
     .roles();
-    assert_eq!(roles, [Role::Line, Role::Curve]);
+    assert_eq!(roles, [Role::Line, Role::Curve, Role::Frame]);
 }
 
 #[test]
@@ -481,7 +481,7 @@ fn frames() {
     assert!(d.frame.u().sub(&v(0., 1., 0.)).norm().to_f64() < 1e-9);
 
     let roles = Aspects::of(&EntityRef::datum("cs"), &part).unwrap().roles();
-    assert_eq!(roles, [Role::Point]);
+    assert_eq!(roles, [Role::Point, Role::Frame]);
     // Its axes carry an offset point, as a datum point's do.
     let d = datum(
         &part,

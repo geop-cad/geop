@@ -10,6 +10,12 @@
 //! the world's — or grabbed anywhere and dragged in the plane facing the
 //! eye.
 //!
+//! A joint is made between frames, one picked on each part: a click on a
+//! face, an edge or a point puts one there (see
+//! [`geop_ops::operation::Aspects::frame_on`]), and the hover shows the
+//! frame it would pick, as three arrows. A coupling is made of two joints
+//! already made, offered by what they join.
+//!
 //! A joint's coordinates are parameters of the program too: set in the
 //! dialog, they are held there while the step is edited ([`Form::holds`]),
 //! and the parts move to them.
@@ -44,13 +50,7 @@ fn mate_roles(kind: &MateKind) -> &'static [Role] {
         MateKind::Constraint(Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. }) => {
             &[Role::Line, Role::Plane, Role::Round]
         }
-        MateKind::Joint(_) => &[
-            Role::Circle,
-            Role::Round,
-            Role::Point,
-            Role::Line,
-            Role::Plane,
-        ],
+        MateKind::Joint(_) => &[Role::Frame],
         MateKind::Coupling(_) => &[],
     }
 }
@@ -100,7 +100,7 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
                 min: None,
                 max: None,
             },
-            "The second part turns about the first one's axis, and nothing else: pick a circular edge or a datum of each.",
+            "The second part turns about the first one's frame's z axis, and nothing else — a hinge: pick a frame on each part.",
         ),
         joint(
             "slider",
@@ -108,17 +108,17 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
                 min: None,
                 max: None,
             },
-            "The second part slides along the first one's axis, and nothing else.",
+            "The second part slides along the first one's frame's z axis, and nothing else: pick a frame on each part.",
         ),
         joint(
             "cylindrical",
             JointKind::Cylindrical,
-            "The second part turns about the first one's axis and slides along it.",
+            "The second part turns about the first one's frame's z axis and slides along it — a shaft in a bearing.",
         ),
         joint(
             "fastened",
             JointKind::Fastened,
-            "The two parts are held together where their circular edges or datums meet.",
+            "The two parts are held together, their frames one: pick a frame on each part.",
         ),
         coupling(
             "gear",
@@ -126,7 +126,7 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
                 ratio: Design::ONE,
                 reverse: true,
             },
-            "Two turning joints turn together: the first `ratio` times per turn of the second.",
+            "Two joints that turn — two gears' hinges — turn together: the first `ratio` times per turn of the second. Add the two joints first.",
         ),
         coupling(
             "rack_pinion",
@@ -134,7 +134,7 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
                 radius: Design::ONE,
                 reverse: false,
             },
-            "A sliding joint moves as far as a turning joint's pitch circle rolls.",
+            "A joint that slides — a rack — moves as far as a joint that turns — its pinion — rolls its pitch circle. Add the two joints first.",
         ),
         coupling(
             "screw",
@@ -142,7 +142,7 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
                 lead: Design::from_ratio(1, 10).expect("ten is not zero"),
                 reverse: false,
             },
-            "A sliding joint moves its lead per turn of a turning joint — of one cylindrical joint, say.",
+            "A joint that slides moves its lead per turn of a joint that turns — of one cylindrical joint, say. Add the joints first.",
         ),
     ]
 }
@@ -232,26 +232,53 @@ fn selected<'a, S: Scalar>(
     joints: &[JointInfo],
 ) {
     if let MateKind::Coupling(kind) = mate.kind {
-        let options: Vec<Choice> = std::iter::once(Choice::new("", "Choose a joint…"))
-            .chain(
-                joints
-                    .iter()
-                    .map(|j| Choice::new(j.name.clone(), format!("{} — {}", j.name, j.kind))),
-            )
-            .collect();
         let [first, second] = match kind {
             CouplingKind::Gear { .. } => ["driving joint", "driven joint"],
             CouplingKind::RackPinion { .. } => ["pinion's joint", "rack's joint"],
             CouplingKind::Screw { .. } => ["turning joint", "sliding joint"],
         };
+        // What each of the two joints has to do: turn or slide.
+        let motions = match kind {
+            CouplingKind::Gear { .. } => [Motion::Turn, Motion::Turn],
+            CouplingKind::RackPinion { .. } => [Motion::Turn, Motion::Slide],
+            CouplingKind::Screw { .. } => [Motion::Turn, Motion::Slide],
+        };
         for (k, label) in [first, second].into_iter().enumerate() {
+            let moves = |j: &&JointInfo| j.values.iter().any(|v| v.motion == motions[k].name());
+            let options: Vec<Choice> = std::iter::once(Choice::new("", "Choose a joint…"))
+                .chain(joints.iter().filter(moves).map(|j| {
+                    let what = if j.between.is_empty() {
+                        j.name.clone()
+                    } else {
+                        format!("{} — {}", j.name, j.between.join(" ↔ "))
+                    };
+                    Choice::new(j.name.clone(), format!("{} · {what}", j.kind))
+                }))
+                .collect();
+            if options.len() == 1 {
+                f.text(
+                    &format!("mate:{id}:no_joint{k}"),
+                    format!(
+                        "No joint {} yet: add one first — Joint, then {} — to the parts placed so far.",
+                        match motions[k] {
+                            Motion::Turn => "turns",
+                            Motion::Slide => "slides",
+                        },
+                        match motions[k] {
+                            Motion::Turn => "Revolute or Cylindrical",
+                            Motion::Slide => "Slider or Cylindrical",
+                        },
+                    ),
+                    Tone::Error,
+                );
+            }
             let mate_id = id.to_string();
             let value = mate.joints.get(k).cloned().unwrap_or_default();
             f.select(
                 &format!("mate:{id}:joint{k}"),
                 label,
                 value,
-                options.clone(),
+                options,
                 true,
                 move |args, joint| {
                     if let Some(mate) = args.mates.get_mut(&mate_id) {
@@ -302,7 +329,7 @@ fn selected<'a, S: Scalar>(
         f.text(
             "mate_hint",
             format!(
-                "Choose {}: the joints of the parts placed so far.",
+                "Choose {} from the joints of the parts placed so far, here or in an earlier step.",
                 mate.needs()
             ),
             Tone::Hint,
@@ -313,7 +340,11 @@ fn selected<'a, S: Scalar>(
     let mate_id = id.to_string();
     f.reference(
         &format!("mate:{id}:entities"),
-        "entities",
+        if matches!(mate.kind, MateKind::Joint(_)) {
+            "frames"
+        } else {
+            "entities"
+        },
         mate.entities.clone(),
         mate_roles(&mate.kind),
         None,
@@ -331,14 +362,22 @@ fn selected<'a, S: Scalar>(
             }
         },
     );
-    f.text(
-        "mate_hint",
-        format!(
+    let hint = match mate.kind {
+        MateKind::Joint(_) => {
+            "Click a face, an edge, a point or a datum on each of the two parts: where you click, a \
+             frame is put, and the joint turns or slides along its z axis, the blue arrow. A planar \
+             face has it at its middle, or at the corner or side you are near, along its normal; a \
+             cylinder, on its axis; a circular edge, at its center, along its axis; a straight edge, \
+             at its middle, or at the end you are near, along it; a point, along the world's z. \
+             The first part holds, the second moves."
+                .to_string()
+        }
+        _ => format!(
             "Pick two entities, each {} — of the placed part, of a part placed before, or of this part itself.",
             mate.needs()
         ),
-        Tone::Hint,
-    );
+    };
+    f.text("mate_hint", hint, Tone::Hint);
 
     let MateKind::Joint(kind) = mate.kind else {
         return;

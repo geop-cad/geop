@@ -34,7 +34,9 @@ export type EntityRef =
   | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch" | "Sketch3d" | "Feature"; name: string }
   | { type: "Datum"; name: string; component?: DatumComponent }
   | { type: "SketchCurve"; sketch: string; curve: number }
-  | { type: "SketchPoint"; sketch: string; point: number };
+  | { type: "SketchPoint"; sketch: string; point: number }
+  /** A reference frame on `on`, put at `at` — a vertex of it, or an edge of it — if it says where. */
+  | { type: "Frame"; on: EntityRef; at?: EntityRef };
 
 /** Whether two entities are the same one. */
 export function sameEntity(a: EntityRef, b: EntityRef): boolean {
@@ -45,6 +47,7 @@ export function sameEntity(a: EntityRef, b: EntityRef): boolean {
 export function entityLabel(e: EntityRef): string {
   if (e.type === "SketchCurve") return `${e.sketch} c${e.curve}`;
   if (e.type === "SketchPoint") return `${e.sketch} p${e.point}`;
+  if (e.type === "Frame") return e.at ? `frame on ${entityLabel(e.on)} at ${entityLabel(e.at)}` : `frame on ${entityLabel(e.on)}`;
   if (e.type !== "Datum" || !e.component) return e.name;
   if ("axis" in e.component) return `${e.name} ${e.component.axis} axis`;
   const plane = { x: "yz", y: "zx", z: "xy" }[e.component.plane];
@@ -298,7 +301,9 @@ export type Role =
   | "solid"
   | "sheet"
   | "sketch"
-  | "path";
+  | "path"
+  | "feature"
+  | "frame";
 
 /** What a number measures. */
 export type Unit = "length" | "angle" | "fraction" | "count";
@@ -375,8 +380,8 @@ export type Shape =
   | { shape: "handle"; at: Vec3; direction: Vec3 }
   /** A placed part, by its instance's name, drawn lit when hovered or selected. */
   | { shape: "instance"; name: string }
-  /** The world's x, y and z as arrows from `at`, a constant size on screen (see `TRIAD_REACHES` in visuals3d.ts). */
-  | { shape: "triad"; at: Vec3 };
+  /** Three arrows from `at` along `axes` — the world's x, y and z, or a frame's — a constant size on screen (see `TRIAD_REACHES` in visuals3d.ts). */
+  | { shape: "triad"; at: Vec3; axes: [Vec3, Vec3, Vec3] };
 
 export type Style =
   | "free"
@@ -524,6 +529,8 @@ export interface JointValue {
 export interface JointInfo {
   name: string;
   kind: string;
+  /** What it joins, as the entities its frames are on read: the part it holds, then the part it moves. */
+  between: string[];
   values: JointValue[];
 }
 

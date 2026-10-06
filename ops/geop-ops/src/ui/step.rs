@@ -779,12 +779,31 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
                 visual.style = Style::Hover;
             }
         }
-        let highlights = form
-            .dialog
-            .picked()
-            .cloned()
-            .chain(self.hover.clone())
-            .collect();
+        // A frame is lit as what it is on and where it sits, and drawn as
+        // the three axes it has.
+        let mut highlights = Vec::new();
+        let picked = form.dialog.picked().cloned().map(|e| (e, Style::Selected));
+        for (entity, style) in picked.chain(self.hover.clone().map(|e| (e, Style::Hover))) {
+            let EntityRef::Frame { on, at } = &entity else {
+                highlights.push(entity);
+                continue;
+            };
+            highlights.push((**on).clone());
+            highlights.extend(at.as_ref().map(|at| (**at).clone()));
+            if let Some(frame) = Aspects::of(&entity, picks_in)
+                .ok()
+                .and_then(|aspects| aspects.frame)
+            {
+                visuals.push(Visual::new(
+                    format!("frame:{}", visuals.len()),
+                    Shape::Triad {
+                        at: *frame.origin(),
+                        axes: [*frame.u(), *frame.v(), *frame.w()],
+                    },
+                    style,
+                ));
+            }
+        }
         Presentation {
             dialog: form.dialog,
             visuals,

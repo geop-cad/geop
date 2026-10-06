@@ -36,9 +36,9 @@ const DOUBLE_MS = 350;
 /** The kinds of datum a click can pick something of, looking for `roles`: a frame's origin, axes and planes are points, lines and planes too. */
 function datumKinds(roles: Role[]): DatumKind[] {
   const kinds: DatumKind[] = [];
-  if (roles.includes("point")) kinds.push("point");
-  if (roles.includes("line")) kinds.push("axis");
-  if (roles.includes("plane")) kinds.push("plane");
+  if (roles.includes("point") || roles.includes("frame")) kinds.push("point");
+  if (roles.includes("line") || roles.includes("frame")) kinds.push("axis");
+  if (roles.includes("plane") || roles.includes("frame")) kinds.push("plane");
   if (kinds.length) kinds.push("frame");
   return kinds;
 }

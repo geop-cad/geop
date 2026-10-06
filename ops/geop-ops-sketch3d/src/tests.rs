@@ -408,7 +408,7 @@ fn lines_snap_along_axes_and_onto_points() {
     );
     assert!(matches!(shown("snap"), Some(v) if v.style == Style::Snap));
     assert!(
-        matches!(shown("triad"), Some(v) if matches!(v.shape, Shape::Triad { at } if close(&at, [1.0, 0.0, 1.0])))
+        matches!(shown("triad"), Some(v) if matches!(v.shape, Shape::Triad { at, .. } if close(&at, [1.0, 0.0, 1.0])))
     );
     e.click(side(3.0, 1.005));
     let p = e.points();

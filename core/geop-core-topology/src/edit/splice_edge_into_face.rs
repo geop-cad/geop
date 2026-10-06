@@ -65,7 +65,7 @@ impl<S: Scalar> Model<S> {
         // its pcurve end is the authoritative `(u, v)` there — the new pcurve
         // is pinned to it so the loop stays exactly continuous.
         let surface = model.get_face(face_id).with_context(&ctx)?.surface.clone();
-        let fit = |at_start: Option<CoedgeId>, at_end: Option<CoedgeId>| {
+        let fit = |model: &Model<S>, at_start: Option<CoedgeId>, at_end: Option<CoedgeId>| {
             surface
                 .fit_pcurve(
                     &curve,
@@ -76,10 +76,48 @@ impl<S: Scalar> Model<S> {
                 )
                 .with_context(&ctx)
         };
-        let arriving_start = coedges_ending_at(model, face_id, start_vertex).with_context(&ctx)?;
-        let arriving_end = coedges_ending_at(model, face_id, end_vertex).with_context(&ctx)?;
+        let mut arriving_start =
+            coedges_ending_at(model, face_id, start_vertex).with_context(&ctx)?;
+        let mut arriving_end = coedges_ending_at(model, face_id, end_vertex).with_context(&ctx)?;
         let first = |arriving: &[CoedgeId]| arriving.first().copied();
-        let mut pcurve_fwd = fit(first(&arriving_start), first(&arriving_end))?;
+        // A pole is a whole row of the surface at one vertex: no one corner
+        // of the loop is where an edge arrives at it, so the first fit pins
+        // neither end there, and the end's own `(u, v)` says where along the
+        // row it is (see [`split_pole_row`]).
+        let pole = |model: &Model<S>, vertex: VertexId, arriving: &[CoedgeId]| {
+            arriving.iter().any(|&c| {
+                model
+                    .get_coedge(c)
+                    .is_ok_and(|c| c.geometry == CoedgeGeometry::Vertex(vertex))
+            })
+        };
+        let (pole_start, pole_end) = (
+            pole(model, start_vertex, &arriving_start),
+            pole(model, end_vertex, &arriving_end),
+        );
+        let mut pcurve_fwd = fit(
+            model,
+            first(&arriving_start).filter(|_| !pole_start),
+            first(&arriving_end).filter(|_| !pole_end),
+        )?;
+        if pole_start || pole_end {
+            let (t0, t1) = pcurve_fwd.domain();
+            for (is_pole, vertex, t, arriving) in [
+                (pole_start, start_vertex, t0, &mut arriving_start),
+                (pole_end, end_vertex, t1, &mut arriving_end),
+            ] {
+                if !is_pole {
+                    continue;
+                }
+                let uv = pcurve_fwd.evaluate(t).with_context(&ctx)?;
+                if let Some(corner) =
+                    split_pole_row(model, vertex, arriving, uv).with_context(&ctx)?
+                {
+                    *arriving = vec![corner];
+                }
+            }
+            pcurve_fwd = fit(model, first(&arriving_start), first(&arriving_end))?;
+        }
         // A vertex the loop passes more than once — the root of a spur, or a
         // point where the face touches itself — has as many corners there,
         // and the edge belongs in the one it leaves into. Its pcurve says
@@ -104,7 +142,7 @@ impl<S: Scalar> Model<S> {
         )
         .with_context(&ctx)?;
         if at_start != first(&arriving_start) || at_end != first(&arriving_end) {
-            pcurve_fwd = fit(at_start, at_end)?;
+            pcurve_fwd = fit(model, at_start, at_end)?;
         }
         let pcurve_rev = pcurve_fwd.reverse();
 
@@ -293,6 +331,66 @@ impl<S: Scalar> Model<S> {
 
         Ok(new_face)
     }
+}
+
+/// Where an edge arrives at a pole — `vertex`, at which a face's surface
+/// collapses a whole row — if that is in the middle of the row's coedge: the
+/// coedge among `arriving` that runs along the row (see
+/// [`CoedgeGeometry::Vertex`]) is cut at `uv`, where the edge's pcurve ends,
+/// into two, and the first is returned, which now ends there. The edge is
+/// spliced after it, between the two halves of the row.
+///
+/// `None` where no such coedge holds `uv` strictly inside: the edge arrives
+/// at one of the corners of the row, which the usual choice of corner
+/// finds. A pole has a corner for every end of its row and every meridian
+/// that arrives at it, each at a `(u, v)` of its own, though they are one
+/// vertex — so which of them an edge arrives at is told by its `(u, v)`,
+/// not by the way it leaves the vertex.
+///
+/// Which `u` the edge arrives at, along a row that is all one point, is the
+/// edge's own: taken from where its pcurve was fitted to end — sharp, since
+/// the row is cut there, and the edge is then pinned to that cut.
+fn split_pole_row<S: Scalar>(
+    model: &mut Model<S>,
+    vertex: VertexId,
+    arriving: &[CoedgeId],
+    uv: Vector2<S>,
+) -> GeopResult<Option<CoedgeId>> {
+    for &row in arriving {
+        let coedge = model.get_coedge(row)?;
+        if coedge.geometry != CoedgeGeometry::Vertex(vertex) {
+            continue;
+        }
+        let (t0, t1) = coedge.pcurve.domain();
+        let (a, b) = (coedge.pcurve.evaluate(t0)?, coedge.pcurve.evaluate(t1)?);
+        let (face, next) = (coedge.face, coedge.next);
+        if !uv[1].could_be_equal(a[1]) || !uv[1].could_be_equal(b[1]) {
+            continue;
+        }
+        let u = uv[0].midpoint().sharpen();
+        let (lo, hi) = (a[0].min(b[0]), a[0].max(b[0]));
+        if !u.definitely_greater(lo) || !u.definitely_less(hi) {
+            continue;
+        }
+        // The row runs straight along `u`, at a speed of its own.
+        let t = t0
+            .add(t1.sub(t0).mul(u.sub(a[0]).div(b[0].sub(a[0]))?))
+            .sharpen();
+        let (before, after) = coedge.pcurve.split(t)?;
+        model.get_coedge_mut(row)?.pcurve = before;
+        let rest = model.insert_coedge(Coedge {
+            geometry: CoedgeGeometry::Vertex(vertex),
+            sense: Sense::Forward,
+            pcurve: after,
+            next,
+            prev: row,
+            face,
+        });
+        link(model, row, rest)?;
+        link(model, rest, next)?;
+        return Ok(Some(row));
+    }
+    Ok(None)
 }
 
 /// The `(u, v)` a coedge's pcurve ends at, if there is such a coedge.

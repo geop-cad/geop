@@ -77,6 +77,20 @@ pub enum EntityRef {
     Feature {
         name: String,
     },
+    /// A reference frame on an entity, for what is placed or moved by it —
+    /// a mate's joint turns about the `z` axis of one: a planar face's at
+    /// its middle, `z` along its normal; a cylinder's on its axis, half way
+    /// along it; a circular edge's at its center, `z` along its axis; a
+    /// straight edge's at its middle, `z` along it; a point's, with the
+    /// world's axes. `at` says where else on `on` it sits: at a vertex of
+    /// it, or at the middle of an edge of it — a face's frame at a corner,
+    /// or half way along a side, with its `z` still the face's — or at an
+    /// end of a straight edge (see [`crate::operation::Aspects::frame_on`]).
+    Frame {
+        on: Box<EntityRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Box<EntityRef>>,
+    },
 }
 
 impl EntityRef {
@@ -105,6 +119,10 @@ impl EntityRef {
             } => format!("{name} {component}"),
             EntityRef::SketchCurve { sketch, curve } => format!("{sketch} {curve}"),
             EntityRef::SketchPoint { sketch, point } => format!("{sketch} {point}"),
+            EntityRef::Frame { on, at: None } => format!("frame on {}", on.label()),
+            EntityRef::Frame { on, at: Some(at) } => {
+                format!("frame on {} at {}", on.label(), at.label())
+            }
             EntityRef::Vertex { name }
             | EntityRef::Edge { name }
             | EntityRef::Face { name }
@@ -118,8 +136,9 @@ impl EntityRef {
 }
 
 impl EntityRef {
-    /// The name it is found by: its own, or its sketch's.
-    fn name_mut(&mut self) -> &mut String {
+    /// The name it is found by: its own, or its sketch's. A frame has none
+    /// of its own: it is found by those of its entity and where it sits.
+    fn name_mut(&mut self) -> Option<&mut String> {
         match self {
             EntityRef::Vertex { name }
             | EntityRef::Edge { name }
@@ -128,16 +147,37 @@ impl EntityRef {
             | EntityRef::Solid { name }
             | EntityRef::Sketch { name }
             | EntityRef::Sketch3d { name }
-            | EntityRef::Feature { name } => name,
-            EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. } => sketch,
+            | EntityRef::Feature { name } => Some(name),
+            EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. } => {
+                Some(sketch)
+            }
+            EntityRef::Frame { .. } => None,
         }
     }
 
     /// If it lies in a part placed in this one: the instance's name, and the
-    /// entity as the placed part names it.
+    /// entity as the placed part names it. A frame lies in the part its
+    /// entity does, and so does where it sits.
     pub fn split_instance(&self) -> Option<(String, EntityRef)> {
+        if let EntityRef::Frame { on, at } = self {
+            let (instance, on) = on.split_instance()?;
+            let at = match at {
+                Some(at) => match at.split_instance() {
+                    Some((of, at)) if of == instance => Some(Box::new(at)),
+                    _ => return None,
+                },
+                None => None,
+            };
+            return Some((
+                instance,
+                EntityRef::Frame {
+                    on: Box::new(on),
+                    at,
+                },
+            ));
+        }
         let mut inner = self.clone();
-        let name = inner.name_mut();
+        let name = inner.name_mut()?;
         let (instance, rest) = name.split_once(INSTANCE_SEPARATOR)?;
         let instance = instance.to_string();
         *name = rest.to_string();
@@ -147,8 +187,14 @@ impl EntityRef {
     /// The entity, of the part placed as `instance`, as the part it is
     /// placed in names it.
     pub fn in_instance(&self, instance: &str) -> EntityRef {
+        if let EntityRef::Frame { on, at } = self {
+            return EntityRef::Frame {
+                on: Box::new(on.in_instance(instance)),
+                at: at.as_ref().map(|at| Box::new(at.in_instance(instance))),
+            };
+        }
         let mut outer = self.clone();
-        let name = outer.name_mut();
+        let name = outer.name_mut().expect("every other entity has a name");
         *name = format!("{instance}{INSTANCE_SEPARATOR}{name}");
         outer
     }
@@ -158,6 +204,9 @@ impl EntityRef {
     /// solid it bounds, if any, which only the part knows.
     pub fn lies_in(&self, scope: &EntityRef, solid: Option<&str>) -> bool {
         match (self, scope) {
+            (EntityRef::Frame { on, .. }, _) if !matches!(scope, EntityRef::Frame { .. }) => {
+                on.lies_in(scope, solid)
+            }
             (
                 EntityRef::SketchCurve { sketch, .. } | EntityRef::SketchPoint { sketch, .. },
                 EntityRef::Sketch { name },
@@ -195,6 +244,8 @@ impl std::fmt::Display for EntityRef {
             EntityRef::SketchPoint { sketch, point } => {
                 write!(f, "point {point} of sketch {sketch:?}")
             }
+            EntityRef::Frame { on, at: None } => write!(f, "the frame on {on}"),
+            EntityRef::Frame { on, at: Some(at) } => write!(f, "the frame on {on} at {at}"),
         }
     }
 }

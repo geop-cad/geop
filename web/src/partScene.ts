@@ -378,6 +378,8 @@ export function localTo(instance: string, refs: EntityRef[]): EntityRef[] {
     if (r.type === "SketchCurve" || r.type === "SketchPoint") {
       return r.sketch.startsWith(prefix) ? [{ ...r, sketch: r.sketch.slice(prefix.length) }] : [];
     }
+    // Lit as what it is on and where it sits, which the kernel sends: never as a frame.
+    if (r.type === "Frame") return [];
     return r.name.startsWith(prefix) ? [{ ...r, name: r.name.slice(prefix.length) }] : [];
   });
 }
