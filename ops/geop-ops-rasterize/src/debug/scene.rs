@@ -291,8 +291,7 @@ impl<S: Scalar> PrimitiveScene<S> {
         }
         for i in 0..n {
             for j in 0..n - 1 {
-                if let Ok(l) = Line::try_new(grid[j * n + i], grid[(j + 1) * n + i])
-                {
+                if let Ok(l) = Line::try_new(grid[j * n + i], grid[(j + 1) * n + i]) {
                     self.add_line(l, color);
                 }
             }

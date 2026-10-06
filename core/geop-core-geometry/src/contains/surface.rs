@@ -202,10 +202,11 @@ pub fn surface_could_contain<S: Scalar>(
 
         let ranges = [patch.domain_u(), patch.domain_v()];
         if let Some(b) = restriction(&[u_hat, v_hat], &ranges)?
-            && let Ok(restricted) = patch.sub_surface(b[0], b[1]) {
-                queue.push_back(restricted);
-                continue;
-            }
+            && let Ok(restricted) = patch.sub_surface(b[0], b[1])
+        {
+            queue.push_back(restricted);
+            continue;
+        }
 
         let sizes = surface_extents(&patch);
         // The query point's own width counts too, like a second object's.
@@ -252,7 +253,7 @@ mod tests {
     };
 
     const MAX: usize = 2000;
-    const EPS: f64 = 1e-4;
+    const MIN_SUBDIVISION_SIZE: f64 = 1e-4;
 
     /// Homogeneous control point for Cartesian `(x, y, z)` with weight `w`.
     fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
@@ -342,7 +343,7 @@ mod tests {
     fn assert_contains_at<S: Scalar>(s: &NurbSurface<S, 4>, u: f64, v: f64) {
         let (u, v) = (S::from_f64(u), S::from_f64(v));
         let p = s.evaluate(u, v).unwrap();
-        let (ru, rv) = surface_could_contain(s, &p, MAX, S::from_f64(EPS))
+        let (ru, rv) = surface_could_contain(s, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap_or_else(|| panic!("point at ({u:?}, {v:?}) not found"));
         assert!(
@@ -371,7 +372,7 @@ mod tests {
             &sphere_octant::<S>(),
             &v3(0., 0., 1.),
             MAX,
-            S::from_f64(EPS),
+            S::from_f64(MIN_SUBDIVISION_SIZE),
         )
         .unwrap()
         .unwrap();
@@ -388,7 +389,7 @@ mod tests {
 
     fn check_misses_off_surface_points<S: Scalar>() {
         let miss = |s: &NurbSurface<S, 4>, p: Vector3<S>| {
-            surface_could_contain(s, &p, MAX, S::from_f64(EPS))
+            surface_could_contain(s, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
                 .unwrap()
                 .is_none()
         };
@@ -416,7 +417,7 @@ mod tests {
             &sphere_octant::<ScalInF64>(),
             &v3(r, r, r),
             MAX,
-            ScalInF64::from_f64(EPS),
+            ScalInF64::from_f64(MIN_SUBDIVISION_SIZE),
         )
         .unwrap();
         assert!(found.is_none(), "{found:?}");
@@ -426,7 +427,10 @@ mod tests {
     /// contained".
     fn check_zero_budget_is_an_error<S: Scalar>() {
         let s = lifted::<S>();
-        assert!(surface_could_contain(&s, &v3(0.5, 0.5, 5.), 0, S::from_f64(EPS)).is_err());
+        assert!(
+            surface_could_contain(&s, &v3(0.5, 0.5, 5.), 0, S::from_f64(MIN_SUBDIVISION_SIZE))
+                .is_err()
+        );
     }
     #[test]
     fn zero_budget_is_an_error() {
@@ -437,11 +441,17 @@ mod tests {
     fn check_result_is_tight<S: Scalar>() {
         let s = wavy::<S>();
         let p = s.evaluate(S::from_f64(0.3), S::from_f64(0.7)).unwrap();
-        let (u, v) = surface_could_contain(&s, &p, MAX, S::from_f64(EPS))
+        let (u, v) = surface_could_contain(&s, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap();
-        assert!(u.width().definitely_less(S::from_f64(EPS)), "{u:?}");
-        assert!(v.width().definitely_less(S::from_f64(EPS)), "{v:?}");
+        assert!(
+            u.width().definitely_less(S::from_f64(MIN_SUBDIVISION_SIZE)),
+            "{u:?}"
+        );
+        assert!(
+            v.width().definitely_less(S::from_f64(MIN_SUBDIVISION_SIZE)),
+            "{v:?}"
+        );
     }
     #[test]
     fn result_is_tight() {

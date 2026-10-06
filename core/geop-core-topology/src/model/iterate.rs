@@ -150,9 +150,10 @@ impl<'a, S: Scalar> Iterator for BodyEdges<'a, S> {
             };
 
             if let CoedgeGeometry::Edge(edge_id) = self.model.coedges[&coedge_id].geometry
-                && self.seen.insert(edge_id) {
-                    return Some(edge_id);
-                }
+                && self.seen.insert(edge_id)
+            {
+                return Some(edge_id);
+            }
         }
     }
 }

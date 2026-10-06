@@ -171,9 +171,10 @@ fn insert_to_full_multiplicity<S: Scalar, const D: usize>(
 ) -> GeopResult<usize> {
     let s: usize = knots.iter().filter(|&&ui| ui.could_be_equal(t)).count();
     if s == 0
-        && let Some(k) = split_bezier_span(knots, rows, degree, t) {
-            return Ok(k);
-        }
+        && let Some(k) = split_bezier_span(knots, rows, degree, t)
+    {
+        return Ok(k);
+    }
     for _ in 0..(degree + 1).saturating_sub(s) {
         let span = find_insertion_span(knots, rows[0].len() - 1, degree, t);
         insert_once(knots, rows, degree, span, t);

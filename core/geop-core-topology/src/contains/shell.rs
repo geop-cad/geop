@@ -538,7 +538,7 @@ mod tests {
     };
 
     const MAX: usize = 200;
-    const EPS: f64 = 1e-3;
+    const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
     const SEED: u64 = 424_242;
 
     type P3 = (f64, f64, f64);
@@ -696,7 +696,15 @@ mod tests {
         let shell_id = unit_cube(&mut model);
         let p = Vector3::from_array([S::from_f64(0.5); 3]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
             PointClassification::Inside
         );
     }
@@ -710,7 +718,15 @@ mod tests {
         let shell_id = unit_cube(&mut model);
         let p = Vector3::from_array([S::from_f64(-5.0), S::from_f64(0.5), S::from_f64(0.5)]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
             PointClassification::Outside
         );
     }
@@ -724,7 +740,15 @@ mod tests {
         let shell_id = unit_cube(&mut model);
         let p = Vector3::from_array([S::from_f64(-0.1), S::from_f64(0.5), S::from_f64(0.5)]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
             PointClassification::Outside
         );
     }
@@ -738,7 +762,15 @@ mod tests {
         let shell_id = unit_cube(&mut model);
         let p = Vector3::from_array([S::ZERO, S::from_f64(0.5), S::from_f64(0.5)]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
             PointClassification::OnFace
         );
     }
@@ -752,7 +784,15 @@ mod tests {
         let shell_id = unit_cube(&mut model);
         let p = Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(0.5)]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
             PointClassification::OnEdge
         );
     }
@@ -766,7 +806,15 @@ mod tests {
         let shell_id = unit_cube(&mut model);
         let p = Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
             PointClassification::OnVertex
         );
     }
@@ -796,7 +844,7 @@ mod tests {
             p(0.0, 0.0, 0.0),
             p(0.0, 0.5, 0.5),
         ];
-        let eps = S::from_f64(EPS);
+        let eps = S::from_f64(MIN_SUBDIVISION_SIZE);
         for from in &points[..6] {
             let from_class = shell_contains(&model, shell_id, *from, MAX, eps, SEED).unwrap();
             let from_inside = from_class == PointClassification::Inside;

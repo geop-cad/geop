@@ -144,10 +144,11 @@ where
 
         let ranges = [seg.domain()];
         if let Some(bounds) = restriction(&[t_hat], &ranges)?
-            && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1) {
-                queue.push_back(restricted);
-                continue;
-            }
+            && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1)
+        {
+            queue.push_back(restricted);
+            continue;
+        }
 
         let sizes = [extent([seg.control_points.iter().copied()])];
         // The query point's own width counts too, like a second object's.
@@ -193,7 +194,7 @@ mod tests {
     }
 
     const MAX: usize = 500;
-    const EPS: f64 = 1e-3;
+    const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
 
     /// Degree-1 line from (0,0,0) to (1,0,0).
     fn line<S: Scalar>() -> NurbCurve<S, 4> {
@@ -251,7 +252,7 @@ mod tests {
     fn assert_contains_at<S: Scalar>(c: &NurbCurve<S, 4>, t: f64) {
         let t = S::from_f64(t);
         let p = c.evaluate(t).unwrap();
-        let found = curve_could_contain(c, &p, MAX, S::from_f64(EPS))
+        let found = curve_could_contain(c, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap_or_else(|| panic!("point at t={t:?} not found"));
         assert!(
@@ -296,10 +297,15 @@ mod tests {
         let c = wiggle::<S>();
         let t = S::from_f64(0.42);
         let p = c.evaluate(t).unwrap();
-        let found = curve_could_contain(&c, &p, MAX, S::from_f64(EPS))
+        let found = curve_could_contain(&c, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap();
-        assert!(found.width().definitely_less(S::from_f64(EPS)), "{found:?}");
+        assert!(
+            found
+                .width()
+                .definitely_less(S::from_f64(MIN_SUBDIVISION_SIZE)),
+            "{found:?}"
+        );
     }
     #[test]
     fn result_is_tight() {
@@ -311,25 +317,45 @@ mod tests {
         let off = |x, y, z| Vector3::from_array([f(x), f(y), f(z)]);
         // Inside the circle's bounding box and control polygon, off the arc.
         assert!(
-            curve_could_contain(&quarter_circle::<S>(), &off(0.6, 0.6, 0.), MAX, f(EPS))
-                .unwrap()
-                .is_none()
+            curve_could_contain(
+                &quarter_circle::<S>(),
+                &off(0.6, 0.6, 0.),
+                MAX,
+                f(MIN_SUBDIVISION_SIZE)
+            )
+            .unwrap()
+            .is_none()
         );
         // Beside the line, beyond its end.
         assert!(
-            curve_could_contain(&line::<S>(), &off(1.5, 0., 0.), MAX, f(EPS))
-                .unwrap()
-                .is_none()
+            curve_could_contain(
+                &line::<S>(),
+                &off(1.5, 0., 0.),
+                MAX,
+                f(MIN_SUBDIVISION_SIZE)
+            )
+            .unwrap()
+            .is_none()
         );
         assert!(
-            curve_could_contain(&line::<S>(), &off(0.5, 0.1, 0.), MAX, f(EPS))
-                .unwrap()
-                .is_none()
+            curve_could_contain(
+                &line::<S>(),
+                &off(0.5, 0.1, 0.),
+                MAX,
+                f(MIN_SUBDIVISION_SIZE)
+            )
+            .unwrap()
+            .is_none()
         );
         assert!(
-            curve_could_contain(&wiggle::<S>(), &off(2.5, 0.5, 0.5), MAX, f(EPS))
-                .unwrap()
-                .is_none()
+            curve_could_contain(
+                &wiggle::<S>(),
+                &off(2.5, 0.5, 0.5),
+                MAX,
+                f(MIN_SUBDIVISION_SIZE)
+            )
+            .unwrap()
+            .is_none()
         );
     }
     #[test]
@@ -347,7 +373,8 @@ mod tests {
         let r = 1. + 1e-7;
         let (x, y) = (r * 0.6, r * 0.8);
         let p = Vector3::from_array([f(x), f(y), f(0.)]);
-        let found = curve_could_contain(&quarter_circle::<S>(), &p, MAX, f(EPS)).unwrap();
+        let found =
+            curve_could_contain(&quarter_circle::<S>(), &p, MAX, f(MIN_SUBDIVISION_SIZE)).unwrap();
         assert!(found.is_none(), "{found:?}");
     }
     #[test]

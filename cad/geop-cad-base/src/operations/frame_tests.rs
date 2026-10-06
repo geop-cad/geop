@@ -103,7 +103,13 @@ fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
     let part = plate();
     assert_frame(&part, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
     let corner = vertex_at(&part, [0.0, 0.0, 1.0]);
-    assert_frame(&part, &top(), Some(&corner), [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]);
+    assert_frame(
+        &part,
+        &top(),
+        Some(&corner),
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    );
     let side = edge_at(&part, [1.0, 0.0, 1.0]);
     assert_frame(&part, &top(), Some(&side), [1.0, 0.0, 1.0], [0.0, 0.0, 1.0]);
     // Out of the solid: up, on the top.
@@ -134,9 +140,10 @@ fn round_things_give_their_axis() {
         .edges
         .iter()
         .find(|(_, e)| {
-            e.curve.as_arc().unwrap().is_some_and(|arc| {
-                arc.circle.center.could_be_equal(&v([1.0, 1.0, 1.0]))
-            })
+            e.curve
+                .as_arc()
+                .unwrap()
+                .is_some_and(|arc| arc.circle.center.could_be_equal(&v([1.0, 1.0, 1.0])))
         })
         .map(|(&id, _)| EntityRef::Edge {
             name: part.name_of(id).unwrap().to_string(),

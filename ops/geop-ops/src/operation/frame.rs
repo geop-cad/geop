@@ -49,8 +49,7 @@ impl<S: Scalar> Aspects<S> {
             return Ok(frame);
         }
         if let Some(arc) = &aspects.arc {
-            return axis_frame(arc.circle.center.sharpen(), &arc.circle.normal)
-                .with_context(ctx);
+            return axis_frame(arc.circle.center.sharpen(), &arc.circle.normal).with_context(ctx);
         }
         let anchor = at
             .map(|at| middle_of(at, part))
@@ -97,10 +96,7 @@ impl<S: Scalar> Aspects<S> {
 /// a joint measures its turns from (see [`across`]): the same for every
 /// body drawn the same way round, so two mated on the same axis of each are
 /// at a turn of zero.
-fn axis_frame<S: Scalar>(
-    origin: Vector3<S>,
-    axis: &Vector3<S>,
-) -> GeopResult<CoordinateSystem<S>> {
+fn axis_frame<S: Scalar>(origin: Vector3<S>, axis: &Vector3<S>) -> GeopResult<CoordinateSystem<S>> {
     let w = axis.normalize()?;
     let [u, v] = across(&w)?;
     CoordinateSystem::try_new(origin, u, v, w)
@@ -160,7 +156,9 @@ fn face_middle<S: Scalar>(part: &Part<S>, face: FaceId) -> GeopResult<Vector3<S>
         }
     }
     let [first, rest @ ..] = points.as_slice() else {
-        return Err(GeopError::new(format!("face {face} has no edge to measure")));
+        return Err(GeopError::new(format!(
+            "face {face} has no edge to measure"
+        )));
     };
     let (lo, hi) = rest.iter().fold((*first, *first), |(lo, hi), p| {
         (

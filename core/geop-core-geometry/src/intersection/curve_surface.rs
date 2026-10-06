@@ -212,10 +212,11 @@ pub fn curve_surface_crossings<S: Scalar>(
 
         let ranges = [c.domain(), s.domain_u(), s.domain_v()];
         if let Some(b) = restriction(&hats, &ranges)?
-            && let (Ok(rc), Ok(rs)) = (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2])) {
-                queue.push_back((rc, rs));
-                continue;
-            }
+            && let (Ok(rc), Ok(rs)) = (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2]))
+        {
+            queue.push_back((rc, rs));
+            continue;
+        }
 
         let [size_u, size_v] = surface_extents(&s);
         let sizes = [extent([c.control_points.clone()]), size_u, size_v];
@@ -479,7 +480,7 @@ mod tests {
     use geop_core_math::{scalars::Scalar, vector::Vector4};
 
     const MAX: usize = 5000;
-    const EPS: f64 = 1e-6;
+    const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
 
     fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
         Vector4::from_array([
@@ -537,7 +538,7 @@ mod tests {
     }
 
     fn solve<S: Scalar>(c: &NurbCurve<S, 4>, s: &NurbSurface<S, 4>) -> Vec<(S, [S; 2])> {
-        curve_surface_crossings(c, s, MAX, S::from_f64(EPS))
+        curve_surface_crossings(c, s, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .into_iter()
             .map(|(t, uv)| (t, [uv[0], uv[1]]))
@@ -621,7 +622,9 @@ mod tests {
 
     fn check_budget_exhaustion_is_an_error<S: Scalar>() {
         let c = line::<S>([0., 0., -1.], [1., 0.5, 1.]);
-        assert!(curve_surface_crossings(&c, &plane(), 1, S::from_f64(EPS)).is_err());
+        assert!(
+            curve_surface_crossings(&c, &plane(), 1, S::from_f64(MIN_SUBDIVISION_SIZE)).is_err()
+        );
     }
     #[test]
     fn budget_exhaustion_is_an_error() {
@@ -638,7 +641,7 @@ mod tests {
         c: &NurbCurve<S, 4>,
         s: &NurbSurface<S, 4>,
     ) -> Intersections<(S, Vector2<S>)> {
-        curve_surface_intersect(c, s, 5, MAX, S::from_f64(EPS)).unwrap()
+        curve_surface_intersect(c, s, 5, MAX, S::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
     }
 
     /// The equator lies on the sphere octant's `v = 0` boundary.
@@ -979,15 +982,21 @@ mod tests {
             .unwrap()
         }
 
-        const EPS: f64 = 1e-2;
+        const MIN_SUBDIVISION_SIZE: f64 = 1e-2;
 
         // ── Single crossing ───────────────────────────────────────────────────────
 
         fn check_single_crossing_curve_has_one_solution<S: Scalar>() {
             let curve = vertical_crossing_line::<S>();
             let surf = flat_xy::<S>();
-            let result =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert_eq!(result.len(), 1);
         }
         #[test]
@@ -1000,8 +1009,14 @@ mod tests {
         fn check_curve_missing_surface_has_no_solution<S: Scalar>() {
             let curve = line_above_surface::<S>();
             let surf = flat_xy::<S>();
-            let result =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(result.is_empty());
         }
         #[test]
@@ -1014,8 +1029,14 @@ mod tests {
         fn check_max_solutions_zero_returns_empty<S: Scalar>() {
             let curve = vertical_crossing_line::<S>();
             let surf = flat_xy::<S>();
-            let result =
-                curve_surface_intersect(&curve, &surf, 0, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                0,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(result.is_empty());
         }
         #[test]
@@ -1032,7 +1053,8 @@ mod tests {
             // a two-crossing pair that genuinely needs more nodes than that.
             let curve = double_dip_curve::<S>();
             let surf = flat_xy::<S>();
-            let result = curve_surface_intersect(&curve, &surf, 1000, 1, S::from_f64(EPS));
+            let result =
+                curve_surface_intersect(&curve, &surf, 1000, 1, S::from_f64(MIN_SUBDIVISION_SIZE));
             assert!(result.is_err());
         }
         #[test]
@@ -1045,9 +1067,15 @@ mod tests {
         fn check_two_crossings_found_when_budget_allows<S: Scalar>() {
             let curve = double_dip_curve::<S>();
             let surf = flat_xy::<S>();
-            let result = curve_surface_intersect(&curve, &surf, 2, MAX_NODES, S::from_f64(EPS))
-                .unwrap()
-                .into_vec();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                2,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap()
+            .into_vec();
             assert_eq!(result.len(), 2);
             assert!(
                 !result[0].0.could_be_equal(result[1].0),
@@ -1062,8 +1090,14 @@ mod tests {
         fn check_max_solutions_one_caps_at_one_even_with_two_crossings<S: Scalar>() {
             let curve = double_dip_curve::<S>();
             let surf = flat_xy::<S>();
-            let result =
-                curve_surface_intersect(&curve, &surf, 1, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                1,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert_eq!(result.len(), 1);
         }
         #[test]
@@ -1107,14 +1141,26 @@ mod tests {
             let surf = flat_xy::<S>();
 
             // A single dive must converge to exactly one result.
-            let result_one =
-                curve_surface_intersect(&curve, &surf, 1, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_one = curve_surface_intersect(
+                &curve,
+                &surf,
+                1,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert_eq!(result_one.len(), 1);
 
             // Asking for more solutions still terminates, with at most that many
             // (possibly fewer after unification) segments along the coplanar overlap.
-            let result_many =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_many = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(!result_many.is_empty());
             assert!(result_many.len() <= 5);
         }
@@ -1148,14 +1194,20 @@ mod tests {
         fn check_partial_overlap_coplanar_line<S: Scalar>() {
             let curve = partial_overlap_line::<S>();
             let surf = flat_xy::<S>();
-            let result =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(!result.is_empty());
             assert!(result.len() <= 5);
 
             // Every solution must lie within the overlapping half of the curve
             // (x >= 0, i.e. t >= 0.5), up to a small tolerance.
-            let lower_bound = S::from_f64(0.5 - EPS);
+            let lower_bound = S::from_f64(0.5 - MIN_SUBDIVISION_SIZE);
             for &(t, _) in result.as_slice() {
                 assert!(!t.definitely_less(lower_bound));
             }
@@ -1170,15 +1222,21 @@ mod tests {
         fn check_curve_larger_than_surface_terminates<S: Scalar>() {
             let curve = oversized_line::<S>();
             let surf = flat_xy::<S>();
-            let result =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(!result.is_empty());
             assert!(result.len() <= 5);
 
             // Every solution must lie within the overlapping middle third of the
             // curve (x ∈ [0,1], i.e. t ∈ [1/3, 2/3]), up to a small tolerance.
-            let lower_bound = S::from_f64(1.0 / 3.0 - EPS);
-            let upper_bound = S::from_f64(2.0 / 3.0 + EPS);
+            let lower_bound = S::from_f64(1.0 / 3.0 - MIN_SUBDIVISION_SIZE);
+            let upper_bound = S::from_f64(2.0 / 3.0 + MIN_SUBDIVISION_SIZE);
             for &(t, _) in result.as_slice() {
                 assert!(!t.definitely_less(lower_bound));
                 assert!(!t.definitely_greater(upper_bound));
@@ -1195,12 +1253,24 @@ mod tests {
             let curve = full_width_line::<S>();
             let surf = flat_xy::<S>();
 
-            let result_one =
-                curve_surface_intersect(&curve, &surf, 1, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_one = curve_surface_intersect(
+                &curve,
+                &surf,
+                1,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert_eq!(result_one.len(), 1);
 
-            let result_many =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_many = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(!result_many.is_empty());
             assert!(result_many.len() <= 5);
         }
@@ -1214,9 +1284,15 @@ mod tests {
         fn check_bent_surface_bent_curve_two_distinct_crossings<S: Scalar>() {
             let curve = bent_curve::<S>();
             let surf = bent_surface::<S>();
-            let result = curve_surface_intersect(&curve, &surf, 4, MAX_NODES, S::from_f64(EPS))
-                .unwrap()
-                .into_vec();
+            let result = curve_surface_intersect(
+                &curve,
+                &surf,
+                4,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap()
+            .into_vec();
             assert_eq!(result.len(), 2);
             assert!(
                 !result[0].0.could_be_equal(result[1].0),
@@ -1234,12 +1310,24 @@ mod tests {
             let curve = equator_quarter_circle::<S>();
             let surf = sphere_octant_patch::<S>();
 
-            let result_one =
-                curve_surface_intersect(&curve, &surf, 1, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_one = curve_surface_intersect(
+                &curve,
+                &surf,
+                1,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert_eq!(result_one.len(), 1);
 
-            let result_many =
-                curve_surface_intersect(&curve, &surf, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_many = curve_surface_intersect(
+                &curve,
+                &surf,
+                5,
+                MAX_NODES,
+                S::from_f64(MIN_SUBDIVISION_SIZE),
+            )
+            .unwrap();
             assert!(!result_many.is_empty());
             assert!(result_many.len() <= 5);
         }

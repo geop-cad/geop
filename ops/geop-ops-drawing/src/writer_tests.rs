@@ -16,7 +16,10 @@ pub(crate) type Entity = (String, String, String);
 /// A DXF file read back: every entity of its `ENTITIES` section.
 pub(crate) fn read_dxf(dxf: &str) -> Vec<Entity> {
     let lines: Vec<&str> = dxf.lines().collect();
-    assert!(lines.len().is_multiple_of(2), "a DXF file is pairs of lines");
+    assert!(
+        lines.len().is_multiple_of(2),
+        "a DXF file is pairs of lines"
+    );
     let pairs: Vec<(i32, &str)> = lines
         .chunks(2)
         .map(|p| (p[0].trim().parse().unwrap(), p[1]))

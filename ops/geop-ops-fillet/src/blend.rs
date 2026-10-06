@@ -1287,7 +1287,8 @@ fn corners_of<S: Scalar>(part: &Part<S>, edge: EdgeId) -> String {
             faces.sort_by_key(|f| f.0);
             format!(
                 "vertex {} meets faces {}",
-                part.name_of(vertex).map_or(format!("{vertex}"), String::from),
+                part.name_of(vertex)
+                    .map_or(format!("{vertex}"), String::from),
                 faces.into_iter().map(name).collect::<Vec<_>>().join(", ")
             )
         })

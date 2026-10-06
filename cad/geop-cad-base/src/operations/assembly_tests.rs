@@ -1473,7 +1473,11 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     let pin_top = EntityRef::Face {
         name: "pin/extrude(pin,end)".into(),
     };
-    assert!(presentation.highlights.contains(&pin_top), "{:?}", presentation.highlights);
+    assert!(
+        presentation.highlights.contains(&pin_top),
+        "{:?}",
+        presentation.highlights
+    );
     let triad = presentation
         .visuals
         .iter()

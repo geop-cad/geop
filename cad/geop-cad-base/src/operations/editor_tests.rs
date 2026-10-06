@@ -536,7 +536,9 @@ fn offset_plane_dragged_by_its_handle() {
             shift: false,
         },
     });
-    if let Some(e) = &editor.handle(Command::Commit).error { panic!("{e}") }
+    if let Some(e) = &editor.handle(Command::Commit).error {
+        panic!("{e}")
+    }
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::AddDatum(args) => assert_eq!(
             args.construction,

@@ -29,7 +29,7 @@ const MAX_ALTERNATIONS: usize = 64;
 /// The search budget and tolerance of the containment test that decides
 /// whether a foot point lies inside a face's trim (see [`face_contains`]).
 const CONTAINS_MAX_NODES: usize = 20_000;
-const CONTAINS_EPSILON: f64 = 1e-7;
+const CONTAINS_MIN_SUBDIVISION_SIZE: f64 = 1e-7;
 const SEED: u64 = 0xD157_A1CE_0000_0001;
 
 /// A face of a model, where `pose` puts it — or where it is, without one —
@@ -83,7 +83,7 @@ fn contains<S: Scalar>(model: &Model<S>, face: FaceId, u: S, v: S) -> GeopResult
         u,
         v,
         CONTAINS_MAX_NODES,
-        S::from_f64(CONTAINS_EPSILON),
+        S::from_f64(CONTAINS_MIN_SUBDIVISION_SIZE),
         SEED,
     )?;
     Ok(class != PointClassification::Outside)

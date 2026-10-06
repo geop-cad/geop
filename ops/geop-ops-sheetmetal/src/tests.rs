@@ -877,7 +877,10 @@ fn a_closed_corner_reaches_to_the_flange_beside_it() {
 /// type, layer and text, and the layers its table declares.
 fn read_dxf(dxf: &str) -> (Vec<(String, String, String)>, Vec<String>) {
     let lines: Vec<&str> = dxf.lines().collect();
-    assert!(lines.len().is_multiple_of(2), "a DXF file is pairs of lines");
+    assert!(
+        lines.len().is_multiple_of(2),
+        "a DXF file is pairs of lines"
+    );
     let pairs: Vec<(i32, &str)> = lines
         .chunks(2)
         .map(|p| (p[0].trim().parse().unwrap(), p[1]))

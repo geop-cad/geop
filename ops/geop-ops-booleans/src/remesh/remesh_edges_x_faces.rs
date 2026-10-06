@@ -1426,8 +1426,8 @@ fn trace_one_side<S: Scalar>(
     // domain — a distinction the raw domain bounds can't make. Once a
     // direction is committed the march just follows the curve; re-testing
     // containment every step would only re-derive the same answer.
-    let first_step = adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0, &axis)
-        .with_context(&ctx)?;
+    let first_step =
+        adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0, &axis).with_context(&ctx)?;
     let mut chosen = None;
     let mut last_rejection: Option<(PointClassification, PointClassification)> = None;
     // The trial step that decides the direction must not overshoot the curve.
@@ -1568,8 +1568,8 @@ fn trace_one_side<S: Scalar>(
     // along `dir` that the corrector lands it on (see `candidate_within`).
     let mut hit_vertex = None;
     for _ in 0..max_trace_steps {
-        let step = adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, &dir)
-            .with_context(&ctx)?;
+        let step =
+            adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, &dir).with_context(&ctx)?;
         let reached = |radius: S| {
             candidate_within(
                 model,
@@ -1617,13 +1617,14 @@ fn trace_one_side<S: Scalar>(
         // Re-derive direction from the new normals for the next step,
         // keeping continuity with the previous direction.
         if let (Ok(na), Ok(nb)) = (surf_a.normal(u_a, v_a), surf_b.normal(u_b, v_b))
-            && let Ok(new_axis) = na.prod_cross(&nb).normalize() {
-                dir = if new_axis.prod_dot(&dir).could_be_greater(S::ZERO) {
-                    new_axis
-                } else {
-                    new_axis.neg()
-                };
-            }
+            && let Ok(new_axis) = na.prod_cross(&nb).normalize()
+        {
+            dir = if new_axis.prod_dot(&dir).could_be_greater(S::ZERO) {
+                new_axis
+            } else {
+                new_axis.neg()
+            };
+        }
     }
 
     // An intersection curve of two faces has to end at a vertex — every

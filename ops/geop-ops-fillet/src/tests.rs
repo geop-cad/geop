@@ -453,6 +453,9 @@ fn fillet_up_to_a_wall_two_faces_make() {
     // Where the fillet meets the sides it ends flush: its corners are at
     // the sides' planes.
     for y in [0.0, 4.0] {
-        assert!(has_vertex(&part, [1.2, y, 1.0]), "no vertex at x 1.2, y {y}");
+        assert!(
+            has_vertex(&part, [1.2, y, 1.0]),
+            "no vertex at x 1.2, y {y}"
+        );
     }
 }

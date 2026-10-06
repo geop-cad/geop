@@ -187,14 +187,15 @@ where
             let (other, free) = if on_a { (&b, hats[1]) } else { (&a, hats[0]) };
             let budget = max_nodes - explored;
             if let Some(t) = curve_could_contain(other, &point, budget, min_subdivision_size)?
-                && t.could_be_equal(free) {
-                    let free = free.intersect(t);
-                    solutions.insert(if on_a {
-                        (hats[0], free)
-                    } else {
-                        (free, hats[1])
-                    });
-                }
+                && t.could_be_equal(free)
+            {
+                let free = free.intersect(t);
+                solutions.insert(if on_a {
+                    (hats[0], free)
+                } else {
+                    (free, hats[1])
+                });
+            }
             continue;
         }
 
@@ -203,10 +204,11 @@ where
             && let (Ok(ra), Ok(rb)) = (
                 a.sub_curve(bounds[0].0, bounds[0].1),
                 b.sub_curve(bounds[1].0, bounds[1].1),
-            ) {
-                queue.push_back((ra, rb));
-                continue;
-            }
+            )
+        {
+            queue.push_back((ra, rb));
+            continue;
+        }
 
         let sizes = [
             extent([a.control_points.clone()]),
@@ -651,7 +653,7 @@ mod tests {
     use geop_core_math::{scalars::Scalar, vector::Vector4};
 
     const MAX: usize = 5000;
-    const EPS: f64 = 1e-6;
+    const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
 
     fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
         Vector4::from_array([
@@ -687,7 +689,7 @@ mod tests {
     }
 
     fn solve<S: Scalar>(a: &NurbCurve<S, 4>, b: &NurbCurve<S, 4>) -> Vec<(S, S)> {
-        curve_curve_crossings::<S, 4, 3>(a, b, MAX, S::from_f64(EPS)).unwrap()
+        curve_curve_crossings::<S, 4, 3>(a, b, MAX, S::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
     }
 
     /// Every returned pair's two points agree, and there are `n` of them.
@@ -772,7 +774,9 @@ mod tests {
     fn check_budget_exhaustion_is_an_error<S: Scalar>() {
         let a = line::<S>([0., 0., 0.], [1., 1., 0.]);
         let b = line::<S>([0., 1., 0.], [1., 0., 0.]);
-        assert!(curve_curve_crossings::<S, 4, 3>(&a, &b, 1, S::from_f64(EPS)).is_err());
+        assert!(
+            curve_curve_crossings::<S, 4, 3>(&a, &b, 1, S::from_f64(MIN_SUBDIVISION_SIZE)).is_err()
+        );
     }
     #[test]
     fn budget_exhaustion_is_an_error() {
@@ -785,7 +789,7 @@ mod tests {
     use crate::intersection::Intersections;
 
     fn wrap<S: Scalar>(a: &NurbCurve<S, 4>, b: &NurbCurve<S, 4>) -> Intersections<(S, S)> {
-        curve_curve_intersect::<S, 4, 3>(a, b, 5, MAX, S::from_f64(EPS)).unwrap()
+        curve_curve_intersect::<S, 4, 3>(a, b, 5, MAX, S::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
     }
 
     /// Both ends of the arc lie on its chord, but the arc leaves it: the
@@ -955,14 +959,16 @@ mod tests {
             .unwrap()
         }
 
-        const EPS: f64 = 1e-6;
+        const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
 
         // ── Single crossing ───────────────────────────────────────────────────────
 
         fn check_single_crossing_curves_have_one_solution<S: Scalar>() {
             let a = horizontal_line::<S>();
             let b = vertical_crossing_line::<S>();
-            let result = curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result =
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
             assert_eq!(result.len(), 1);
         }
         #[test]
@@ -975,7 +981,9 @@ mod tests {
         fn check_curves_missing_each_other_have_no_solution<S: Scalar>() {
             let a = horizontal_line::<S>();
             let b = vertical_missing_line::<S>();
-            let result = curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result =
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
             assert!(result.is_empty());
         }
         #[test]
@@ -988,7 +996,9 @@ mod tests {
         fn check_max_solutions_zero_returns_empty<S: Scalar>() {
             let a = horizontal_line::<S>();
             let b = vertical_crossing_line::<S>();
-            let result = curve_curve_intersect(&a, &b, 0, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result =
+                curve_curve_intersect(&a, &b, 0, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
             assert!(result.is_empty());
         }
         #[test]
@@ -1002,7 +1012,7 @@ mod tests {
             // with two crossings that genuinely needs more nodes stands in.
             let a = horizontal_line::<S>();
             let b = double_dip_curve::<S>();
-            let result = curve_curve_intersect(&a, &b, 1000, 1, S::from_f64(EPS));
+            let result = curve_curve_intersect(&a, &b, 1000, 1, S::from_f64(MIN_SUBDIVISION_SIZE));
             assert!(result.is_err());
         }
         #[test]
@@ -1015,9 +1025,10 @@ mod tests {
         fn check_two_crossings_found_when_budget_allows<S: Scalar>() {
             let a = horizontal_line::<S>();
             let b = double_dip_curve::<S>();
-            let result = curve_curve_intersect(&a, &b, 2, MAX_NODES, S::from_f64(EPS))
-                .unwrap()
-                .into_vec();
+            let result =
+                curve_curve_intersect(&a, &b, 2, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap()
+                    .into_vec();
             assert_eq!(result.len(), 2);
             assert!(
                 !result[0].0.could_be_equal(result[1].0),
@@ -1032,7 +1043,9 @@ mod tests {
         fn check_max_solutions_one_caps_at_one_even_with_two_crossings<S: Scalar>() {
             let a = horizontal_line::<S>();
             let b = double_dip_curve::<S>();
-            let result = curve_curve_intersect(&a, &b, 1, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result =
+                curve_curve_intersect(&a, &b, 1, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
             assert_eq!(result.len(), 1);
         }
         #[test]
@@ -1069,18 +1082,21 @@ mod tests {
             let b = coincident_overlap_line::<S>();
 
             // A single dive must converge to exactly one result.
-            let result_one = curve_curve_intersect(&a, &b, 1, MAX_NODES, S::from_f64(EPS)).unwrap();
+            let result_one =
+                curve_curve_intersect(&a, &b, 1, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
             assert_eq!(result_one.len(), 1);
 
             // Asking for more solutions still terminates, with at most that many
             // (possibly fewer after merging) segments along the overlap, and
             // each solution lying within the overlapping x ∈ [0.5, 1] range.
             let result_many =
-                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(EPS)).unwrap();
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
             assert!(!result_many.is_empty());
             assert!(result_many.len() <= 5);
 
-            let lower_bound = S::from_f64(0.5 - EPS);
+            let lower_bound = S::from_f64(0.5 - MIN_SUBDIVISION_SIZE);
             for &(t_a, _) in result_many.as_slice() {
                 assert!(t_a.could_be_greater(lower_bound));
             }
@@ -1141,9 +1157,10 @@ mod tests {
         fn check_single_crossing_2d<S: Scalar>() {
             let a = horizontal_line_2d::<S>();
             let b = vertical_crossing_line_2d::<S>();
-            let result = curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(EPS))
-                .unwrap()
-                .into_vec();
+            let result =
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap()
+                    .into_vec();
             assert_eq!(result.len(), 1);
             let (t_a, _) = result[0];
             let hit = a.evaluate(t_a).unwrap();

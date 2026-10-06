@@ -505,7 +505,7 @@ mod tests {
     };
 
     const MAX: usize = 200;
-    const EPS: f64 = 1e-3;
+    const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
     const SEED: u64 = 12345;
 
     fn p2<S: Scalar>(x: f64, y: f64) -> Vector3<S> {
@@ -615,7 +615,7 @@ mod tests {
                 S::from_f64(0.5),
                 S::from_f64(0.3),
                 MAX,
-                S::from_f64(EPS),
+                S::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
@@ -637,7 +637,7 @@ mod tests {
                 S::from_f64(0.1),
                 S::from_f64(0.3),
                 MAX,
-                S::from_f64(EPS),
+                S::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
@@ -659,7 +659,7 @@ mod tests {
                 S::from_f64(0.5),
                 S::from_f64(0.5),
                 MAX,
-                S::from_f64(EPS),
+                S::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
@@ -681,7 +681,7 @@ mod tests {
                 S::ONE,
                 S::from_f64(0.5),
                 MAX,
-                S::from_f64(EPS),
+                S::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
@@ -703,7 +703,7 @@ mod tests {
                 S::from_f64(0.75),
                 S::from_f64(0.75),
                 MAX,
-                S::from_f64(EPS),
+                S::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),

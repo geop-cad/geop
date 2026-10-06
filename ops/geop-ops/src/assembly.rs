@@ -146,7 +146,9 @@ impl Mate {
             MateKind::Constraint(Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. }) => {
                 "a line or a plane"
             }
-            MateKind::Joint(_) => "a face, an edge, a point or a datum: where it is picked, a frame is put",
+            MateKind::Joint(_) => {
+                "a face, an edge, a point or a datum: where it is picked, a frame is put"
+            }
             MateKind::Coupling(CouplingKind::Gear { .. }) => "two joints that turn",
             MateKind::Coupling(_) => "a joint that turns, then one that slides",
         }

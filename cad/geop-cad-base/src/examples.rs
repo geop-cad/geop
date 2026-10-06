@@ -1476,8 +1476,14 @@ pub fn workspaces() -> Vec<Example<ExampleFiles>> {
             vec![
                 ("asm.geop", drawn(include_str!("drawn/press/asm.geop"))),
                 ("base.geop", drawn(include_str!("drawn/press/base.geop"))),
-                ("handle.geop", drawn(include_str!("drawn/press/handle.geop"))),
-                ("slider.geop", drawn(include_str!("drawn/press/slider.geop"))),
+                (
+                    "handle.geop",
+                    drawn(include_str!("drawn/press/handle.geop")),
+                ),
+                (
+                    "slider.geop",
+                    drawn(include_str!("drawn/press/slider.geop")),
+                ),
                 ("link.geop", drawn(include_str!("drawn/press/link.geop"))),
             ]
         }),
@@ -2249,8 +2255,12 @@ pub fn curved_panel() -> Program {
 /// may solve sketches, or build a part to name its faces.
 pub fn all() -> Vec<Example<Program>> {
     vec![
-        ("turbine_blade", || drawn(include_str!("drawn/turbine_blade.geop"))),
-        ("cool_flange", || drawn(include_str!("drawn/cool_flange.geop"))),
+        ("turbine_blade", || {
+            drawn(include_str!("drawn/turbine_blade.geop"))
+        }),
+        ("cool_flange", || {
+            drawn(include_str!("drawn/cool_flange.geop"))
+        }),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
         ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
         ("box_with_drill_hole", box_with_drill_hole),
