@@ -347,10 +347,10 @@ mod tests {
         let model = part.topology();
 
         let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, &model) {
+        if let Err(e) = validate(&params, model) {
             panic!("{e:?}");
         }
-        if let Err(e) = validate_manifold(&params, &model) {
+        if let Err(e) = validate_manifold(&params, model) {
             panic!("{e:?}");
         }
     }
@@ -389,10 +389,10 @@ mod tests {
         assert_eq!(model.faces.len(), 8);
 
         let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, &model) {
+        if let Err(e) = validate(&params, model) {
             panic!("{e:?}");
         }
-        if let Err(e) = validate_manifold(&params, &model) {
+        if let Err(e) = validate_manifold(&params, model) {
             panic!("{e:?}");
         }
     }
@@ -431,7 +431,7 @@ mod tests {
             );
 
             let (u, v) = geop_core_topology::contains::face::face_interior_point(
-                &model,
+                model,
                 face_id,
                 20000,
                 S::from_f64(1e-4),
@@ -556,7 +556,7 @@ mod tests {
         sphere_solid(&mut part, "t6", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 32).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 32).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());
@@ -576,7 +576,7 @@ mod tests {
         sphere_solid(&mut part, "t7", center, S::from_f64(2.0)).unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 32).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 32).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());

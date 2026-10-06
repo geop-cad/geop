@@ -16,6 +16,12 @@ pub type Vector4<S> = Vector<S, 4>;
 pub type Vector3<S> = Vector<S, 3>;
 pub type Vector2<S> = Vector<S, 2>;
 
+impl<S: Default + Copy, const N: usize> Default for Vector<S, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S: Default + Copy, const N: usize> Vector<S, N> {
     pub fn new() -> Self {
         Self {
@@ -152,34 +158,6 @@ impl<'a, S: Scalar, const N: usize> Display for VectorSlice<'a, Vec<Vector<S, N>
     }
 }
 
-// tests
-#[cfg(test)]
-mod tests {
-    use crate::scalars::{ScalInF64, Scalar};
-
-    use super::*;
-
-    #[test]
-    fn test_vector() {
-        let mut v = Vector::<ScalInF64, 3>::new();
-        v[0] = 1.into();
-        v[1] = 2.into();
-        v[2] = 3.into();
-
-        assert!(v[0].could_be_equal(1.into()));
-        assert!(v[1].could_be_equal(2.into()));
-        assert!(v[2].could_be_equal(3.into()));
-    }
-
-    #[test]
-    fn test_vector_everything() {
-        let v = Vector::<ScalInF64, 3>::everything();
-        assert!(v[0].could_be_equal(42.0.into()));
-        assert!(v[1].could_be_equal((-1e300).into()));
-        assert!(v[2].could_be_equal(0.into()));
-    }
-}
-
 /// A vector serializes as the array of its components' midpoints — how it
 /// travels to a viewer, which draws points, not enclosures — and reads back
 /// from an array of plain numbers, each a sharp scalar.
@@ -224,5 +202,33 @@ impl<'de, S: Scalar, const N: usize> serde::Deserialize<'de> for Vector<S, N> {
         }
 
         deserializer.deserialize_tuple(N, Components(std::marker::PhantomData))
+    }
+}
+
+// tests
+#[cfg(test)]
+mod tests {
+    use crate::scalars::{ScalInF64, Scalar};
+
+    use super::*;
+
+    #[test]
+    fn test_vector() {
+        let mut v = Vector::<ScalInF64, 3>::new();
+        v[0] = 1.into();
+        v[1] = 2.into();
+        v[2] = 3.into();
+
+        assert!(v[0].could_be_equal(1.into()));
+        assert!(v[1].could_be_equal(2.into()));
+        assert!(v[2].could_be_equal(3.into()));
+    }
+
+    #[test]
+    fn test_vector_everything() {
+        let v = Vector::<ScalInF64, 3>::everything();
+        assert!(v[0].could_be_equal(42.0.into()));
+        assert!(v[1].could_be_equal((-1e300).into()));
+        assert!(v[2].could_be_equal(0.into()));
     }
 }

@@ -170,11 +170,10 @@ fn insert_to_full_multiplicity<S: Scalar, const D: usize>(
     t: S,
 ) -> GeopResult<usize> {
     let s: usize = knots.iter().filter(|&&ui| ui.could_be_equal(t)).count();
-    if s == 0 {
-        if let Some(k) = split_bezier_span(knots, rows, degree, t) {
+    if s == 0
+        && let Some(k) = split_bezier_span(knots, rows, degree, t) {
             return Ok(k);
         }
-    }
     for _ in 0..(degree + 1).saturating_sub(s) {
         let span = find_insertion_span(knots, rows[0].len() - 1, degree, t);
         insert_once(knots, rows, degree, span, t);
@@ -190,6 +189,9 @@ fn domain<S: Scalar>(knots: &[S], num_points: usize, degree: usize) -> (S, S) {
     (knots[degree], knots[num_points])
 }
 
+/// Control point rows: one `Vec` of points per row of a tensor-product grid.
+pub(crate) type Rows<S, const D: usize> = Vec<Vec<Vector<S, D>>>;
+
 /// Split every row at `t`, which must be strictly inside the domain.
 /// Returns the right piece's `(knots, rows)`; `knots`/`rows` are left
 /// holding the left piece.
@@ -198,7 +200,7 @@ pub(crate) fn split<S: Scalar, const D: usize>(
     rows: &mut [Vec<Vector<S, D>>],
     degree: usize,
     t: S,
-) -> GeopResult<(Vec<S>, Vec<Vec<Vector<S, D>>>)> {
+) -> GeopResult<(Vec<S>, Rows<S, D>)> {
     let (start, end) = domain(knots, rows[0].len(), degree);
     if !t.definitely_greater(start) || !t.definitely_less(end) {
         return Err(GeopError::new(

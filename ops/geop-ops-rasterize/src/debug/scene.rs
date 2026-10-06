@@ -226,7 +226,7 @@ impl<S: Scalar> PrimitiveScene<S> {
             pts.push(curve.evaluate(t)?);
         }
         for i in 0..n - 1 {
-            if let Ok(seg) = Line::try_new(pts[i].clone(), pts[i + 1].clone()) {
+            if let Ok(seg) = Line::try_new(pts[i], pts[i + 1]) {
                 self.add_line(seg, color);
             }
         }
@@ -251,11 +251,11 @@ impl<S: Scalar> PrimitiveScene<S> {
         let grid = sample_surface_grid(surface, u_min, u_max, v_min, v_max, n)?;
         for j in 0..n - 1 {
             for i in 0..n - 1 {
-                let p00 = grid[j * n + i].clone();
-                let p10 = grid[j * n + i + 1].clone();
-                let p01 = grid[(j + 1) * n + i].clone();
-                let p11 = grid[(j + 1) * n + i + 1].clone();
-                if let Ok(t) = TriangleFace::try_new(p00, p10.clone(), p01.clone()) {
+                let p00 = grid[j * n + i];
+                let p10 = grid[j * n + i + 1];
+                let p01 = grid[(j + 1) * n + i];
+                let p11 = grid[(j + 1) * n + i + 1];
+                if let Ok(t) = TriangleFace::try_new(p00, p10, p01) {
                     self.add_triangle(t, color);
                 }
                 if let Ok(t) = TriangleFace::try_new(p10, p11, p01) {
@@ -284,14 +284,14 @@ impl<S: Scalar> PrimitiveScene<S> {
         let grid = sample_surface_grid(surface, u_min, u_max, v_min, v_max, n)?;
         for j in 0..n {
             for i in 0..n - 1 {
-                if let Ok(l) = Line::try_new(grid[j * n + i].clone(), grid[j * n + i + 1].clone()) {
+                if let Ok(l) = Line::try_new(grid[j * n + i], grid[j * n + i + 1]) {
                     self.add_line(l, color);
                 }
             }
         }
         for i in 0..n {
             for j in 0..n - 1 {
-                if let Ok(l) = Line::try_new(grid[j * n + i].clone(), grid[(j + 1) * n + i].clone())
+                if let Ok(l) = Line::try_new(grid[j * n + i], grid[(j + 1) * n + i])
                 {
                     self.add_line(l, color);
                 }
@@ -305,7 +305,8 @@ impl<S: Scalar> PrimitiveScene<S> {
     /// identified regardless of direction, must be shared by exactly 2
     /// triangles.
     pub fn is_watertight(&self, eps: f64) -> Result<(), String> {
-        let quantize = |p: &Vector3<S>| -> (i64, i64, i64) {
+        type Cell = (i64, i64, i64);
+        let quantize = |p: &Vector3<S>| -> Cell {
             (
                 (p[0].to_f64() / eps).round() as i64,
                 (p[1].to_f64() / eps).round() as i64,
@@ -313,7 +314,7 @@ impl<S: Scalar> PrimitiveScene<S> {
             )
         };
 
-        let mut edge_uses: HashMap<((i64, i64, i64), (i64, i64, i64)), Vec<usize>> = HashMap::new();
+        let mut edge_uses: HashMap<(Cell, Cell), Vec<usize>> = HashMap::new();
         for (idx, (t, _)) in self.triangles.iter().enumerate() {
             let qa = quantize(&t.a);
             let qb = quantize(&t.b);

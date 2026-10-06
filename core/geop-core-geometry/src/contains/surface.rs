@@ -201,12 +201,11 @@ pub fn surface_could_contain<S: Scalar>(
         }
 
         let ranges = [patch.domain_u(), patch.domain_v()];
-        if let Some(b) = restriction(&[u_hat, v_hat], &ranges)? {
-            if let Ok(restricted) = patch.sub_surface(b[0], b[1]) {
+        if let Some(b) = restriction(&[u_hat, v_hat], &ranges)?
+            && let Ok(restricted) = patch.sub_surface(b[0], b[1]) {
                 queue.push_back(restricted);
                 continue;
             }
-        }
 
         let sizes = surface_extents(&patch);
         // The query point's own width counts too, like a second object's.

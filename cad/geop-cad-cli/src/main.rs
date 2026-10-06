@@ -708,6 +708,71 @@ fn main() -> ExitCode {
     }
 }
 
+/// A [`Cache`] on disk: a file per key in a folder — kept across processes
+/// and sessions — read into memory once. The folder ignores itself, so it
+/// is never committed with the workspace it is in.
+struct DiskCache {
+    dir: PathBuf,
+    memory: geop_ops::MemoryCache,
+}
+
+impl DiskCache {
+    fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            memory: geop_ops::MemoryCache::default(),
+        }
+    }
+
+    /// The file `key` is kept in. Keys are file names already (see
+    /// `geop_ops_step::cache::key`); anything else is replaced, to be sure.
+    fn file(&self, key: &str) -> PathBuf {
+        let name: String = key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.dir.join(format!("{name}.bin"))
+    }
+}
+
+impl Cache for DiskCache {
+    fn load(&self, key: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.memory.load(key) {
+            return Some(bytes);
+        }
+        let bytes = std::fs::read(self.file(key)).ok()?;
+        self.memory.store(key, &bytes);
+        Some(bytes)
+    }
+
+    fn store(&self, key: &str, bytes: &[u8]) {
+        self.memory.store(key, bytes);
+        // Not kept on disk, then: it is worked out again next time.
+        let _ = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&self.dir)?;
+            let ignore = self.dir.join(".gitignore");
+            if !ignore.exists() {
+                std::fs::write(
+                    ignore,
+                    "# geop's cache: worked out again whenever it is missing.\n*\n",
+                )?;
+            }
+            // Written whole, then moved into place: another process never
+            // reads half a file.
+            let file = self.file(key);
+            let partial = file.with_extension(format!("{}.part", std::process::id()));
+            std::fs::write(&partial, bytes)?;
+            std::fs::rename(partial, file)
+        })();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use geop_cad_base::examples;
@@ -1070,70 +1135,5 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("extrude(hole)"), "{err}");
-    }
-}
-
-/// A [`Cache`] on disk: a file per key in a folder — kept across processes
-/// and sessions — read into memory once. The folder ignores itself, so it
-/// is never committed with the workspace it is in.
-struct DiskCache {
-    dir: PathBuf,
-    memory: geop_ops::MemoryCache,
-}
-
-impl DiskCache {
-    fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            memory: geop_ops::MemoryCache::default(),
-        }
-    }
-
-    /// The file `key` is kept in. Keys are file names already (see
-    /// `geop_ops_step::cache::key`); anything else is replaced, to be sure.
-    fn file(&self, key: &str) -> PathBuf {
-        let name: String = key
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        self.dir.join(format!("{name}.bin"))
-    }
-}
-
-impl Cache for DiskCache {
-    fn load(&self, key: &str) -> Option<Vec<u8>> {
-        if let Some(bytes) = self.memory.load(key) {
-            return Some(bytes);
-        }
-        let bytes = std::fs::read(self.file(key)).ok()?;
-        self.memory.store(key, &bytes);
-        Some(bytes)
-    }
-
-    fn store(&self, key: &str, bytes: &[u8]) {
-        self.memory.store(key, bytes);
-        // Not kept on disk, then: it is worked out again next time.
-        let _ = (|| -> std::io::Result<()> {
-            std::fs::create_dir_all(&self.dir)?;
-            let ignore = self.dir.join(".gitignore");
-            if !ignore.exists() {
-                std::fs::write(
-                    ignore,
-                    "# geop's cache: worked out again whenever it is missing.\n*\n",
-                )?;
-            }
-            // Written whole, then moved into place: another process never
-            // reads half a file.
-            let file = self.file(key);
-            let partial = file.with_extension(format!("{}.part", std::process::id()));
-            std::fs::write(&partial, bytes)?;
-            std::fs::rename(partial, file)
-        })();
     }
 }

@@ -547,7 +547,7 @@ fn gear_drive() -> Program {
         program.push(
             format!("{id}_shaft"),
             AddDatumArgs {
-                selection: vec![EntityRef::datum(&format!("{id}_centre")), z_axis.clone()],
+                selection: vec![EntityRef::datum(format!("{id}_centre")), z_axis.clone()],
                 construction: Construction::Parallel {},
             },
         );
@@ -565,8 +565,8 @@ fn gear_drive() -> Program {
                 max: None,
             },
             vec![
-                EntityRef::datum(&format!("{id}_shaft")),
-                EntityRef::datum(&format!("{id}/axis")),
+                EntityRef::datum(format!("{id}_shaft")),
+                EntityRef::datum(format!("{id}/axis")),
             ],
         )
     };

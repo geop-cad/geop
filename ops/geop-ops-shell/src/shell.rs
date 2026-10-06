@@ -283,9 +283,9 @@ fn inward_corner<S: Scalar>(
         }
     }
     for (e, at) in sides.iter().enumerate() {
-        let [(f, f_sense, f_pcurve), (g, _, g_pcurve)] = match at.as_slice() {
-            &[a, b] if removed[a.0] && !removed[b.0] => [a, b],
-            &[a, b] if removed[b.0] && !removed[a.0] => [b, a],
+        let [(f, f_sense, f_pcurve), (g, _, g_pcurve)] = match *at.as_slice() {
+            [a, b] if removed[a.0] && !removed[b.0] => [a, b],
+            [a, b] if removed[b.0] && !removed[a.0] => [b, a],
             _ => continue,
         };
         let curve = &spec.edges[e].curve;

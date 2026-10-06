@@ -161,10 +161,10 @@ mod tests {
         let model = part.topology();
 
         let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, &model) {
+        if let Err(e) = validate(&params, model) {
             panic!("{e:?}");
         }
-        if let Err(e) = validate_manifold(&params, &model) {
+        if let Err(e) = validate_manifold(&params, model) {
             panic!("{e:?}");
         }
     }
@@ -178,7 +178,7 @@ mod tests {
         figure8_profile(&mut part, "t").unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 8).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 8).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());

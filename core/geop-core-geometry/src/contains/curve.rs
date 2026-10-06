@@ -143,12 +143,11 @@ where
         };
 
         let ranges = [seg.domain()];
-        if let Some(bounds) = restriction(&[t_hat], &ranges)? {
-            if let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1) {
+        if let Some(bounds) = restriction(&[t_hat], &ranges)?
+            && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1) {
                 queue.push_back(restricted);
                 continue;
             }
-        }
 
         let sizes = [extent([seg.control_points.iter().copied()])];
         // The query point's own width counts too, like a second object's.

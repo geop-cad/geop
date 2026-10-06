@@ -89,8 +89,8 @@ impl<S: Scalar> Part<S> {
             let name = self.name_of(id).unwrap_or_default();
             let prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
             let key = Arc::as_ptr(&instance.component);
-            if !meshed.contains_key(&key) {
-                meshed.insert(key, Arc::new(instance.part().own_solid_meshes(quality)?));
+            if let std::collections::hash_map::Entry::Vacant(e) = meshed.entry(key) {
+                e.insert(Arc::new(instance.part().own_solid_meshes(quality)?));
             }
             let inner = meshed[&key].clone();
             instance.part().placed_solid_meshes(

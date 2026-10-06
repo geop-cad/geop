@@ -211,12 +211,11 @@ pub fn curve_surface_crossings<S: Scalar>(
         }
 
         let ranges = [c.domain(), s.domain_u(), s.domain_v()];
-        if let Some(b) = restriction(&hats, &ranges)? {
-            if let (Ok(rc), Ok(rs)) = (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2])) {
+        if let Some(b) = restriction(&hats, &ranges)?
+            && let (Ok(rc), Ok(rs)) = (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2])) {
                 queue.push_back((rc, rs));
                 continue;
             }
-        }
 
         let [size_u, size_v] = surface_extents(&s);
         let sizes = [extent([c.control_points.clone()]), size_u, size_v];

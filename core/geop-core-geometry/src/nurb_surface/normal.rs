@@ -194,11 +194,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let (v0, v1) = self.domain_v();
         for (u_fixed, t, (start, end)) in [(false, v, (v0, v1)), (true, u, (u0, u1))] {
             for (end_value, first) in [(start, true), (end, false)] {
-                if t.could_be_equal(end_value) {
-                    if let Some(normal) = self.pole_normal(u_fixed, first) {
+                if t.could_be_equal(end_value)
+                    && let Some(normal) = self.pole_normal(u_fixed, first) {
                         return normal;
                     }
-                }
             }
         }
         regular

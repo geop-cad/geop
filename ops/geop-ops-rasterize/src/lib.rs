@@ -37,7 +37,7 @@ pub fn face_triangles_uv<S: Scalar>(
     model: &Model<S>,
     face: &Face<S>,
     n: usize,
-) -> GeopResult<Vec<(Vector2<S>, Vector2<S>, Vector2<S>)>> {
+) -> GeopResult<Vec<polygon_triangulate::Triangle2<S>>> {
     let mut samples = grid::Samples::new(face);
     Ok(grid::triangulate_face(model, face, n, &mut samples)?
         .into_iter()
@@ -215,7 +215,7 @@ mod tests {
         )
         .unwrap();
         let model = part.topology();
-        rasterize_and_save(&model, "cube");
+        rasterize_and_save(model, "cube");
     }
     #[test]
     fn rasterize_cube() {
@@ -229,7 +229,7 @@ mod tests {
         let mut part = Part::<S>::new();
         sphere_solid(&mut part, "t3", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
-        let scene = rasterize(&model, 24).unwrap().scene(|_| Color10::Blue);
+        let scene = rasterize(model, 24).unwrap().scene(|_| Color10::Blue);
         assert!(!scene.triangles.is_empty());
         let mut with_normals = 0;
         for (t, _) in &scene.triangles {
@@ -273,7 +273,7 @@ mod tests {
         )
         .unwrap();
         let model = part.topology();
-        let rasterized = rasterize(&model, 24).unwrap();
+        let rasterized = rasterize(model, 24).unwrap();
         // The wall quadrants are the faces whose triangles are all off-axis.
         let walls: Vec<&Vec<TriangleFace<S>>> = rasterized
             .faces
@@ -323,7 +323,7 @@ mod tests {
         let mut part = Part::<S>::new();
         sphere_solid(&mut part, "t4", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
-        let sphere_edges = rasterize(&model, 24).unwrap().edges;
+        let sphere_edges = rasterize(model, 24).unwrap().edges;
         for polyline in sphere_edges.values() {
             // A quarter circle of radius 1 within `1 / (4 * 24²)` of the arc
             // needs 16 segments (its sagitta falls off with the square).

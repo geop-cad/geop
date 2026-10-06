@@ -106,13 +106,13 @@ impl Reader<'_> {
                 let unit = u.reference(1)?;
                 if self.instance(unit)?.is("LENGTH_UNIT") {
                     let mm = value * self.length_unit(unit)?;
-                    if mm > 0.0 && !(scope.uncertainty <= mm) {
+                    if mm > 0.0 && (scope.uncertainty.is_nan() || scope.uncertainty > mm) {
                         scope.uncertainty = mm;
                     }
                 }
             }
         }
-        if !(scope.uncertainty > 0.0) {
+        if scope.uncertainty.is_nan() || scope.uncertainty <= 0.0 {
             scope.uncertainty = DEFAULT_UNCERTAINTY;
         }
         Ok(scope)

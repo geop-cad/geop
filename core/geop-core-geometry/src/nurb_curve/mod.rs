@@ -84,7 +84,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     ) -> GeopResult<Self> {
         let n = control_points.len();
         if knot_vector.len() != n + degree + 1 {
-            return Err(GeopError::new(&format!(
+            return Err(GeopError::new(format!(
                 "Invalid knot vector length: expected {}, got {}",
                 n + degree + 1,
                 knot_vector.len()
@@ -100,7 +100,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         // this.
         for p in &control_points {
             if !p[D - 1].definitely_greater(S::ZERO) {
-                return Err(GeopError::new(&format!(
+                return Err(GeopError::new(format!(
                     "NurbCurve::try_new: control point {p:?} has a weight that is not definitely positive"
                 )));
             }

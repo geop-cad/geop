@@ -120,7 +120,7 @@ mod tests {
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let p = Vector3::from_array([S::from_f64(0.5); 3]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
             PointClassification::Inside
         );
     }
@@ -142,7 +142,7 @@ mod tests {
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let p = Vector3::from_array([S::from_f64(-5.0), S::from_f64(0.5), S::from_f64(0.5)]);
         assert_eq!(
-            shell_contains(&model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
+            shell_contains(model, shell_id, p, MAX, S::from_f64(EPS), SEED).unwrap(),
             PointClassification::Outside
         );
     }
@@ -162,7 +162,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 8).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 8).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());

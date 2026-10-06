@@ -807,7 +807,7 @@ fn sketches_undo_their_own_edits() {
             .points
             .values()
             .filter(|p| !p.fixed)
-            .last()
+            .next_back()
             .unwrap()
             .xy();
         [p[0].to_f64(), p[1].to_f64()]

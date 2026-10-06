@@ -7,6 +7,9 @@
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
+/// A triangle of a `(u, v)` triangulation, as its three corners.
+pub type Triangle2<S> = (Vector2<S>, Vector2<S>, Vector2<S>);
+
 pub use geop_core_math::polygon::polygon_signed_area;
 
 /// Twice the signed area of `poly` (shoelace formula): positive for CCW,
@@ -350,7 +353,7 @@ pub(crate) fn merge_outer_and_holes<S: Scalar>(
 pub fn triangulate_with_holes<S: Scalar>(
     outer: &[Vector2<S>],
     holes: &[Vec<Vector2<S>>],
-) -> GeopResult<Vec<(Vector2<S>, Vector2<S>, Vector2<S>)>> {
+) -> GeopResult<Vec<Triangle2<S>>> {
     if outer.len() < 3 {
         return Err(geop_core_math::geop_error::GeopError::new(
             "triangulate_with_holes: outer polygon needs >= 3 vertices",

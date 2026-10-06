@@ -1492,7 +1492,7 @@ fn check_weights(id: u64, weights: &[f64], n: usize) -> GeopResult<()> {
             weights.len()
         )));
     }
-    if let Some(w) = weights.iter().find(|w| !(**w > 0.0)) {
+    if let Some(w) = weights.iter().find(|w| w.is_nan() || **w <= 0.0) {
         return Err(GeopError::new(format!(
             "#{id}: the weight {w} is not positive"
         )));
@@ -1522,7 +1522,7 @@ fn expand_knots(id: u64, multiplicities: &[i64], knots: &[f64]) -> GeopResult<Ve
 }
 
 fn bezier_knots(id: u64, n: usize, degree: usize) -> GeopResult<Vec<f64>> {
-    if degree == 0 || (n - 1) % degree != 0 {
+    if degree == 0 || !(n - 1).is_multiple_of(degree) {
         return Err(GeopError::new(format!(
             "#{id}: {n} control points do not make Bezier pieces of degree {degree}"
         )));

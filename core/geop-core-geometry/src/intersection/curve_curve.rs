@@ -186,8 +186,8 @@ where
         if let Some((point, on_a)) = pinned_endpoint::<S, D, C>(&a, &b, hats) {
             let (other, free) = if on_a { (&b, hats[1]) } else { (&a, hats[0]) };
             let budget = max_nodes - explored;
-            if let Some(t) = curve_could_contain(other, &point, budget, min_subdivision_size)? {
-                if t.could_be_equal(free) {
+            if let Some(t) = curve_could_contain(other, &point, budget, min_subdivision_size)?
+                && t.could_be_equal(free) {
                     let free = free.intersect(t);
                     solutions.insert(if on_a {
                         (hats[0], free)
@@ -195,20 +195,18 @@ where
                         (free, hats[1])
                     });
                 }
-            }
             continue;
         }
 
         let ranges = [a.domain(), b.domain()];
-        if let Some(bounds) = restriction(&hats, &ranges)? {
-            if let (Ok(ra), Ok(rb)) = (
+        if let Some(bounds) = restriction(&hats, &ranges)?
+            && let (Ok(ra), Ok(rb)) = (
                 a.sub_curve(bounds[0].0, bounds[0].1),
                 b.sub_curve(bounds[1].0, bounds[1].1),
             ) {
                 queue.push_back((ra, rb));
                 continue;
             }
-        }
 
         let sizes = [
             extent([a.control_points.clone()]),
@@ -279,6 +277,10 @@ where
     coincidence::find_overlaps(candidates, |s| on(b, a, s))
 }
 
+/// What [`curve_curve_overlaps_and_crossings`] finds: the overlaps, and the
+/// parameter pairs of the isolated crossings.
+pub type OverlapsAndCrossings<S> = (Vec<Overlap<S, S>>, Vec<(S, S)>);
+
 /// Overlaps of `a` with `b`, and the isolated crossings away from them (the
 /// clipping search run on each stretch of `a` between overlaps).
 pub fn curve_curve_overlaps_and_crossings<S: Scalar, const D: usize, const C: usize>(
@@ -286,7 +288,7 @@ pub fn curve_curve_overlaps_and_crossings<S: Scalar, const D: usize, const C: us
     b: &NurbCurve<S, D>,
     max_nodes: usize,
     min_subdivision_size: S,
-) -> GeopResult<(Vec<Overlap<S, S>>, Vec<(S, S)>)>
+) -> GeopResult<OverlapsAndCrossings<S>>
 where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {

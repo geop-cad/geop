@@ -26,7 +26,7 @@ impl<S: Scalar> Model<S> {
                 "ca_id and cb_id must belong to the same face",
             )));
         }
-        validate_same_loop(&self, ca_id, cb_id).with_context(&ctx)?;
+        validate_same_loop(self, ca_id, cb_id).with_context(&ctx)?;
 
         let face_id = ca.face;
         let ring_index = self

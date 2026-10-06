@@ -536,10 +536,7 @@ fn offset_plane_dragged_by_its_handle() {
             shift: false,
         },
     });
-    match &editor.handle(Command::Commit).error {
-        Some(e) => panic!("{e}"),
-        None => {}
-    }
+    if let Some(e) = &editor.handle(Command::Commit).error { panic!("{e}") }
     match &editor.program().steps.last().unwrap().operation {
         PartOperation::AddDatum(args) => assert_eq!(
             args.construction,
@@ -1685,7 +1682,7 @@ fn measure_tool_measures_what_is_clicked() {
 
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
-            pointer: from_above.clone(),
+            pointer: from_above,
             shift: false,
         },
     });
@@ -2965,7 +2962,7 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
     };
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
-            pointer: wall.clone(),
+            pointer: wall,
             shift: false,
         },
     });
@@ -2990,7 +2987,7 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
         Some(Control::Reference(r)) => r.entities().cloned().collect::<Vec<_>>(),
         other => panic!("{key}: {other:?}"),
     };
-    assert_eq!(picked("features"), [hole.clone()]);
+    assert_eq!(picked("features"), std::slice::from_ref(&hole));
     assert!(picked("bodies").is_empty());
     // A feature combines as it did: there is no combining to choose.
     assert!(step.presentation.dialog.get("combine").is_none());

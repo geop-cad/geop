@@ -112,7 +112,7 @@ impl<S: Scalar> Model<S> {
         let coedge_forward = self.insert_coedge(Coedge {
             geometry: CoedgeGeometry::Edge(edge_id),
             sense: Sense::Forward,
-            pcurve: pcurve,
+            pcurve,
             next: coedge2,
             prev: coedge1,
             face: ce1.face, // fixed up below, once moved onto existing_face_id

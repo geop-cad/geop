@@ -740,7 +740,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(&model, face, 32).unwrap();
+        let tris = crate::face_triangles_uv(model, face, 32).unwrap();
         // Zero curvature never triggers a resolution doubling, so the grid
         // stays at the minimum whatever quality was asked for: a flat face
         // is approximated exactly by any grid, and its trim is clipped
@@ -762,7 +762,7 @@ mod tests {
         sphere_solid(&mut part, "t3", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
+        let tris = crate::face_triangles_uv(model, face, 8).unwrap();
         assert!(
             tris.len() > 8,
             "a sphere quadrant should be refined well past a trivial fan, got {}",
@@ -779,7 +779,7 @@ mod tests {
         sphere_solid(&mut part, "t4", Vector3::zero(), S::ONE).unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(&model, face, 24).unwrap();
+        let tris = crate::face_triangles_uv(model, face, 24).unwrap();
         let mut samples = Samples::new(face);
         let mut worst: f64 = 0.0;
         for (a, b, c) in &tris {
@@ -821,7 +821,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
         let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
+        let tris = crate::face_triangles_uv(model, face, 8).unwrap();
         let total: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
         assert!(
             (total - 1.0).abs() < 1e-6,
@@ -885,7 +885,7 @@ mod tests {
             .collect();
         assert_eq!(capped.len(), 2);
         for face in capped {
-            let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
+            let tris = crate::face_triangles_uv(model, face, 8).unwrap();
             let area: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
             // The cap's uv square spans the 4x4 footprint, so the hole is
             // π / 16 of it.
@@ -929,7 +929,7 @@ mod tests {
         let model = part.topology();
         let mut total_triangles = 0;
         for face in model.faces.values() {
-            let tris = crate::face_triangles_uv(&model, face, 8).unwrap();
+            let tris = crate::face_triangles_uv(model, face, 8).unwrap();
             for (a, b, c) in &tris {
                 for v in [a, b, c] {
                     assert!(

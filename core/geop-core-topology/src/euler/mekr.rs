@@ -44,7 +44,7 @@ impl<S: Scalar> Model<S> {
                 "coedge1 and coedge2 must belong to the same face",
             )));
         }
-        validate_different_loop(&self, coedge1, coedge2).with_context(&ctx)?;
+        validate_different_loop(self, coedge1, coedge2).with_context(&ctx)?;
         let face = self.get_face(ce1.face)?.clone();
 
         let start_id = self.coedge_end_vertex_id(coedge1)?;

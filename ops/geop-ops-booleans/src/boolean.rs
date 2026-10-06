@@ -1313,7 +1313,7 @@ mod tests {
                     continue;
                 };
                 let uses = model.coedges_of_edge(edge).len();
-                if uses % 2 != 0 {
+                if !uses.is_multiple_of(2) {
                     let e = model.get_edge(edge).unwrap();
                     let at = |v| {
                         let p = model.get_vertex(v).unwrap().point;

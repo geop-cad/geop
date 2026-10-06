@@ -238,7 +238,7 @@ fn join<S: Scalar>(a: &Piece<S>, b: &Piece<S>) -> Option<Piece<S>> {
                         .sub(near_a)
                         .prod_dot(&far_b.sub(near_b))
                         .definitely_less(S::ZERO))
-                .then(|| Piece::Line(*far_a, *far_b))
+                .then_some(Piece::Line(*far_a, *far_b))
             })
         }
         (

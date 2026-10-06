@@ -407,6 +407,41 @@ pub fn all_scenes<S: Scalar>() -> Vec<TestScene<S>> {
     scenes
 }
 
+/// Run `f` over every scene, spread across threads, and return the results in
+/// scene order.
+///
+/// Each scene owns its own `Part` and shares nothing with the others, so the
+/// sweeps over them are embarrassingly parallel — and slow enough
+/// (a full remesh or boolean per scene, 175 of them) that running them serially
+/// dominates the test suite's wall time. `rayon`'s global pool (fixed at
+/// `available_parallelism` threads, lazily started once per process) does the
+/// spreading, one job per scene — never more than one thread working on any
+/// single scene.
+///
+/// The pool is process-wide and shared by every caller, in this crate or
+/// otherwise, that uses rayon — critically including the several render
+/// tests that each call this function and that `cargo test` runs
+/// concurrently by default. Spawning a fresh `std::thread::scope` of
+/// `available_parallelism` threads per call (the previous approach) let
+/// those tests oversubscribe the machine several times over, which was
+/// enough contention to make an unrelated timing-sensitive test fail
+/// spuriously. Going through the shared pool instead means concurrent
+/// callers queue for the same fixed set of workers rather than each getting
+/// their own, so total parallelism across the whole test binary stays
+/// bounded at the core count.
+///
+/// `par_iter`'s `collect` preserves the source order regardless of which
+/// worker finished a given scene first, so a caller's output does not depend
+/// on scheduling.
+pub fn map_scenes_parallel<S, T, F>(f: F) -> Vec<T>
+where
+    S: Scalar,
+    T: Send,
+    F: Fn(TestScene<S>) -> T + Sync + Send,
+{
+    all_scenes::<S>().into_par_iter().map(f).collect()
+}
+
 #[cfg(test)]
 mod topology_render_test {
     use super::*;
@@ -446,39 +481,4 @@ mod topology_render_test {
                 .unwrap();
         }
     }
-}
-
-/// Run `f` over every scene, spread across threads, and return the results in
-/// scene order.
-///
-/// Each scene owns its own `Part` and shares nothing with the others, so the
-/// sweeps over them are embarrassingly parallel — and slow enough
-/// (a full remesh or boolean per scene, 175 of them) that running them serially
-/// dominates the test suite's wall time. `rayon`'s global pool (fixed at
-/// `available_parallelism` threads, lazily started once per process) does the
-/// spreading, one job per scene — never more than one thread working on any
-/// single scene.
-///
-/// The pool is process-wide and shared by every caller, in this crate or
-/// otherwise, that uses rayon — critically including the several render
-/// tests that each call this function and that `cargo test` runs
-/// concurrently by default. Spawning a fresh `std::thread::scope` of
-/// `available_parallelism` threads per call (the previous approach) let
-/// those tests oversubscribe the machine several times over, which was
-/// enough contention to make an unrelated timing-sensitive test fail
-/// spuriously. Going through the shared pool instead means concurrent
-/// callers queue for the same fixed set of workers rather than each getting
-/// their own, so total parallelism across the whole test binary stays
-/// bounded at the core count.
-///
-/// `par_iter`'s `collect` preserves the source order regardless of which
-/// worker finished a given scene first, so a caller's output does not depend
-/// on scheduling.
-pub fn map_scenes_parallel<S, T, F>(f: F) -> Vec<T>
-where
-    S: Scalar,
-    T: Send,
-    F: Fn(TestScene<S>) -> T + Sync + Send,
-{
-    all_scenes::<S>().into_par_iter().map(f).collect()
 }

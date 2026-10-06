@@ -167,10 +167,10 @@ mod tests {
         assert_eq!(model.faces.len(), 12);
 
         let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, &model) {
+        if let Err(e) = validate(&params, model) {
             panic!("{e:?}");
         }
-        if let Err(e) = validate_manifold(&params, &model) {
+        if let Err(e) = validate_manifold(&params, model) {
             panic!("{e:?}");
         }
     }
@@ -193,10 +193,10 @@ mod tests {
         let model = part.topology();
 
         let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, &model) {
+        if let Err(e) = validate(&params, model) {
             panic!("{e:?}");
         }
-        if let Err(e) = validate_manifold(&params, &model) {
+        if let Err(e) = validate_manifold(&params, model) {
             panic!("{e:?}");
         }
         assert_eq!(model.faces.len(), 12 + 2);
@@ -218,7 +218,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 32).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 32).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());
@@ -247,7 +247,7 @@ mod tests {
         .unwrap();
         let model = part.topology();
 
-        let scene = geop_ops_rasterize::debug::rasterize_topology(&model, 8).unwrap();
+        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 8).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());
@@ -284,8 +284,8 @@ mod tests {
             let model = part.topology();
             assert_eq!(model.faces.len(), 12, "{axis:?}");
 
-            validate(&params, &model).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
-            validate_manifold(&params, &model).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            validate(&params, model).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            validate_manifold(&params, model).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
 
             // Every vertex's coordinate along the *other* two axes stays
             // within the radius; `extent_axis` alone reaches all the way

@@ -72,6 +72,12 @@ pub struct Model<S: Scalar> {
     next_id: u64,
 }
 
+impl<S: Scalar> Default for Model<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S: Scalar> Model<S> {
     pub fn new() -> Self {
         Self {

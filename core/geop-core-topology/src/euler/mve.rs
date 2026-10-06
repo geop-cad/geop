@@ -48,7 +48,7 @@ impl<S: Scalar> Model<S> {
 
         let v = self.insert_vertex(Vertex { point: p });
         let edge_id = self.insert_edge(Edge {
-            curve: curve,
+            curve,
             start_vertex: ce_end_id,
             end_vertex: v,
         });
@@ -56,7 +56,7 @@ impl<S: Scalar> Model<S> {
         let coedge_forward = self.insert_coedge(Coedge {
             geometry: CoedgeGeometry::Edge(edge_id),
             sense: Sense::Forward,
-            pcurve: pcurve,
+            pcurve,
             next: CoedgeId(0), // set later
             prev: coedge,
             face: ce.face,
@@ -100,7 +100,7 @@ impl<S: Scalar> Model<S> {
 
         let v = self.insert_vertex(Vertex { point: p });
         let edge_id = self.insert_edge(Edge {
-            curve: curve,
+            curve,
             start_vertex: vertex,
             end_vertex: v,
         });
@@ -108,7 +108,7 @@ impl<S: Scalar> Model<S> {
         let coedge_forward = self.insert_coedge(Coedge {
             geometry: CoedgeGeometry::Edge(edge_id),
             sense: Sense::Forward,
-            pcurve: pcurve,
+            pcurve,
             next: CoedgeId(0), // set later
             prev: CoedgeId(0), // set later
             face: face_id,

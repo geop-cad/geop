@@ -12,8 +12,8 @@
 //! a helix does, the middle control row sits at the height halfway between
 //! (where the curve, by symmetry, passes at the span's middle angle, exactly
 //! on the helix), and in between the height runs ahead of or behind the true
-//! helix by at most **0.53 % of the pitch** for quarter-turn spans (`5.3e-3
-//! * pitch`, measured over the span; see the test). Any other middle height
+//! helix by at most **0.53 % of the pitch** for quarter-turn spans (`5.3e-3`
+//! times the pitch, measured over the span; see the test). Any other middle height
 //! is worse: the error is odd about the middle of the span, and moving the
 //! middle row adds an even term.
 //!

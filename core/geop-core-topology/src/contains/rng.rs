@@ -83,7 +83,7 @@ mod tests {
         let mut r = Rng::new(7);
         for _ in 0..1000 {
             let x = r.next_f64();
-            assert!(x >= 0.0 && x < 1.0);
+            assert!((0.0..1.0).contains(&x));
         }
     }
 }

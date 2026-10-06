@@ -1616,15 +1616,14 @@ fn trace_one_side<S: Scalar>(
 
         // Re-derive direction from the new normals for the next step,
         // keeping continuity with the previous direction.
-        if let (Ok(na), Ok(nb)) = (surf_a.normal(u_a, v_a), surf_b.normal(u_b, v_b)) {
-            if let Ok(new_axis) = na.prod_cross(&nb).normalize() {
+        if let (Ok(na), Ok(nb)) = (surf_a.normal(u_a, v_a), surf_b.normal(u_b, v_b))
+            && let Ok(new_axis) = na.prod_cross(&nb).normalize() {
                 dir = if new_axis.prod_dot(&dir).could_be_greater(S::ZERO) {
                     new_axis
                 } else {
                     new_axis.neg()
                 };
             }
-        }
     }
 
     // An intersection curve of two faces has to end at a vertex — every

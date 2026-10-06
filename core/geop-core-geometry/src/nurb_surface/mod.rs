@@ -87,7 +87,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         // definitely positive, so `W(u, v) > 0` on the whole domain.
         for p in &control_points {
             if !p[D - 1].definitely_greater(S::ZERO) {
-                return Err(GeopError::new(&format!(
+                return Err(GeopError::new(format!(
                     "NurbSurface::try_new: control point {p:?} has a weight that is not definitely positive"
                 )));
             }

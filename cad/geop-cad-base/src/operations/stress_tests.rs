@@ -311,7 +311,7 @@ fn stress_corners(program: Program, size: f64) {
     let model = part.topology();
     let name = |id: EdgeId| part.name_of(id).unwrap().to_string();
     let mut groups: Vec<(String, Vec<String>)> = Vec::new();
-    for (&vertex, _) in &model.vertices {
+    for &vertex in model.vertices.keys() {
         let mut edges: Vec<String> = model
             .edges
             .iter()

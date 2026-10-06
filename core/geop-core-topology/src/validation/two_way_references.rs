@@ -26,22 +26,20 @@ pub fn check_two_way_references<S: Scalar>(
 ) {
     // coedge.next.prev == self, coedge.prev.next == self.
     for (&coedge_id, coedge) in &model.coedges {
-        if let Some(next) = model.coedges.get(&coedge.next) {
-            if next.prev != coedge_id {
+        if let Some(next) = model.coedges.get(&coedge.next)
+            && next.prev != coedge_id {
                 errors.push(GeopError::new(format!(
                     "coedge {} has next {} whose prev is {} (expected {})",
                     coedge_id.0, coedge.next.0, next.prev.0, coedge_id.0
                 )));
             }
-        }
-        if let Some(prev) = model.coedges.get(&coedge.prev) {
-            if prev.next != coedge_id {
+        if let Some(prev) = model.coedges.get(&coedge.prev)
+            && prev.next != coedge_id {
                 errors.push(GeopError::new(format!(
                     "coedge {} has prev {} whose next is {} (expected {})",
                     coedge_id.0, coedge.prev.0, prev.next.0, coedge_id.0
                 )));
             }
-        }
     }
 
     // Every coedge reachable from some face's boundary loop, mapped to the
@@ -94,14 +92,13 @@ pub fn check_two_way_references<S: Scalar>(
         }
 
         // Every face's `shell` must list that face back.
-        if let Some(shell) = model.shells.get(&face.shell) {
-            if !shell.faces.contains(&face_id) {
+        if let Some(shell) = model.shells.get(&face.shell)
+            && !shell.faces.contains(&face_id) {
                 errors.push(GeopError::new(format!(
                     "face {} names shell {}, but that shell does not list it back",
                     face_id.0, face.shell.0
                 )));
             }
-        }
     }
 
     // Every coedge's `face` must actually list it back in some boundary.
@@ -117,14 +114,13 @@ pub fn check_two_way_references<S: Scalar>(
     for (&shell_id, shell) in &model.shells {
         // Every face a shell lists must name that shell back.
         for &face_id in &shell.faces {
-            if let Some(face) = model.faces.get(&face_id) {
-                if face.shell != shell_id {
+            if let Some(face) = model.faces.get(&face_id)
+                && face.shell != shell_id {
                     errors.push(GeopError::new(format!(
                         "shell {} lists face {}, but that face names shell {} instead",
                         shell_id.0, face_id.0, face.shell.0
                     )));
                 }
-            }
         }
 
         // Every shell's `solid` must list that shell back.
@@ -142,14 +138,13 @@ pub fn check_two_way_references<S: Scalar>(
     for (&solid_id, solid) in &model.solids {
         // Every shell a solid lists must name that solid back.
         for &shell_id in &solid.shells {
-            if let Some(shell) = model.shells.get(&shell_id) {
-                if shell.solid != Some(solid_id) {
+            if let Some(shell) = model.shells.get(&shell_id)
+                && shell.solid != Some(solid_id) {
                     errors.push(GeopError::new(format!(
                         "solid {} lists shell {}, but that shell names solid {:?} instead",
                         solid_id.0, shell_id.0, shell.solid
                     )));
                 }
-            }
         }
     }
 
