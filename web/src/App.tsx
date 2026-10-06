@@ -388,6 +388,7 @@ function App() {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (editing) event({ type: "key", key: e.key });
       else if (e.key === "f" || e.key === "F") fitView();
+      else if (e.key === "Home") fitView(DEFAULT_POSE);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -851,7 +852,6 @@ function App() {
           )}
           <main className="viewport">
             {wasmError && <p className="error">Failed to load wasm: {wasmError}</p>}
-            {!wasmError && !wasmReady && <p className="status">Loading geop wasm module…</p>}
             {error && !step && <p className="error">{error}</p>}
             {infos.some((info) => info.tier === undefined) && (
               <p className="error">
@@ -890,16 +890,26 @@ function App() {
                 onPose={(pose) => (poseRef.current = pose)}
               />
             )}
-            <button className="fit-view" title="Frame the whole part in the view (F)" onClick={() => fitView()}>
-              Fit
-            </button>
-            <button
-              className="projection-toggle"
-              title="Switch between a perspective and an orthographic view"
-              onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
-            >
-              {projection === "perspective" ? "Perspective" : "Orthographic"}
-            </button>
+            {(!wasmReady || pending > 0) && !wasmError && (
+              <div className="loading" role="status" aria-label={wasmReady ? "Working" : "Loading"}>
+                <span className="spinner" />
+                {!wasmReady && <span>Loading geop…</span>}
+              </div>
+            )}
+            <div className="view-buttons">
+              <button title="Frame the whole part in the view (F)" onClick={() => fitView()}>
+                Fit
+              </button>
+              <button title="Back to the standard view of the whole part (Home)" onClick={() => fitView(DEFAULT_POSE)}>
+                Reset view
+              </button>
+              <button
+                title="Switch between a perspective and an orthographic view"
+                onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
+              >
+                {projection === "perspective" ? "Perspective" : "Orthographic"}
+              </button>
+            </div>
             <div className="desktop-only">{detailPanel}</div>
           </main>
         </div>

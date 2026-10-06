@@ -663,7 +663,7 @@ await check("a subd cage face is moved up by the gizmo's arrow", async () => {
   await fresh();
   await clickOperation(page, "SubD");
   await settle(page);
-  await page.locator("button.fit-view").click();
+  await page.getByRole("button", { name: "Fit", exact: true }).click();
   await page.waitForTimeout(1200);
   // The cage's top face, near its middle: selected, a gizmo at its centre.
   await clickAt(await onScreen([0.3, 0.2, 1]));
