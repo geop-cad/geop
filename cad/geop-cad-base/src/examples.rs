@@ -2240,6 +2240,7 @@ pub fn all() -> Vec<Example<Program>> {
         ("turbine_blade", || drawn(include_str!("drawn/turbine_blade.geop"))),
         ("cool_flange", || drawn(include_str!("drawn/cool_flange.geop"))),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
+        ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
         ("box_with_drill_hole", box_with_drill_hole),
         ("bracket", bracket),
         ("cross_drilled_shaft", cross_drilled_shaft),
@@ -2419,7 +2420,7 @@ mod tests {
     /// as the ones written here do.
     #[test]
     fn drawn_examples_round_trip() {
-        let drawn = ["turbine_blade", "cool_flange", "edge_part"];
+        let drawn = ["turbine_blade", "cool_flange", "edge_part", "conebox"];
         for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
             build_and_round_trip(name, &program());
         }
