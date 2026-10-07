@@ -476,6 +476,50 @@ impl<S: Scalar> Pose<S> {
         }
     }
 
+    /// This pose after the step `(dt, w)` taken about `center` — a point of
+    /// the world, the body's middle, ideally: turned by `R(w)` about
+    /// `center`, then moved by `dt`. Its rotation is `R(w) r` and its
+    /// position `center + dt + R(w) (position - center)`, for the pose's
+    /// rotation `r`.
+    ///
+    /// `R(w)` is the unit quaternion of the modified Rodrigues parameters
+    /// `σ = w / 4`: `((1 − |σ|²), 2σ) / (1 + |σ|²)`, turning by `4 atan(|w| /
+    /// 4)` about `w` — `|w|` radians to first order. It is rational, so smooth
+    /// everywhere and a unit quaternion by construction — no square root of
+    /// `|w|`, as the exponential needs — and every rotation short of a full
+    /// turn is one, a half turn at `|w| = 4` with the turn still changing
+    /// half as fast as `w`. The quaternion `(1, w / 2)` normalized reaches a
+    /// half turn only as `|w|` goes to infinity: a body that had to turn
+    /// nearly half way round in one drag ran its variables off to hundreds,
+    /// every step of the minimizer turning it by less, and the solve ran out
+    /// of steps. Turning about the body's own center rather than the world's
+    /// origin keeps a turn of a body far from the origin from also moving it.
+    ///
+    /// This is how a solver moves a body: `w = 0` and `dt = 0` give the pose
+    /// itself, and the pose has no singular configurations to cross.
+    pub fn moved(&self, center: &Vector3<S>, dt: Vector3<S>, w: Vector3<S>) -> GeopResult<Pose<S>> {
+        let sigma = w.prod_scalar(S::ONE.div(S::from_i64(4))?);
+        let s2 = sigma.prod_dot(&sigma);
+        let inv = S::ONE.div(S::ONE.add(s2))?;
+        let twice = S::TWO.mul(inv);
+        let turn = Quaternion::new(
+            S::ONE.sub(s2).mul(inv),
+            sigma[0].mul(twice),
+            sigma[1].mul(twice),
+            sigma[2].mul(twice),
+        );
+        let [x, y, z] = turn.rotation_columns()?;
+        let by_turn = |v: &Vector3<S>| {
+            x.prod_scalar(v[0])
+                .add(&y.prod_scalar(v[1]))
+                .add(&z.prod_scalar(v[2]))
+        };
+        Ok(Pose {
+            rotation: turn.mul(&self.rotation),
+            position: center.add(&dt).add(&by_turn(&self.position.sub(center))),
+        })
+    }
+
     /// The point `p` moved by the pose.
     pub fn apply(&self, p: &Vector3<S>) -> Vector3<S> {
         let r = &self.rotation;

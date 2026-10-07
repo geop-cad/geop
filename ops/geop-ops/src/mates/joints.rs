@@ -21,7 +21,7 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use super::{Dual, V, cst};
-use crate::{Placed, Residual, Value};
+use geop_core_math::solvers::system::{Residual, Value};
 
 /// A joint's end on a body, in that body's frame: where its axis passes, the
 /// axis, and the direction its turns are measured from — unit vectors, the
@@ -495,11 +495,11 @@ impl<S: Scalar> JointResidual<S> {
         let c = &end.connector;
         Ok(match end.body {
             Some(body) => {
-                let placed: &Placed<Dual<S>> = value_of(&self.params, values, body).pose()?;
+                let motion = value_of(&self.params, values, body).pose()?.motion();
                 (
-                    placed.point(&cst(&c.origin)),
-                    placed.direction(&cst(&c.axis)),
-                    placed.direction(&cst(&c.reference)),
+                    motion.apply(&cst(&c.origin)),
+                    motion.rotate(&cst(&c.axis)),
+                    motion.rotate(&cst(&c.reference)),
                 )
             }
             None => (cst(&c.origin), cst(&c.axis), cst(&c.reference)),

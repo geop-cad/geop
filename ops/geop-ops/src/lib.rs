@@ -99,6 +99,7 @@ extern crate self as geop_ops;
 /// built in any scalar; the design data is cast to it.
 pub type Design = geop_core_math::scalars::ScalInF64;
 
+pub mod mates;
 pub mod operation;
 pub mod parameters;
 pub mod part;

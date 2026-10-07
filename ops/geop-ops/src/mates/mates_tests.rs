@@ -522,7 +522,7 @@ fn jacobians_match_finite_differences() {
         scale: n(2.0),
     };
     let pulls = [(
-        crate::Pull::Point {
+        geop_core_math::solvers::system::Pull::Point {
             param: 1,
             local: v([0.5, 0.5, 0.0]),
             target: v([2.0, 1.0, 0.0]),
@@ -530,10 +530,20 @@ fn jacobians_match_finite_differences() {
         n(0.1),
     )];
     let residuals = assembly.residuals().unwrap();
-    let system = assembly.system(&residuals).unwrap();
+    let (params, mobility) = assembly.parameters(&residuals).unwrap();
+    let all = residuals.all();
     let evaluate = |x: &[f64]| {
         let x: Vec<S> = x.iter().map(|&v| S::from_f64(v)).collect();
-        let e = system.evaluate(&x, &pulls, false).unwrap();
+        let e = geop_core_math::solvers::system::evaluate(
+            &params,
+            &mobility,
+            &all,
+            assembly.scale,
+            &x,
+            &pulls,
+            false,
+        )
+        .unwrap();
         let mid = |v: &[S]| v.iter().map(|v| v.to_f64()).collect::<Vec<_>>();
         (
             mid(&e.sum.values),
@@ -732,7 +742,7 @@ fn unmet<T: Scalar>(reports: &[SolveReport<T>]) -> Vec<String> {
                 || r.phases.len() > 1
                 || r.phases
                     .iter()
-                    .any(|p| p.stop == geop_core_math::least_squares::Stop::Budget)
+                    .any(|p| p.stop == geop_core_math::solvers::least_squares::Stop::Budget)
         })
         .map(|(k, r)| format!("drag {k}: {r:?}"))
         .collect()

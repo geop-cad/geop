@@ -1,5 +1,5 @@
 //! Solving a 3-D sketch with the solver every system of the kernel shares
-//! ([`geop_core_solve`]), the way a planar sketch is solved (see
+//! ([`geop_core_math::solvers::system`]), the way a planar sketch is solved (see
 //! [`crate::solve`]): every constraint a [`Residual`] of the sketch's
 //! variables, each a length, computed as a [`geop_core_math::dual::Dual`] of
 //! the sketch's scalar so its gradient is exact and its value an enclosure.
@@ -24,19 +24,22 @@
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
+use geop_core_math::solvers::system::{self, Mobility, Param, Phase, Pull, Residual, Value};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Ring, Scalar, as_f64},
     vector::Vector3,
 };
-use geop_core_solve::{Mobility, Param, Phase, Pull, Residual, System, Value};
 use serde::{Deserialize, Serialize};
 
 use super::{
     Constraint3d, CurveKind3d, Enclosure3d, End, Sketch3d,
     geometry::{Arc3, across, length, unit},
 };
-use crate::{ConstraintId, CurveId, PointId};
+use crate::{
+    ConstraintId, CurveId, PointId,
+    solve::{parameters, solver_residuals, values},
+};
 
 /// The most variables one constraint depends on: a tangency between two
 /// arcs, five points.
@@ -452,41 +455,32 @@ impl<'a, S: Scalar> Problem<'a, S> {
             .collect()
     }
 
-    fn system<'r>(
-        &self,
-        residuals: &'r [SketchResidual<'_, 'a, S>],
-        x: &[S],
-    ) -> System<'r, S, MAX_LOCAL_VARS> {
-        System {
-            params: x.iter().map(|&v| Param::Scalar(v)).collect(),
-            free: self
-                .layout
-                .free
-                .iter()
-                .map(|&f| if f { Mobility::Held } else { Mobility::Fixed })
-                .collect(),
-            residuals: residuals
-                .iter()
-                .map(|r| r as &dyn Residual<S, MAX_LOCAL_VARS>)
-                .collect(),
-            scale: self.scale,
-        }
+    /// What a solve may do with each variable: change it as far as the
+    /// constraints need if it is free, else not at all.
+    fn mobility(&self) -> Vec<Mobility> {
+        self.layout
+            .free
+            .iter()
+            .map(|&f| if f { Mobility::Held } else { Mobility::Fixed })
+            .collect()
     }
 
-    /// How the sketch stands at the variables `system` has.
+    /// How the sketch stands at the variables `params` are.
     fn report(
         &self,
-        system: &System<'_, S, MAX_LOCAL_VARS>,
+        params: &[Param<S>],
+        residuals: &[&dyn Residual<S, MAX_LOCAL_VARS>],
         iterations: usize,
         phases: Vec<Phase<S>>,
     ) -> GeopResult<Solve3dReport<S>> {
-        let solved = system.report()?;
+        let solved = system::report(params, &self.mobility(), residuals, self.scale)?;
         let failed_constraints = solved
             .failed
             .iter()
             .map(|&i| self.constraints[i].id)
             .collect::<Vec<_>>();
-        let (free_offsets, dof) = system.free_variables();
+        let (free_offsets, dof) =
+            system::free_variables(params, &self.mobility(), residuals, self.scale);
         let free_vars: Vec<bool> = self
             .layout
             .offsets()
@@ -547,18 +541,6 @@ fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopR
     Ok(S::from_f64(t))
 }
 
-/// The variables of a system of a sketch, as they are now.
-fn values<S: Scalar>(system: &System<'_, S, MAX_LOCAL_VARS>) -> Vec<S> {
-    system
-        .params
-        .iter()
-        .map(|p| match p {
-            Param::Scalar(v) => *v,
-            Param::Pose { .. } => unreachable!("a sketch's variables are numbers"),
-        })
-        .collect()
-}
-
 /// One constraint as a residual of the variables it depends on.
 struct SketchResidual<'p, 'a, S: Scalar> {
     problem: &'p Problem<'a, S>,
@@ -584,7 +566,7 @@ impl<S: Scalar> Residual<S, MAX_LOCAL_VARS> for SketchResidual<'_, '_, S> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Solve3dReport<S: Scalar> {
-    /// Every constraint holds, to [`geop_core_solve::RELATIVE_TOLERANCE`] of
+    /// Every constraint holds, to [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of
     /// the sketch's size.
     pub converged: bool,
     /// The largest remaining residual, a length: an upper bound.
@@ -616,7 +598,8 @@ impl<S: Scalar> Sketch3d<S> {
     ) -> GeopResult<Solve3dReport<S>> {
         let problem = Problem::new(self)?;
         let residuals = problem.residuals_of();
-        let mut system = problem.system(&residuals, &problem.start);
+        let start = parameters(&problem.start);
+        let solver = solver_residuals(&residuals);
         let pulls: Vec<Pull<S>> = drags
             .iter()
             .flat_map(|&(point, target)| {
@@ -627,9 +610,19 @@ impl<S: Scalar> Sketch3d<S> {
                 })
             })
             .collect();
-        let solved = system.solve(&pulls)?;
-        let report = problem.report(&system, solved.iterations, solved.phases)?;
-        let x = values(&system);
+        let solved = system::solve(&start, &problem.mobility(), &solver, problem.scale, &pulls)?;
+        let report = problem.report(
+            &solved.params,
+            &solver,
+            solved.report.iterations,
+            solved.report.phases,
+        )?;
+        // Where the solve put the points is the sketch's state, and a free
+        // choice: sharp.
+        let x: Vec<S> = values(&solved.params)
+            .into_iter()
+            .map(Scalar::sharpen)
+            .collect();
         problem.layout.write(self, &x);
         Ok(report)
     }
@@ -639,25 +632,26 @@ impl<S: Scalar> Sketch3d<S> {
     pub fn check(&self) -> GeopResult<Solve3dReport<S>> {
         let problem = Problem::new(self)?;
         let residuals = problem.residuals_of();
-        let system = problem.system(&residuals, &problem.start);
-        problem.report(&system, 0, Vec::new())
+        let params = parameters(&problem.start);
+        let solver = solver_residuals(&residuals);
+        problem.report(&params, &solver, 0, Vec::new())
     }
 
     /// The sketch's geometry as the kernel builds on it: an enclosure of
     /// the exact solution of its constraints near the solved points, every
     /// coordinate they leave free exactly as drawn (see
-    /// [`System::enclose`]). A sketch whose constraints do not hold is built
+    /// [`system::enclose`]). A sketch whose constraints do not hold is built
     /// as drawn. Fails where the solution cannot be proven.
     pub fn enclose<T: Scalar>(&self) -> GeopResult<Enclosure3d<T>> {
         let ctx = |e: GeopError| e.with_context("enclosing the 3-D sketch's solution");
         let problem = Problem::new(self).map_err(ctx)?;
         let residuals = problem.residuals_of();
-        let system = problem.system(&residuals, &problem.start);
-        if !problem.report(&system, 0, Vec::new())?.converged {
+        let params = parameters(&problem.start);
+        let solver = solver_residuals(&residuals);
+        if !problem.report(&params, &solver, 0, Vec::new())?.converged {
             return Ok(Enclosure3d::as_drawn(self));
         }
-        let enclosed = system
-            .enclose()
+        let enclosed = system::enclose(&params, &problem.mobility(), &solver, problem.scale)
             .map_err(|e| {
                 e.named(|i| {
                     let c = &problem.constraints[i];

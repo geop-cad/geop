@@ -2,10 +2,10 @@
 //! which variables they leave free, and inverses — in honest enclosures, so
 //! that a pivot counts as zero exactly when it could be zero.
 
-use geop_core_math::scalars::Scalar;
+use crate::scalars::Scalar;
 
 /// The outcome of Gauss-Jordan elimination (see [`eliminate`]).
-pub(crate) struct Elimination<S: Scalar> {
+pub(super) struct Elimination<S: Scalar> {
     /// The rows, reduced: row `k` has a one at `pivots[k].0` and zeros at
     /// every other pivot column.
     pub rows: Vec<Vec<S>>,
@@ -23,7 +23,7 @@ pub(crate) struct Elimination<S: Scalar> {
 /// cannot be zero; elimination stops when every candidate could be zero.
 /// Which constraints are independent and which variables they determine is
 /// decided from the rows' own enclosures; where it matters for correctness,
-/// [`crate::System::enclose`] verifies what it is used for.
+/// [`enclose`] verifies what it is used for.
 ///
 /// Complete, not column by column: going column by column takes the first
 /// column with any entry that cannot be zero, and rounding leaves entries
@@ -31,7 +31,7 @@ pub(crate) struct Elimination<S: Scalar> {
 /// constraints barely touch, in place of one they do — a half circle
 /// tangent to two parallel sides was left with its sweep free and two
 /// tangencies over the same coordinate, and could not be enclosed.
-pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
+pub(super) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
     // Per row, the columns it has an entry in other than an exact zero, in
     // order — of the whole row, which may be longer than `n`: columns past
     // the pivots' go along, as in `inverse`'s: the only ones that can be a
@@ -47,7 +47,7 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
     let mut used = vec![false; n];
     let mut r = 0;
     loop {
-        let size = |v: S| v.abs().sharpen();
+        let size = |v: S| v.abs().lower();
         let mut best: Option<(usize, usize)> = None;
         for i in r..rows.len() {
             for &col in support[i].iter().filter(|&&c| c < n && !used[c]) {
@@ -94,9 +94,10 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
     }
 }
 
-/// Whether `v` is exactly zero: the entry of a column a row has nothing in.
-fn is_zero<S: Scalar>(v: S) -> bool {
-    v.is_sharp() && v.could_be_equal(S::ZERO)
+/// Whether `v` is definitely zero — no value it could be is less or more
+/// than zero: the entry of a column a row has nothing in.
+pub(super) fn is_zero<S: Scalar>(v: S) -> bool {
+    !v.could_be_less(S::ZERO) && !v.could_be_greater(S::ZERO)
 }
 
 /// The columns of `a` and of `b`, in order.
@@ -132,7 +133,7 @@ fn union(a: &[usize], b: &[usize]) -> Vec<usize> {
 /// directions in which every row stays put, to first order. One vector per
 /// variable no pivot determines, which is one there and zero at every other
 /// such variable.
-pub(crate) fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> {
+pub(super) fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> {
     let Elimination { rows, pivots, .. } = eliminate(rows, n);
     let is_pivot: Vec<bool> = (0..n).map(|c| pivots.iter().any(|p| p.0 == c)).collect();
     (0..n)
@@ -150,7 +151,7 @@ pub(crate) fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> 
 
 /// How many of `rows` (each over `n` variables) are independent: those an
 /// elimination finds a pivot that cannot be zero for.
-pub(crate) fn rank<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> usize {
+pub fn rank<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> usize {
     eliminate(rows, n).pivots.len()
 }
 
@@ -159,7 +160,7 @@ pub(crate) fn rank<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> usize {
 /// definitely not zero), and the null space's dimension. This only
 /// classifies entities for display — the solve itself does not depend on
 /// it.
-pub(crate) fn free_variables<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> (Vec<bool>, usize) {
+pub(super) fn free_variables<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> (Vec<bool>, usize) {
     let basis = null_space(rows, n);
     let free = (0..n)
         .map(|k| basis.iter().any(|v| v[k].definitely_not_equal(S::ZERO)))
@@ -167,17 +168,16 @@ pub(crate) fn free_variables<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> (Vec<boo
     (free, basis.len())
 }
 
-/// An approximate inverse of the square matrix `a`, by Gauss-Jordan
-/// elimination: any matrix serves where it is only a preconditioner, as in
-/// the Krawczyk test, so its entries are sharp. `None` if `a` could be
-/// singular.
-pub(crate) fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
+/// An enclosure of the inverse of the square matrix `a`, by Gauss-Jordan
+/// elimination: each entry encloses that of the inverse of every matrix `a`
+/// encloses. `None` if `a` could be singular.
+pub(super) fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
     let m = a.len();
     let rows: Vec<Vec<S>> = a
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            let mut row: Vec<S> = row.iter().map(|v| v.sharpen()).collect();
+            let mut row = row.clone();
             row.extend((0..m).map(|j| if i == j { S::ONE } else { S::ZERO }));
             row
         })
@@ -188,14 +188,14 @@ pub(crate) fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
     }
     let mut inverse = vec![Vec::new(); m];
     for (row, &(col, _)) in rows.into_iter().zip(&pivots) {
-        inverse[col] = row[m..].iter().map(|v| v.sharpen()).collect();
+        inverse[col] = row[m..].to_vec();
     }
     Some(inverse)
 }
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::scalars::{Field, Ring, ScalInF64 as S, Scalar};
+    use crate::scalars::{Field, Ring, ScalInF64 as S, Scalar};
 
     use super::*;
 
@@ -207,7 +207,7 @@ mod tests {
         let mut used = vec![false; n];
         let mut r = 0;
         loop {
-            let size = |v: S| v.abs().sharpen();
+            let size = |v: S| v.abs().lower();
             let mut best: Option<(usize, usize)> = None;
             for i in r..rows.len() {
                 for col in (0..n).filter(|&c| !used[c]) {
@@ -229,7 +229,7 @@ mod tests {
             }
             for i in (0..rows.len()).filter(|&i| i != r) {
                 let factor = rows[i][col];
-                if factor.is_sharp() && factor.could_be_equal(S::ZERO) {
+                if is_zero(factor) {
                     continue;
                 }
                 for c in 0..rows[i].len() {

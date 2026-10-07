@@ -498,7 +498,7 @@ fn a_six_axis_arm_reaches_random_poses() {
         // rescued by the least-squares pass after it.
         assert!(
             report.phases.len() == 1
-                && report.phases[0].stop != geop_core_math::least_squares::Stop::Budget,
+                && report.phases[0].stop != geop_core_math::solvers::least_squares::Stop::Budget,
             "pose {pose} {angles:?}: {report:?}"
         );
         for (i, joint) in assembly.joints.iter().enumerate() {

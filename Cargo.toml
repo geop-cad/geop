@@ -5,7 +5,6 @@ members = [
     "core/geop-core-geometry",
     "core/geop-core-topology",
     "core/geop-core-sketch",
-    "core/geop-core-solve",
     "ops/geop-ops",
     "ops/geop-ops-derive",
     "ops/geop-ops-sketch",
@@ -44,7 +43,6 @@ geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }
 geop-core-sketch = { path = "core/geop-core-sketch" }
-geop-core-solve = { path = "core/geop-core-solve" }
 geop-ops = { path = "ops/geop-ops" }
 geop-ops-derive = { path = "ops/geop-ops-derive" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }

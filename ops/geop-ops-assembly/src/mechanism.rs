@@ -1,7 +1,7 @@
 //! The mechanism of a part: its mates as constraints, joints and couplings
 //! between the rigid bodies placed in it (see [`Mechanism`]), and solving,
 //! checking and measuring them — the methods of [`PartMates`] — where
-//! [`geop_core_solve::mates`] does the solving.
+//! [`geop_ops::mates`] does the solving.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -10,7 +10,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_solve::mates::{
+use geop_ops::mates::{
     Assembly, Body, Connector, Constraint, Coordinate, Coupling, Feature, Joint, JointEnd, Motion,
     Pull as BodyPull,
 };
@@ -411,7 +411,7 @@ pub trait PartMates<S: Scalar> {
 
     /// How free every placed part is where it is now, and — if the mates do
     /// not all hold — a smallest set of them that conflict (see
-    /// `geop_core_solve::mates::Assembly::conflicting`): as many solves as
+    /// `geop_ops::mates::Assembly::conflicting`): as many solves as
     /// there are mates, so for a dialog to show, not for every drag.
     fn mate_freedom(&self) -> GeopResult<MateFreedom>;
 

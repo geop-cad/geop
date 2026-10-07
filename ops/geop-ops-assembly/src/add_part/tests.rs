@@ -125,7 +125,7 @@ fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
 }
 
 /// How near the solver brings mates to holding: a billionth of the
-/// assembly's size (see `geop_core_solve`), and the cube is 1 across.
+/// assembly's size (see `geop_core_math::solvers::system`), and the cube is 1 across.
 const SOLVED: f64 = 1e-8;
 
 /// `before` with the cube placed by `args` as the step `id`, where the

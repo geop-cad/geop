@@ -258,8 +258,15 @@ impl<S: Scalar, const N: usize> Scalar for Dual<S, N> {
         }
     }
 
+    /// A single, exactly known point: a sharp value that does not vary
+    /// with any variable. A value that is sharp but moves with a variable is
+    /// no point — taking it for one drops the gradient.
     fn is_sharp(self) -> bool {
         self.v.is_sharp()
+            && self
+                .d
+                .iter()
+                .all(|g| !g.could_be_less(S::ZERO) && !g.could_be_greater(S::ZERO))
     }
 
     fn width(self) -> Self {

@@ -4,7 +4,7 @@
 //! Krawczyk operator's `Y·J(X)`, …) work with actual matrix/vector values
 //! and named operations (`transpose`, `mul_vec`, `mul_mat`) instead of raw
 //! `[[S; N]; M]` arrays and hand-rolled index loops at every call site —
-//! see [`crate::interval_newton`] and [`solve_linear_system`] for the two
+//! see [`crate::solvers::interval_newton`] and [`solve_linear_system`] for the two
 //! main consumers.
 
 use std::ops::{Index, IndexMut};

@@ -1,8 +1,8 @@
 //! Rigid bodies and the constraints between them — mates — as a
-//! [`System`]: a body is a pose parameter, a constraint a residual between
+//! [`Problem`]: a body is a pose parameter, a constraint a residual between
 //! a point, a line or a plane attached to each of two bodies, or to the
 //! ground, which never moves. Joints, and the couplings between them, are
-//! mates too (see [`joints`]): their coordinates are numbers of the system.
+//! mates too (see [`joints`]): their coordinates are numbers of the problem.
 //! [`Assembly`] puts them together.
 
 use geop_core_math::{
@@ -10,13 +10,12 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
     scalars::{Ring, Scalar, as_f64},
+    solvers::system::{
+        self, Mobility, Param, Phase, Pull as ParamPull, Residual, Solution, Value, rank,
+    },
     vector::Vector3,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    Mobility, Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank, memory,
-};
 
 mod joints;
 
@@ -24,10 +23,6 @@ pub use joints::{
     Connector, Coordinate, Coupling, CouplingKind, Joint, JointEnd, JointKind, Motion,
 };
 use joints::{CouplingResidual, JointResidual, from_variable, to_variable};
-
-/// A group of this many bodies or more has its freedom remembered: fewer
-/// cost less to work out than to find.
-const REMEMBERED_FROM: usize = 4;
 
 /// Variables per body: a translation and a turn.
 const BODY_VARS: usize = 6;
@@ -223,7 +218,7 @@ pub enum Pull<S: Scalar> {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct SolveReport<S: Scalar> {
-    /// Every mate holds (to [`crate::RELATIVE_TOLERANCE`] of the size).
+    /// Every mate holds (to [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of the size).
     pub converged: bool,
     /// The largest remaining mate residual, in units of length: an upper
     /// bound.
@@ -231,7 +226,7 @@ pub struct SolveReport<S: Scalar> {
     pub max_residual: S,
     pub iterations: usize,
     /// Each minimization of the solve.
-    pub phases: Vec<crate::Phase<S>>,
+    pub phases: Vec<Phase<S>>,
     /// The mates left unsatisfied — conflicting, or unreachable from where
     /// the bodies started — by index among the constraints, then the
     /// joints, then the couplings (see [`Assembly::mates`]); empty when
@@ -321,7 +316,7 @@ impl<S: Scalar> Mate<S> {
         &self,
         values: &'v [Value<Dual<S>>],
         body: Option<usize>,
-    ) -> GeopResult<Option<&'v Placed<Dual<S>>>> {
+    ) -> GeopResult<Option<&'v Pose<Dual<S>>>> {
         let Some(body) = body else {
             return Ok(None);
         };
@@ -334,16 +329,17 @@ impl<S: Scalar> Mate<S> {
     }
 
     /// `feature` in the world.
-    fn world(feature: &Feature<S>, placed: Option<&Placed<Dual<S>>>) -> GeopResult<World<S>> {
+    fn world(feature: &Feature<S>, placed: Option<&Pose<Dual<S>>>) -> GeopResult<World<S>> {
+        let motion = placed.map(Pose::motion);
         let point = |at: &Vector3<S>| -> V<S> {
-            match placed {
-                Some(p) => p.point(&cst(at)),
+            match &motion {
+                Some(m) => m.apply(&cst(at)),
                 None => cst(at),
             }
         };
         let rotate = |d: &Vector3<S>| -> V<S> {
-            match placed {
-                Some(p) => p.direction(&cst(d)),
+            match &motion {
+                Some(m) => m.rotate(&cst(d)),
                 None => cst(d),
             }
         };
@@ -523,8 +519,9 @@ struct Group {
     couplings: Vec<usize>,
 }
 
-/// The residuals of an assembly, kept alive for a [`System`] borrowing
-/// them, and where each joint's coordinates are among its parameters.
+/// The residuals of an assembly, kept alive for a solve borrowing them
+/// (see [`Residuals::all`]), and where each joint's coordinates are among
+/// its parameters.
 struct Residuals<S: Scalar> {
     mates: Vec<Mate<S>>,
     joints: Vec<JointResidual<S>>,
@@ -532,6 +529,21 @@ struct Residuals<S: Scalar> {
     /// Per joint and motion: the parameter its coordinate is, if its kind
     /// frees that motion.
     coordinates: Vec<[Option<usize>; 2]>,
+}
+
+impl<S: Scalar> Residuals<S> {
+    /// Every residual of every mate, in the order a solve counts them.
+    fn all(&self) -> Vec<&dyn Residual<S, MATE_VARS>> {
+        let mut all: Vec<&dyn Residual<S, MATE_VARS>> = Vec::new();
+        all.extend(self.mates.iter().map(|m| m as &dyn Residual<S, MATE_VARS>));
+        all.extend(self.joints.iter().map(|m| m as &dyn Residual<S, MATE_VARS>));
+        all.extend(
+            self.couplings
+                .iter()
+                .map(|m| m as &dyn Residual<S, MATE_VARS>),
+        );
+        all
+    }
 }
 
 impl<S: Scalar> Assembly<S> {
@@ -623,9 +635,9 @@ impl<S: Scalar> Assembly<S> {
         })
     }
 
-    /// The system of the bodies and the joints' coordinates, and the
-    /// residuals of every mate.
-    fn system<'m>(&self, residuals: &'m Residuals<S>) -> GeopResult<System<'m, S, MATE_VARS>> {
+    /// The parameters of a solve — the bodies' poses, and the joints'
+    /// coordinates — and what a solve may do with each.
+    fn parameters(&self, residuals: &Residuals<S>) -> GeopResult<(Vec<Param<S>>, Vec<Mobility>)> {
         let mut params: Vec<Param<S>> = self
             .bodies
             .iter()
@@ -634,7 +646,7 @@ impl<S: Scalar> Assembly<S> {
                 center: b.center,
             })
             .collect();
-        let mut free: Vec<Mobility> = self
+        let mut mobility: Vec<Mobility> = self
             .bodies
             .iter()
             .map(|b| {
@@ -650,7 +662,7 @@ impl<S: Scalar> Assembly<S> {
                 if coordinates[k].is_some() {
                     let c = joint.coordinate(motion);
                     params.push(Param::Scalar(to_variable(motion, c.value, self.scale)?));
-                    free.push(if c.held {
+                    mobility.push(if c.held {
                         Mobility::Fixed
                     } else {
                         Mobility::Follows
@@ -658,31 +670,7 @@ impl<S: Scalar> Assembly<S> {
                 }
             }
         }
-        let mut all: Vec<&dyn Residual<S, MATE_VARS>> = Vec::new();
-        all.extend(
-            residuals
-                .mates
-                .iter()
-                .map(|m| m as &dyn Residual<S, MATE_VARS>),
-        );
-        all.extend(
-            residuals
-                .joints
-                .iter()
-                .map(|m| m as &dyn Residual<S, MATE_VARS>),
-        );
-        all.extend(
-            residuals
-                .couplings
-                .iter()
-                .map(|m| m as &dyn Residual<S, MATE_VARS>),
-        );
-        Ok(System {
-            params,
-            free,
-            residuals: all,
-            scale: self.scale,
-        })
+        Ok((params, mobility))
     }
 
     /// The free bodies, and the joints with a free coordinate, in groups no
@@ -1016,7 +1004,7 @@ impl<S: Scalar> Assembly<S> {
     /// One solve, limits left out (see [`Assembly::solve`]): the groups no
     /// mate ties together (see [`Assembly::independent`]) one by one.
     fn solve_once(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
-        let mut phases: Vec<crate::Phase<S>> = Vec::new();
+        let mut phases: Vec<Phase<S>> = Vec::new();
         let mut iterations = 0;
         let mut moved = Vec::new();
         for group in self.independent() {
@@ -1083,8 +1071,7 @@ impl<S: Scalar> Assembly<S> {
     /// [`Assembly::solve_once`], every free body in one system.
     fn solve_together(&mut self, pulls: &[Pull<S>]) -> GeopResult<SolveReport<S>> {
         let residuals = self.residuals()?;
-        let mut system = self.system(&residuals)?;
-        let before = system.params.clone();
+        let (start, mobility) = self.parameters(&residuals)?;
         let pulls: Vec<ParamPull<S>> = pulls
             .iter()
             .map(|p| match *p {
@@ -1103,10 +1090,13 @@ impl<S: Scalar> Assembly<S> {
                 },
             })
             .collect();
-        let report = system.solve(&pulls)?;
-        for (body, param) in self.bodies.iter_mut().zip(&system.params) {
+        let Solution { params, report } =
+            system::solve(&start, &mobility, &residuals.all(), self.scale, &pulls)?;
+        for (body, param) in self.bodies.iter_mut().zip(&params) {
+            // Where the solve put a body is the assembly's state, and a free
+            // choice: sharp.
             if let Param::Pose { pose, .. } = param {
-                body.pose = *pose;
+                body.pose = pose.map(Scalar::sharpen);
             }
         }
         for (joint, coordinates) in self.joints.iter_mut().zip(&residuals.coordinates) {
@@ -1116,11 +1106,10 @@ impl<S: Scalar> Assembly<S> {
                 };
                 // Moved only if the solve moved it: a coordinate it left
                 // keeps its value exactly, not converted there and back.
-                if let (Param::Scalar(v), Param::Scalar(was)) = (system.params[p], before[p])
+                if let (Param::Scalar(v), Param::Scalar(was)) = (params[p], start[p])
                     && !(v.is_sharp() && was.is_sharp() && v.could_be_equal(was))
                 {
-                    // Where the solve put it is state, a free choice (see
-                    // `System::minimize`): sharp.
+                    // State again: sharp.
                     joint.coordinate_mut(motion).value =
                         from_variable(motion, v, self.scale)?.sharpen();
                 }
@@ -1142,7 +1131,8 @@ impl<S: Scalar> Assembly<S> {
     /// Which mates hold where the bodies are now.
     pub fn report(&self) -> GeopResult<SolveReport<S>> {
         let residuals = self.residuals()?;
-        let report = self.system(&residuals)?.report()?;
+        let (params, mobility) = self.parameters(&residuals)?;
+        let report = system::report(&params, &mobility, &residuals.all(), self.scale)?;
         Ok(SolveReport {
             converged: report.converged,
             max_residual: report.max_residual,
@@ -1156,32 +1146,23 @@ impl<S: Scalar> Assembly<S> {
 
     /// How free each of the first `bodies` of this assembly is — none, for
     /// one that is not free — and the dimension of its null space: the
-    /// freedom of one independent group (see [`Assembly::freedom`]). A group
-    /// seen before, where it is and mated as it was, is not worked out again
-    /// (see [`crate::memory`]).
+    /// freedom of one independent group (see [`Assembly::freedom`]).
     fn group_freedom(&self, bodies: usize) -> GeopResult<(Vec<Option<usize>>, usize)> {
-        let remembered = self.bodies.len() >= REMEMBERED_FROM;
-        if remembered && let Some(found) = memory::recall::<S, _>(self) {
-            return Ok(found);
-        }
         let residuals = self.residuals()?;
-        let system = self.system(&residuals)?;
-        let basis = system.null_space();
+        let (params, mobility) = self.parameters(&residuals)?;
+        let all = residuals.all();
+        let basis = system::null_space(&params, &mobility, &all, self.scale);
         let dof = (0..bodies)
             .map(|local| {
-                system.variables(local).map(|vars| {
+                system::variables(&params, &mobility, local).map(|vars| {
                     rank(
                         basis.iter().map(|v| v[vars.clone()].to_vec()).collect(),
                         vars.len(),
                     )
                 })
             })
-            .collect::<Vec<_>>();
-        let found = (dof, basis.len());
-        if remembered {
-            memory::remember::<S, _>(self, found.clone());
-        }
-        Ok(found)
+            .collect();
+        Ok((dof, basis.len()))
     }
 
     /// How free every body is where the bodies are now (see [`Freedom`]):

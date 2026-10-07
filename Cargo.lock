@@ -248,17 +248,8 @@ version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
- "geop-core-solve",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "geop-core-solve"
-version = "0.1.0"
-dependencies = [
- "geop-core-math",
- "serde",
 ]
 
 [[package]]
@@ -276,7 +267,6 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-sketch",
- "geop-core-solve",
  "geop-core-topology",
  "geop-ops-derive",
  "geop-ops-rasterize",
@@ -292,7 +282,6 @@ version = "0.1.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
- "geop-core-solve",
  "geop-ops",
  "geop-ops-extrude-revolve",
  "serde",

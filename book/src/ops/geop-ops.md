@@ -44,7 +44,7 @@ construction, not by the diligence of each caller.
   file builds, shared by every instance of it and drawn once, with the file
   it came from — at a `Pose`, free to be moved by the **mates**: constraints
   between two entities, a `fixed` one among them holding a part in place (see the `assembly` module, which solves them with
-  [geop-core-solve](../core/geop-core-solve.md)). A placed part is a
+  [geop-core-math](../core/geop-core-math.md)'s constraint solver). A placed part is a
   part too, so a part is a tree. An entity of a placed part is named behind
   its instance's name — `bolt/extrude(head,end)` — and resolves where it is
   placed: `Aspects::of`, `resolve_plane` and `resolve_datum` move what they
@@ -59,6 +59,16 @@ construction, not by the diligence of each caller.
 - **`PartDescription::of`** describes the topology in names only, with no
   internal id anywhere, so two parts built by the same program describe
   identically and the description diffs well as text.
+
+## Mates
+
+The `mates` module builds systems of rigid bodies on the constraint solver
+of [geop-core-math](../core/geop-core-math.md): an `Assembly` of `Body`s and
+`Constraint`s, each a `Kind` — `Coincident`, `Concentric`, `Parallel`,
+`Perpendicular`, `Distance`, `Angle` — between two `Feature`s: a point, line
+or plane attached to a body, or to the ground. Joints with limits and the
+couplings between them are mates too, solved in groups no mate ties
+together. `geop-core-sketch` builds a sketch's system the same way.
 
 ## Topological naming
 

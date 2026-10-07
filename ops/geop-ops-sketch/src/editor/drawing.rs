@@ -604,7 +604,7 @@ fn build(
             // Both sides about the center. With the ends tangent to both,
             // the inner side's center follows from the rest, so one of
             // these says what the others do: true on the solution, which
-            // is all `System::enclose` asks of a redundant constraint.
+            // is all `system::enclose` asks of a redundant constraint.
             for side in [outer, inner] {
                 sketch.constrain(Constraint::Concentric {
                     a: centerline,

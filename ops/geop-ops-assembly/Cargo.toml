@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
-geop-core-solve.workspace = true
 geop-ops.workspace = true
 serde.workspace = true
 serde_json.workspace = true

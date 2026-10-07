@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
-geop-core-solve.workspace = true
 # `Sketch` is plain `f64` design data, which makes it its own natural wire
 # format: a part program stores it verbatim, and the wasm boundary sends it
 # as-is instead of mirroring every entity and constraint in parallel structs.

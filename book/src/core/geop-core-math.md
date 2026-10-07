@@ -101,16 +101,18 @@ and every comparison downstream depends on that statement being honest.
   and `union`.
 - `Matrix<S, R, C>`: a dense, row-major fixed-size matrix with `transpose`,
   `mul_vec`, `mul_mat` and `solve_linear_system`.
-- `interval_newton`: a verified Gauss-Newton-Krawczyk contraction for
+- `solvers::interval_newton`: a verified Gauss-Newton-Krawczyk contraction for
   over-determined systems `F: R² → Rᴹ`, such as curve/curve intersection.
   One step either proves that a box holds exactly one root (`verified`),
   proves that it holds none (`empty`), or tightens it without deciding.
 
-## Solver numerics
+## Solvers
+
+In `solvers`: `interval_newton`, `least_squares` and `system`.
 
 What the constraint solvers of sketches and assemblies share:
 
-- `least_squares::minimize`: constrained Levenberg–Marquardt over any
+- `solvers::least_squares::minimize`: constrained Levenberg–Marquardt over any
   `Scalar` — a sum of squares minimized where other residuals vanish
   exactly, with a BFGS estimate of the constraints' curvature. Steps are
   free choices and sharpened; one is taken only where the merit definitely
@@ -203,3 +205,46 @@ own.
 `Ray` is a half-line from a point along a unit direction, and how near it
 passes to what it might hit: a point, a segment, a triangle, a plane, the
 nearest point of a line — what picking in a viewer is built on.
+
+## Constraint systems (`solvers::system`)
+
+Solving constraints: the one engine behind sketches, assemblies and the
+parameters of programs.
+
+
+A system has **parameters** (`Param`): numbers, and poses of rigid
+bodies — a unit dual quaternion and the point the body turns about. It has
+**residuals** (`Residual`): functions of a few parameters that are zero
+exactly when what they stand for holds. Solving moves the free parameters
+until every residual vanishes, changing them as little as it can: `solve`
+is a function of the parameters, what each may do (`Mobility`), the
+residuals and the size: it gives back where the parameters go, and leaves
+them as they were.
+
+- **Residuals are lengths**, so no kind dominates another by its units,
+  and one relative tolerance decides when a residual holds.
+- **Residuals are constraints.** A solve minimizes its preferences (pulls,
+  and staying put) among the configurations where every residual holds,
+  by constrained Levenberg–Marquardt (`solvers::least_squares`).
+  The residuals hold exactly: no preference can trade a little violation
+  of them for itself — which, behind a long lever, is a lot of motion.
+- **Honest enclosures.** Every residual is computed as a `Dual` over
+  `ScalInF64`, so its gradient is exact and its `sqrt`/`sin`/`PI` are
+  enclosed; the minimizer takes a step only where the merit definitely
+  drops, and stops where no step can tell.
+- **Increments.** The variables are increments from where the parameters
+  are when a solve starts. A pose's are a translation and a turn about the
+  body's center (`Pose::moved`: `T(c + dt) R(w) T(-c) q0`, with `R(w)` the
+  rational unit quaternion of the modified Rodrigues parameters `w / 4`). Turns are measured as lengths at the
+  system's size, so a step is as long for a turn as for a move. Poses have
+  no singular configurations.
+- **Pulls** (`Pull`) are preferences: a number towards a value, a body
+  towards a pose, a point of a body towards a point — a drag. Ranked below
+  them, a dragged body would rather not turn, and below that everything
+  else would rather stay where it is: from far off, a solve moves bodies as
+  little as it can rather than turning them over.
+
+`report` says which residuals hold, `free_variables` how many
+degrees of freedom are left and which variables can still move, and
+`enclose` proves an interval enclosure of the exact solution of a system
+of numbers (Krawczyk).

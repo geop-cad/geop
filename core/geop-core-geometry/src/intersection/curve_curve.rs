@@ -373,17 +373,17 @@ where
 // `geop-ops-booleans` remesh test suite's runtime (more iterations and
 // extra `evaluate`/`tangent`/`second_derivative` calls per refinement, in a
 // hot path called for every candidate edge/edge and edge/face crossing).
-// The math itself (`geop_core_math::interval_newton`, `geop_core_math::matrix`)
+// The math itself (`geop_core_math::solvers::interval_newton`, `geop_core_math::matrix`)
 // and the `Intersections` enum are unaffected and stay in active use; only
 // this file's *use* of Krawczyk for polishing a crossing is reverted to the
 // original plain (unverified) Gauss-Newton below. Kept here, commented out,
 // rather than deleted, in case it's worth revisiting with a cheaper
 // convergence check.
 //
-// use geop_core_math::interval_newton::{KrawczykStep, gauss_newton_krawczyk_step};
+// use geop_core_math::solvers::interval_newton::{KrawczykStep, gauss_newton_krawczyk_step};
 //
 // /// Cross-product tangential deflation for [`refine_crossing`] — see
-// /// `geop_core_math::interval_newton`'s own doc comment for the Krawczyk math
+// /// `geop_core_math::solvers::interval_newton`'s own doc comment for the Krawczyk math
 // /// this feeds into, and the module-level rationale for why a tangential
 // /// contact (parallel tangents, Cauchy-Schwarz equality) leaves the plain
 // /// system's Jacobian `J = [A'(s), -B'(t)]` rank-deficient: deflating to

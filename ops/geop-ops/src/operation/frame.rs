@@ -2,6 +2,7 @@
 //! anywhere else something is placed by one: where it sits, and which way
 //! its `z` axis runs (see [`Aspects::frame_on`]).
 
+use crate::mates::across;
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -10,7 +11,6 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_solve::mates::across;
 use geop_core_topology::{CoedgeGeometry, FaceId};
 
 use super::{Aspects, EntityRef};

@@ -3,7 +3,7 @@
 > Brief overview only — full documentation is coming later.
 
 2-D constraint sketches: entities, constraints solved by the engine every
-system shares ([geop-core-solve](./geop-core-solve.md)), and
+system shares ([geop-core-math](./geop-core-math.md)), and
 profile extraction. Sketches are what get extruded or revolved into solids.
 
 ## Entities and constraints
@@ -75,7 +75,7 @@ points and curves are still free to move, and which constraints failed.
 - **Residuals.** Every constraint contributes residuals that are zero exactly
   when it holds, all scaled to lengths so that no constraint kind dominates
   through its units. Each is a `Residual` of the sketch's variables, and
-  the shared `System` of [geop-core-solve](./geop-core-solve.md) drives
+  the shared solver (`solvers::system`) of [geop-core-math](./geop-core-math.md) drives
   the sum of their squares to zero, pulls dragged points, reports degrees
   of freedom and encloses the exact solution.
 - **Derivatives.** Residuals are written once, generic over `Scalar`, and

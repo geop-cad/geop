@@ -8,7 +8,6 @@
 - [geop-core-geometry](./core/geop-core-geometry.md)
 - [geop-core-topology](./core/geop-core-topology.md)
 - [geop-core-sketch](./core/geop-core-sketch.md)
-- [geop-core-solve](./core/geop-core-solve.md)
 
 # Ops
 

@@ -3,7 +3,7 @@
 //! each other (see [`MateKind`]) — and solving them, by moving the placed
 //! parts ([`Part::solve_mates`]).
 //!
-//! The solving is `geop_core_solve::mates`'s. What is added here is how an
+//! The solving is `geop_ops::mates`'s. What is added here is how an
 //! entity, named like any other ([`EntityRef`]), becomes a point, a line, a
 //! plane or a joint's connector attached to a rigid body: an entity of a
 //! placed part — named behind the instance's name — moves with that
@@ -22,8 +22,8 @@
 //! whose coordinate the state does not give starts where its parts are.
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-use geop_core_solve::mates::{Connector, Geometry};
-pub use geop_core_solve::mates::{CouplingKind, JointKind, Kind, Motion};
+use geop_ops::mates::{Connector, Geometry};
+pub use geop_ops::mates::{CouplingKind, JointKind, Kind, Motion};
 use geop_ops::{
     Design,
     operation::{Aspects, EntityRef},
@@ -287,7 +287,7 @@ pub struct MateReport {
     /// for a check: why it stopped, after how many steps, and the largest
     /// residual it left.
     pub iterations: usize,
-    pub phases: Vec<(geop_core_math::least_squares::Stop, usize, f64)>,
+    pub phases: Vec<(geop_core_math::solvers::least_squares::Stop, usize, f64)>,
 }
 
 /// A joint's coordinate, as a dialog shows it.
@@ -315,7 +315,7 @@ pub struct JointInfo {
     pub values: Vec<JointValue>,
 }
 
-/// How free the placed parts are (see `geop_core_solve::mates::Freedom`),
+/// How free the placed parts are (see `geop_ops::mates::Freedom`),
 /// and which mates conflict.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct MateFreedom {

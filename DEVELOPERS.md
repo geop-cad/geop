@@ -25,11 +25,6 @@ core/geop-core-geometry       NURBS curves/surfaces, helices, compatible
                                containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation;
                                wires: edges and vertices bounding no face
-core/geop-core-solve          the constraint solver every system shares:
-                               parameters, residuals, pulls, enclosure;
-                               rigid bodies and mates, joints with limits
-                               and the couplings between them, solved in
-                               groups no mate ties together
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
                                made from geometry (mirror, patterns, offset),

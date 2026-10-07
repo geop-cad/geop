@@ -558,7 +558,7 @@ the quaternion `(1, w / 2)` normalized, which reaches a half turn only as
 half way round ran its variables off to hundreds, each step turning it
 less, until the solver ran out of steps. Nothing was wrong with the mates.
 The turn is now given by modified Rodrigues parameters
-(`geop-core-solve/src/placed.rs`): rational, a half turn at `|w| = 4`,
+(`geop-core-math/src/solvers/system/placed.rs`): rational, a half turn at `|w| = 4`,
 singular only at a full turn. When a solve stalls, check that its
 variables can reach the answer at a finite, well-conditioned value.
 
@@ -581,7 +581,7 @@ choose the well-conditioned one.
 
 ## Decide a rank over the box you prove, not at a point
 
-`System::enclose` chose its independent constraint rows by eliminating the
+`system::enclose` chose its independent constraint rows by eliminating the
 Jacobian at the solved point. A redundant constraint (an arc slot's second
 `Concentric`, a rectangle's fourth right angle) holds only *on* the
 solution, and the solved point is a solution only to the solver's

@@ -1,12 +1,11 @@
 pub mod disjoint_set;
 pub mod dual;
 pub mod geop_error;
-pub mod interval_newton;
-pub mod least_squares;
 pub mod matrix;
 pub mod polygon;
 pub mod primitives;
 pub mod quadrature;
 pub mod scalars;
+pub mod solvers;
 pub mod union_find;
 pub mod vector;

@@ -28,11 +28,11 @@
 //! short for the corners at its ends to fit, pieces of the offset running
 //! into each other.
 
+use geop_core_math::solvers::system::RELATIVE_TOLERANCE;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_solve::RELATIVE_TOLERANCE;
 use serde::{Deserialize, Serialize};
 
 use crate::{
