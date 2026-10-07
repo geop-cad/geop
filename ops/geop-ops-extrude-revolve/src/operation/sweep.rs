@@ -116,25 +116,24 @@ impl Operation for Sweep {
     type Args = SweepArgs;
     type Session = ();
 
-    /// The newest sketch along the newest path — a sketch or a 3-D sketch,
-    /// whichever is newer — joined to the newest solid if there is one.
+    /// The newest sketch along the newest 3-D sketch if there is one, else
+    /// along the sketch before it — joined to the newest solid if there is
+    /// one. A 3-D sketch is drawn as a path, a sketch as a profile.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> SweepArgs {
-        let mut sketches: Vec<(u64, String)> = before
+        let mut sketches: Vec<String> = before
             .sketches()
-            .filter_map(|(id, _)| Some((id.0, before.name_of(id)?.to_string())))
+            .filter_map(|(id, _)| Some(before.name_of(id)?.to_string()))
             .collect();
         let newest_3d = before
             .sketches3d()
-            .filter_map(|(id, _)| Some((id.0, before.name_of(id)?.to_string())))
+            .filter_map(|(id, _)| Some(before.name_of(id)?.to_string()))
             .last();
         let path = match newest_3d {
-            Some((id, name)) if sketches.last().is_none_or(|(newest, _)| *newest < id) => {
-                Some(EntityRef::Sketch3d { name })
-            }
-            _ => sketches.pop().map(|(_, name)| EntityRef::Sketch { name }),
+            Some(name) => Some(EntityRef::Sketch3d { name }),
+            None => sketches.pop().map(|name| EntityRef::Sketch { name }),
         };
         SweepArgs {
-            profile: sketches.pop().map(|(_, name)| name).unwrap_or_default(),
+            profile: sketches.pop().unwrap_or_default(),
             path,
             orientation: Orientation::FollowPath,
             twist: 0.0,

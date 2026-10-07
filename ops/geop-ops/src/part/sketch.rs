@@ -48,14 +48,15 @@ impl<S: Scalar> Part<S> {
         placed: PlacedSketch<S>,
         name: impl Into<String>,
     ) -> GeopResult<SketchId> {
-        let id = SketchId(self.fresh_id());
+        let name = name.into();
+        let id = SketchId::named(&name);
         self.names.insert(id, name)?;
         self.sketches.insert(id, placed);
         Ok(id)
     }
 
     pub fn remove_sketch(&mut self, id: SketchId) -> GeopResult<()> {
-        if self.sketches.remove(&id).is_none() {
+        if self.sketches.shift_remove(&id).is_none() {
             return Err(GeopError::new(format!("Part has no sketch {id}")));
         }
         self.names.remove(id);

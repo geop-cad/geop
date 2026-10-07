@@ -16,7 +16,8 @@ impl<S: Scalar> Part<S> {
     /// Adds `datum` to the part under `name`. Fails, leaving the part
     /// unchanged, if `name` is already taken.
     pub fn add_datum(&mut self, datum: Datum<S>, name: impl Into<String>) -> GeopResult<DatumId> {
-        let id = DatumId(self.fresh_id());
+        let name = name.into();
+        let id = DatumId::named(&name);
         self.names.insert(id, name)?;
         self.datums.insert(id, datum);
         Ok(id)

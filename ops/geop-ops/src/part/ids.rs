@@ -1,8 +1,25 @@
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
 
+/// A 64-bit FNV-1a hash of `name`. Fixed by its definition, so the same
+/// name gives the same id in every build and run of a program.
+fn hash_of(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 /// A [`crate::Part`]'s own id for one of its sketches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SketchId(pub u64);
+pub struct SketchId(u64);
+
+impl SketchId {
+    /// The id of the entity named `name`: derived from the name alone, so
+    /// that it does not depend on how many entities were added before it.
+    /// Two names with the same id are refused by the [`super::NameRegistry`].
+    pub(super) fn named(name: &str) -> Self {
+        Self(hash_of(name))
+    }
+}
 
 impl std::fmt::Display for SketchId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -12,7 +29,16 @@ impl std::fmt::Display for SketchId {
 
 /// A [`crate::Part`]'s own id for one of its 3-D sketches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Sketch3dId(pub u64);
+pub struct Sketch3dId(u64);
+
+impl Sketch3dId {
+    /// The id of the entity named `name`: derived from the name alone, so
+    /// that it does not depend on how many entities were added before it.
+    /// Two names with the same id are refused by the [`super::NameRegistry`].
+    pub(super) fn named(name: &str) -> Self {
+        Self(hash_of(name))
+    }
+}
 
 impl std::fmt::Display for Sketch3dId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -22,7 +48,16 @@ impl std::fmt::Display for Sketch3dId {
 
 /// A [`crate::Part`]'s own id for one of its datums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DatumId(pub u64);
+pub struct DatumId(u64);
+
+impl DatumId {
+    /// The id of the entity named `name`: derived from the name alone, so
+    /// that it does not depend on how many entities were added before it.
+    /// Two names with the same id are refused by the [`super::NameRegistry`].
+    pub(super) fn named(name: &str) -> Self {
+        Self(hash_of(name))
+    }
+}
 
 impl std::fmt::Display for DatumId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -33,7 +68,16 @@ impl std::fmt::Display for DatumId {
 /// A [`crate::Part`]'s own id for one of the parts placed in it (see
 /// [`crate::part::Instance`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InstanceId(pub u64);
+pub struct InstanceId(u64);
+
+impl InstanceId {
+    /// The id of the entity named `name`: derived from the name alone, so
+    /// that it does not depend on how many entities were added before it.
+    /// Two names with the same id are refused by the [`super::NameRegistry`].
+    pub(super) fn named(name: &str) -> Self {
+        Self(hash_of(name))
+    }
+}
 
 impl std::fmt::Display for InstanceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -71,6 +71,7 @@ geop-ops-surface = { path = "ops/geop-ops-surface" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"
+indexmap = "2"
 # A compact binary form for what steps keep between builds (see
 # `geop_ops::Cache`).
 postcard = { version = "1", default-features = false, features = ["alloc"] }

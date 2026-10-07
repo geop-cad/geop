@@ -19,6 +19,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::Model;
+use indexmap::IndexMap;
 
 use crate::assembly::Mate;
 
@@ -69,13 +70,13 @@ pub use state::{ParamValue, State, pose_parameter};
 pub struct Part<S: Scalar> {
     pub(crate) topology: Model<S>,
     pub(crate) names: NameRegistry,
-    pub(crate) sketches: BTreeMap<SketchId, PlacedSketch<S>>,
-    pub(crate) sketches3d: BTreeMap<Sketch3dId, sketch3d::PartSketch3d>,
+    pub(crate) sketches: IndexMap<SketchId, PlacedSketch<S>>,
+    pub(crate) sketches3d: IndexMap<Sketch3dId, sketch3d::PartSketch3d>,
     /// What the operation family that built a solid recorded on it, by the
     /// solid's name (see [`Part::body_data`]).
     body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,
-    pub(crate) datums: BTreeMap<DatumId, Datum<S>>,
-    pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
+    pub(crate) datums: IndexMap<DatumId, Datum<S>>,
+    pub(crate) instances: IndexMap<InstanceId, Instance<S>>,
     pub(crate) mates: BTreeMap<String, Mate>,
     /// What the operation families kept in it for themselves (see
     /// [`Part::ext`]).
@@ -91,9 +92,6 @@ pub struct Part<S: Scalar> {
     pub(crate) parameters: crate::parameters::Parameters,
     /// What was worked out of it once placed (see [`Part::view`]).
     cache: cache::Cache<S>,
-    /// The next sketch, 3-D sketch, datum or instance id: ids count up in the order
-    /// they are added, so iterating any of these maps goes oldest first.
-    next_id: u64,
     /// Which build it is (see [`Part::revision`]).
     revision: u64,
 }
@@ -112,10 +110,10 @@ impl<S: Scalar> Part<S> {
         let mut part = Self {
             topology: Model::new(),
             names: NameRegistry::new(),
-            sketches: BTreeMap::new(),
-            sketches3d: BTreeMap::new(),
-            datums: BTreeMap::new(),
-            instances: BTreeMap::new(),
+            sketches: IndexMap::new(),
+            sketches3d: IndexMap::new(),
+            datums: IndexMap::new(),
+            instances: IndexMap::new(),
             mates: BTreeMap::new(),
             extensions: extension::Extensions::new(),
             features: Vec::new(),
@@ -124,7 +122,6 @@ impl<S: Scalar> Part<S> {
             parameters: crate::parameters::Parameters::default(),
             body_data: BTreeMap::new(),
             cache: cache::Cache::new(),
-            next_id: 1,
             revision: 0,
         };
         part.renew_revision();
@@ -173,13 +170,6 @@ impl<S: Scalar> Part<S> {
     /// for the one situation this is for.
     pub fn rename(&mut self, id: impl Into<RefId>, new_name: impl Into<String>) -> GeopResult<()> {
         self.names.rename(id, new_name)
-    }
-
-    /// A sketch, datum or instance id no entity has had yet.
-    pub(crate) fn fresh_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
     }
 
     fn exists(&self, id: RefId) -> bool {
@@ -344,6 +334,34 @@ mod tests {
         part.remove_sketch(id).unwrap();
         assert_eq!(part.name_of(id), None);
         assert!(part.sketch(id).is_err());
+    }
+
+    /// An id comes from the entity's name alone, whatever was added before
+    /// it, while iteration stays in the order of adding.
+    #[test]
+    fn ids_come_from_names_and_iteration_keeps_the_order_added() {
+        let datum = || Datum {
+            kind: DatumKind::Frame,
+            frame: CoordinateSystem::world_at(origin()),
+        };
+        let mut a = Part::<ScalInF64>::new();
+        let (x, y) = (
+            a.add_datum(datum(), "x").unwrap(),
+            a.add_datum(datum(), "y").unwrap(),
+        );
+        let mut b = Part::<ScalInF64>::new();
+        let y_first = b.add_datum(datum(), "y").unwrap();
+        let x_second = b.add_datum(datum(), "x").unwrap();
+
+        assert_eq!((x, y), (x_second, y_first));
+        let order = |part: &Part<ScalInF64>| -> Vec<String> {
+            part.datums()
+                .map(|(id, _)| part.name_of(id).unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(order(&a), [ORIGIN, "x", "y"]);
+        assert_eq!(order(&b), [ORIGIN, "y", "x"]);
+        assert!(a.add_datum(datum(), "x").is_err());
     }
 
     /// A provisional name can be settled, but not onto a name in use.

@@ -68,7 +68,8 @@ impl<S: Scalar> Part<S> {
         instance: Instance<S>,
         name: impl Into<String>,
     ) -> GeopResult<InstanceId> {
-        let id = InstanceId(self.fresh_id());
+        let name = name.into();
+        let id = InstanceId::named(&name);
         self.names.insert(id, name)?;
         self.instances.insert(id, instance);
         Ok(id)

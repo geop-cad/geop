@@ -58,7 +58,7 @@ impl<S: Scalar> Part<S> {
         } else {
             self.build_body(spec, names).with_context(ctx)?.wire
         };
-        let id = Sketch3dId(self.fresh_id());
+        let id = Sketch3dId::named(&name);
         self.names.insert(id, name)?;
         self.sketches3d.insert(id, PartSketch3d { sketch, wire });
         Ok(id)
