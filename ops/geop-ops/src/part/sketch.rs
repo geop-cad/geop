@@ -50,27 +50,28 @@ impl<S: Scalar> Part<S> {
     ) -> GeopResult<SketchId> {
         let name = name.into();
         let id = SketchId::named(&name);
-        self.names.insert(id, name)?;
-        self.sketches.insert(id, placed);
+        self.store.insert_name(id, name)?;
+        self.store.sketches_mut().insert(id, placed);
         Ok(id)
     }
 
     pub fn remove_sketch(&mut self, id: SketchId) -> GeopResult<()> {
-        if self.sketches.shift_remove(&id).is_none() {
+        if self.store.sketches_mut().shift_remove(&id).is_none() {
             return Err(GeopError::new(format!("Part has no sketch {id}")));
         }
-        self.names.remove(id);
+        self.store.remove_name(id);
         Ok(())
     }
 
     pub fn sketch(&self, id: SketchId) -> GeopResult<&PlacedSketch<S>> {
-        self.sketches
+        self.store
+            .sketches()
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("Part has no sketch {id}")))
     }
 
     /// Every sketch, in the order they were added.
     pub fn sketches(&self) -> impl Iterator<Item = (SketchId, &PlacedSketch<S>)> {
-        self.sketches.iter().map(|(&id, s)| (id, s))
+        self.store.sketches().iter().map(|(&id, s)| (id, s))
     }
 }

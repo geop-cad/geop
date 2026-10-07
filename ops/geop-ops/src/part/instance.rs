@@ -70,20 +70,20 @@ impl<S: Scalar> Part<S> {
     ) -> GeopResult<InstanceId> {
         let name = name.into();
         let id = InstanceId::named(&name);
-        self.names.insert(id, name)?;
-        self.instances.insert(id, instance);
+        self.store.insert_name(id, name.clone())?;
+        self.store.insert_instance(id, &name, instance);
         Ok(id)
     }
 
     pub fn instance(&self, id: InstanceId) -> GeopResult<&Instance<S>> {
-        self.instances
-            .get(&id)
+        self.store
+            .instance(id)
             .ok_or_else(|| GeopError::new(format!("Part has no instance {id}")))
     }
 
     /// Every instance, in the order they were placed.
     pub fn instances(&self) -> impl Iterator<Item = (InstanceId, &Instance<S>)> {
-        self.instances.iter().map(|(&id, i)| (id, i))
+        self.store.instances().iter().map(|(&id, i)| (id, i))
     }
 
     /// Adds `mate` under `name`: a mate is no entity — nothing is built on
@@ -91,10 +91,10 @@ impl<S: Scalar> Part<S> {
     /// name is taken.
     pub fn add_mate(&mut self, mate: Mate, name: impl Into<String>) -> GeopResult<()> {
         let name = name.into();
-        if self.mates.contains_key(&name) {
+        if self.store.mates().contains_key(&name) {
             return Err(GeopError::new(format!("Part already has a mate {name:?}")));
         }
-        self.mates.insert(name, mate);
+        self.store.mates_mut().insert(name, mate);
         Ok(())
     }
 
@@ -112,6 +112,9 @@ impl<S: Scalar> Part<S> {
 
     /// Every mate, by name.
     pub fn mates(&self) -> impl Iterator<Item = (&str, &Mate)> {
-        self.mates.iter().map(|(name, m)| (name.as_str(), m))
+        self.store
+            .mates()
+            .iter()
+            .map(|(name, m)| (name.as_str(), m))
     }
 }

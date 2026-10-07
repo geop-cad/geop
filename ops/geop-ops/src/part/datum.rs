@@ -18,19 +18,20 @@ impl<S: Scalar> Part<S> {
     pub fn add_datum(&mut self, datum: Datum<S>, name: impl Into<String>) -> GeopResult<DatumId> {
         let name = name.into();
         let id = DatumId::named(&name);
-        self.names.insert(id, name)?;
-        self.datums.insert(id, datum);
+        self.store.insert_name(id, name)?;
+        self.store.datums_mut().insert(id, datum);
         Ok(id)
     }
 
     pub fn datum(&self, id: DatumId) -> GeopResult<&Datum<S>> {
-        self.datums
+        self.store
+            .datums()
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("Part has no datum {id}")))
     }
 
     /// Every datum, in the order they were added.
     pub fn datums(&self) -> impl Iterator<Item = (DatumId, &Datum<S>)> {
-        self.datums.iter().map(|(&id, d)| (id, d))
+        self.store.datums().iter().map(|(&id, d)| (id, d))
     }
 }

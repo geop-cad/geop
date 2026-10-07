@@ -482,8 +482,8 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         // the values and the parameters the program has now — its colour,
         // what a program placing it offers, what the next step reads.
         for part in &mut self.parts {
-            part.state = self.inputs.clone();
-            part.parameters = program.parameters.clone();
+            part.set_state(self.inputs.clone());
+            part.set_parameters(program.parameters.clone());
         }
 
         let target = stop.unwrap_or(program.steps.len()).min(program.steps.len());

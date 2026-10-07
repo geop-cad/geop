@@ -59,23 +59,23 @@ pub struct FeatureTool<S: Scalar> {
 impl<S: Scalar> Part<S> {
     /// Records `tool` as one more tool of the feature of the step `step`.
     pub fn record_feature_tool(&mut self, step: &str, tool: FeatureTool<S>) {
-        match self.features.iter_mut().find(|(s, _)| s == step) {
+        let features = self.store.features_mut();
+        match features.iter_mut().find(|(s, _)| s == step) {
             Some((_, feature)) => Arc::make_mut(feature).tools.push(tool),
-            None => self
-                .features
-                .push((step.to_string(), Arc::new(Feature { tools: vec![tool] }))),
+            None => features.push((step.to_string(), Arc::new(Feature { tools: vec![tool] }))),
         }
     }
 
     /// The feature of the step `step`. Fails, saying which steps are
     /// features, for a step that combined nothing.
     pub fn feature(&self, step: &str) -> GeopResult<&Feature<S>> {
-        self.features
+        self.store
+            .features()
             .iter()
             .find(|(s, _)| s == step)
             .map(|(_, f)| f.as_ref())
             .ok_or_else(|| {
-                let steps: Vec<&str> = self.features.iter().map(|(s, _)| s.as_str()).collect();
+                let steps: Vec<&str> = self.store.features().iter().map(|(s, _)| s.as_str()).collect();
                 GeopError::new(format!(
                     "step {step:?} is no feature: only a step that joins, cuts or intersects a tool with a solid is (the features: {steps:?})"
                 ))
@@ -84,13 +84,16 @@ impl<S: Scalar> Part<S> {
 
     /// Every feature, by its step, in the order the steps ran.
     pub fn features(&self) -> impl Iterator<Item = (&str, &Feature<S>)> {
-        self.features.iter().map(|(s, f)| (s.as_str(), f.as_ref()))
+        self.store
+            .features()
+            .iter()
+            .map(|(s, f)| (s.as_str(), f.as_ref()))
     }
 
     /// Which feature made each face, as [`FeatureFaces::of`] tells.
     pub fn feature_faces(&self) -> FeatureFaces<'_> {
         let mut steps = HashMap::new();
-        for (step, feature) in &self.features {
+        for (step, feature) in self.store.features() {
             for tool in &feature.tools {
                 for face in &tool.names.faces {
                     steps.insert(face.clone(), step.as_str());

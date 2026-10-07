@@ -43,8 +43,18 @@ pub fn pose_parameter(instance: &str) -> String {
 impl<S: geop_core_math::scalars::Scalar> Part<S> {
     /// The part, to be built with the parameter values `state`.
     pub fn with_state(mut self, state: State) -> Self {
-        self.state = state;
+        self.set_state(state);
         self
+    }
+
+    /// Sets the values the part is built with.
+    pub(crate) fn set_state(&mut self, state: State) {
+        self.store.set_state(state);
+    }
+
+    /// The value of the program input `name`, if there is one.
+    pub fn input(&self, name: &str) -> Option<&ParamValue> {
+        self.store.input(name)
     }
 
     /// The value of the pose parameter `name` — `default` if the part is
@@ -55,7 +65,7 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
         name: &str,
         default: Pose<Design>,
     ) -> GeopResult<Pose<Design>> {
-        let value = match self.state.get(name) {
+        let value = match self.store.input(name) {
             None => default,
             Some(ParamValue::Pose(pose)) => *pose,
             Some(other) => {
@@ -65,7 +75,8 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
             }
         };
         if self
-            .declared
+            .store
+            .declared_mut()
             .insert(name.to_string(), ParamValue::Pose(value))
             .is_some()
         {
@@ -83,13 +94,18 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
     pub fn evaluate(&mut self, expression: &str) -> GeopResult<f64> {
         let mut read = Vec::new();
         let value = crate::parameters::evaluate(expression, |name| {
-            let v = crate::parameters::number(&self.state, name)?;
+            let v = match self.store.input(name) {
+                Some(ParamValue::Number(v)) => geop_core_math::scalars::Scalar::to_f64(*v),
+                _ => return None,
+            };
             read.push(name.to_string());
             Some(v)
         });
         for name in read {
-            let value = self.state[&name].clone();
-            self.declared.entry(name).or_insert(value);
+            let value = self.store.input(&name).cloned();
+            if let Some(value) = value {
+                self.store.declared_mut().entry(name).or_insert(value);
+            }
         }
         value
     }
@@ -97,18 +113,23 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
     /// The parameters the part is defined with: what a program placing it
     /// can give other values.
     pub fn parameters(&self) -> &crate::parameters::Parameters {
-        &self.parameters
+        self.store.parameters()
     }
 
     /// The part, defined with `parameters`.
     pub fn with_parameters(mut self, parameters: crate::parameters::Parameters) -> Self {
-        self.parameters = parameters;
+        self.set_parameters(parameters);
         self
+    }
+
+    /// Defines the part with `parameters`.
+    pub(crate) fn set_parameters(&mut self, parameters: crate::parameters::Parameters) {
+        self.store.set_parameters(parameters);
     }
 
     /// The part's colour, `#rrggbb`, if it is given one.
     pub fn color(&self) -> Option<&str> {
-        match self.state.get(crate::parameters::COLOR) {
+        match self.store.input(crate::parameters::COLOR) {
             Some(ParamValue::Text(c)) => Some(c),
             _ => None,
         }
@@ -117,29 +138,29 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
     /// What the part is, in words, if it is given (see
     /// [`crate::parameters::Parameters::title`]).
     pub fn title(&self) -> Option<&str> {
-        self.parameters.title.as_deref()
+        self.store.parameters().title.as_deref()
     }
 
     /// What the part, as built, is ordered as, if it is given: `ISO 4762
     /// M4x12` (see [`crate::parameters::Parameters::designate`]).
     pub fn designation(&self) -> Option<String> {
-        self.parameters.designate(&self.state)
+        self.store.parameters().designate(self.store.state())
     }
 
     /// What the part is made of, if it is given (see
     /// [`crate::parameters::Material`]).
     pub fn material(&self) -> Option<&crate::parameters::Material> {
-        self.parameters.material.as_ref()
+        self.store.parameters().material.as_ref()
     }
 
     /// Every parameter the part's steps declared, with the value it was
     /// built with.
     pub fn declared(&self) -> &State {
-        &self.declared
+        self.store.declared()
     }
 
     /// The values the part is built with, declared or not.
     pub fn state(&self) -> &State {
-        &self.state
+        self.store.state()
     }
 }

@@ -17,7 +17,7 @@ use std::{any::Any, collections::BTreeMap};
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
-use super::{Part, cache::Cache};
+use super::{Part, cache::Cache, cells::Cell};
 
 /// Something an extension has drawn on a part, besides its topology: a
 /// polyline, and what it is called.
@@ -101,7 +101,13 @@ impl<S: Scalar> Part<S> {
     /// The state of the family `E`, if an operation has kept any in this
     /// part.
     pub fn ext<E: Extension<S>>(&self) -> Option<&E> {
-        self.extensions.0.get(E::NAME)?.as_any().downcast_ref()
+        self.store.read(Cell::Ext(E::NAME));
+        self.store
+            .extensions()
+            .0
+            .get(E::NAME)?
+            .as_any()
+            .downcast_ref()
     }
 
     /// The state of the family `E`, to change: an empty one if there was
@@ -109,7 +115,9 @@ impl<S: Scalar> Part<S> {
     /// about to differ.
     pub fn ext_mut<E: Extension<S> + Default>(&mut self) -> &mut E {
         self.cache = Cache::new();
-        self.extensions
+        self.store.write(Cell::Ext(E::NAME));
+        self.store
+            .extensions_mut()
             .0
             .entry(E::NAME)
             .or_insert_with(|| Box::new(E::default()))
@@ -127,7 +135,7 @@ impl<S: Scalar> Part<S> {
     /// names.
     pub(crate) fn annotations(&self) -> GeopResult<Vec<Annotation<S>>> {
         let mut annotations = Vec::new();
-        for extension in self.extensions.0.values() {
+        for extension in self.store.extensions().0.values() {
             annotations.extend(extension.annotations()?);
         }
         Ok(annotations)
@@ -138,7 +146,8 @@ impl<S: Scalar> Part<S> {
     pub(crate) fn extension_descriptions(
         &self,
     ) -> BTreeMap<String, BTreeMap<String, serde_json::Value>> {
-        self.extensions
+        self.store
+            .extensions()
             .0
             .iter()
             .map(|(&name, extension)| (name.to_string(), extension.describe()))

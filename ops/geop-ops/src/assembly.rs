@@ -624,7 +624,7 @@ impl<S: Scalar> Part<S> {
                             continue;
                         }
                         let parameter = joint_parameter(name, motion);
-                        let value = match self.state.get(&parameter) {
+                        let value = match self.input(&parameter) {
                             Some(ParamValue::Number(v)) => v.cast(),
                             Some(other) => {
                                 return Err(GeopError::new(format!(

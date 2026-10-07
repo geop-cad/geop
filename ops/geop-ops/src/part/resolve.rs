@@ -18,13 +18,13 @@ impl<S: Scalar> Part<S> {
         kind: &str,
         extract: impl Fn(RefId) -> Option<T>,
     ) -> GeopResult<T> {
-        let id = self.names.id_of(name).ok_or_else(|| {
+        let id = self.store.id_of(name).ok_or_else(|| {
             // The names of the same kind that the same step made: usually
             // what was meant, if a later step renamed or split it.
             let step = name.split_once(',').map_or(name, |(head, _)| head);
             let step = step.split_once('(').map_or(step, |(_, id)| id);
             let mut similar: Vec<&str> = self
-                .names
+                .names()
                 .iter()
                 .map(|(_, n)| n)
                 .filter(|n| n.contains(step))
@@ -151,11 +151,11 @@ impl<S: Scalar> Part<S> {
         let edge = self.edge_id(edge_name)?;
         let face = self.face_id(face_name)?;
         let mut on_face = self
-            .topology
+            .topology()
             .coedges_of_edge(edge)
             .into_iter()
             .filter(|&c| {
-                self.topology
+                self.topology()
                     .get_coedge(c)
                     .map(|co| co.face == face)
                     .unwrap_or(false)
@@ -185,11 +185,11 @@ impl<S: Scalar> Part<S> {
     ) -> GeopResult<CoedgeId> {
         let edge = self.edge_id(edge_name)?;
         let face = self.face_id(face_name)?;
-        self.topology
+        self.topology()
             .coedges_of_edge(edge)
             .into_iter()
             .find(|&c| {
-                self.topology
+                self.topology()
                     .get_coedge(c)
                     .map(|co| co.face == face && co.sense == sense)
                     .unwrap_or(false)

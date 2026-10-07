@@ -5,7 +5,6 @@
 
 use std::{
     any::Any,
-    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -19,11 +18,9 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::Model;
-use indexmap::IndexMap;
-
-use crate::assembly::Mate;
 
 mod cache;
+mod cells;
 mod datum;
 mod describe;
 mod edit;
@@ -39,6 +36,7 @@ mod sketch;
 mod sketch3d;
 mod state;
 
+pub use cells::{Access, Cell, Log};
 pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
 pub use edit::BodyNames;
 pub use extension::{Annotation, Extension};
@@ -68,28 +66,8 @@ pub use state::{ParamValue, State, pose_parameter};
 /// construction rather than by each caller's diligence.
 #[derive(Clone)]
 pub struct Part<S: Scalar> {
-    pub(crate) topology: Model<S>,
-    pub(crate) names: NameRegistry,
-    pub(crate) sketches: IndexMap<SketchId, PlacedSketch<S>>,
-    pub(crate) sketches3d: IndexMap<Sketch3dId, sketch3d::PartSketch3d>,
-    /// What the operation family that built a solid recorded on it, by the
-    /// solid's name (see [`Part::body_data`]).
-    body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,
-    pub(crate) datums: IndexMap<DatumId, Datum<S>>,
-    pub(crate) instances: IndexMap<InstanceId, Instance<S>>,
-    pub(crate) mates: BTreeMap<String, Mate>,
-    /// What the operation families kept in it for themselves (see
-    /// [`Part::ext`]).
-    extensions: extension::Extensions<S>,
-    /// What each step that combined tools with a solid did, by the step's
-    /// id, in the order the steps ran (see [`Feature`]).
-    features: Vec<(String, Arc<Feature<S>>)>,
-    /// The parameter values the part is built with (see [`Part::pose_parameter`]).
-    pub(crate) state: State,
-    /// The parameters its steps declared, with the values they read.
-    declared: State,
-    /// What its parameters are defined as (see [`Part::parameters`]).
-    pub(crate) parameters: crate::parameters::Parameters,
+    /// Everything a step reads and writes (see [`Cell`]).
+    store: cells::Store<S>,
     /// What was worked out of it once placed (see [`Part::view`]).
     cache: cache::Cache<S>,
     /// Which build it is (see [`Part::revision`]).
@@ -108,19 +86,7 @@ impl<S: Scalar> Part<S> {
     /// A part with nothing in it but the frame [`ORIGIN`].
     pub fn new() -> Self {
         let mut part = Self {
-            topology: Model::new(),
-            names: NameRegistry::new(),
-            sketches: IndexMap::new(),
-            sketches3d: IndexMap::new(),
-            datums: IndexMap::new(),
-            instances: IndexMap::new(),
-            mates: BTreeMap::new(),
-            extensions: extension::Extensions::new(),
-            features: Vec::new(),
-            state: State::new(),
-            declared: State::new(),
-            parameters: crate::parameters::Parameters::default(),
-            body_data: BTreeMap::new(),
+            store: cells::Store::new(),
             cache: cache::Cache::new(),
             revision: 0,
         };
@@ -151,37 +117,37 @@ impl<S: Scalar> Part<S> {
     /// The part's topology, to query. Changing it goes through `Part`'s own
     /// methods, so that names stay in sync.
     pub fn topology(&self) -> &Model<S> {
-        &self.topology
+        self.store.topology()
     }
 
     pub fn names(&self) -> &NameRegistry {
-        &self.names
+        self.store.names()
     }
 
     pub fn name_of(&self, id: impl Into<RefId>) -> Option<&str> {
-        self.names.name_of(id)
+        self.store.name_of(id.into())
     }
 
     pub fn id_of(&self, name: &str) -> Option<RefId> {
-        self.names.id_of(name)
+        self.store.id_of(name)
     }
 
     /// Gives `id` the name `new_name` instead — see [`NameRegistry::rename`]
     /// for the one situation this is for.
     pub fn rename(&mut self, id: impl Into<RefId>, new_name: impl Into<String>) -> GeopResult<()> {
-        self.names.rename(id, new_name)
+        self.store.rename(id.into(), new_name)
     }
 
     fn exists(&self, id: RefId) -> bool {
         match id {
-            RefId::Vertex(id) => self.topology.vertices.contains_key(&id),
-            RefId::Edge(id) => self.topology.edges.contains_key(&id),
-            RefId::Face(id) => self.topology.faces.contains_key(&id),
-            RefId::Solid(id) => self.topology.solids.contains_key(&id),
-            RefId::Sketch(id) => self.sketches.contains_key(&id),
-            RefId::Sketch3d(id) => self.sketches3d.contains_key(&id),
-            RefId::Datum(id) => self.datums.contains_key(&id),
-            RefId::Instance(id) => self.instances.contains_key(&id),
+            RefId::Vertex(id) => self.topology().vertices.contains_key(&id),
+            RefId::Edge(id) => self.topology().edges.contains_key(&id),
+            RefId::Face(id) => self.topology().faces.contains_key(&id),
+            RefId::Solid(id) => self.topology().solids.contains_key(&id),
+            RefId::Sketch(id) => self.store.sketches().contains_key(&id),
+            RefId::Sketch3d(id) => self.store.sketches3d().contains_key(&id),
+            RefId::Datum(id) => self.store.datums().contains_key(&id),
+            RefId::Instance(id) => self.store.instance(id).is_some(),
         }
     }
 
@@ -196,7 +162,9 @@ impl<S: Scalar> Part<S> {
     /// another name, which has none.
     pub fn set_body_data<T: Any + Send + Sync>(&mut self, solid: &str, data: T) -> GeopResult<()> {
         self.solid_id(solid)?;
-        self.body_data.insert(solid.to_string(), Arc::new(data));
+        self.store
+            .body_data_mut()
+            .insert(solid.to_string(), Arc::new(data));
         Ok(())
     }
 
@@ -205,7 +173,7 @@ impl<S: Scalar> Part<S> {
     /// exists.
     pub fn body_data<T: Any>(&self, solid: &str) -> Option<&T> {
         self.solid_id(solid).ok()?;
-        self.body_data.get(solid)?.downcast_ref()
+        self.store.body_data().get(solid)?.downcast_ref()
     }
 
     /// Forgets the name of every entity that no longer exists — for an
@@ -213,22 +181,30 @@ impl<S: Scalar> Part<S> {
     /// (see [`Model::assemble_solid`]).
     pub(crate) fn forget_dead_names(&mut self) {
         let alive: std::collections::HashSet<RefId> = self
-            .names
+            .names()
             .iter()
             .map(|(id, _)| id)
             .filter(|&id| self.exists(id))
             .collect();
-        self.names.retain(|id| alive.contains(&id));
-        let names = &self.names;
-        self.body_data
-            .retain(|solid, _| matches!(names.id_of(solid), Some(RefId::Solid(_))));
+        self.store.retain_names(|id| alive.contains(&id));
+        let names = self.store.names();
+        let dead: Vec<String> = self
+            .store
+            .body_data()
+            .keys()
+            .filter(|solid| !matches!(names.id_of(solid), Some(RefId::Solid(_))))
+            .cloned()
+            .collect();
+        for solid in dead {
+            self.store.body_data_mut().remove(&solid);
+        }
     }
 
     /// Checks the invariant every method keeps: every vertex, edge, face,
     /// solid, sketch, datum and instance has a name, and every name belongs
     /// to one of them.
     pub fn check_names(&self) -> GeopResult<()> {
-        let topology = &self.topology;
+        let topology = self.topology();
         let entities = topology
             .vertices
             .keys()
@@ -236,16 +212,16 @@ impl<S: Scalar> Part<S> {
             .chain(topology.edges.keys().map(|&id| id.into()))
             .chain(topology.faces.keys().map(|&id| id.into()))
             .chain(topology.solids.keys().map(|&id| id.into()))
-            .chain(self.sketches.keys().map(|&id| id.into()))
-            .chain(self.sketches3d.keys().map(|&id| id.into()))
-            .chain(self.datums.keys().map(|&id| id.into()))
-            .chain(self.instances.keys().map(|&id| id.into()));
+            .chain(self.store.sketches().keys().map(|&id| id.into()))
+            .chain(self.store.sketches3d().keys().map(|&id| id.into()))
+            .chain(self.store.datums().keys().map(|&id| id.into()))
+            .chain(self.store.instances().keys().map(|&id| id.into()));
         let unnamed: Vec<String> = entities
-            .filter(|&id| self.names.name_of(id).is_none())
+            .filter(|&id| self.name_of(id).is_none())
             .map(|id| id.to_string())
             .collect();
         let dead: Vec<&str> = self
-            .names
+            .names()
             .iter()
             .filter(|&(id, _)| !self.exists(id))
             .map(|(_, name)| name)

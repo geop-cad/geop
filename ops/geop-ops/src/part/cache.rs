@@ -57,7 +57,7 @@ impl<S: Scalar> Part<S> {
         if let Some(&properties) = kept().get(&solid) {
             return Ok(properties);
         }
-        let properties = self.topology.mass_properties(solid)?;
+        let properties = self.topology().mass_properties(solid)?;
         kept().insert(solid, properties);
         Ok(properties)
     }

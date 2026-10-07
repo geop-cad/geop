@@ -49,7 +49,7 @@ impl<S: Scalar> Part<S> {
     ) -> GeopResult<Sketch3dId> {
         let name = name.into();
         let ctx = with_context!("Part::add_sketch3d({name})");
-        if self.names.id_of(&name).is_some() {
+        if self.store.id_of(&name).is_some() {
             return Err(GeopError::new(format!("the name {name:?} is taken"))).with_context(ctx);
         }
         let (spec, names) = wire_of(&sketch, &Namer::new("sketch3d", &name)?).with_context(ctx)?;
@@ -59,13 +59,16 @@ impl<S: Scalar> Part<S> {
             self.build_body(spec, names).with_context(ctx)?.wire
         };
         let id = Sketch3dId::named(&name);
-        self.names.insert(id, name)?;
-        self.sketches3d.insert(id, PartSketch3d { sketch, wire });
+        self.store.insert_name(id, name)?;
+        self.store
+            .sketches3d_mut()
+            .insert(id, PartSketch3d { sketch, wire });
         Ok(id)
     }
 
     pub fn sketch3d(&self, id: Sketch3dId) -> GeopResult<&Sketch3d<Design>> {
-        self.sketches3d
+        self.store
+            .sketches3d()
             .get(&id)
             .map(|s| &s.sketch)
             .ok_or_else(|| GeopError::new(format!("Part has no 3-D sketch {id}")))
@@ -73,7 +76,8 @@ impl<S: Scalar> Part<S> {
 
     /// The wire the 3-D sketch `id` is built as — none for an empty one.
     pub fn sketch3d_wire(&self, id: Sketch3dId) -> GeopResult<Option<WireId>> {
-        self.sketches3d
+        self.store
+            .sketches3d()
             .get(&id)
             .map(|s| s.wire)
             .ok_or_else(|| GeopError::new(format!("Part has no 3-D sketch {id}")))
@@ -81,7 +85,10 @@ impl<S: Scalar> Part<S> {
 
     /// Every 3-D sketch, in the order they were added.
     pub fn sketches3d(&self) -> impl Iterator<Item = (Sketch3dId, &Sketch3d<Design>)> {
-        self.sketches3d.iter().map(|(&id, s)| (id, &s.sketch))
+        self.store
+            .sketches3d()
+            .iter()
+            .map(|(&id, s)| (id, &s.sketch))
     }
 }
 
