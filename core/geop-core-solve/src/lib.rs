@@ -37,6 +37,7 @@
 
 mod linalg;
 pub mod mates;
+mod memory;
 mod placed;
 mod system;
 

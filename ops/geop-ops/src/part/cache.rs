@@ -5,6 +5,7 @@
 //! worked out once, not once per instance.
 
 use std::{
+    any::{Any, TypeId},
     collections::HashMap,
     sync::{Mutex, OnceLock, PoisonError},
 };
@@ -23,6 +24,9 @@ pub(super) struct Cache<S: Scalar> {
     bounds: OnceLock<Option<[Vector3<S>; 2]>>,
     /// Its solids' mass properties, of density one, as far as asked for.
     mass: Mutex<HashMap<SolidId, MassProperties<S>>>,
+    /// What an operation family worked out of it, by what it is and what
+    /// it was asked (see [`Part::memo`]).
+    memo: Mutex<HashMap<(TypeId, String), Box<dyn Any + Send + Sync>>>,
 }
 
 impl<S: Scalar> Cache<S> {
@@ -31,6 +35,7 @@ impl<S: Scalar> Cache<S> {
             view: OnceLock::new(),
             bounds: OnceLock::new(),
             mass: Mutex::new(HashMap::new()),
+            memo: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -42,6 +47,42 @@ impl<S: Scalar> Clone for Cache<S> {
 }
 
 impl<S: Scalar> Part<S> {
+    /// What `compute` works out of the part for `key`, kept for as long as
+    /// the part is: for a value an operation family derives from a part
+    /// once placed — what an entity of it is, to mate it — which is the
+    /// same for every instance of it. The key says what is asked, the type
+    /// of the value what it is. Not kept while a step records what it
+    /// reads of the part, since a kept value would hide the reads (see
+    /// [`Cell`](super::Cell)).
+    pub fn memo<V: Clone + Send + Sync + 'static>(
+        &self,
+        key: &str,
+        compute: impl FnOnce() -> GeopResult<V>,
+    ) -> GeopResult<V> {
+        if self.store.is_recorded() {
+            return compute();
+        }
+        let id = (TypeId::of::<V>(), key.to_string());
+        let kept = |cache: &Self| {
+            let memo = cache
+                .cache
+                .memo
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            memo.get(&id).and_then(|v| v.downcast_ref::<V>()).cloned()
+        };
+        if let Some(value) = kept(self) {
+            return Ok(value);
+        }
+        let value = compute()?;
+        self.cache
+            .memo
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, Box::new(value.clone()));
+        Ok(value)
+    }
+
     /// The mass properties of its solid `solid`, of density one (see
     /// [`geop_core_topology::Model::mass_properties`]): integrated the
     /// first time they are asked for, and kept for as long as the part is —

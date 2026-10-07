@@ -249,7 +249,9 @@ fn assembly<'p, S: Scalar>(
                 Some(b) => (&*bodies_of[b].instance.part, rest),
                 None => (part, entity.clone()),
             };
-            let aspects = Aspects::of(&local, part)?;
+            // What an entity of a placed part is, is the same for every
+            // instance of it.
+            let aspects = part.memo(&format!("{local:?}"), || Aspects::of(&local, part))?;
             Ok((body, aspects, local, part))
         };
         match mate.kind {

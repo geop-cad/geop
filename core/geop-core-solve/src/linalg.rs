@@ -32,6 +32,16 @@ pub(crate) struct Elimination<S: Scalar> {
 /// tangent to two parallel sides was left with its sweep free and two
 /// tangencies over the same coordinate, and could not be enclosed.
 pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
+    // Per row, the columns it has an entry in other than an exact zero, in
+    // order — of the whole row, which may be longer than `n`: columns past
+    // the pivots' go along, as in `inverse`'s: the only ones that can be a
+    // pivot (among the first `n`), and the only ones a pivot row changes in
+    // another row. The Jacobian of an assembly has a dozen
+    // in a row of hundreds, and a pivot row, still, a few dozen.
+    let mut support: Vec<Vec<usize>> = rows
+        .iter()
+        .map(|row| (0..row.len()).filter(|&c| !is_zero(row[c])).collect())
+        .collect();
     let mut origin: Vec<usize> = (0..rows.len()).collect();
     let mut pivots: Vec<(usize, usize)> = Vec::new();
     let mut used = vec![false; n];
@@ -40,7 +50,7 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
         let size = |v: S| v.abs().sharpen();
         let mut best: Option<(usize, usize)> = None;
         for i in r..rows.len() {
-            for col in (0..n).filter(|&c| !used[c]) {
+            for &col in support[i].iter().filter(|&&c| c < n && !used[c]) {
                 let v = rows[i][col];
                 if v.definitely_not_equal(S::ZERO)
                     && best.is_none_or(|(bi, bc)| size(v).definitely_greater(size(rows[bi][bc])))
@@ -53,20 +63,26 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
             break;
         };
         rows.swap(r, best);
+        support.swap(r, best);
         origin.swap(r, best);
         let pivot = rows[r][col];
-        for v in &mut rows[r] {
-            *v = v.div(pivot).expect("a pivot is definitely not zero");
+        for &c in &support[r] {
+            rows[r][c] = rows[r][c]
+                .div(pivot)
+                .expect("a pivot is definitely not zero");
         }
+        let pivot_support = std::mem::take(&mut support[r]);
         for i in (0..rows.len()).filter(|&i| i != r) {
             let factor = rows[i][col];
-            if factor.is_sharp() && factor.could_be_equal(S::ZERO) {
+            if is_zero(factor) {
                 continue;
             }
-            for c in 0..rows[i].len() {
+            for &c in &pivot_support {
                 rows[i][c] = rows[i][c].sub(factor.mul(rows[r][c]));
             }
+            support[i] = union(&support[i], &pivot_support);
         }
+        support[r] = pivot_support;
         used[col] = true;
         pivots.push((col, origin[r]));
         r += 1;
@@ -76,6 +92,40 @@ pub(crate) fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Eliminati
         pivots,
         origin,
     }
+}
+
+/// Whether `v` is exactly zero: the entry of a column a row has nothing in.
+fn is_zero<S: Scalar>(v: S) -> bool {
+    v.is_sharp() && v.could_be_equal(S::ZERO)
+}
+
+/// The columns of `a` and of `b`, in order.
+fn union(a: &[usize], b: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        match (a.get(i), b.get(j)) {
+            (Some(&x), Some(&y)) if x == y => {
+                out.push(x);
+                i += 1;
+                j += 1;
+            }
+            (Some(&x), Some(&y)) if x < y => {
+                out.push(x);
+                i += 1;
+            }
+            (Some(&x), None) => {
+                out.push(x);
+                i += 1;
+            }
+            (_, Some(&y)) => {
+                out.push(y);
+                j += 1;
+            }
+            (None, None) => unreachable!("the loop ends when both are exhausted"),
+        }
+    }
+    out
 }
 
 /// A basis of the null space of `rows` (each over `n` variables): the
@@ -141,4 +191,133 @@ pub(crate) fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
         inverse[col] = row[m..].iter().map(|v| v.sharpen()).collect();
     }
     Some(inverse)
+}
+
+#[cfg(test)]
+mod tests {
+    use geop_core_math::scalars::{Field, Ring, ScalInF64 as S, Scalar};
+
+    use super::*;
+
+    /// The elimination as it was before it kept to the columns a row has
+    /// something in: every column of every row, every time.
+    fn dense(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
+        let mut origin: Vec<usize> = (0..rows.len()).collect();
+        let mut pivots: Vec<(usize, usize)> = Vec::new();
+        let mut used = vec![false; n];
+        let mut r = 0;
+        loop {
+            let size = |v: S| v.abs().sharpen();
+            let mut best: Option<(usize, usize)> = None;
+            for i in r..rows.len() {
+                for col in (0..n).filter(|&c| !used[c]) {
+                    let v = rows[i][col];
+                    if v.definitely_not_equal(S::ZERO)
+                        && best
+                            .is_none_or(|(bi, bc)| size(v).definitely_greater(size(rows[bi][bc])))
+                    {
+                        best = Some((i, col));
+                    }
+                }
+            }
+            let Some((best, col)) = best else { break };
+            rows.swap(r, best);
+            origin.swap(r, best);
+            let pivot = rows[r][col];
+            for v in &mut rows[r] {
+                *v = (*v).div(pivot).unwrap();
+            }
+            for i in (0..rows.len()).filter(|&i| i != r) {
+                let factor = rows[i][col];
+                if factor.is_sharp() && factor.could_be_equal(S::ZERO) {
+                    continue;
+                }
+                for c in 0..rows[i].len() {
+                    rows[i][c] = rows[i][c].sub(factor.mul(rows[r][c]));
+                }
+            }
+            used[col] = true;
+            pivots.push((col, origin[r]));
+            r += 1;
+        }
+        Elimination {
+            rows,
+            pivots,
+            origin,
+        }
+    }
+
+    /// A chain of `m` constraints, each between two neighbouring blocks of
+    /// `block` variables, with entries that are neither zero nor alike, and
+    /// each row's own variable the one that counts: the rows are independent.
+    fn chain(m: usize, block: usize) -> (Vec<Vec<S>>, usize) {
+        let n = (m + 1) * block;
+        let mut rows = Vec::new();
+        for k in 0..m {
+            for e in 0..block {
+                let mut row = vec![S::ZERO; n];
+                for b in 0..block {
+                    let own = if b == e { 10.0 } else { 0.0 };
+                    row[k * block + b] = S::from_f64(own + ((k + e + b) % 5) as f64 * 0.1);
+                    row[(k + 1) * block + b] =
+                        S::from_f64(((k * 3 + e * 5 + b) % 7) as f64 * 0.1 - 0.3);
+                }
+                rows.push(row);
+            }
+        }
+        (rows, n)
+    }
+
+    /// Keeping to the columns a row has something in changes nothing but
+    /// the work: as many independent rows as the dense elimination finds,
+    /// and a null space that is one — every row vanishes on each vector of
+    /// it. (Which of two pivots that are nearly as large is taken may
+    /// differ: the dense one widens the entries it adds a zero to.)
+    #[test]
+    fn a_sparse_elimination_finds_what_the_dense_one_does() {
+        let (rows, n) = chain(12, 6);
+        let sparse = eliminate(rows.clone(), n);
+        let dense = dense(rows.clone(), n);
+        assert_eq!(sparse.pivots.len(), dense.pivots.len());
+        assert_eq!(sparse.pivots.len(), rows.len());
+        let basis = null_space(rows.clone(), n);
+        assert_eq!(basis.len(), n - rows.len());
+        for v in &basis {
+            for row in &rows {
+                let dot: f64 = row
+                    .iter()
+                    .zip(v)
+                    .map(|(a, b)| a.to_f64() * b.to_f64())
+                    .sum();
+                assert!(dot.abs() < 1e-9, "a row is {dot} on a null vector");
+            }
+        }
+    }
+
+    /// A long chain of independent rows is all found.
+    #[test]
+    fn a_chain_has_its_rank() {
+        let (rows, n) = chain(150, 6);
+        let m = rows.len();
+        assert_eq!(eliminate(rows, n).pivots.len(), m);
+    }
+
+    /// The inverse of a matrix with zeros in it: eliminated with an identity
+    /// beside it, in rows longer than the variables they are pivoted on.
+    #[test]
+    fn the_inverse_of_a_sparse_matrix_is_one() {
+        let a: Vec<Vec<S>> = [[2.0, 0.0, 1.0], [0.0, 3.0, 0.0], [1.0, 0.0, 4.0]]
+            .map(|row| row.map(S::from_f64).to_vec())
+            .to_vec();
+        let inverse = inverse(&a).expect("the matrix is not singular");
+        for i in 0..3 {
+            for j in 0..3 {
+                let dot: f64 = (0..3)
+                    .map(|k| a[i][k].to_f64() * inverse[k][j].to_f64())
+                    .sum();
+                let want = if i == j { 1.0 } else { 0.0 };
+                assert!((dot - want).abs() < 1e-12, "({i}, {j}): {dot}");
+            }
+        }
+    }
 }

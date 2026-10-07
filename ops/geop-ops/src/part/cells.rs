@@ -41,6 +41,7 @@ use super::{
     feature::Feature,
     ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId},
     names::NameRegistry,
+    shared::SharedMap,
     sketch::PlacedSketch,
     sketch3d::PartSketch3d,
     state::State,
@@ -165,11 +166,11 @@ pub(super) struct Store<S: Scalar> {
     instances: IndexMap<InstanceId, Arc<Instance<S>>>,
     body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,
     features: Vec<(String, Arc<Feature<S>>)>,
-    state: State,
-    declared: State,
-    parameters: crate::parameters::Parameters,
+    state: Arc<State>,
+    declared: Arc<State>,
+    parameters: Arc<crate::parameters::Parameters>,
     extensions: Extensions<S>,
-    versions: Arc<BTreeMap<Cell, u64>>,
+    versions: SharedMap<Cell, u64>,
     log: Option<Arc<Log>>,
 }
 
@@ -184,11 +185,11 @@ impl<S: Scalar> Store<S> {
             instances: IndexMap::new(),
             body_data: BTreeMap::new(),
             features: Vec::new(),
-            state: State::new(),
-            declared: State::new(),
-            parameters: crate::parameters::Parameters::default(),
+            state: Arc::new(State::new()),
+            declared: Arc::new(State::new()),
+            parameters: Arc::new(crate::parameters::Parameters::default()),
             extensions: Extensions::new(),
-            versions: Arc::new(BTreeMap::new()),
+            versions: SharedMap::new(),
             log: None,
         }
     }
@@ -199,6 +200,11 @@ impl<S: Scalar> Store<S> {
     /// now on, in `log`.
     pub(super) fn record(&mut self, log: Arc<Log>) {
         self.log = Some(log);
+    }
+
+    /// Whether accesses to this part are being noted.
+    pub(super) fn is_recorded(&self) -> bool {
+        self.log.is_some()
     }
 
     /// Stops noting accesses, and returns the log that did.
@@ -225,7 +231,7 @@ impl<S: Scalar> Store<S> {
             log.write(&cell);
         }
         let version = NEXT_VERSION.fetch_add(1, Ordering::Relaxed);
-        Arc::make_mut(&mut self.versions).insert(cell, version);
+        self.versions.insert(cell, version);
     }
 
     /// The version of `cell`: 0 for one never written.
@@ -427,7 +433,7 @@ impl<S: Scalar> Store<S> {
             .filter(|name| self.state.get(*name) != state.get(*name))
             .cloned()
             .collect();
-        self.state = state;
+        self.state = Arc::new(state);
         if !changed.is_empty() {
             self.write_unlogged(Cell::Inputs);
         }
@@ -440,7 +446,7 @@ impl<S: Scalar> Store<S> {
     /// changes what a part is built with, and no step did.
     fn write_unlogged(&mut self, cell: Cell) {
         let version = NEXT_VERSION.fetch_add(1, Ordering::Relaxed);
-        Arc::make_mut(&mut self.versions).insert(cell, version);
+        self.versions.insert(cell, version);
     }
 
     pub(super) fn declared(&self) -> &State {
@@ -448,7 +454,7 @@ impl<S: Scalar> Store<S> {
     }
 
     pub(super) fn declared_mut(&mut self) -> &mut State {
-        &mut self.declared
+        Arc::make_mut(&mut self.declared)
     }
 
     pub(super) fn parameters(&self) -> &crate::parameters::Parameters {
@@ -457,10 +463,10 @@ impl<S: Scalar> Store<S> {
     }
 
     pub(super) fn set_parameters(&mut self, parameters: crate::parameters::Parameters) {
-        if self.parameters != parameters {
+        if *self.parameters != parameters {
             self.write_unlogged(Cell::Parameters);
         }
-        self.parameters = parameters;
+        self.parameters = Arc::new(parameters);
     }
 
     // --- replaying ---
@@ -509,27 +515,26 @@ impl<S: Scalar> Store<S> {
         // What a step declared it read (see `Part::declared`).
         for (name, value) in after.declared.iter() {
             if !before.declared.contains_key(name) {
-                self.declared.insert(name.clone(), value.clone());
+                Arc::make_mut(&mut self.declared).insert(name.clone(), value.clone());
             }
         }
         // A cell is as the step left it only if what it was written onto is
         // what it was written onto before; else it is another content.
-        let versions = Arc::make_mut(&mut self.versions);
         for cell in writes {
-            let same_base = versions.get(cell) == before.versions.get(cell);
+            let same_base = self.versions.get(cell) == before.versions.get(cell);
             let version = if same_base {
                 after.version(cell)
             } else {
                 NEXT_VERSION.fetch_add(1, Ordering::Relaxed)
             };
-            versions.insert(cell.clone(), version);
+            self.versions.insert(cell.clone(), version);
         }
     }
 
     /// Whether every cell has the version it has in `other`: the two hold
     /// the same content.
     pub(super) fn same_versions(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.versions, &other.versions) || self.versions == other.versions
+        self.versions.same_as(&other.versions)
     }
 
     // --- extensions ---

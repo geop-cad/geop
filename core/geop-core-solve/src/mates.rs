@@ -14,7 +14,9 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Mobility, Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank};
+use crate::{
+    Mobility, Param, Placed, Pull as ParamPull, Residual, System, Value, linalg::rank, memory,
+};
 
 mod joints;
 
@@ -22,6 +24,10 @@ pub use joints::{
     Connector, Coordinate, Coupling, CouplingKind, Joint, JointEnd, JointKind, Motion,
 };
 use joints::{CouplingResidual, JointResidual, from_variable, to_variable};
+
+/// A group of this many bodies or more has its freedom remembered: fewer
+/// cost less to work out than to find.
+const REMEMBERED_FROM: usize = 4;
 
 /// Variables per body: a translation and a turn.
 const BODY_VARS: usize = 6;
@@ -1148,6 +1154,36 @@ impl<S: Scalar> Assembly<S> {
         })
     }
 
+    /// How free each of the first `bodies` of this assembly is — none, for
+    /// one that is not free — and the dimension of its null space: the
+    /// freedom of one independent group (see [`Assembly::freedom`]). A group
+    /// seen before, where it is and mated as it was, is not worked out again
+    /// (see [`crate::memory`]).
+    fn group_freedom(&self, bodies: usize) -> GeopResult<(Vec<Option<usize>>, usize)> {
+        let remembered = self.bodies.len() >= REMEMBERED_FROM;
+        if remembered && let Some(found) = memory::recall::<S, _>(self) {
+            return Ok(found);
+        }
+        let residuals = self.residuals()?;
+        let system = self.system(&residuals)?;
+        let basis = system.null_space();
+        let dof = (0..bodies)
+            .map(|local| {
+                system.variables(local).map(|vars| {
+                    rank(
+                        basis.iter().map(|v| v[vars.clone()].to_vec()).collect(),
+                        vars.len(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let found = (dof, basis.len());
+        if remembered {
+            memory::remember::<S, _>(self, found.clone());
+        }
+        Ok(found)
+    }
+
     /// How free every body is where the bodies are now (see [`Freedom`]):
     /// the directions in which every mate's residuals stay put to first
     /// order — the Jacobian's null space — and of those, how many move each
@@ -1165,20 +1201,15 @@ impl<S: Scalar> Assembly<S> {
         let mut total = 0;
         for group in self.independent() {
             let (part, _) = self.restricted(&group);
-            let residuals = part.residuals()?;
-            let system = part.system(&residuals)?;
-            let basis = system.null_space();
+            let (dof, dimension) = part.group_freedom(group.bodies.len())?;
             // The group's free bodies come first in the restricted
             // assembly, in the order of `group.bodies`.
-            for (local, &body) in group.bodies.iter().enumerate() {
-                if let Some(vars) = system.variables(local) {
-                    bodies[body] = rank(
-                        basis.iter().map(|v| v[vars.clone()].to_vec()).collect(),
-                        vars.len(),
-                    );
+            for (&body, dof) in group.bodies.iter().zip(dof) {
+                if let Some(dof) = dof {
+                    bodies[body] = dof;
                 }
             }
-            total += basis.len();
+            total += dimension;
         }
         Ok(Freedom { bodies, total })
     }

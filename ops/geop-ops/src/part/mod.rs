@@ -33,6 +33,7 @@ mod mesh;
 mod names;
 mod replay;
 mod resolve;
+mod shared;
 mod sketch;
 mod sketch3d;
 mod state;
