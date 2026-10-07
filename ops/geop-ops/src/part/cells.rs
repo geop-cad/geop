@@ -162,7 +162,7 @@ pub(super) struct Store<S: Scalar> {
     sketches: IndexMap<SketchId, PlacedSketch<S>>,
     sketches3d: IndexMap<Sketch3dId, PartSketch3d>,
     datums: IndexMap<DatumId, Datum<S>>,
-    instances: IndexMap<InstanceId, Instance<S>>,
+    instances: IndexMap<InstanceId, Arc<Instance<S>>>,
     body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,
     mates: BTreeMap<String, Mate>,
     features: Vec<(String, Arc<Feature<S>>)>,
@@ -363,7 +363,7 @@ impl<S: Scalar> Store<S> {
     // --- instances ---
 
     /// Every instance, to list.
-    pub(super) fn instances(&self) -> &IndexMap<InstanceId, Instance<S>> {
+    pub(super) fn instances(&self) -> &IndexMap<InstanceId, Arc<Instance<S>>> {
         self.read(Cell::Instances);
         &self.instances
     }
@@ -374,14 +374,14 @@ impl<S: Scalar> Store<S> {
             Some(name) => self.read(Cell::Instance(name.to_string())),
             None => self.read(Cell::Instances),
         }
-        self.instances.get(&id)
+        self.instances.get(&id).map(|i| &**i)
     }
 
     /// Places `instance` as `id`, named `name`.
     pub(super) fn insert_instance(&mut self, id: InstanceId, name: &str, instance: Instance<S>) {
         self.write(Cell::Instance(name.to_string()));
         self.write(Cell::Instances);
-        self.instances.insert(id, instance);
+        self.instances.insert(id, Arc::new(instance));
     }
 
     // --- body data, mates, features ---

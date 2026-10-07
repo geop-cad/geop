@@ -83,7 +83,7 @@ impl<S: Scalar> Part<S> {
 
     /// Every instance, in the order they were placed.
     pub fn instances(&self) -> impl Iterator<Item = (InstanceId, &Instance<S>)> {
-        self.store.instances().iter().map(|(&id, i)| (id, i))
+        self.store.instances().iter().map(|(&id, i)| (id, &**i))
     }
 
     /// Adds `mate` under `name`: a mate is no entity — nothing is built on
