@@ -18,50 +18,50 @@
 use geop_ops::Operations;
 use geop_ops_assembly::{AddPart, AddPartArgs, PartPattern, PartPatternArgs};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
-use geop_ops_datums::{AddDatum, AddDatumArgs};
-use geop_ops_drawing::{Drawing, DrawingArgs};
-use geop_ops_edit::{
-    DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
-};
+// use geop_ops_datums::{AddDatum, AddDatumArgs};
+// use geop_ops_drawing::{Drawing, DrawingArgs};
+// use geop_ops_edit::{
+//     DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
+// };
 use geop_ops_extrude_revolve::{
     Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
-use geop_ops_harness::{Route, RouteArgs};
+// use geop_ops_harness::{Route, RouteArgs};
 use geop_ops_hole::{Hole, HoleArgs, Thread, ThreadArgs};
 use geop_ops_pattern::{
     CircularPattern, CircularPatternArgs, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs,
     MoveBody, MoveBodyArgs,
 };
-use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
-use geop_ops_sheetmetal::{
-    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs, Hem,
-    HemArgs, SheetCut, SheetCutArgs,
-};
-use geop_ops_shell::{Shell, ShellArgs};
+// use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
+// use geop_ops_sheetmetal::{
+//     BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs, Hem,
+//     HemArgs, SheetCut, SheetCutArgs,
+// };
+// use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
-use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
-use geop_ops_step::{ImportStep, ImportStepArgs};
-use geop_ops_subd::{Subd, SubdArgs};
-use geop_ops_surface::{
-    BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
-    OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
-};
-use geop_ops_surface::{NetworkSurface, NetworkSurfaceArgs};
+// use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
+// use geop_ops_step::{ImportStep, ImportStepArgs};
+// use geop_ops_subd::{Subd, SubdArgs};
+// use geop_ops_surface::{
+//     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
+//     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
+// };
+// use geop_ops_surface::{NetworkSurface, NetworkSurfaceArgs};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 mod assembly_scale_tests;
 #[cfg(test)]
 mod assembly_tests;
-#[cfg(test)]
-mod bom_tests;
-#[cfg(test)]
-mod datum_tests;
-#[cfg(test)]
-mod drawing_tests;
-#[cfg(test)]
-mod edit_tests;
+// #[cfg(test)]
+// mod bom_tests;
+// #[cfg(test)]
+// mod datum_tests;
+// #[cfg(test)]
+// mod drawing_tests;
+// #[cfg(test)]
+// mod edit_tests;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
@@ -70,44 +70,44 @@ mod feature_pattern_tests;
 mod fillet_tests;
 #[cfg(test)]
 mod frame_tests;
-#[cfg(test)]
-mod harness_tests;
+// #[cfg(test)]
+// mod harness_tests;
 #[cfg(test)]
 mod hole_tests;
-#[cfg(test)]
-mod inspect_tests;
+// #[cfg(test)]
+// mod inspect_tests;
 #[cfg(test)]
 mod pattern_tests;
-#[cfg(test)]
-mod plastic_tests;
+// #[cfg(test)]
+// mod plastic_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
 pub(crate) mod regression_tests;
 #[cfg(test)]
 mod set_tests;
-#[cfg(test)]
-mod sheetmetal_tests;
-#[cfg(test)]
-mod shell_tests;
-#[cfg(test)]
-mod sketch3d_tests;
+// #[cfg(test)]
+// mod sheetmetal_tests;
+// #[cfg(test)]
+// mod shell_tests;
+// #[cfg(test)]
+// mod sketch3d_tests;
 #[cfg(test)]
 mod sketch_tests;
-#[cfg(test)]
-mod step_tests;
+// #[cfg(test)]
+// mod step_tests;
 #[cfg(test)]
 mod stress_tests;
-#[cfg(test)]
-mod subd_tests;
-#[cfg(test)]
-mod surface_tests;
+// #[cfg(test)]
+// mod subd_tests;
+// #[cfg(test)]
+// mod surface_tests;
 #[cfg(test)]
 mod sweep_loft_tests;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod urdf_tests;
+// #[cfg(test)]
+// mod urdf_tests;
 #[cfg(test)]
 mod view_tests;
 
@@ -120,13 +120,13 @@ pub enum PartOperation {
     /// planar face.
     #[operation(label = "Sketch", group = Sketch, tier = Big)]
     AddSketch(AddSketchArgs),
-    /// Draw points, lines, arcs and splines in space: paths to sweep along.
-    #[operation(label = "3-D sketch", group = Sketch, tier = Small)]
-    AddSketch3d(AddSketch3dArgs),
-    /// Add reference geometry — a point, an axis, a plane or a coordinate
-    /// system — built from selected points, edges and planes.
-    #[operation(label = "Reference", group = Sketch, tier = Small)]
-    AddDatum(AddDatumArgs),
+    // /// Draw points, lines, arcs and splines in space: paths to sweep along.
+    // #[operation(label = "3-D sketch", group = Sketch, tier = Small)]
+    // AddSketch3d(AddSketch3dArgs),
+    // /// Add reference geometry — a point, an axis, a plane or a coordinate
+    // /// system — built from selected points, edges and planes.
+    // #[operation(label = "Reference", group = Sketch, tier = Small)]
+    // AddDatum(AddDatumArgs),
     /// Sweep a sketch's area along its plane's normal into a solid, or its
     /// curves into faces.
     #[operation(group = Solid, tier = Big)]
@@ -151,30 +151,30 @@ pub enum PartOperation {
     /// cosmetic thread, or modelled.
     #[operation(group = Features, tier = Small)]
     Thread(ThreadArgs),
-    /// Grow a thin wall from an open sketch profile up to a solid's faces,
-    /// and join it.
-    #[operation(group = Features, tier = Menu, experimental)]
-    Rib(RibArgs),
+    // /// Grow a thin wall from an open sketch profile up to a solid's faces,
+    // /// and join it.
+    // #[operation(group = Features, tier = Menu, experimental)]
+    // Rib(RibArgs),
     /// Round a solid's straight and circular edges.
     #[operation(group = Features, tier = Big)]
     Fillet(FilletArgs),
     /// Bevel a solid's straight and circular edges.
     #[operation(group = Features, tier = Small)]
     Chamfer(ChamferArgs),
-    /// Hollow a solid out to walls of one thickness, open where faces are
-    /// picked.
-    #[operation(group = Features, tier = Small)]
-    Shell(ShellArgs),
-    /// Tilt planar faces about a neutral plane, so the part comes out of
-    /// its mould.
-    #[operation(group = Features, tier = Menu, experimental)]
-    Draft(DraftArgs),
-    /// Raise a lip along the rim of one half of an enclosure.
-    #[operation(group = Features, tier = Menu, experimental)]
-    Lip(LipArgs),
-    /// Cut the groove that takes a lip into the rim of the other half.
-    #[operation(group = Features, tier = Menu, experimental)]
-    Groove(GrooveArgs),
+    // /// Hollow a solid out to walls of one thickness, open where faces are
+    // /// picked.
+    // #[operation(group = Features, tier = Small)]
+    // Shell(ShellArgs),
+    // /// Tilt planar faces about a neutral plane, so the part comes out of
+    // /// its mould.
+    // #[operation(group = Features, tier = Menu, experimental)]
+    // Draft(DraftArgs),
+    // /// Raise a lip along the rim of one half of an enclosure.
+    // #[operation(group = Features, tier = Menu, experimental)]
+    // Lip(LipArgs),
+    // /// Cut the groove that takes a lip into the rim of the other half.
+    // #[operation(group = Features, tier = Menu, experimental)]
+    // Groove(GrooveArgs),
     /// Unite, intersect or subtract two solids.
     #[operation(group = Bodies, tier = Big)]
     Boolean(BooleanArgs),
@@ -193,58 +193,58 @@ pub enum PartOperation {
     /// Move bodies, or a copy of them, turned and shifted.
     #[operation(label = "Move body", group = Bodies, tier = Menu)]
     MoveBody(MoveBodyArgs),
-    /// Delete solids, and faces standing on their own.
-    #[operation(label = "Delete body", group = Bodies, tier = Menu)]
-    DeleteBody(DeleteBodyArgs),
-    /// Span a face standing on its own between two edges, or fill a closed
-    /// loop of edges — optionally tangent to the flat faces along them.
-    #[operation(label = "Boundary surface", group = Surface, tier = Small, experimental)]
-    BoundarySurface(BoundarySurfaceArgs),
-    /// Copy faces a distance along their normals into a face standing on
-    /// its own.
-    #[operation(label = "Offset surface", group = Surface, tier = Menu, experimental)]
-    OffsetSurface(OffsetSurfaceArgs),
-    /// Make a solid of a face standing on its own, a thickness on either
-    /// side of it or on both.
-    #[operation(group = Surface, tier = Menu, experimental)]
-    Thicken(ThickenArgs),
-    /// Join faces standing on their own along the edges where they meet,
-    /// into a solid once they close up.
-    #[operation(group = Surface, tier = Menu, experimental)]
-    Knit(KnitArgs),
-    /// Cut a face standing on its own back to one side of another face.
-    #[operation(label = "Trim surface", group = Surface, tier = Menu, experimental)]
-    TrimSurface(TrimSurfaceArgs),
-    /// Carry a face standing on its own on past one of its edges.
-    #[operation(label = "Extend surface", group = Surface, tier = Menu, experimental)]
-    ExtendSurface(ExtendSurfaceArgs),
-    /// Copy a face out of its body into a face standing on its own.
-    #[operation(label = "Extract face", group = Surface, tier = Menu, experimental)]
-    ExtractFace(ExtractFaceArgs),
-    /// Project a sketch's curves onto a face, dividing the face along them.
-    #[operation(label = "Project curve", group = Surface, tier = Menu, experimental)]
-    ProjectCurve(ProjectCurveArgs),
-    /// Start a sheet-metal body: a plate from a sketch's area, or a bent
-    /// strip from a chain of lines and arcs.
-    #[operation(label = "Base flange", group = SheetMetal, tier = Big)]
-    BaseFlange(BaseFlangeArgs),
-    /// Bend a flange up from a straight edge of a sheet-metal body.
-    #[operation(label = "Edge flange", group = SheetMetal, tier = Small)]
-    EdgeFlange(EdgeFlangeArgs),
-    /// Cut holes and notches through a sheet-metal body along a sketch,
-    /// across its bends as they lie unrolled.
-    #[operation(label = "Sheet-metal cut", group = SheetMetal, tier = Menu)]
-    SheetCut(SheetCutArgs),
-    /// Fold an edge of a sheet-metal body right back over it.
-    #[operation(group = SheetMetal, tier = Menu)]
-    Hem(HemArgs),
-    /// Unfold a sheet-metal body into its flat pattern.
-    #[operation(label = "Flat pattern", group = SheetMetal, tier = Small)]
-    FlatPattern(FlatPatternArgs),
-    /// Shape a freeform body by dragging the vertices, edges and faces of a
-    /// control cage, built as its smooth subdivision surface.
-    #[operation(label = "SubD", group = Surface, tier = Big)]
-    Subd(SubdArgs),
+    // /// Delete solids, and faces standing on their own.
+    // #[operation(label = "Delete body", group = Bodies, tier = Menu)]
+    // DeleteBody(DeleteBodyArgs),
+    // /// Span a face standing on its own between two edges, or fill a closed
+    // /// loop of edges — optionally tangent to the flat faces along them.
+    // #[operation(label = "Boundary surface", group = Surface, tier = Small, experimental)]
+    // BoundarySurface(BoundarySurfaceArgs),
+    // /// Copy faces a distance along their normals into a face standing on
+    // /// its own.
+    // #[operation(label = "Offset surface", group = Surface, tier = Menu, experimental)]
+    // OffsetSurface(OffsetSurfaceArgs),
+    // /// Make a solid of a face standing on its own, a thickness on either
+    // /// side of it or on both.
+    // #[operation(group = Surface, tier = Menu, experimental)]
+    // Thicken(ThickenArgs),
+    // /// Join faces standing on their own along the edges where they meet,
+    // /// into a solid once they close up.
+    // #[operation(group = Surface, tier = Menu, experimental)]
+    // Knit(KnitArgs),
+    // /// Cut a face standing on its own back to one side of another face.
+    // #[operation(label = "Trim surface", group = Surface, tier = Menu, experimental)]
+    // TrimSurface(TrimSurfaceArgs),
+    // /// Carry a face standing on its own on past one of its edges.
+    // #[operation(label = "Extend surface", group = Surface, tier = Menu, experimental)]
+    // ExtendSurface(ExtendSurfaceArgs),
+    // /// Copy a face out of its body into a face standing on its own.
+    // #[operation(label = "Extract face", group = Surface, tier = Menu, experimental)]
+    // ExtractFace(ExtractFaceArgs),
+    // /// Project a sketch's curves onto a face, dividing the face along them.
+    // #[operation(label = "Project curve", group = Surface, tier = Menu, experimental)]
+    // ProjectCurve(ProjectCurveArgs),
+    // /// Start a sheet-metal body: a plate from a sketch's area, or a bent
+    // /// strip from a chain of lines and arcs.
+    // #[operation(label = "Base flange", group = SheetMetal, tier = Big)]
+    // BaseFlange(BaseFlangeArgs),
+    // /// Bend a flange up from a straight edge of a sheet-metal body.
+    // #[operation(label = "Edge flange", group = SheetMetal, tier = Small)]
+    // EdgeFlange(EdgeFlangeArgs),
+    // /// Cut holes and notches through a sheet-metal body along a sketch,
+    // /// across its bends as they lie unrolled.
+    // #[operation(label = "Sheet-metal cut", group = SheetMetal, tier = Menu)]
+    // SheetCut(SheetCutArgs),
+    // /// Fold an edge of a sheet-metal body right back over it.
+    // #[operation(group = SheetMetal, tier = Menu)]
+    // Hem(HemArgs),
+    // /// Unfold a sheet-metal body into its flat pattern.
+    // #[operation(label = "Flat pattern", group = SheetMetal, tier = Small)]
+    // FlatPattern(FlatPatternArgs),
+    // /// Shape a freeform body by dragging the vertices, edges and faces of a
+    // /// control cage, built as its smooth subdivision surface.
+    // #[operation(label = "SubD", group = Surface, tier = Big)]
+    // Subd(SubdArgs),
     /// Place the part another program file builds, and mate it to what is
     /// already there.
     #[operation(label = "Part", group = Assembly, tier = Big)]
@@ -253,22 +253,22 @@ pub enum PartOperation {
     /// axis.
     #[operation(label = "Part pattern", group = Assembly, tier = Menu, experimental)]
     PartPattern(PartPatternArgs),
-    /// Route a bundle of wires from a connector through clips to another
-    /// connector, its bends checked and every wire's cut length reported.
-    #[operation(group = Assembly, tier = Small, experimental)]
-    Route(RouteArgs),
-    /// Describe a 2-D drawing of the part — views with hidden lines, a
-    /// section and a title block — annotated on its sheet with dimensions,
-    /// notes and centre marks, and downloaded as SVG or DXF.
-    #[operation(group = Output, tier = Big)]
-    Drawing(DrawingArgs),
-    /// Add the solids and sheets of a STEP file next to the program.
-    #[operation(label = "Import STEP", group = Output, tier = Small)]
-    ImportStep(ImportStepArgs),
-    /// Span a face standing on its own through a network of curves — u
-    /// curves crossing v curves — running along every one of them.
-    #[operation(label = "UV surface", group = Surface, tier = Small, experimental)]
-    NetworkSurface(NetworkSurfaceArgs),
+    // /// Route a bundle of wires from a connector through clips to another
+    // /// connector, its bends checked and every wire's cut length reported.
+    // #[operation(group = Assembly, tier = Small, experimental)]
+    // Route(RouteArgs),
+    // /// Describe a 2-D drawing of the part — views with hidden lines, a
+    // /// section and a title block — annotated on its sheet with dimensions,
+    // /// notes and centre marks, and downloaded as SVG or DXF.
+    // #[operation(group = Output, tier = Big)]
+    // Drawing(DrawingArgs),
+    // /// Add the solids and sheets of a STEP file next to the program.
+    // #[operation(label = "Import STEP", group = Output, tier = Small)]
+    // ImportStep(ImportStepArgs),
+    // /// Span a face standing on its own through a network of curves — u
+    // /// curves crossing v curves — running along every one of them.
+    // #[operation(label = "UV surface", group = Surface, tier = Small, experimental)]
+    // NetworkSurface(NetworkSurfaceArgs),
 }
 
 /// A program of the editor's operations.

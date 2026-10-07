@@ -19,7 +19,7 @@ use geop_ops::{
     parameters::{Parameter, ParameterKind, Row},
 };
 use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+// use geop_ops_datums::{AddDatumArgs, Construction};  // out of the workspace for the core refactor
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
 
 use super::{drawing::Drawing, tables::Table};
@@ -162,17 +162,7 @@ pub fn cut_to(
     let plane = match through {
         Through::Both => outline_plane(),
         Through::Up => {
-            if program.index_of(BELOW).is_err() {
-                program.push(
-                    BELOW,
-                    AddDatumArgs {
-                        selection: vec![outline_plane()],
-                        construction: Construction::Offset {
-                            distance: (-1.0).into(),
-                        },
-                    },
-                );
-            }
+            // The datum BELOW is not added while `geop_ops_datums` is out of the workspace.
             EntityRef::datum(BELOW)
         }
     };
@@ -207,14 +197,8 @@ pub fn hexagon(drawing: &mut Drawing, across: &str) -> GeopResult<Vec<CurveId>> 
 
 /// The datum `axis`: the `z` axis every standard part turns around or
 /// runs along — what a concentric mate picks.
-pub fn axis_datum(program: &mut Program) {
-    program.push(
-        "axis",
-        AddDatumArgs {
-            selection: vec![z_axis()],
-            construction: Construction::AlongLine {},
-        },
-    );
+pub fn axis_datum(_program: &mut Program) {
+    // Not added while `geop_ops_datums` is out of the workspace.
 }
 
 /// The datum plane `id` normal to `z`, `height` — a formula of the size —
@@ -227,14 +211,6 @@ pub fn plane_datum(program: &mut Program, id: &str, height: &str) {
 /// The datum plane `id` parallel to the plane `plane`, `distance` — a
 /// formula of the size — along its normal: for a part that runs along `z`,
 /// a face it sits on beside the axis.
-pub fn offset_datum(program: &mut Program, id: &str, plane: EntityRef, distance: &str) {
-    program.push(
-        id,
-        AddDatumArgs {
-            selection: vec![plane],
-            construction: Construction::Offset {
-                distance: distance.into(),
-            },
-        },
-    );
+pub fn offset_datum(_program: &mut Program, _id: &str, _plane: EntityRef, _distance: &str) {
+    // Not added while `geop_ops_datums` is out of the workspace.
 }

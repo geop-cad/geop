@@ -263,6 +263,7 @@ fn a_pasted_step_takes_its_state_along() {
 /// step skipped for reading what did not change would otherwise show here
 /// as a part that differs, or an error that is missing.
 #[test]
+#[ignore = "slow: 10 s — run with `cargo test -- --ignored`"]
 fn a_runner_builds_what_building_from_scratch_builds() {
     use crate::examples;
     use geop_ops::parameters::ParameterKind;

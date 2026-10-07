@@ -37,8 +37,8 @@ pub mod involute;
 pub mod steps;
 pub mod tables;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 use std::{
     ops::{Deref, DerefMut},

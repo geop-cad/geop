@@ -9,30 +9,30 @@ members = [
     "ops/geop-ops",
     "ops/geop-ops-derive",
     "ops/geop-ops-sketch",
-    "ops/geop-ops-datums",
+#     "ops/geop-ops-datums",
     "ops/geop-ops-extrude-revolve",
     "ops/geop-ops-booleans",
-    "ops/geop-ops-edit",
+#     "ops/geop-ops-edit",
     "ops/geop-ops-fillet",
-    "ops/geop-ops-shell",
+#     "ops/geop-ops-shell",
     "ops/geop-ops-assembly",
     "ops/geop-ops-rasterize",
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
-    "ops/geop-ops-drawing",
-    "ops/geop-ops-inspect",
-    "ops/geop-ops-subd",
-    "ops/geop-ops-sheetmetal",
-    "ops/geop-ops-plastic",
-    "ops/geop-ops-sketch3d",
-    "ops/geop-ops-step",
-    "ops/geop-ops-surface",
+#     "ops/geop-ops-drawing",
+#     "ops/geop-ops-inspect",
+#     "ops/geop-ops-subd",
+#     "ops/geop-ops-sheetmetal",
+#     "ops/geop-ops-plastic",
+#     "ops/geop-ops-sketch3d",
+#     "ops/geop-ops-step",
+#     "ops/geop-ops-surface",
     "ops/geop-ops-pattern",
-    "ops/geop-ops-harness",
+#     "ops/geop-ops-harness",
     "ops/geop-ops-hole",
-    "ops/geop-ops-urdf",
-    "ops/geop-ops-bom",
+#     "ops/geop-ops-urdf",
+#     "ops/geop-ops-bom",
 ]
 
 [workspace.package]
@@ -48,23 +48,23 @@ geop-core-solve = { path = "core/geop-core-solve" }
 geop-ops = { path = "ops/geop-ops" }
 geop-ops-derive = { path = "ops/geop-ops-derive" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
-geop-ops-datums = { path = "ops/geop-ops-datums" }
+# geop-ops-datums = { path = "ops/geop-ops-datums" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
 geop-ops-booleans = { path = "ops/geop-ops-booleans" }
-geop-ops-edit = { path = "ops/geop-ops-edit" }
+# geop-ops-edit = { path = "ops/geop-ops-edit" }
 geop-ops-fillet = { path = "ops/geop-ops-fillet" }
-geop-ops-shell = { path = "ops/geop-ops-shell" }
-geop-ops-drawing = { path = "ops/geop-ops-drawing" }
+# geop-ops-shell = { path = "ops/geop-ops-shell" }
+# geop-ops-drawing = { path = "ops/geop-ops-drawing" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
-geop-ops-inspect = { path = "ops/geop-ops-inspect" }
+# geop-ops-inspect = { path = "ops/geop-ops-inspect" }
 geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
-geop-ops-subd = { path = "ops/geop-ops-subd" }
+# geop-ops-subd = { path = "ops/geop-ops-subd" }
 serde = { version = "1", features = ["derive"] }
-geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
-geop-ops-plastic = { path = "ops/geop-ops-plastic" }
-geop-ops-step = { path = "ops/geop-ops-step" }
-geop-ops-sketch3d = { path = "ops/geop-ops-sketch3d" }
-geop-ops-surface = { path = "ops/geop-ops-surface" }
+# geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
+# geop-ops-plastic = { path = "ops/geop-ops-plastic" }
+# geop-ops-step = { path = "ops/geop-ops-step" }
+# geop-ops-sketch3d = { path = "ops/geop-ops-sketch3d" }
+# geop-ops-surface = { path = "ops/geop-ops-surface" }
 # `float_roundtrip`: without it, parsing a float may land one ULP off the
 # value that was written, and a program read back from JSON would no longer
 # build the very same part.
@@ -76,10 +76,10 @@ indexmap = "2"
 # `geop_ops::Cache`).
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 geop-ops-pattern = { path = "ops/geop-ops-pattern" }
-geop-ops-harness = { path = "ops/geop-ops-harness" }
+# geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }
-geop-ops-urdf = { path = "ops/geop-ops-urdf" }
-geop-ops-bom = { path = "ops/geop-ops-bom" }
+# geop-ops-urdf = { path = "ops/geop-ops-urdf" }
+# geop-ops-bom = { path = "ops/geop-ops-bom" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in

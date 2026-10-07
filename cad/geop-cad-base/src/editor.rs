@@ -181,7 +181,7 @@ pub enum Command<S: Scalar> {
     ExportDrawing {
         #[serde(default)]
         id: Option<String>,
-        format: geop_ops_drawing::Format,
+        format: String,
         #[serde(default)]
         date: String,
     },
@@ -202,7 +202,7 @@ pub enum Command<S: Scalar> {
     /// after the program's file: the update's [`Update::export`].
     ExportBom {
         #[serde(default)]
-        structure: geop_ops_bom::Structure,
+        structure: inspect::Structure,
     },
     /// Write the flat pattern of a sheet-metal body of the part shown — the
     /// body `solid`, else the newest — as a DXF file for laser cutting (see
@@ -655,7 +655,6 @@ impl<S: Scalar> Editor<S> {
             // Settling runs the whole program, so what is shown runs after.
             self.settle();
             self.rerun();
-            self.give_parts_list();
         }
         let step = self.step_state();
         let steps = self.shown_steps(step.as_ref());
@@ -1183,26 +1182,16 @@ impl<S: Scalar> Editor<S> {
                 self.visibility.insert(name, visible);
                 Changed::Nothing
             }
-            Command::ExportStep => {
-                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
-                let text = geop_ops_step::write_step(self.runner.part(), &stem)?;
-                self.exported = Some(Export {
-                    name: format!("{stem}.step"),
-                    content: Content::Text(text),
-                });
-                Changed::Nothing
+            Command::ExportStep
+            | Command::ExportFlatPattern { .. }
+            | Command::ExportBom { .. }
+            | Command::ExportDrawing { .. }
+            | Command::ExportUrdf => {
+                return Err(GeopError::new(
+                    "this export is not available while its crate is out of the workspace",
+                ));
             }
             Command::Crash => panic!("the kernel was asked to crash"),
-            Command::ExportFlatPattern { solid } => {
-                let (_, dxf) =
-                    geop_ops_sheetmetal::flat_pattern_dxf(self.runner.part(), solid.as_deref())?;
-                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
-                self.exported = Some(Export {
-                    name: format!("{stem}_flat.dxf"),
-                    content: Content::Text(dxf),
-                });
-                Changed::Nothing
-            }
             Command::ExportStl => {
                 let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
                 let triangles: Vec<_> = self
@@ -1218,15 +1207,6 @@ impl<S: Scalar> Editor<S> {
                 self.exported = Some(Export {
                     name: format!("{stem}.stl"),
                     content: Content::Bytes(bytes),
-                });
-                Changed::Nothing
-            }
-            Command::ExportBom { structure } => {
-                let bom = inspect::bill_of_materials(self.runner.part(), &self.file(), structure)?;
-                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
-                self.exported = Some(Export {
-                    name: format!("{stem}_bom.csv"),
-                    content: Content::Text(bom.to_csv()),
                 });
                 Changed::Nothing
             }
@@ -1248,54 +1228,6 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Inspect { query } => {
                 self.query = Some(query);
-                Changed::Nothing
-            }
-            Command::ExportDrawing { id, format, date } => {
-                let (index, mut args) = self.drawing(id.as_deref())?;
-                let stem = self.file_stem();
-                if args.name.is_empty() {
-                    args.name = stem.clone().unwrap_or_default();
-                }
-                let library = library(&self.workspace, self.path.as_deref());
-                self.runner.run(&self.program, Some(index), &library);
-                let part = self.runner.part_at(index);
-                let parts = inspect::parts_list(part, &self.file(), &args)?;
-                // The drawing being edited is written from the views it
-                // shows: they are projected already.
-                let shown = self
-                    .open
-                    .as_ref()
-                    .filter(|open| open.index == index)
-                    .and_then(|open| {
-                        open.editor
-                            .session()
-                            .downcast_ref::<geop_ops_drawing::operation::DrawingSession>()
-                    });
-                let sheet = match shown {
-                    Some(session) => session.compose(part, &args, &date, &parts)?,
-                    None => geop_ops_drawing::compose(part, &args, &date, &parts)?,
-                };
-                let text = format.write(&sheet);
-                let base = stem.unwrap_or_else(|| "drawing".to_string());
-                self.exported = Some(Export {
-                    name: format!("{base}.{}", format.extension()),
-                    content: Content::Text(text),
-                });
-                // Running only up to the drawing moved the runner: run again
-                // as far as the program is shown.
-                Changed::Run
-            }
-            Command::ExportUrdf => {
-                idle(self)?;
-                let index = self.marker.unwrap_or(self.program.steps.len());
-                let library = library(&self.workspace, self.path.as_deref());
-                self.runner.run(&self.program, Some(index), &library);
-                let name = self.file_stem().unwrap_or_else(|| "robot".to_string());
-                let robot = geop_ops_urdf::export(self.runner.part_at(index), &name, MESH_QUALITY)?;
-                self.exported = Some(Export {
-                    name: format!("{name}.zip"),
-                    content: Content::Bytes(robot.zip()?),
-                });
                 Changed::Nothing
             }
             Command::Undo | Command::Redo if self.open.is_some() => {
@@ -1501,33 +1433,6 @@ impl<S: Scalar> Editor<S> {
             if let (Some(open), Some(view)) = (&mut self.open, view) {
                 open.view = view;
             }
-        }
-    }
-
-    /// Gives a drawing being edited the bill of materials of the part it
-    /// draws, which it cannot list itself (see
-    /// [`geop_ops_drawing::operation::DrawingSession::show`]) — once per
-    /// part built, and whenever it starts or stops asking for one.
-    fn give_parts_list(&mut self) {
-        let file = self.file();
-        let Some(open) = &mut self.open else {
-            return;
-        };
-        let PartOperation::Drawing(args) = open.editor.step() else {
-            return;
-        };
-        let args = args.clone();
-        let before = self.runner.part_at(open.index);
-        let Some(session) = open
-            .editor
-            .session_mut()
-            .downcast_mut::<geop_ops_drawing::operation::DrawingSession>()
-        else {
-            return;
-        };
-        if session.wants_parts(before.revision(), args.bom) {
-            let parts = inspect::parts_list(before, &file, &args);
-            session.show(before.revision(), args.bom, parts);
         }
     }
 
@@ -1822,35 +1727,6 @@ impl<S: Scalar> Editor<S> {
             .filter(|s| !s.is_empty())
     }
 
-    /// The drawing to export, and how many steps run before it: the step
-    /// `id`, else the drawing being edited, else the program's last; the
-    /// default drawing of the part as far as it runs if there is none.
-    fn drawing(&self, id: Option<&str>) -> GeopResult<(usize, geop_ops_drawing::DrawingArgs)> {
-        use geop_core_math::geop_error::GeopError;
-        if let Some(open) = &self.open
-            && id.is_none_or(|id| id == open.id)
-            && let PartOperation::Drawing(args) = open.editor.step()
-        {
-            return Ok((open.index, args.clone()));
-        }
-        if let Some(id) = id {
-            let index = self.program.index_of(id)?;
-            return match &self.program.steps[index].operation {
-                PartOperation::Drawing(args) => Ok((index, args.clone())),
-                _ => Err(GeopError::new(format!("the step {id:?} is no drawing"))),
-            };
-        }
-        let runs = self.marker.unwrap_or(self.program.steps.len());
-        let last = self.program.steps[..runs]
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, step)| match &step.operation {
-                PartOperation::Drawing(args) => Some((i, args.clone())),
-                _ => None,
-            });
-        Ok(last.unwrap_or((runs, geop_ops_drawing::DrawingArgs::default())))
-    }
 }
 
 /// What a command changed.

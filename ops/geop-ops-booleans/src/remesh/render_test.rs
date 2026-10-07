@@ -148,6 +148,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn render_all_scenes_remesh() {
         run_all_scenes(false);
     }

@@ -105,15 +105,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "cobs"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -159,18 +150,6 @@ name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
-
-[[package]]
-name = "embedded-io"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
-
-[[package]]
-name = "embedded-io"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "equivalent"
@@ -224,27 +203,13 @@ dependencies = [
  "geop-core-topology",
  "geop-ops",
  "geop-ops-assembly",
- "geop-ops-bom",
  "geop-ops-booleans",
- "geop-ops-datums",
- "geop-ops-drawing",
- "geop-ops-edit",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
- "geop-ops-harness",
  "geop-ops-hole",
- "geop-ops-inspect",
  "geop-ops-pattern",
- "geop-ops-plastic",
  "geop-ops-rasterize",
- "geop-ops-sheetmetal",
- "geop-ops-shell",
  "geop-ops-sketch",
- "geop-ops-sketch3d",
- "geop-ops-step",
- "geop-ops-subd",
- "geop-ops-surface",
- "geop-ops-urdf",
  "serde",
  "serde_json",
 ]
@@ -258,12 +223,7 @@ dependencies = [
  "geop-core-math",
  "geop-ops",
  "geop-ops-assembly",
- "geop-ops-bom",
- "geop-ops-drawing",
  "geop-ops-rasterize",
- "geop-ops-sheetmetal",
- "geop-ops-step",
- "geop-ops-urdf",
  "serde_json",
 ]
 
@@ -340,19 +300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops-bom"
-version = "0.1.0"
-dependencies = [
- "geop-core-math",
- "geop-ops",
- "geop-ops-extrude-revolve",
- "geop-ops-harness",
- "geop-ops-inspect",
- "geop-ops-sheetmetal",
- "serde",
-]
-
-[[package]]
 name = "geop-ops-booleans"
 version = "0.1.0"
 dependencies = [
@@ -367,52 +314,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops-datums"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-ops",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "geop-ops-derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "geop-ops-drawing"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-booleans",
- "geop-ops-extrude-revolve",
- "geop-ops-hole",
- "geop-ops-inspect",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "geop-ops-edit"
-version = "0.1.0"
-dependencies = [
- "geop-core-math",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-booleans",
- "geop-ops-extrude-revolve",
- "serde",
 ]
 
 [[package]]
@@ -443,18 +350,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops-harness"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-extrude-revolve",
- "serde",
-]
-
-[[package]]
 name = "geop-ops-hole"
 version = "0.1.0"
 dependencies = [
@@ -467,20 +362,6 @@ dependencies = [
  "geop-ops-extrude-revolve",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "geop-ops-inspect"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-booleans",
- "geop-ops-extrude-revolve",
- "serde",
 ]
 
 [[package]]
@@ -499,22 +380,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops-plastic"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-booleans",
- "geop-ops-extrude-revolve",
- "geop-ops-rasterize",
- "geop-ops-shell",
- "serde",
-]
-
-[[package]]
 name = "geop-ops-rasterize"
 version = "0.1.0"
 dependencies = [
@@ -523,33 +388,6 @@ dependencies = [
  "geop-core-topology",
  "geop-ops",
  "geop-ops-extrude-revolve",
-]
-
-[[package]]
-name = "geop-ops-sheetmetal"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-drawing",
- "geop-ops-extrude-revolve",
- "geop-ops-rasterize",
- "serde",
-]
-
-[[package]]
-name = "geop-ops-shell"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-extrude-revolve",
- "serde",
 ]
 
 [[package]]
@@ -563,71 +401,6 @@ dependencies = [
  "geop-ops",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "geop-ops-sketch3d"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-sketch",
- "geop-ops",
- "geop-ops-extrude-revolve",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "geop-ops-step"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-extrude-revolve",
- "postcard",
- "serde",
-]
-
-[[package]]
-name = "geop-ops-subd"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-topology",
- "geop-ops",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "geop-ops-surface"
-version = "0.1.0"
-dependencies = [
- "geop-core-geometry",
- "geop-core-math",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-booleans",
- "geop-ops-extrude-revolve",
- "geop-ops-shell",
- "serde",
-]
-
-[[package]]
-name = "geop-ops-urdf"
-version = "0.1.0"
-dependencies = [
- "geop-core-math",
- "geop-core-solve",
- "geop-core-topology",
- "geop-ops",
- "geop-ops-assembly",
- "geop-ops-inspect",
- "geop-ops-rasterize",
 ]
 
 [[package]]
@@ -717,18 +490,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "postcard"
-version = "1.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
-dependencies = [
- "cobs",
- "embedded-io 0.4.0",
- "embedded-io 0.6.1",
- "serde",
-]
 
 [[package]]
 name = "proc-macro2"
@@ -849,26 +610,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "thiserror"
-version = "2.0.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "2.0.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.3",
 ]
 
 [[package]]

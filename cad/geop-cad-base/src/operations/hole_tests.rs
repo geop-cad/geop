@@ -331,38 +331,38 @@ fn a_pattern_of_points_in_one_sketch() {
     assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
 }
 
-/// Points picked one by one, a sketch point and a datum point 10 in from
-/// the plate's corner: two holes.
-#[test]
-fn points_picked_one_by_one() {
-    let mut program = plate(&[[20.0, 20.0], [40.0, 20.0]]);
-    program.push(
-        "corner",
-        geop_ops_datums::AddDatumArgs {
-            selection: vec![EntityRef::Vertex {
-                name: "extrude(plate,outline,p2,end)".into(),
-            }],
-            construction: geop_ops_datums::Construction::Point {
-                x: (-10.0).into(),
-                y: (-10.0).into(),
-                z: 0.0.into(),
-            },
-        },
-    );
-    let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
-    args.points = vec![
-        EntityRef::SketchPoint {
-            sketch: "centres".into(),
-            point: geop_core_sketch::PointId(1),
-        },
-        EntityRef::datum("corner"),
-    ];
-    let part = drilled(program, args);
-    part.face_id("hole(h,centres,p1,wall,q0)").unwrap();
-    part.face_id("hole(h,corner,wall,q0)").unwrap();
-    let removed = 2.0 * cylinder(3.2, 3.0);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
-}
+// /// Points picked one by one, a sketch point and a datum point 10 in from
+// /// the plate's corner: two holes.
+// #[test]
+// fn points_picked_one_by_one() {
+//     let mut program = plate(&[[20.0, 20.0], [40.0, 20.0]]);
+//     program.push(
+//         "corner",
+//         geop_ops_datums::AddDatumArgs {
+//             selection: vec![EntityRef::Vertex {
+//                 name: "extrude(plate,outline,p2,end)".into(),
+//             }],
+//             construction: geop_ops_datums::Construction::Point {
+//                 x: (-10.0).into(),
+//                 y: (-10.0).into(),
+//                 z: 0.0.into(),
+//             },
+//         },
+//     );
+//     let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
+//     args.points = vec![
+//         EntityRef::SketchPoint {
+//             sketch: "centres".into(),
+//             point: geop_core_sketch::PointId(1),
+//         },
+//         EntityRef::datum("corner"),
+//     ];
+//     let part = drilled(program, args);
+//     part.face_id("hole(h,centres,p1,wall,q0)").unwrap();
+//     part.face_id("hole(h,corner,wall,q0)").unwrap();
+//     let removed = 2.0 * cylinder(3.2, 3.0);
+//     assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+// }
 
 /// A "C" lying on its back, two arms 10 thick with a gap of 10 between:
 /// up to next goes through the top arm and stops in the gap, through all

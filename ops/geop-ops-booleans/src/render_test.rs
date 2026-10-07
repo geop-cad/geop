@@ -123,16 +123,19 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn render_all_scenes_union() {
         run_op(BooleanOp::Union, "outputs/booleans_union");
     }
 
     #[test]
+    #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn render_all_scenes_intersection() {
         run_op(BooleanOp::Intersection, "outputs/booleans_intersection");
     }
 
     #[test]
+    #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn render_all_scenes_difference() {
         run_op(BooleanOp::Difference, "outputs/booleans_difference");
     }

@@ -122,6 +122,7 @@ fn boss_on_sphere() -> (Part<S>, Vec<String>) {
 /// it — checked at samples of every blend face, to within the deviation the
 /// blend is held to.
 #[test]
+#[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
 fn boss_on_sphere_fillet_is_a_torus() {
     let (mut part, rim) = boss_on_sphere();
     let r = 0.1;

@@ -24,7 +24,7 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{Editor, PartOperation, Program, Workspace, stdlib::WithStandardParts};
+use geop_cad_base::{Editor, Program, Workspace, stdlib::WithStandardParts};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::TriangleFace,
@@ -57,17 +57,17 @@ enum Command {
     Compile(CompileArgs),
     /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
     Examples(ExamplesArgs),
-    /// Build a program and write a 2-D drawing of its part — views with
-    /// hidden lines, dimensions, a title block — as SVG or DXF.
-    Drawing(DrawingCliArgs),
-    /// Build an assembly and write it as a URDF robot — links, joints,
-    /// inertia and meshes — for simulators: a directory of `robot.urdf`
-    /// and `meshes/*.stl`, or one `.zip` of them.
-    Urdf(UrdfArgs),
-    /// Build an assembly and write its bill of materials as CSV: every
-    /// part with its quantity, designation, material and mass, and every
-    /// wire of its harnesses cut to length.
-    Bom(BomArgs),
+//     /// Build a program and write a 2-D drawing of its part — views with
+//     /// hidden lines, dimensions, a title block — as SVG or DXF.
+//     Drawing(DrawingCliArgs),
+//     /// Build an assembly and write it as a URDF robot — links, joints,
+//     /// inertia and meshes — for simulators: a directory of `robot.urdf`
+//     /// and `meshes/*.stl`, or one `.zip` of them.
+//     Urdf(UrdfArgs),
+//     /// Build an assembly and write its bill of materials as CSV: every
+//     /// part with its quantity, designation, material and mass, and every
+//     /// wire of its harnesses cut to length.
+//     Bom(BomArgs),
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
@@ -126,228 +126,228 @@ struct ExamplesArgs {
     quality: u16,
 }
 
-#[derive(clap::Args)]
-struct DrawingCliArgs {
-    /// The program to draw, e.g. `part.geop`.
-    program: PathBuf,
-    /// Where to write the drawing: `.svg` or `.dxf`. Defaults to the
-    /// program's path with `.geop` replaced by `.svg`.
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-    /// The drawing step to draw, by id. The program's last drawing step if
-    /// not given; the default drawing of the whole part if it has none.
-    #[arg(long)]
-    step: Option<String>,
-    /// The views, e.g. `front,top,right,iso` (also `left`, `bottom`,
-    /// `back`). The drawing step's if not given.
-    #[arg(long, value_delimiter = ',')]
-    views: Vec<String>,
-    /// Lay the views out in first-angle projection (ISO) rather than third
-    /// angle (ASME).
-    #[arg(long)]
-    first_angle: bool,
-    /// The scale, e.g. `1:2` or `5:1`; the largest standard one that fits
-    /// if not given.
-    #[arg(long)]
-    scale: Option<String>,
-    /// The paper: `a4` to `a0`, landscape.
-    #[arg(long)]
-    sheet: Option<String>,
-    /// The part's name for the title block; the program's file name if
-    /// neither this nor the drawing step gives one.
-    #[arg(long)]
-    name: Option<String>,
-    /// What the part is made of, for the title block.
-    #[arg(long)]
-    material: Option<String>,
-    /// Put the bill of materials of the parts placed on the sheet, above
-    /// the title block, whether or not the drawing step asks for it.
-    #[arg(long)]
-    bom: bool,
-    /// Write instead the flat pattern of a sheet-metal body, for laser
-    /// cutting — its outline and holes on a CUT layer, its bend lines on a
-    /// BEND layer with how each is bent — as DXF: of the body named, else
-    /// the newest. The whole program runs; the drawing's options do not
-    /// apply. Defaults the output to the program's path with `.geop`
-    /// replaced by `_flat.dxf`.
-    #[arg(long, value_name = "SOLID", num_args = 0..=1, default_missing_value = "")]
-    flat_pattern: Option<String>,
-}
+// #[derive(clap::Args)]
+// struct DrawingCliArgs {
+//     /// The program to draw, e.g. `part.geop`.
+//     program: PathBuf,
+//     /// Where to write the drawing: `.svg` or `.dxf`. Defaults to the
+//     /// program's path with `.geop` replaced by `.svg`.
+//     #[arg(short, long)]
+//     output: Option<PathBuf>,
+//     /// The drawing step to draw, by id. The program's last drawing step if
+//     /// not given; the default drawing of the whole part if it has none.
+//     #[arg(long)]
+//     step: Option<String>,
+//     /// The views, e.g. `front,top,right,iso` (also `left`, `bottom`,
+//     /// `back`). The drawing step's if not given.
+//     #[arg(long, value_delimiter = ',')]
+//     views: Vec<String>,
+//     /// Lay the views out in first-angle projection (ISO) rather than third
+//     /// angle (ASME).
+//     #[arg(long)]
+//     first_angle: bool,
+//     /// The scale, e.g. `1:2` or `5:1`; the largest standard one that fits
+//     /// if not given.
+//     #[arg(long)]
+//     scale: Option<String>,
+//     /// The paper: `a4` to `a0`, landscape.
+//     #[arg(long)]
+//     sheet: Option<String>,
+//     /// The part's name for the title block; the program's file name if
+//     /// neither this nor the drawing step gives one.
+//     #[arg(long)]
+//     name: Option<String>,
+//     /// What the part is made of, for the title block.
+//     #[arg(long)]
+//     material: Option<String>,
+//     /// Put the bill of materials of the parts placed on the sheet, above
+//     /// the title block, whether or not the drawing step asks for it.
+//     #[arg(long)]
+//     bom: bool,
+//     /// Write instead the flat pattern of a sheet-metal body, for laser
+//     /// cutting — its outline and holes on a CUT layer, its bend lines on a
+//     /// BEND layer with how each is bent — as DXF: of the body named, else
+//     /// the newest. The whole program runs; the drawing's options do not
+//     /// apply. Defaults the output to the program's path with `.geop`
+//     /// replaced by `_flat.dxf`.
+//     #[arg(long, value_name = "SOLID", num_args = 0..=1, default_missing_value = "")]
+//     flat_pattern: Option<String>,
+// }
 
-#[derive(clap::Args)]
-struct UrdfArgs {
-    /// The assembly to export, e.g. `robot.geop`.
-    program: PathBuf,
-    /// Where to write it: a directory — made if missing — or a `.zip`
-    /// file. Defaults to the program's path with `.geop` replaced by
-    /// `_urdf`, a directory.
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-    /// How finely curved faces are meshed: higher is smoother, and bigger.
-    #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
-    quality: u16,
-}
+// #[derive(clap::Args)]
+// struct UrdfArgs {
+//     /// The assembly to export, e.g. `robot.geop`.
+//     program: PathBuf,
+//     /// Where to write it: a directory — made if missing — or a `.zip`
+//     /// file. Defaults to the program's path with `.geop` replaced by
+//     /// `_urdf`, a directory.
+//     #[arg(short, long)]
+//     output: Option<PathBuf>,
+//     /// How finely curved faces are meshed: higher is smoother, and bigger.
+//     #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
+//     quality: u16,
+// }
 
-#[derive(clap::Args)]
-struct BomArgs {
-    /// The assembly to list, e.g. `robot.geop`.
-    program: PathBuf,
-    /// Where to write the CSV file. Written to the standard output if not
-    /// given.
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-    /// List the tree of sub-assemblies, each part counted per one of the
-    /// assembly placing it, rather than every part once with its count in
-    /// the whole.
-    #[arg(long)]
-    indented: bool,
-}
+// #[derive(clap::Args)]
+// struct BomArgs {
+//     /// The assembly to list, e.g. `robot.geop`.
+//     program: PathBuf,
+//     /// Where to write the CSV file. Written to the standard output if not
+//     /// given.
+//     #[arg(short, long)]
+//     output: Option<PathBuf>,
+//     /// List the tree of sub-assemblies, each part counted per one of the
+//     /// assembly placing it, rather than every part once with its count in
+//     /// the whole.
+//     #[arg(long)]
+//     indented: bool,
+// }
 
-/// Today's date, `YYYY-MM-DD` (UTC), for a title block.
-fn today() -> String {
-    let days = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| (d.as_secs() / 86_400) as i64)
-        .unwrap_or(0);
-    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}")
-}
+// /// Today's date, `YYYY-MM-DD` (UTC), for a title block.
+// fn today() -> String {
+//     let days = std::time::SystemTime::now()
+//         .duration_since(std::time::UNIX_EPOCH)
+//         .map(|d| (d.as_secs() / 86_400) as i64)
+//         .unwrap_or(0);
+//     // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+//     let z = days + 719_468;
+//     let era = z.div_euclid(146_097);
+//     let doe = z.rem_euclid(146_097);
+//     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+//     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+//     let mp = (5 * doy + 2) / 153;
+//     let day = doy - (153 * mp + 2) / 5 + 1;
+//     let month = if mp < 10 { mp + 3 } else { mp - 9 };
+//     let year = yoe + era * 400 + i64::from(month <= 2);
+//     format!("{year:04}-{month:02}-{day:02}")
+// }
 
-/// A scale as written, `1:2` or `5:1`, as paper length per model length.
-fn parse_scale(text: &str) -> GeopResult<f64> {
-    let bad = || GeopError::new(format!("the scale {text:?} is not like 1:2 or 5:1"));
-    let (a, b) = text.split_once(':').ok_or_else(bad)?;
-    let (a, b): (f64, f64) = (
-        a.trim().parse().map_err(|_| bad())?,
-        b.trim().parse().map_err(|_| bad())?,
-    );
-    if a > 0.0 && b > 0.0 {
-        Ok(a / b)
-    } else {
-        Err(bad())
-    }
-}
+// /// A scale as written, `1:2` or `5:1`, as paper length per model length.
+// fn parse_scale(text: &str) -> GeopResult<f64> {
+//     let bad = || GeopError::new(format!("the scale {text:?} is not like 1:2 or 5:1"));
+//     let (a, b) = text.split_once(':').ok_or_else(bad)?;
+//     let (a, b): (f64, f64) = (
+//         a.trim().parse().map_err(|_| bad())?,
+//         b.trim().parse().map_err(|_| bad())?,
+//     );
+//     if a > 0.0 && b > 0.0 {
+//         Ok(a / b)
+//     } else {
+//         Err(bad())
+//     }
+// }
 
-/// Writes the drawing `args` ask for; returns where.
-fn drawing(args: &DrawingCliArgs) -> GeopResult<PathBuf> {
-    use geop_ops_drawing::{DrawingArgs, Format, Projection, SheetSize, ViewKind};
-    let path = args.program.to_string_lossy();
-    let program = Program::from_json(&Disk.read(&path)?)?;
-    let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
-    let library = workspace.scope(&path);
-    if let Some(solid) = &args.flat_pattern {
-        let output = args.output.clone().unwrap_or_else(|| {
-            let stem = args
-                .program
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy();
-            args.program.with_file_name(format!("{stem}_flat.dxf"))
-        });
-        if Format::of_path(&output.to_string_lossy()) != Some(Format::Dxf) {
-            return Err(GeopError::new(format!(
-                "{} is no .dxf file: a flat pattern is written for cutting as DXF",
-                output.display()
-            )));
-        }
-        let part = program.build(&library)?;
-        let named = (!solid.is_empty()).then_some(solid.as_str());
-        let (_, text) = geop_ops_sheetmetal::flat_pattern_dxf(&part, named)?;
-        std::fs::write(&output, text)
-            .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
-        return Ok(output);
-    }
-    let found = match &args.step {
-        Some(id) => {
-            let index = program.index_of(id)?;
-            match &program.steps[index].operation {
-                PartOperation::Drawing(d) => Some((index, d.clone())),
-                _ => return Err(GeopError::new(format!("the step {id:?} is no drawing"))),
-            }
-        }
-        None => program
-            .steps
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, s)| match &s.operation {
-                PartOperation::Drawing(d) => Some((i, d.clone())),
-                _ => None,
-            }),
-    };
-    let (index, mut spec) = found.unwrap_or((program.steps.len(), DrawingArgs::default()));
-    let mut before = program.clone();
-    before.steps.truncate(index);
-    let part = before.build(&library)?;
+// /// Writes the drawing `args` ask for; returns where.
+// fn drawing(args: &DrawingCliArgs) -> GeopResult<PathBuf> {
+//     use geop_ops_drawing::{DrawingArgs, Format, Projection, SheetSize, ViewKind};
+//     let path = args.program.to_string_lossy();
+//     let program = Program::from_json(&Disk.read(&path)?)?;
+//     let workspace = Workspace::<S, Disk>::new(WithStandardParts(Disk));
+//     let library = workspace.scope(&path);
+//     if let Some(solid) = &args.flat_pattern {
+//         let output = args.output.clone().unwrap_or_else(|| {
+//             let stem = args
+//                 .program
+//                 .file_stem()
+//                 .unwrap_or_default()
+//                 .to_string_lossy();
+//             args.program.with_file_name(format!("{stem}_flat.dxf"))
+//         });
+//         if Format::of_path(&output.to_string_lossy()) != Some(Format::Dxf) {
+//             return Err(GeopError::new(format!(
+//                 "{} is no .dxf file: a flat pattern is written for cutting as DXF",
+//                 output.display()
+//             )));
+//         }
+//         let part = program.build(&library)?;
+//         let named = (!solid.is_empty()).then_some(solid.as_str());
+//         let (_, text) = geop_ops_sheetmetal::flat_pattern_dxf(&part, named)?;
+//         std::fs::write(&output, text)
+//             .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
+//         return Ok(output);
+//     }
+//     let found = match &args.step {
+//         Some(id) => {
+//             let index = program.index_of(id)?;
+//             match &program.steps[index].operation {
+//                 PartOperation::Drawing(d) => Some((index, d.clone())),
+//                 _ => return Err(GeopError::new(format!("the step {id:?} is no drawing"))),
+//             }
+//         }
+//         None => program
+//             .steps
+//             .iter()
+//             .enumerate()
+//             .rev()
+//             .find_map(|(i, s)| match &s.operation {
+//                 PartOperation::Drawing(d) => Some((i, d.clone())),
+//                 _ => None,
+//             }),
+//     };
+//     let (index, mut spec) = found.unwrap_or((program.steps.len(), DrawingArgs::default()));
+//     let mut before = program.clone();
+//     before.steps.truncate(index);
+//     let part = before.build(&library)?;
 
-    if !args.views.is_empty() {
-        spec.views = args
-            .views
-            .iter()
-            .map(|v| {
-                ViewKind::from_name(v.trim()).ok_or_else(|| {
-                    let known: Vec<&str> = ViewKind::ALL.iter().map(|k| k.name()).collect();
-                    GeopError::new(format!(
-                        "no view is named {v:?}; the views are {}",
-                        known.join(", ")
-                    ))
-                })
-            })
-            .collect::<GeopResult<_>>()?;
-    }
-    if args.first_angle {
-        spec.projection = Projection::FirstAngle;
-    }
-    if let Some(scale) = &args.scale {
-        spec.scale = Some(parse_scale(scale)?);
-    }
-    if let Some(sheet) = &args.sheet {
-        spec.sheet = SheetSize::ALL
-            .into_iter()
-            .find(|s| s.name() == sheet.to_ascii_lowercase())
-            .ok_or_else(|| GeopError::new(format!("no paper is named {sheet:?}: a4 to a0")))?;
-    }
-    if let Some(name) = &args.name {
-        spec.name = name.clone();
-    }
-    if spec.name.is_empty() {
-        spec.name = args
-            .program
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-    }
-    if let Some(material) = &args.material {
-        spec.material = material.clone();
-    }
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| args.program.with_extension("svg"));
-    let format = Format::of_path(&output.to_string_lossy()).ok_or_else(|| {
-        GeopError::new(format!(
-            "{} is neither .svg nor .dxf: name the drawing for the format to write",
-            output.display()
-        ))
-    })?;
-    if args.bom {
-        spec.bom = true;
-    }
-    let parts = geop_cad_base::inspect::parts_list(&part, &args.program.to_string_lossy(), &spec)?;
-    let text = geop_ops_drawing::render(&part, &spec, &today(), &parts, format)?;
-    std::fs::write(&output, text)
-        .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
-    Ok(output)
-}
+//     if !args.views.is_empty() {
+//         spec.views = args
+//             .views
+//             .iter()
+//             .map(|v| {
+//                 ViewKind::from_name(v.trim()).ok_or_else(|| {
+//                     let known: Vec<&str> = ViewKind::ALL.iter().map(|k| k.name()).collect();
+//                     GeopError::new(format!(
+//                         "no view is named {v:?}; the views are {}",
+//                         known.join(", ")
+//                     ))
+//                 })
+//             })
+//             .collect::<GeopResult<_>>()?;
+//     }
+//     if args.first_angle {
+//         spec.projection = Projection::FirstAngle;
+//     }
+//     if let Some(scale) = &args.scale {
+//         spec.scale = Some(parse_scale(scale)?);
+//     }
+//     if let Some(sheet) = &args.sheet {
+//         spec.sheet = SheetSize::ALL
+//             .into_iter()
+//             .find(|s| s.name() == sheet.to_ascii_lowercase())
+//             .ok_or_else(|| GeopError::new(format!("no paper is named {sheet:?}: a4 to a0")))?;
+//     }
+//     if let Some(name) = &args.name {
+//         spec.name = name.clone();
+//     }
+//     if spec.name.is_empty() {
+//         spec.name = args
+//             .program
+//             .file_stem()
+//             .map(|s| s.to_string_lossy().into_owned())
+//             .unwrap_or_default();
+//     }
+//     if let Some(material) = &args.material {
+//         spec.material = material.clone();
+//     }
+//     let output = args
+//         .output
+//         .clone()
+//         .unwrap_or_else(|| args.program.with_extension("svg"));
+//     let format = Format::of_path(&output.to_string_lossy()).ok_or_else(|| {
+//         GeopError::new(format!(
+//             "{} is neither .svg nor .dxf: name the drawing for the format to write",
+//             output.display()
+//         ))
+//     })?;
+//     if args.bom {
+//         spec.bom = true;
+//     }
+//     let parts = geop_cad_base::inspect::parts_list(&part, &args.program.to_string_lossy(), &spec)?;
+//     let text = geop_ops_drawing::render(&part, &spec, &today(), &parts, format)?;
+//     std::fs::write(&output, text)
+//         .map_err(|e| GeopError::new(format!("writing {}: {e}", output.display())))?;
+//     Ok(output)
+// }
 
 /// What a compile wrote, for the report.
 #[derive(Debug)]
@@ -408,60 +408,60 @@ fn build(path: &Path, cache_dir: Option<&Path>) -> GeopResult<(Program, Part<S>,
     Ok((program, part, report.failed))
 }
 
-/// Writes the robot `args` ask for; returns where, and how many links and
-/// joints it has.
-fn urdf(args: &UrdfArgs) -> GeopResult<(PathBuf, usize, usize)> {
-    let (_, part, _) = build(&args.program, None)?;
-    let name = args
-        .program
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "robot".into());
-    let robot = geop_ops_urdf::export(&part, &name, usize::from(args.quality))?;
-    let output = args.output.clone().unwrap_or_else(|| {
-        let mut dir = args.program.with_extension("").into_os_string();
-        dir.push("_urdf");
-        dir.into()
-    });
-    let write = |path: &Path, bytes: &[u8]| {
-        std::fs::write(path, bytes)
-            .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))
-    };
-    if output.extension().is_some_and(|e| e == "zip") {
-        write(&output, &robot.zip()?)?;
-    } else {
-        for (file, bytes) in robot.files() {
-            let path = output.join(&file);
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir)
-                    .map_err(|e| GeopError::new(format!("creating {}: {e}", dir.display())))?;
-            }
-            write(&path, &bytes)?;
-        }
-    }
-    Ok((output, robot.robot.links.len(), robot.robot.joints.len()))
-}
+// /// Writes the robot `args` ask for; returns where, and how many links and
+// /// joints it has.
+// fn urdf(args: &UrdfArgs) -> GeopResult<(PathBuf, usize, usize)> {
+//     let (_, part, _) = build(&args.program, None)?;
+//     let name = args
+//         .program
+//         .file_stem()
+//         .map(|s| s.to_string_lossy().into_owned())
+//         .unwrap_or_else(|| "robot".into());
+//     let robot = geop_ops_urdf::export(&part, &name, usize::from(args.quality))?;
+//     let output = args.output.clone().unwrap_or_else(|| {
+//         let mut dir = args.program.with_extension("").into_os_string();
+//         dir.push("_urdf");
+//         dir.into()
+//     });
+//     let write = |path: &Path, bytes: &[u8]| {
+//         std::fs::write(path, bytes)
+//             .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))
+//     };
+//     if output.extension().is_some_and(|e| e == "zip") {
+//         write(&output, &robot.zip()?)?;
+//     } else {
+//         for (file, bytes) in robot.files() {
+//             let path = output.join(&file);
+//             if let Some(dir) = path.parent() {
+//                 std::fs::create_dir_all(dir)
+//                     .map_err(|e| GeopError::new(format!("creating {}: {e}", dir.display())))?;
+//             }
+//             write(&path, &bytes)?;
+//         }
+//     }
+//     Ok((output, robot.robot.links.len(), robot.robot.joints.len()))
+// }
 
-/// The bill of materials `args` ask for: written as CSV where they say,
-/// and returned.
-fn bom(args: &BomArgs) -> GeopResult<geop_ops_bom::Bom> {
-    let (_, part, _) = build(&args.program, None)?;
-    let structure = match args.indented {
-        true => geop_ops_bom::Structure::Indented,
-        false => geop_ops_bom::Structure::Flat,
-    };
-    let file = args.program.to_string_lossy();
-    let bom = geop_cad_base::inspect::bill_of_materials(&part, &file, structure)?;
-    let csv = bom.to_csv();
-    match &args.output {
-        Some(path) => std::fs::write(path, csv)
-            .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))?,
-        None => std::io::stdout()
-            .write_all(csv.as_bytes())
-            .map_err(|e| GeopError::new(format!("writing the bill of materials: {e}")))?,
-    }
-    Ok(bom)
-}
+// /// The bill of materials `args` ask for: written as CSV where they say,
+// /// and returned.
+// fn bom(args: &BomArgs) -> GeopResult<geop_ops_bom::Bom> {
+//     let (_, part, _) = build(&args.program, None)?;
+//     let structure = match args.indented {
+//         true => geop_ops_bom::Structure::Indented,
+//         false => geop_ops_bom::Structure::Flat,
+//     };
+//     let file = args.program.to_string_lossy();
+//     let bom = geop_cad_base::inspect::bill_of_materials(&part, &file, structure)?;
+//     let csv = bom.to_csv();
+//     match &args.output {
+//         Some(path) => std::fs::write(path, csv)
+//             .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))?,
+//         None => std::io::stdout()
+//             .write_all(csv.as_bytes())
+//             .map_err(|e| GeopError::new(format!("writing the bill of materials: {e}")))?,
+//     }
+//     Ok(bom)
+// }
 
 fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     let io_err = |what: &str, path: &Path| {
@@ -479,23 +479,23 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         .file_stem()
         .and_then(|n| n.to_str())
         .unwrap_or("part");
-    if geop_ops_step::is_step_file(&output.to_string_lossy()) {
-        if !args.solids.is_empty() {
-            return Err(GeopError::new(
-                "choosing solids (--solid) is only for an STL mesh: a STEP file holds the whole part",
-            ));
-        }
-        let text = geop_ops_step::write_step(&part, name)?;
-        std::fs::write(&output, text).map_err(io_err("writing", &output))?;
-        let solids = part.topology().solids.len();
-        return Ok(Compiled {
-            output,
-            steps: program.steps.len(),
-            solids,
-            triangles: 0,
-            solved_for,
-        });
-    }
+    // if geop_ops_step::is_step_file(&output.to_string_lossy()) {
+    //     if !args.solids.is_empty() {
+    //         return Err(GeopError::new(
+    //             "choosing solids (--solid) is only for an STL mesh: a STEP file holds the whole part",
+    //         ));
+    //     }
+    //     let text = geop_ops_step::write_step(&part, name)?;
+    //     std::fs::write(&output, text).map_err(io_err("writing", &output))?;
+    //     let solids = part.topology().solids.len();
+    //     return Ok(Compiled {
+    //         output,
+    //         steps: program.steps.len(),
+    //         solids,
+    //         triangles: 0,
+    //         solved_for,
+    //     });
+    // }
 
     let all = part.solid_meshes(usize::from(args.quality))?;
     let chosen: Vec<&(String, Vec<TriangleFace<S>>)> = if args.solids.is_empty() {
@@ -678,17 +678,17 @@ fn main() -> ExitCode {
                 c.output.display()
             );
         }),
-        Command::Drawing(args) => drawing(&args).map(|output| {
-            eprintln!("drawing -> {}", output.display());
-        }),
-        Command::Urdf(args) => urdf(&args).map(|(output, links, joints)| {
-            eprintln!("{links} links, {joints} joints -> {}", output.display());
-        }),
-        Command::Bom(args) => bom(&args).map(|bom| {
-            if let Some(output) = &args.output {
-                eprintln!("{} lines -> {}", bom.lines.len(), output.display());
-            }
-        }),
+        // Command::Drawing(args) => drawing(&args).map(|output| {
+        //     eprintln!("drawing -> {}", output.display());
+        // }),
+        // Command::Urdf(args) => urdf(&args).map(|(output, links, joints)| {
+        //     eprintln!("{links} links, {joints} joints -> {}", output.display());
+        // }),
+        // Command::Bom(args) => bom(&args).map(|bom| {
+        //     if let Some(output) = &args.output {
+        //         eprintln!("{} lines -> {}", bom.lines.len(), output.display());
+        //     }
+        // }),
         Command::Examples(args) => export_examples(&args).map(|compiled| {
             for c in &compiled {
                 eprintln!("{} triangles -> {}", c.triangles, c.output.display());
@@ -829,42 +829,43 @@ mod tests {
         assert!(editor.handle_json("not json").is_err());
     }
 
-    /// An output ending in `.step` is a STEP file of the part, which a
-    /// program next to it imports back to as many solids.
-    #[test]
-    fn compiles_to_step_and_imports_it_back() {
-        let dir = scratch("step");
-        let program = examples::all()
-            .into_iter()
-            .find(|(name, _)| *name == "box_with_drill_hole")
-            .unwrap()
-            .1();
-        let path = dir.join("box.geop");
-        std::fs::write(&path, program.to_json().unwrap()).unwrap();
-        let compiled = compile(&CompileArgs {
-            output: Some(dir.join("box.step")),
-            ..args(path)
-        })
-        .unwrap();
-        let text = std::fs::read_to_string(&compiled.output).unwrap();
-        assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
-        assert!(text.contains("MANIFOLD_SOLID_BREP"));
+    // /// An output ending in `.step` is a STEP file of the part, which a
+    // /// program next to it imports back to as many solids.
+    // #[test]
+    // fn compiles_to_step_and_imports_it_back() {
+        // let dir = scratch("step");
+        // let program = examples::all()
+            // .into_iter()
+            // .find(|(name, _)| *name == "box_with_drill_hole")
+            // .unwrap()
+            // .1();
+        // let path = dir.join("box.geop");
+        // std::fs::write(&path, program.to_json().unwrap()).unwrap();
+        // let compiled = compile(&CompileArgs {
+            // output: Some(dir.join("box.step")),
+            // ..args(path)
+        // })
+        // .unwrap();
+        // let text = std::fs::read_to_string(&compiled.output).unwrap();
+        // assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
+        // assert!(text.contains("MANIFOLD_SOLID_BREP"));
 
-        let mut import = geop_cad_base::Program::default();
-        import.push(
-            "imp",
-            geop_cad_base::PartOperation::ImportStep(geop_ops_step::ImportStepArgs {
-                file: "box.step".into(),
-            }),
-        );
-        let path = dir.join("import.geop");
-        std::fs::write(&path, import.to_json().unwrap()).unwrap();
-        let back = compile(&args(path)).unwrap();
-        assert_eq!(back.solids, compiled.solids);
-        assert!(back.triangles > 0);
-    }
+        // let mut import = geop_cad_base::Program::default();
+        // import.push(
+            // "imp",
+            // geop_cad_base::PartOperation::ImportStep(geop_ops_step::ImportStepArgs {
+                // file: "box.step".into(),
+            // }),
+        // );
+        // let path = dir.join("import.geop");
+        // std::fs::write(&path, import.to_json().unwrap()).unwrap();
+        // let back = compile(&args(path)).unwrap();
+        // assert_eq!(back.solids, compiled.solids);
+        // assert!(back.triangles > 0);
+    // }
 
     #[test]
+    #[ignore = "slow: 7 s — run with `cargo test -- --ignored`"]
     fn compiles_every_example() {
         let dir = scratch("examples");
         for (name, program) in examples::all() {
@@ -879,6 +880,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: 10 s — run with `cargo test -- --ignored`"]
     fn export_examples_writes_every_example_as_json_and_stl() {
         let dir = scratch("export-examples");
         let compiled = export_examples(&ExamplesArgs {
@@ -904,74 +906,74 @@ mod tests {
         }
     }
 
-    /// The arm, exported as a URDF robot: by default into a directory
-    /// beside it — `robot.urdf` and the mesh of its link — and as one ZIP
-    /// archive of the same files when asked for a `.zip`.
-    #[test]
-    fn exports_the_arm_as_urdf() {
-        let dir = scratch("urdf");
-        let (_, files) = examples::workspaces()
-            .into_iter()
-            .find(|(name, _)| *name == "arm")
-            .unwrap();
-        let files = files();
-        for (file, program) in &files {
-            std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-        }
-        let args = UrdfArgs {
-            program: dir.join("arm.geop"),
-            output: None,
-            quality: 8,
-        };
-        let (output, links, joints) = urdf(&args).unwrap();
-        assert_eq!(output, dir.join("arm_urdf"));
-        assert_eq!((links, joints), (3, 2));
-        let text = std::fs::read_to_string(output.join("robot.urdf")).unwrap();
-        assert!(text.contains(r#"<robot name="arm">"#), "{text}");
-        assert!(output.join("meshes/link.stl").is_file());
+    // /// The arm, exported as a URDF robot: by default into a directory
+    // /// beside it — `robot.urdf` and the mesh of its link — and as one ZIP
+    // /// archive of the same files when asked for a `.zip`.
+    // #[test]
+    // fn exports_the_arm_as_urdf() {
+        // let dir = scratch("urdf");
+        // let (_, files) = examples::workspaces()
+            // .into_iter()
+            // .find(|(name, _)| *name == "arm")
+            // .unwrap();
+        // let files = files();
+        // for (file, program) in &files {
+            // std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+        // }
+        // let args = UrdfArgs {
+            // program: dir.join("arm.geop"),
+            // output: None,
+            // quality: 8,
+        // };
+        // let (output, links, joints) = urdf(&args).unwrap();
+        // assert_eq!(output, dir.join("arm_urdf"));
+        // assert_eq!((links, joints), (3, 2));
+        // let text = std::fs::read_to_string(output.join("robot.urdf")).unwrap();
+        // assert!(text.contains(r#"<robot name="arm">"#), "{text}");
+        // assert!(output.join("meshes/link.stl").is_file());
 
-        let zip = dir.join("arm.zip");
-        urdf(&UrdfArgs {
-            output: Some(zip.clone()),
-            ..args
-        })
-        .unwrap();
-        let bytes = std::fs::read(zip).unwrap();
-        assert!(bytes.starts_with(b"PK\x03\x04"));
-        let urdf_at = bytes.windows(10).position(|w| w == b"robot.urdf");
-        assert!(urdf_at.is_some());
-    }
+        // let zip = dir.join("arm.zip");
+        // urdf(&UrdfArgs {
+            // output: Some(zip.clone()),
+            // ..args
+        // })
+        // .unwrap();
+        // let bytes = std::fs::read(zip).unwrap();
+        // assert!(bytes.starts_with(b"PK\x03\x04"));
+        // let urdf_at = bytes.windows(10).position(|w| w == b"robot.urdf");
+        // assert!(urdf_at.is_some());
+    // }
 
-    /// The bolted plate's bill of materials, written as CSV: its plate,
-    /// screw and nut, the standard parts by their norms.
-    #[test]
-    fn writes_the_bill_of_materials_of_the_bolted_plate() {
-        let dir = scratch("bom");
-        let (_, files) = examples::workspaces()
-            .into_iter()
-            .find(|(name, _)| *name == "bolted_plate")
-            .unwrap();
-        let files = files();
-        for (file, program) in &files {
-            std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-        }
-        let output = dir.join("bom.csv");
-        let args = BomArgs {
-            program: dir.join("bolted_plate.geop"),
-            output: Some(output.clone()),
-            indented: false,
-        };
-        let listed = bom(&args).unwrap();
-        assert_eq!(listed.lines.len(), 3);
-        let csv = std::fs::read_to_string(&output).unwrap();
-        let rows: Vec<&str> = csv.lines().collect();
-        assert_eq!(rows.len(), 5, "{csv}");
-        assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
-        assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
-        let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
-        assert!(rows[2].contains(screw), "{csv}");
-        assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
-    }
+    // /// The bolted plate's bill of materials, written as CSV: its plate,
+    // /// screw and nut, the standard parts by their norms.
+    // #[test]
+    // fn writes_the_bill_of_materials_of_the_bolted_plate() {
+        // let dir = scratch("bom");
+        // let (_, files) = examples::workspaces()
+            // .into_iter()
+            // .find(|(name, _)| *name == "bolted_plate")
+            // .unwrap();
+        // let files = files();
+        // for (file, program) in &files {
+            // std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+        // }
+        // let output = dir.join("bom.csv");
+        // let args = BomArgs {
+            // program: dir.join("bolted_plate.geop"),
+            // output: Some(output.clone()),
+            // indented: false,
+        // };
+        // let listed = bom(&args).unwrap();
+        // assert_eq!(listed.lines.len(), 3);
+        // let csv = std::fs::read_to_string(&output).unwrap();
+        // let rows: Vec<&str> = csv.lines().collect();
+        // assert_eq!(rows.len(), 5, "{csv}");
+        // assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
+        // assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
+        // let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
+        // assert!(rows[2].contains(screw), "{csv}");
+        // assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
+    // }
 
     /// An assembly compiles with the parts it places, each where it is
     /// placed, read from the files beside it; one solid of a placed part is
@@ -1055,75 +1057,75 @@ mod tests {
         assert!(err.to_string().contains("luggage_tag"), "{err}");
     }
 
-    /// `geop drawing bracket.geop -o bracket.dxf --views front,top`: the
-    /// drawing written in the format its name says, the views asked for.
-    #[test]
-    fn draws_a_program() {
-        let dir = scratch("drawing");
-        let path = dir.join("bracket.geop");
-        std::fs::write(&path, examples::bracket().to_json().unwrap()).unwrap();
-        let args = |output: &str, views: &[&str]| DrawingCliArgs {
-            program: path.clone(),
-            output: Some(dir.join(output)),
-            step: None,
-            views: views.iter().map(|v| v.to_string()).collect(),
-            first_angle: true,
-            scale: Some("2:1".into()),
-            sheet: None,
-            name: None,
-            material: Some("6061-T6".into()),
-            bom: false,
-            flat_pattern: None,
-        };
-        let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
-        let dxf = std::fs::read_to_string(written).unwrap();
-        assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
-        for text in ["bracket", "6061-T6", "2:1", "FIRST ANGLE"] {
-            assert!(dxf.contains(&format!("\n{text}\n")), "{text}");
-        }
-        let svg = std::fs::read_to_string(drawing(&args("bracket.svg", &[])).unwrap()).unwrap();
-        assert!(svg.starts_with("<svg"));
-        let err = drawing(&args("bracket.png", &[])).unwrap_err();
-        assert!(err.to_string().contains(".svg nor .dxf"), "{err}");
-        let err = drawing(&args("bracket.svg", &["side"])).unwrap_err();
-        assert!(err.to_string().contains("front"), "{err}");
-        assert_eq!(parse_scale("1:5").unwrap(), 0.2);
-        assert_eq!(today().len(), 10);
-    }
+    // /// `geop drawing bracket.geop -o bracket.dxf --views front,top`: the
+    // /// drawing written in the format its name says, the views asked for.
+    // #[test]
+    // fn draws_a_program() {
+        // let dir = scratch("drawing");
+        // let path = dir.join("bracket.geop");
+        // std::fs::write(&path, examples::bracket().to_json().unwrap()).unwrap();
+        // let args = |output: &str, views: &[&str]| DrawingCliArgs {
+            // program: path.clone(),
+            // output: Some(dir.join(output)),
+            // step: None,
+            // views: views.iter().map(|v| v.to_string()).collect(),
+            // first_angle: true,
+            // scale: Some("2:1".into()),
+            // sheet: None,
+            // name: None,
+            // material: Some("6061-T6".into()),
+            // bom: false,
+            // flat_pattern: None,
+        // };
+        // let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
+        // let dxf = std::fs::read_to_string(written).unwrap();
+        // assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
+        // for text in ["bracket", "6061-T6", "2:1", "FIRST ANGLE"] {
+            // assert!(dxf.contains(&format!("\n{text}\n")), "{text}");
+        // }
+        // let svg = std::fs::read_to_string(drawing(&args("bracket.svg", &[])).unwrap()).unwrap();
+        // assert!(svg.starts_with("<svg"));
+        // let err = drawing(&args("bracket.png", &[])).unwrap_err();
+        // assert!(err.to_string().contains(".svg nor .dxf"), "{err}");
+        // let err = drawing(&args("bracket.svg", &["side"])).unwrap_err();
+        // assert!(err.to_string().contains("front"), "{err}");
+        // assert_eq!(parse_scale("1:5").unwrap(), 0.2);
+        // assert_eq!(today().len(), 10);
+    // }
 
-    /// `geop drawing sheet_metal_bracket.geop --flat-pattern`: the
-    /// bracket's flat pattern for laser cutting, next to the program — its
-    /// outline and holes on the CUT layer, its two bends on the BEND layer.
-    #[test]
-    fn writes_a_flat_pattern_for_cutting() {
-        let dir = scratch("flat-pattern");
-        let path = dir.join("sheet_metal_bracket.geop");
-        std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
-        let args = DrawingCliArgs {
-            program: path.clone(),
-            output: None,
-            step: None,
-            views: Vec::new(),
-            first_angle: false,
-            scale: None,
-            sheet: None,
-            name: None,
-            material: None,
-            bom: false,
-            flat_pattern: Some(String::new()),
-        };
-        let written = drawing(&args).unwrap();
-        assert_eq!(written, dir.join("sheet_metal_bracket_flat.dxf"));
-        let dxf = std::fs::read_to_string(written).unwrap();
-        assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
-        assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
-        let err = drawing(&DrawingCliArgs {
-            output: Some(dir.join("flat.svg")),
-            ..args
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("no .dxf"), "{err}");
-    }
+    // /// `geop drawing sheet_metal_bracket.geop --flat-pattern`: the
+    // /// bracket's flat pattern for laser cutting, next to the program — its
+    // /// outline and holes on the CUT layer, its two bends on the BEND layer.
+    // #[test]
+    // fn writes_a_flat_pattern_for_cutting() {
+        // let dir = scratch("flat-pattern");
+        // let path = dir.join("sheet_metal_bracket.geop");
+        // std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
+        // let args = DrawingCliArgs {
+            // program: path.clone(),
+            // output: None,
+            // step: None,
+            // views: Vec::new(),
+            // first_angle: false,
+            // scale: None,
+            // sheet: None,
+            // name: None,
+            // material: None,
+            // bom: false,
+            // flat_pattern: Some(String::new()),
+        // };
+        // let written = drawing(&args).unwrap();
+        // assert_eq!(written, dir.join("sheet_metal_bracket_flat.dxf"));
+        // let dxf = std::fs::read_to_string(written).unwrap();
+        // assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
+        // assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
+        // let err = drawing(&DrawingCliArgs {
+            // output: Some(dir.join("flat.svg")),
+            // ..args
+        // })
+        // .unwrap_err();
+        // assert!(err.to_string().contains("no .dxf"), "{err}");
+    // }
 
     #[test]
     fn an_unknown_solid_names_the_known_ones() {

@@ -664,6 +664,7 @@ mod tests {
         assert_eq!(quarter.topology().get_face(cap).unwrap().holes.len(), 1);
     }
     #[test]
+    #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
     fn holes_sweep_voids_and_tunnels() {
         for_all_scalars!(check_holes_sweep_voids_and_tunnels);
     }

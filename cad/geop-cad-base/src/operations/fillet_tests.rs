@@ -6,7 +6,7 @@ use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_ops::operation::Role;
 use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+// use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs};
 use geop_ops_fillet::{ChamferArgs, FilletArgs, VertexRadius};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
@@ -642,117 +642,117 @@ fn circle_sketch(x: f64, y: f64, r: f64) -> Sketch {
     circle
 }
 
-/// A square of side 2 around the origin lofted up into a circle of radius
-/// 0.6 at `z = 2`: its walls are ruled, neither planes nor surfaces of
-/// revolution, so its edges are free-form.
-fn square_to_circle() -> Program {
-    let mut square = Sketch::new();
-    let p: Vec<_> = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
-        .iter()
-        .map(|c| square.add_point(n(c[0]), n(c[1])))
-        .collect();
-    for i in 0..4 {
-        square.add_line(p[i], p[(i + 1) % 4]);
-    }
-    lofted(square, circle_sketch(0.0, 0.0, 0.6))
-}
+// /// A square of side 2 around the origin lofted up into a circle of radius
+// /// 0.6 at `z = 2`: its walls are ruled, neither planes nor surfaces of
+// /// revolution, so its edges are free-form.
+// fn square_to_circle() -> Program {
+//     let mut square = Sketch::new();
+//     let p: Vec<_> = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
+//         .iter()
+//         .map(|c| square.add_point(n(c[0]), n(c[1])))
+//         .collect();
+//     for i in 0..4 {
+//         square.add_line(p[i], p[(i + 1) % 4]);
+//     }
+//     lofted(square, circle_sketch(0.0, 0.0, 0.6))
+// }
 
-/// `bottom`, drawn on the `xy` plane, lofted up into `top`, drawn 2 above
-/// it.
-fn lofted(bottom: Sketch, top: Sketch) -> Program {
-    let mut program = Program::new();
-    let xy = EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
-    program.push(
-        "bottom",
-        AddSketchArgs {
-            plane: Some(xy.clone()),
-            sketch: bottom,
-            ..Default::default()
-        },
-    );
-    program.push(
-        "top_plane",
-        AddDatumArgs {
-            selection: vec![xy],
-            construction: Construction::Offset {
-                distance: 2.0.into(),
-            },
-        },
-    );
-    program.push(
-        "top",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum("top_plane")),
-            sketch: top,
-            ..Default::default()
-        },
-    );
-    program.push(
-        "transition",
-        LoftArgs {
-            profiles: vec!["bottom".into(), "top".into()],
-            matches: Vec::new(),
-            guides: Vec::new(),
-            face: false,
-            combine: Combine::NewBody,
-        },
-    );
-    program
-}
+// /// `bottom`, drawn on the `xy` plane, lofted up into `top`, drawn 2 above
+// /// it.
+// fn lofted(bottom: Sketch, top: Sketch) -> Program {
+//     let mut program = Program::new();
+//     let xy = EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
+//     program.push(
+//         "bottom",
+//         AddSketchArgs {
+//             plane: Some(xy.clone()),
+//             sketch: bottom,
+//             ..Default::default()
+//         },
+//     );
+//     program.push(
+//         "top_plane",
+//         AddDatumArgs {
+//             selection: vec![xy],
+//             construction: Construction::Offset {
+//                 distance: 2.0.into(),
+//             },
+//         },
+//     );
+//     program.push(
+//         "top",
+//         AddSketchArgs {
+//             plane: Some(EntityRef::datum("top_plane")),
+//             sketch: top,
+//             ..Default::default()
+//         },
+//     );
+//     program.push(
+//         "transition",
+//         LoftArgs {
+//             profiles: vec!["bottom".into(), "top".into()],
+//             matches: Vec::new(),
+//             guides: Vec::new(),
+//             face: false,
+//             combine: Combine::NewBody,
+//         },
+//     );
+//     program
+// }
 
-/// A circle of radius 1 lofted up into one of radius 0.6 off to the side,
-/// around `(0.3, 0)`: an oblique cone, ruled, no surface of revolution. Its
-/// top rim rounded: picking one of its arcs rounds the whole circle, the
-/// ball rolled round between the flat top and the slanting wall. The rim
-/// is gone, and the round meets the top inside it.
-#[test]
-fn fillet_lofted_rim() {
-    let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
-    let before = program.build::<S>(&NoFiles).unwrap();
-    let rim = edges_where(&before, |e| {
-        let (t0, t1) = e.curve.domain();
-        let p = e
-            .curve
-            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-            .unwrap();
-        p[2].could_be_equal(S::from_f64(2.0))
-    });
-    assert_eq!(rim.len(), 4, "{rim:?}");
-    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-    let part = program.build::<S>(&NoFiles).unwrap();
-    assert_valid(&part);
-    assert_eq!(part.solid_names(), ["fillet(round)"]);
-    assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
-    // Every vertex left on the top lies inside the rim.
-    for v in part.topology().vertices.values() {
-        if v.point[2].could_be_equal(S::from_f64(2.0)) {
-            let (x, y) = (v.point[0].to_f64() - 0.3, v.point[1].to_f64());
-            assert!(x.hypot(y) < 0.6 - 0.05, "a vertex on the top at {x}, {y}");
-        }
-    }
-}
+// /// A circle of radius 1 lofted up into one of radius 0.6 off to the side,
+// /// around `(0.3, 0)`: an oblique cone, ruled, no surface of revolution. Its
+// /// top rim rounded: picking one of its arcs rounds the whole circle, the
+// /// ball rolled round between the flat top and the slanting wall. The rim
+// /// is gone, and the round meets the top inside it.
+// #[test]
+// fn fillet_lofted_rim() {
+//     let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
+//     let before = program.build::<S>(&NoFiles).unwrap();
+//     let rim = edges_where(&before, |e| {
+//         let (t0, t1) = e.curve.domain();
+//         let p = e
+//             .curve
+//             .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+//             .unwrap();
+//         p[2].could_be_equal(S::from_f64(2.0))
+//     });
+//     assert_eq!(rim.len(), 4, "{rim:?}");
+//     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+//     let part = program.build::<S>(&NoFiles).unwrap();
+//     assert_valid(&part);
+//     assert_eq!(part.solid_names(), ["fillet(round)"]);
+//     assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
+//     // Every vertex left on the top lies inside the rim.
+//     for v in part.topology().vertices.values() {
+//         if v.point[2].could_be_equal(S::from_f64(2.0)) {
+//             let (x, y) = (v.point[0].to_f64() - 0.3, v.point[1].to_f64());
+//             assert!(x.hypot(y) < 0.6 - 0.05, "a vertex on the top at {x}, {y}");
+//         }
+//     }
+// }
 
-/// The lofted body's bottom edges end at corners where the third face, a
-/// ruled wall, is no plane: refused, naming the vertex.
-#[test]
-fn fillet_lofted_bottom_edge_is_refused() {
-    let mut program = square_to_circle();
-    let before = program.build::<S>(&NoFiles).unwrap();
-    let bottom = edges_where(&before, |e| {
-        let (t0, t1) = e.curve.domain();
-        let p = e
-            .curve
-            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-            .unwrap();
-        p[2].could_be_equal(S::ZERO)
-    });
-    program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
-    let Err(error) = program.build::<S>(&NoFiles) else {
-        panic!("rounding a bottom edge of the loft is not refused");
-    };
-    let error = format!("{error:?}");
-    assert!(error.contains("the third face is not planar"), "{error}");
-}
+// /// The lofted body's bottom edges end at corners where the third face, a
+// /// ruled wall, is no plane: refused, naming the vertex.
+// #[test]
+// fn fillet_lofted_bottom_edge_is_refused() {
+//     let mut program = square_to_circle();
+//     let before = program.build::<S>(&NoFiles).unwrap();
+//     let bottom = edges_where(&before, |e| {
+//         let (t0, t1) = e.curve.domain();
+//         let p = e
+//             .curve
+//             .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+//             .unwrap();
+//         p[2].could_be_equal(S::ZERO)
+//     });
+//     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
+//     let Err(error) = program.build::<S>(&NoFiles) else {
+//         panic!("rounding a bottom edge of the loft is not refused");
+//     };
+//     let error = format!("{error:?}");
+//     assert!(error.contains("the third face is not planar"), "{error}");
+// }
 
 /// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined
 /// by straight sides — a rim of lines and arcs running on into each other
@@ -825,28 +825,28 @@ fn fillet_slot_rim_as_one_chain() {
     assert!(!near([1.0, -0.5, 1.0]));
 }
 
-/// The top rim of a square lofted into a circle: the ruled walls meet at
-/// creases, tangent only at the rim itself, so the ball rolling round would
-/// have to roll over them — refused, naming the faces and the edge.
-#[test]
-fn fillet_rim_over_creases_is_refused() {
-    let mut program = square_to_circle();
-    let before = program.build::<S>(&NoFiles).unwrap();
-    let rim = edges_where(&before, |e| {
-        let (t0, t1) = e.curve.domain();
-        let p = e
-            .curve
-            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-            .unwrap();
-        p[2].could_be_equal(S::from_f64(2.0))
-    });
-    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-    let Err(error) = program.build::<S>(&NoFiles) else {
-        panic!("rounding the rim over the creases is not refused");
-    };
-    let error = format!("{error:?}");
-    assert!(error.contains("meet at a crease"), "{error}");
-}
+// /// The top rim of a square lofted into a circle: the ruled walls meet at
+// /// creases, tangent only at the rim itself, so the ball rolling round would
+// /// have to roll over them — refused, naming the faces and the edge.
+// #[test]
+// fn fillet_rim_over_creases_is_refused() {
+//     let mut program = square_to_circle();
+//     let before = program.build::<S>(&NoFiles).unwrap();
+//     let rim = edges_where(&before, |e| {
+//         let (t0, t1) = e.curve.domain();
+//         let p = e
+//             .curve
+//             .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+//             .unwrap();
+//         p[2].could_be_equal(S::from_f64(2.0))
+//     });
+//     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+//     let Err(error) = program.build::<S>(&NoFiles) else {
+//         panic!("rounding the rim over the creases is not refused");
+//     };
+//     let error = format!("{error:?}");
+//     assert!(error.contains("meet at a crease"), "{error}");
+// }
 
 /// The slot's rim rounded with radii set at two of its vertices, where its
 /// sides meet its half circles — 0.15 at `(1, -0.5)`, 0.05 at `(-1, 0.5)`

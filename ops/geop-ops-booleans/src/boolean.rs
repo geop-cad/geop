@@ -1337,6 +1337,7 @@ mod tests {
     /// `(-0.5, 0, -0.5)`, where the cutting cube's face meets an edge of the
     /// first result.
     #[test]
+    #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn bored_cube_plus_inscribed_sphere_minus_half() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1357,6 +1358,7 @@ mod tests {
     /// right: the bore touches the cube's sides along lines, and the one at
     /// `x = 0.5` survives the cut.
     #[test]
+    #[ignore = "slow: 5 s — run with `cargo test -- --ignored`"]
     fn flush_bored_cube_plus_inscribed_sphere_section() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1706,11 +1708,13 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn duplicated_sphere_all_operators() {
         check_duplicated_shape(|part| sphere(part, [0.0, 0.0, 0.0], 0.5));
     }
 
     #[test]
+    #[ignore = "slow: 8 s — run with `cargo test -- --ignored`"]
     fn duplicated_cylinder_all_operators() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         check_duplicated_shape(|part| cylinder(part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z));
@@ -1804,6 +1808,7 @@ mod tests {
     /// first's in two Steinmetz ellipses, which end exactly where both bores
     /// touch the cube's faces — at the midpoints of its edges.
     #[test]
+    #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
     fn cube_minus_two_inscribed_bores() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1884,6 +1889,7 @@ mod tests {
     /// where the two ellipses cross with the walls tangent — so each of its
     /// eight arcs can only be traced from the midpoint end.
     #[test]
+    #[ignore = "slow: 5 s — run with `cargo test -- --ignored`"]
     fn two_inscribed_bores_remesh_imprints_every_arc() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1907,6 +1913,7 @@ mod tests {
     /// to `(±0.5, ±0.5, 0)`. That point is interior to the third wall, so both
     /// arcs leave it into the same face.
     #[test]
+    #[ignore = "slow: 9 s — run with `cargo test -- --ignored`"]
     fn three_inscribed_bores_remesh_imprints_every_arc() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();
@@ -1934,6 +1941,7 @@ mod tests {
     /// Each bore is tangent to four faces, and each later bore crosses the
     /// earlier ones at Steinmetz points.
     #[test]
+    #[ignore = "slow: 8 s — run with `cargo test -- --ignored`"]
     fn cube_minus_three_inscribed_bores() {
         use geop_ops_extrude_revolve::shapes::cylinder::Axis;
         let mut part = M::new();

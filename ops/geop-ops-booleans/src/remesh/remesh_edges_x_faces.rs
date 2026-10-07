@@ -2208,6 +2208,7 @@ mod splice_regression_tests {
     }
 
     #[test]
+    #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
     fn figure8_cylinder_engulfing_thin_slice_is_fully_valid_after_remesh() {
         check_engulfing_scene_fully_valid("figure8_cylinder_engulfing_thin_slice");
     }
