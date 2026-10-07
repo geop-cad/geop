@@ -657,7 +657,7 @@ impl<S: Scalar> PartView<S> {
         parameter: Option<String>,
     ) -> GeopResult<()> {
         self.instances.push(ViewInstance {
-            fixed: part.is_fixed(&name),
+            fixed: part.holds(&name),
             name,
             component: key,
             frame: pose

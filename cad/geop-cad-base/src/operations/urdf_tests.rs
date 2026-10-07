@@ -11,10 +11,9 @@ use geop_core_math::{
 };
 use geop_ops::{
     Part,
-    assembly::{CouplingKind, JointKind, Mate},
     part::{ParamValue, pose_parameter},
 };
-use geop_ops_assembly::AddPartArgs;
+use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, PartMates};
 use geop_ops_urdf::{JointType, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::examples::{self, n, pose};

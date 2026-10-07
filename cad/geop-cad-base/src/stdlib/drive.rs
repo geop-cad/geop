@@ -28,8 +28,8 @@
 //! `x` mesh when the second has a gap facing the first: turned half a
 //! tooth, `180° / z2`, if `z2` is even, and not at all if it is odd.
 //!
-//! [`CouplingKind::Gear`]: geop_ops::assembly::CouplingKind::Gear
-//! [`CouplingKind::RackPinion`]: geop_ops::assembly::CouplingKind::RackPinion
+//! [`CouplingKind::Gear`]: geop_ops_assembly::CouplingKind::Gear
+//! [`CouplingKind::RackPinion`]: geop_ops_assembly::CouplingKind::RackPinion
 
 use geop_core_math::{
     geop_error::GeopResult,

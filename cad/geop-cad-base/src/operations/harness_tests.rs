@@ -9,11 +9,10 @@ use geop_core_math::{
 };
 use geop_ops::{
     EntityRef,
-    assembly::{Kind, Mate},
     part::{ParamValue, State, pose_parameter},
     ui::{StepEditEvent, Value},
 };
-use geop_ops_assembly::AddPartArgs;
+use geop_ops_assembly::{AddPartArgs, Kind, Mate};
 use geop_ops_harness::{PartCables, RouteArgs, Wire, WireSize};
 
 use crate::examples::pose;

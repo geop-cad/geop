@@ -9,14 +9,13 @@
 //! implies for others: another sketch picked brings its own axis, a
 //! selection picks the construction it fits.
 
-use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar};
+use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vector3};
 
 use super::{
     Action, Choice, Control, Dialog, Extent, Gizmo, ListItem, Number, Picked, Prompt, Reference,
     Tone, Value, Visual,
 };
 use crate::{
-    assembly::Drag,
     operation::{EntityRef, Role},
     parameters::Formula,
     part::State,
@@ -46,6 +45,16 @@ pub struct Edit<'e, A, T> {
     pub session: &'e mut T,
     pub selection: &'e mut Vec<String>,
     pub state: &'e mut State,
+}
+
+/// A drag of a placed part: its point `local` — in its own frame — pulled
+/// towards the point `target`, before the part's constraints are solved
+/// alone. The part is named by the parameter its pose is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drag<S: Scalar> {
+    pub parameter: String,
+    pub local: Vector3<S>,
+    pub target: Vector3<S>,
 }
 
 /// What setting a field does.

@@ -18,12 +18,11 @@ use geop_core_math::{
 };
 use geop_ops::{
     EntityRef, ORIGIN, Part, PartDescription,
-    assembly::{Kind, Mate},
     part::{ParamValue, State, pose_parameter},
     program::library::{Files, FilesMut},
     ui::{Pointer, Reach, StepEditEvent},
 };
-use geop_ops_assembly::AddPartArgs;
+use geop_ops_assembly::{AddPartArgs, Kind, Mate, PartMates};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
@@ -507,7 +506,7 @@ fn robot_timings() {
 /// edit — to solve its mates, to check them — and never once per step: a
 /// step list of every placed part, each asking the whole assembly how
 /// free its part is, made a drag of a 2000-part robot take minutes. Counted
-/// in mates resolved (see [`geop_ops::assembly::mates_resolved`]), not
+/// in mates resolved (see [`geop_ops_assembly::mates_resolved`]), not
 /// timed, so it shows at a modest size: per mate of the assembly — those
 /// of the parts placed in it included — an edit resolves a few, however
 /// many there are.
@@ -515,9 +514,9 @@ fn robot_timings() {
 fn an_edit_resolves_each_mate_a_few_times() {
     for screws in [20, 80] {
         let resolved = |f: &mut dyn FnMut()| {
-            let before = geop_ops::assembly::mates_resolved();
+            let before = geop_ops_assembly::mates_resolved();
             f();
-            geop_ops::assembly::mates_resolved() - before
+            geop_ops_assembly::mates_resolved() - before
         };
         let mut editor = None;
         let load = resolved(&mut || editor = Some(robot_editor(1, screws).0));

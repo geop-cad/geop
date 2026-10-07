@@ -20,9 +20,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use geop_core_math::vector::Vector3;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_ops::ui::Drag;
 use geop_ops::{
     Context, Design, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
-    assembly::{Drag, JointInfo, MateFreedom},
     operation::Role,
     parameters::{Parameters, Resolved},
     part::{ParamValue, State},
@@ -32,6 +32,7 @@ use geop_ops::{
         Visual,
     },
 };
+use geop_ops_assembly::{JointInfo, MateFreedom, PartMates};
 use geop_ops_rasterize::stl;
 use serde::{Deserialize, Serialize};
 
@@ -534,7 +535,7 @@ pub struct Editor<S: Scalar> {
     examples: Vec<&'static str>,
     workspace_examples: Vec<&'static str>,
     /// How the solve of the drag tool's last drag went.
-    dragged: Option<geop_ops::assembly::MateReport>,
+    dragged: Option<geop_ops_assembly::MateReport>,
     /// The files the last command added, for the update to say.
     added: Option<Vec<File>>,
     /// The file the last command wrote, for the update to carry.
@@ -630,7 +631,7 @@ impl<S: Scalar> Editor<S> {
 
     /// How the solve of the drag tool's last drag went: whether the mates
     /// hold, and how hard it was to get there.
-    pub fn dragged(&self) -> Option<&geop_ops::assembly::MateReport> {
+    pub fn dragged(&self) -> Option<&geop_ops_assembly::MateReport> {
         self.dragged.as_ref()
     }
 

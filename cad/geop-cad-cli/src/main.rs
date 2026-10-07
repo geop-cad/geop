@@ -31,6 +31,7 @@ use geop_core_math::{
     scalars::scal_in_f64::ScalInF64,
 };
 use geop_ops::{Cache, Files, Part};
+use geop_ops_assembly::PartMates;
 use geop_ops_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
 
 type S = ScalInF64;

@@ -14,11 +14,10 @@ use geop_core_math::{
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops::{
     Design, EntityRef, ORIGIN,
-    assembly::{JointKind, Kind, Mate, Motion, joint_parameter},
     parameters::{Material, Parameter, ParameterKind, Parameters, Row},
     part::{ParamValue, State, pose_parameter},
 };
-use geop_ops_assembly::AddPartArgs;
+use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, Motion, joint_parameter};
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{

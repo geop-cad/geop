@@ -55,12 +55,20 @@ interpret it?* Datums, sketches, mates, cables, threads and features do not.
    step always writes new versions), and `declared` is still kept beside the
    `State(k)` reads it duplicates. See "Cells" below. Replaces the
    prefix-only reuse of `ProgramRunner::run`.
-3. [ ] **Constraints solved over the runner.** A part exposes residuals `r`
-   and Jacobian `J` over its variables (parameters, instance poses); the
-   solver runs the program at `x`, reads `r(x)`/`J(x)` from the final part,
-   steps, runs again. `Mate` and the mate-to-residual code move to
-   `geop-ops-assembly`; the solver in `geop-ops/src/assembly.rs` becomes
-   generic. Guard: `mates_resolved` (80 parts) must keep passing.
+3. [x] **Mates out of `geop-ops`.** `Mate`, the mechanism, solving, checking
+   and measuring them live in `geop-ops-assembly` (`PartMates`); a part keeps
+   mates as keyed entries of an extension (`EntryKind`, `Part::insert_entry`),
+   so adding one reads no other. The framework knows only `Extension::holds`
+   (a viewer does not offer to drag a held part), `ui::Drag` and, for the
+   editor, nothing else. The numerics stay `geop-core-solve`'s: re-running the
+   program inside each step of its constrained least squares would not change
+   a pose-only answer and would cost a rebuild per step; the editor already
+   runs the program, checks the mates on the rebuilt part, solves, applies the
+   poses and runs again. A residual-and-gradient interface (`r(x)`, `J(x)` of a
+   part, which a generic solver can drive through the runner) comes with its
+   first consumer: the freedom analysis of step 3b.
+3b. [ ] **Freedom per independent group.** `Part::mate_freedom` is a dense null
+   space over every body (22 of 24 stack samples of a 2000-part drag).
 4. [ ] **Groups and placed replay.** A feature is a set of steps plus their
    prerequisites (never their dependents); a reference to an entity made by a
    step of the group resolves to the copy's entity (names carry the step:

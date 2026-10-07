@@ -8,6 +8,11 @@
 //! being at its first [`Part::ext_mut`], so there is nothing to register
 //! and nothing to forget; [`Part::ext`] is `None` until then.
 //!
+//! A family that keeps values by name (the mates of a part, say) is an
+//! [`EntryKind`]: each value is a cell of its own, so a step that adds one
+//! reads no other, and the steps that add values stay independent of each
+//! other (see [`Part::insert_entry`]).
+//!
 //! An extension travels with the part and says what it needs the framework
 //! to say for it — what a viewer draws of it ([`Extension::annotations`]),
 //! what a description lists of it ([`Extension::describe`]) — so a part is
@@ -31,7 +36,7 @@ pub struct Annotation<S: Scalar> {
 
 /// State an operation family keeps in a [`Part`] (see the module). A part is
 /// copied whole, extensions with it.
-pub trait Extension<S: Scalar>: Any + Clone + Send + Sync {
+pub trait Extension<S: Scalar>: Any + Clone + Default + Send + Sync {
     /// What tells it apart from every other extension, and the key of its
     /// description. Unique across the workspace. Extensions are kept and
     /// presented in the order of their names: the order of their types' ids
@@ -47,6 +52,78 @@ pub trait Extension<S: Scalar>: Any + Clone + Send + Sync {
     fn describe(&self) -> BTreeMap<String, serde_json::Value> {
         BTreeMap::new()
     }
+
+    /// Takes the entry `key` as `from` has it — none, if it has none —
+    /// for an extension that keeps entries (see [`EntryKind`]).
+    fn copy_entry(&mut self, _from: Option<&Self>, _key: &str) {}
+
+    /// Whether it holds the part placed at the path `instance` — `bolt`,
+    /// or `asm/bolt` for one placed in a part placed — where it is: so
+    /// that a viewer does not offer to drag it.
+    fn holds(&self, _instance: &str) -> bool {
+        false
+    }
+}
+
+/// A family of values kept in a part by name: the `Value`s, found by the
+/// name they were given.
+pub trait EntryKind<S: Scalar>: 'static + Send + Sync {
+    /// What tells it apart from every other extension (see
+    /// [`Extension::NAME`]).
+    const NAME: &'static str;
+    type Value: Clone + Send + Sync + 'static;
+
+    /// Whether the entries hold the part placed at the path `instance` (see
+    /// [`Extension::holds`]).
+    fn holds(_entries: &BTreeMap<String, Self::Value>, _instance: &str) -> bool {
+        false
+    }
+
+    /// What a description of the part lists of the entries, by name.
+    fn describe(_entries: &BTreeMap<String, Self::Value>) -> BTreeMap<String, serde_json::Value> {
+        BTreeMap::new()
+    }
+}
+
+/// The extension that holds the entries of the kind `K`.
+pub struct Entries<S: Scalar, K: EntryKind<S>>(
+    BTreeMap<String, K::Value>,
+    std::marker::PhantomData<fn() -> (S, K)>,
+);
+
+impl<S: Scalar, K: EntryKind<S>> Clone for Entries<S, K> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), std::marker::PhantomData)
+    }
+}
+
+impl<S: Scalar, K: EntryKind<S>> Default for Entries<S, K> {
+    fn default() -> Self {
+        Self(BTreeMap::new(), std::marker::PhantomData)
+    }
+}
+
+impl<S: Scalar, K: EntryKind<S>> Extension<S> for Entries<S, K> {
+    const NAME: &'static str = K::NAME;
+
+    fn describe(&self) -> BTreeMap<String, serde_json::Value> {
+        K::describe(&self.0)
+    }
+
+    fn holds(&self, instance: &str) -> bool {
+        K::holds(&self.0, instance)
+    }
+
+    fn copy_entry(&mut self, from: Option<&Self>, key: &str) {
+        match from.and_then(|from| from.0.get(key)) {
+            Some(value) => {
+                self.0.insert(key.to_string(), value.clone());
+            }
+            None => {
+                self.0.remove(key);
+            }
+        }
+    }
 }
 
 /// An [`Extension`] with its type forgotten: all a part needs to copy and
@@ -57,6 +134,9 @@ trait Erased<S: Scalar>: Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn annotations(&self) -> GeopResult<Vec<Annotation<S>>>;
     fn describe(&self) -> BTreeMap<String, serde_json::Value>;
+    fn holds(&self, instance: &str) -> bool;
+    fn empty_like(&self) -> Box<dyn Erased<S>>;
+    fn copy_key(&mut self, from: Option<&dyn Erased<S>>, key: &str);
 }
 
 impl<S: Scalar, E: Extension<S>> Erased<S> for E {
@@ -74,6 +154,16 @@ impl<S: Scalar, E: Extension<S>> Erased<S> for E {
     }
     fn describe(&self) -> BTreeMap<String, serde_json::Value> {
         Extension::describe(self)
+    }
+    fn holds(&self, instance: &str) -> bool {
+        Extension::holds(self, instance)
+    }
+    fn empty_like(&self) -> Box<dyn Erased<S>> {
+        Box::new(E::default())
+    }
+    fn copy_key(&mut self, from: Option<&dyn Erased<S>>, key: &str) {
+        let from = from.and_then(|from| from.as_any().downcast_ref::<E>());
+        Extension::copy_entry(self, from, key);
     }
 }
 
@@ -97,6 +187,21 @@ impl<S: Scalar> Extensions<S> {
                 self.0.remove(name);
             }
         }
+    }
+}
+
+impl<S: Scalar> Extensions<S> {
+    /// Takes the entry `key` of the extension `name` as `from` has it.
+    pub(super) fn copy_key(&mut self, from: &Self, name: &'static str, key: &str) {
+        let source = from.0.get(name);
+        if self.0.get(name).is_none() {
+            let Some(source) = source else { return };
+            self.0.insert(name, source.empty_like());
+        }
+        self.0
+            .get_mut(name)
+            .expect("inserted above")
+            .copy_key(source.map(|s| &**s), key);
     }
 }
 
@@ -143,6 +248,66 @@ impl<S: Scalar> Part<S> {
                     E::NAME
                 )
             })
+    }
+
+    /// The entry `key` of the kind `K`, if there is one.
+    pub fn entry<K: EntryKind<S>>(&self, key: &str) -> Option<&K::Value> {
+        self.store.read(Cell::Entry(K::NAME, key.to_string()));
+        self.store
+            .extensions()
+            .0
+            .get(K::NAME)?
+            .as_any()
+            .downcast_ref::<Entries<S, K>>()?
+            .0
+            .get(key)
+    }
+
+    /// Every entry of the kind `K`, by name.
+    pub fn entries<K: EntryKind<S>>(&self) -> impl Iterator<Item = (&str, &K::Value)> {
+        self.store.read(Cell::Entries(K::NAME));
+        self.store
+            .extensions()
+            .0
+            .get(K::NAME)
+            .and_then(|e| e.as_any().downcast_ref::<Entries<S, K>>())
+            .into_iter()
+            .flat_map(|entries| entries.0.iter().map(|(key, value)| (key.as_str(), value)))
+    }
+
+    /// Keeps `value` as the entry `key` of the kind `K`. Reads that entry
+    /// and the list of them is written, but not read: a step that adds an
+    /// entry depends on no other.
+    pub fn insert_entry<K: EntryKind<S>>(&mut self, key: impl Into<String>, value: K::Value) {
+        let key = key.into();
+        self.cache = Cache::new();
+        self.store.write(Cell::Entry(K::NAME, key.clone()));
+        self.store.write(Cell::Entries(K::NAME));
+        self.store
+            .extensions_mut()
+            .0
+            .entry(K::NAME)
+            .or_insert_with(|| Box::new(Entries::<S, K>::default()))
+            .as_any_mut()
+            .downcast_mut::<Entries<S, K>>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "two extensions are named {:?}: names must be unique",
+                    K::NAME
+                )
+            })
+            .0
+            .insert(key, value);
+    }
+
+    /// Whether an extension holds the part placed at the path `instance`
+    /// where it is (see [`Extension::holds`]).
+    pub fn holds(&self, instance: &str) -> bool {
+        self.store
+            .extensions()
+            .0
+            .values()
+            .any(|extension| extension.holds(instance))
     }
 
     /// What every extension has drawn on the part, in the order of their
@@ -263,5 +428,50 @@ mod tests {
         let after = part.view().unwrap();
         assert_eq!(after.annotations.len(), 1);
         assert_eq!(after.annotations[0].label, "2");
+    }
+
+    /// A family of values kept by name.
+    struct Notes;
+
+    impl EntryKind<S> for Notes {
+        const NAME: &'static str = "notes";
+        type Value = String;
+    }
+
+    /// Adding an entry reads and writes that entry and writes the list
+    /// of them, and reads no other: steps that add entries do not depend on
+    /// each other. A replay of the writes gives the entry to another part.
+    #[test]
+    fn entries_are_cells_of_their_own() {
+        use crate::part::{Cell, Log};
+
+        let mut part = Part::<S>::new();
+        part.insert_entry::<Notes>("first", "a".to_string());
+
+        let log = Log::new();
+        part.record(&log);
+        part.insert_entry::<Notes>("second", "b".to_string());
+        let access = part.finish_recording(&log).unwrap();
+
+        let entry = |key: &str| Cell::Entry("notes", key.to_string());
+        assert_eq!(access.reads, [entry("second")].into());
+        assert_eq!(
+            access.writes,
+            [entry("second"), Cell::Entries("notes")].into()
+        );
+        assert_eq!(part.entry::<Notes>("first").map(String::as_str), Some("a"));
+        assert_eq!(part.entries::<Notes>().count(), 2);
+
+        let mut other = Part::<S>::new();
+        other.insert_entry::<Notes>("first", "a".to_string());
+        let mut before = Part::<S>::new();
+        before.insert_entry::<Notes>("first", "a".to_string());
+        let after = std::sync::Arc::new(part);
+        other.record(&Log::new());
+        let replayed = other.replayed(&before, &after, &access);
+        assert_eq!(
+            replayed.entry::<Notes>("second").map(String::as_str),
+            Some("b")
+        );
     }
 }

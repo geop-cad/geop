@@ -52,10 +52,8 @@ use geop_core_math::{
 };
 use geop_core_solve::mates::{JointEnd, JointKind, Motion};
 use geop_core_topology::mass::MassProperties;
-use geop_ops::{
-    Instance, Part,
-    assembly::{Mechanism, PlacedBody},
-};
+use geop_ops::{Instance, Part};
+use geop_ops_assembly::{Mechanism, PartMates, PlacedBody};
 use geop_ops_inspect::bodies::placed_solids;
 use geop_ops_rasterize::{
     rasterize,

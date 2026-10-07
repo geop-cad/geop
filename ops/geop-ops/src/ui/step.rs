@@ -225,7 +225,7 @@ impl<O: Operations, S: Scalar> StepEditor<O, S> {
     }
 
     /// The placed parts the step is dragging (see [`Form::drags`]).
-    pub fn drags(&self, context: Context<'_, S>) -> Vec<crate::assembly::Drag<S>> {
+    pub fn drags(&self, context: Context<'_, S>) -> Vec<super::Drag<S>> {
         self.form(context).drags
     }
 

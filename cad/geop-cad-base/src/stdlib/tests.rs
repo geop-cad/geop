@@ -9,6 +9,8 @@ use geop_ops::{
     part::ParamValue,
 };
 
+use geop_ops_assembly::PartMates;
+
 use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
 use crate::{Program, operations::regression_tests::check_valid};
 
@@ -512,10 +514,9 @@ fn gear_drive() -> Program {
     use geop_core_math::primitives::{DatumComponent, FrameAxis};
     use geop_ops::{
         EntityRef, ORIGIN,
-        assembly::{CouplingKind, JointKind, Mate},
         part::{State, pose_parameter},
     };
-    use geop_ops_assembly::AddPartArgs;
+    use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate};
     use geop_ops_datums::{AddDatumArgs, Construction};
 
     use crate::examples::{n, pose};

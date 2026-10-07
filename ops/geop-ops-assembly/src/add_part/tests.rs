@@ -7,11 +7,12 @@ use geop_core_math::{
 };
 use geop_ops::{
     EntityRef, Instance, Operations,
-    assembly::{Drag, Kind, MateKind},
     operation::Aspects,
     part::{ParamValue, State, pose_parameter},
-    ui::{Control, PartView, StepEditEvent, StepEditor, Tone, Value},
+    ui::{Control, Drag, PartView, StepEditEvent, StepEditor, Tone, Value},
 };
+
+use crate::{Kind, MateKind, PartMates};
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
 use geop_core_math::scalars::Scalar;

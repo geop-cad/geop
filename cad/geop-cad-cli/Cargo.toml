@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 geop-core-math.workspace = true
 geop-ops.workspace = true
+geop-ops-assembly.workspace = true
 geop-cad-base.workspace = true
 geop-ops-rasterize.workspace = true
 geop-ops-step.workspace = true

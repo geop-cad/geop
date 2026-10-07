@@ -64,12 +64,9 @@ impl<S: Scalar> Part<S> {
 
     /// The box around every vertex of the part and of the parts placed in
     /// it, as placed — `None` for a part with none: found once, and kept
-    /// for as long as the part is (see [`crate::assembly`]).
+    /// for as long as the part is .
     pub fn bounds(&self) -> Option<[Vector3<S>; 2]> {
-        *self
-            .cache
-            .bounds
-            .get_or_init(|| crate::assembly::bounds(self))
+        *self.cache.bounds.get_or_init(|| bounds(self))
     }
 
     /// The part as drawn, in its own frame: rasterized once, the first time
@@ -84,4 +81,29 @@ impl<S: Scalar> Part<S> {
         view.sketches.clear();
         Ok(self.cache.view.get_or_init(|| view))
     }
+}
+
+/// The box around every vertex of `part` and of the parts placed in it, as
+/// placed — what a body turns about and how large a solve is are free
+/// choices made from it, so its corners are sharp.
+fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
+    let own = part.topology().vertices.values().map(|v| v.point.sharpen());
+    let placed = part.instances().flat_map(|(_, instance)| {
+        let corners = instance.part.bounds().map(|[lo, hi]| {
+            (0..8).map(move |i| {
+                let corner = Vector3::from_array(
+                    [0, 1, 2].map(|k| if i >> k & 1 == 0 { lo[k] } else { hi[k] }),
+                );
+                instance.pose.apply(&corner).sharpen()
+            })
+        });
+        corners.into_iter().flatten().collect::<Vec<_>>()
+    });
+    own.chain(placed).fold(None, |acc, p| {
+        let [lo, hi] = acc.unwrap_or([p, p]);
+        Some([
+            Vector3::from_array([0, 1, 2].map(|k| lo[k].min(p[k]))),
+            Vector3::from_array([0, 1, 2].map(|k| hi[k].max(p[k]))),
+        ])
+    })
 }

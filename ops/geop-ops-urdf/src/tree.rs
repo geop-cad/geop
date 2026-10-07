@@ -18,7 +18,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_solve::mates::{Assembly, JointKind};
-use geop_ops::assembly::Mechanism;
+use geop_ops_assembly::Mechanism;
 
 /// The links of a mechanism and the joints between them.
 #[derive(Clone, Debug, PartialEq)]

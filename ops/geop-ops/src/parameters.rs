@@ -85,7 +85,7 @@ pub enum ParameterKind {
     },
     /// Where a placed part is: a pose, in the frame of the part it is
     /// placed in. Not defined by a formula but given — by a program, or by
-    /// the solve of the mates (see [`crate::assembly`]).
+    /// the solve of the mates .
     Pose,
 }
 

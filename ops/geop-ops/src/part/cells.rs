@@ -45,7 +45,6 @@ use super::{
     sketch3d::PartSketch3d,
     state::State,
 };
-use crate::assembly::Mate;
 use geop_core_math::primitives::Datum;
 
 /// One thing a step can read or write of a part (see the module).
@@ -64,10 +63,11 @@ pub enum Cell {
     /// What operation families recorded on solids (see
     /// [`Part::body_data`](super::Part::body_data)).
     BodyData,
-    /// The mate under one name.
-    Mate(String),
-    /// Every mate: the list of them.
-    Mates,
+    /// The entry under one name of an extension that keeps entries (see
+    /// [`EntryKind`](super::EntryKind)).
+    Entry(&'static str, String),
+    /// Every entry of one: the list of them.
+    Entries(&'static str),
     /// What the steps that combined tools with a solid did.
     Features,
     /// What the part's parameters are defined as.
@@ -91,7 +91,7 @@ impl Cell {
     fn is_collection(&self) -> bool {
         matches!(
             self,
-            Cell::Names | Cell::Instances | Cell::Mates | Cell::Inputs
+            Cell::Names | Cell::Instances | Cell::Entries(_) | Cell::Inputs
         )
     }
 }
@@ -164,7 +164,6 @@ pub(super) struct Store<S: Scalar> {
     datums: IndexMap<DatumId, Datum<S>>,
     instances: IndexMap<InstanceId, Arc<Instance<S>>>,
     body_data: BTreeMap<String, Arc<dyn Any + Send + Sync>>,
-    mates: BTreeMap<String, Mate>,
     features: Vec<(String, Arc<Feature<S>>)>,
     state: State,
     declared: State,
@@ -184,7 +183,6 @@ impl<S: Scalar> Store<S> {
             datums: IndexMap::new(),
             instances: IndexMap::new(),
             body_data: BTreeMap::new(),
-            mates: BTreeMap::new(),
             features: Vec::new(),
             state: State::new(),
             declared: State::new(),
@@ -384,7 +382,7 @@ impl<S: Scalar> Store<S> {
         self.instances.insert(id, Arc::new(instance));
     }
 
-    // --- body data, mates, features ---
+    // --- body data, features ---
 
     pub(super) fn body_data(&self) -> &BTreeMap<String, Arc<dyn Any + Send + Sync>> {
         self.read(Cell::BodyData);
@@ -394,24 +392,6 @@ impl<S: Scalar> Store<S> {
     pub(super) fn body_data_mut(&mut self) -> &mut BTreeMap<String, Arc<dyn Any + Send + Sync>> {
         self.write(Cell::BodyData);
         &mut self.body_data
-    }
-
-    /// Every mate, to list.
-    pub(super) fn mates(&self) -> &BTreeMap<String, Mate> {
-        self.read(Cell::Mates);
-        &self.mates
-    }
-
-    /// Whether there is a mate named `name`.
-    pub(super) fn has_mate(&self, name: &str) -> bool {
-        self.read(Cell::Mate(name.to_string()));
-        self.mates.contains_key(name)
-    }
-
-    pub(super) fn insert_mate(&mut self, name: String, mate: Mate) {
-        self.write(Cell::Mate(name.clone()));
-        self.write(Cell::Mates);
-        self.mates.insert(name, mate);
     }
 
     pub(super) fn features(&self) -> &[(String, Arc<Feature<S>>)] {
@@ -510,14 +490,7 @@ impl<S: Scalar> Store<S> {
                 }
                 Cell::Datums => self.datums = after.datums.clone(),
                 Cell::BodyData => self.body_data = after.body_data.clone(),
-                Cell::Mate(name) => match after.mates.get(name) {
-                    Some(mate) => {
-                        self.mates.insert(name.clone(), mate.clone());
-                    }
-                    None => {
-                        self.mates.remove(name);
-                    }
-                },
+                Cell::Entry(name, key) => self.extensions.copy_key(&after.extensions, name, key),
                 Cell::Features => self.features = after.features.clone(),
                 Cell::Instance(name) => {
                     let id = InstanceId::named(name);
@@ -529,7 +502,7 @@ impl<S: Scalar> Store<S> {
                 Cell::Ext(name) => self.extensions.copy_entry(&after.extensions, name),
                 // Lists have nothing of their own to copy; the program's
                 // inputs and parameters are not written by a step.
-                Cell::Names | Cell::Instances | Cell::Mates | Cell::Inputs => {}
+                Cell::Names | Cell::Instances | Cell::Entries(_) | Cell::Inputs => {}
                 Cell::State(_) | Cell::Parameters => {}
             }
         }

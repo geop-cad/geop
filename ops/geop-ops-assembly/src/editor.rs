@@ -25,15 +25,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
 use geop_ops::{
     Context, Design, EntityRef,
-    assembly::{Anchor, CouplingKind, Drag, JointInfo, JointKind, Kind, Mate, MateKind, Motion},
     operation::Role,
     parameters::{COLOR, ParameterKind, validate_color},
     part::{ParamValue, State, pose_parameter},
     ui::{
-        Action, CanvasEvent, Choice, Control, Edit, Form, Gizmo, ListItem, Number, Shape, Style,
-        Tone, Unit, Value, Visual,
+        Action, CanvasEvent, Choice, Control, Drag, Edit, Form, Gizmo, ListItem, Number, Shape,
+        Style, Tone, Unit, Value, Visual,
     },
 };
+
+use crate::{Anchor, CouplingKind, JointInfo, JointKind, Kind, Mate, MateKind, Motion, PartMates};
 
 use crate::AddPartArgs;
 

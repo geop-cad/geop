@@ -28,13 +28,11 @@ pub struct EdgeDescription {
     pub end: String,
 }
 
-/// A part placed in another: the file it is built from, where it is, and
-/// whether it stays put.
+/// A part placed in another: the file it is built from, and where it is.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InstanceDescription {
     pub file: String,
     pub pose: Pose<Design>,
-    pub fixed: bool,
 }
 
 /// Everything about a part's topology that its names can express, and the
@@ -52,7 +50,6 @@ pub struct PartDescription {
     pub sketches: Vec<String>,
     pub datums: Vec<String>,
     pub instances: BTreeMap<String, InstanceDescription>,
-    pub mates: Vec<String>,
     /// What the extensions list of what they kept (see
     /// [`super::Extension::describe`]), by extension and entry.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -160,12 +157,10 @@ impl PartDescription {
                 let description = InstanceDescription {
                     file: instance.file.clone(),
                     pose: instance.pose.cast(),
-                    fixed: part.is_fixed(&instance_name),
                 };
                 Ok((instance_name, description))
             })
             .collect::<GeopResult<_>>()?;
-        let mates = part.mates().map(|(name, _)| name.to_string()).collect();
         Ok(Self {
             solids,
             faces,
@@ -174,7 +169,6 @@ impl PartDescription {
             sketches,
             datums,
             instances,
-            mates,
             extensions: part.extension_descriptions(),
         })
     }

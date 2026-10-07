@@ -13,7 +13,7 @@ use geop_ops::{
     operation::Aspects,
     ui::{Control, Pointer, Reach, StepEditEvent, Value},
 };
-use geop_ops_assembly::AddPartArgs;
+use geop_ops_assembly::{AddPartArgs, PartMates};
 
 use geop_ops::part::{ParamValue, pose_parameter};
 use geop_ops_datums::{AddDatumArgs, Construction};
@@ -68,7 +68,7 @@ fn the_pin_is_mated_into_the_plate() {
     );
     assert_eq!(description.instances["pin"].file, "pin.geop");
     assert_eq!(
-        description.mates,
+        description.extensions["mates"].keys().collect::<Vec<_>>(),
         [
             "add_part(pin,m1)",
             "add_part(pin,m2)",
@@ -338,7 +338,7 @@ fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
     let part = program
         .build(&Workspace::<S>::new(WithStandardParts(parts())).scope("assembly.geop"))
         .unwrap();
-    assert!(part.is_fixed("pin") && part.is_fixed("plate"));
+    assert!(part.holds("pin") && part.holds("plate"));
 }
 
 /// Where `pose` puts its body's origin.
@@ -616,8 +616,8 @@ fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
             file: "hinge.geop".into(),
             mates: BTreeMap::from([(
                 "m1".into(),
-                geop_ops::assembly::Mate::constraint(
-                    geop_ops::assembly::Kind::Distance { value: n(3.0) },
+                geop_ops_assembly::Mate::constraint(
+                    geop_ops_assembly::Kind::Distance { value: n(3.0) },
                     vec![
                         EntityRef::Face {
                             name: "hinge/pin/extrude(pin,end)".into(),
@@ -778,7 +778,7 @@ fn drive_chain(
     Vec<(
         std::time::Duration,
         usize,
-        Option<geop_ops::assembly::MateReport>,
+        Option<geop_ops_assembly::MateReport>,
     )>,
 ) {
     let files = BTreeMap::from([(
@@ -911,7 +911,7 @@ fn folded_path() -> Vec<[f64; 2]> {
 /// `drive_chain`) — and the mates checked where it put the links, as the
 /// editor does after a drag (they must hold there, or it solves them all
 /// over again).
-fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
+fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops_assembly::MateReport> {
     let files = BTreeMap::from([("link.geop".to_string(), examples::link().to_json().unwrap())]);
     let workspace = Workspace::<S>::new(WithStandardParts(files));
     let library = workspace.scope("chain.geop");
@@ -920,7 +920,7 @@ fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops::assembly::MateReport> {
     path.iter()
         .map(|to| {
             let part = program.build(&library).unwrap();
-            let drag = geop_ops::assembly::Drag {
+            let drag = geop_ops::ui::Drag {
                 parameter: "link3.pose".into(),
                 local: v([2.5, 0.0, 0.2]),
                 target: v([to[0], to[1] / 2.0, 0.2 + to[1] / 2.0]),
@@ -1077,7 +1077,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
     for step in 1..=36 {
         let angle = (60.0 + 10.0 * f64::from(step)).to_radians();
         let part = program.build(&library).unwrap();
-        let drag = geop_ops::assembly::Drag {
+        let drag = geop_ops::ui::Drag {
             parameter: "crank.pose".into(),
             local: v([1.5, 0.0, 0.1]),
             target: v([1.5 * angle.cos(), 1.5 * angle.sin(), 0.3]),
@@ -1142,7 +1142,7 @@ fn the_arm_is_dragged_up_to_its_limit() {
     let part = program.build(&library).unwrap();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     let a = 170.0_f64.to_radians();
-    let drag = geop_ops::assembly::Drag {
+    let drag = geop_ops::ui::Drag {
         parameter: "fore.pose".into(),
         local: v([1.5, 0.0, 0.2]),
         target: v([3.0 + 1.5 * a.cos(), 1.5 * a.sin(), 0.4]),
@@ -1267,7 +1267,7 @@ fn six_pins_are_patterned_round_a_hole() {
 /// the second to -45°.
 #[test]
 fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
-    use geop_ops::assembly::{CouplingKind, JointKind, Mate};
+    use geop_ops_assembly::{CouplingKind, JointKind, Mate};
     let (files, _) = workspace_example("arm");
     let workspace = Workspace::<S>::new(WithStandardParts(files));
     let library = workspace.scope("gears.geop");

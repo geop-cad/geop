@@ -40,7 +40,7 @@ mod state;
 pub use cells::{Access, Cell, Log};
 pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
 pub use edit::BodyNames;
-pub use extension::{Annotation, Extension};
+pub use extension::{Annotation, Entries, EntryKind, Extension};
 pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool};
 pub use ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId};
 pub use instance::Instance;

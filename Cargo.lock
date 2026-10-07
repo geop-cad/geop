@@ -257,6 +257,7 @@ dependencies = [
  "geop-cad-base",
  "geop-core-math",
  "geop-ops",
+ "geop-ops-assembly",
  "geop-ops-bom",
  "geop-ops-drawing",
  "geop-ops-rasterize",
@@ -329,7 +330,9 @@ dependencies = [
 name = "geop-ops-assembly"
 version = "0.1.0"
 dependencies = [
+ "geop-core-geometry",
  "geop-core-math",
+ "geop-core-solve",
  "geop-ops",
  "geop-ops-extrude-revolve",
  "serde",
@@ -622,6 +625,7 @@ dependencies = [
  "geop-core-solve",
  "geop-core-topology",
  "geop-ops",
+ "geop-ops-assembly",
  "geop-ops-inspect",
  "geop-ops-rasterize",
 ]

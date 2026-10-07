@@ -12,6 +12,7 @@ use geop_ops::{
     operation::Role,
     ui::{Button, Control, Pointer, Reach, StepEditEvent, Tone, Value},
 };
+use geop_ops_assembly::PartMates;
 use geop_ops_booleans::Combine;
 use geop_ops_harness::PartCables;
 

@@ -10,7 +10,6 @@ use geop_core_math::{
 };
 use geop_ops::{
     Context, EntityRef, Library, Namer, ORIGIN, Part,
-    assembly::Mate,
     operation::INSTANCE_SEPARATOR,
     operation::Operation,
     parameters::Parameter,
@@ -18,6 +17,8 @@ use geop_ops::{
     ui::{CanvasEvent, Edit, Form},
 };
 use serde::{Deserialize, Serialize};
+
+use crate::{Mate, PartMates};
 
 use crate::editor::{self, PartSession};
 
@@ -29,7 +30,7 @@ use crate::editor::{self, PartSession};
 /// [`geop_ops::part::State`]), and the step adds its mates. It solves
 /// nothing: where every placed part is, so that every mate of the program
 /// holds, is the program's state, which solving the program changes (see
-/// [`geop_ops::assembly`]). So every step sees each placed part where it
+/// [`crate::mates`]). So every step sees each placed part where it
 /// ends up, however late the mates that put it there are.
 ///
 /// Mates that cannot hold do not fail the step — the parts are left as near

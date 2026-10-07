@@ -36,7 +36,7 @@ pub use dialog::{
     Action, Choice, Control, Dialog, Field, ListItem, Number, Picked, Reference, Tone, Track, Unit,
 };
 pub use event::{Button, CanvasEvent, Pointer, Reach, StepEditEvent, Value};
-pub use form::{Edit, Form, InHand};
+pub use form::{Drag, Edit, Form, InHand};
 pub use gizmo::{Change, Gizmo, GizmoDrag, GizmoPart, GizmoView, Orientation};
 pub use step::{DRAG_SNAP, GIZMO_ORIENTATION, StepEditor};
 pub use view::{EMPTY_EXTENT, Extent, PartHit, PartView, ViewAnnotation, ViewInstance};

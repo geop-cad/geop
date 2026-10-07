@@ -8,7 +8,14 @@
 
 mod add_part;
 pub mod editor;
+pub mod mates;
+pub mod mechanism;
 mod part_pattern;
 
 pub use add_part::{AddPart, AddPartArgs};
+pub use mates::{
+    Anchor, CouplingKind, JointInfo, JointKind, JointValue, Kind, Mate, MateFreedom, MateKind,
+    MateReport, Mates, Motion, joint_parameter,
+};
+pub use mechanism::{Mechanism, PartMates, PlacedBody, mates_resolved};
 pub use part_pattern::{Layout, PartPattern, PartPatternArgs};

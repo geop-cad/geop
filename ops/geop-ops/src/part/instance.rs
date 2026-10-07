@@ -1,6 +1,5 @@
 //! A [`Part`]'s instances: other parts placed in it, each at a pose — what
-//! makes a part an assembly — and the mates that hold them together (see
-//! [`crate::assembly`]). Named like any other entity.
+//! makes a part an assembly. Named like any other entity.
 
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -12,12 +11,12 @@ use geop_core_math::{
 
 use super::Part;
 use super::ids::InstanceId;
-use crate::{assembly::Mate, parameters::Parameter};
+use crate::parameters::Parameter;
 
 /// A part placed in another, at a [`Pose`] — every point `p` of it at
 /// `pose.apply(p)` — the value of the pose parameter `parameter` of the
 /// part it is placed in, which a solve of the mates may change unless a
-/// fixed mate holds it (see [`crate::assembly`]). A copy of a pattern of
+/// fixed mate holds it . A copy of a pattern of
 /// placed parts has no parameter: it goes where the pattern puts it.
 ///
 /// The part is shared — through an [`Arc`] — by every instance of it, and
@@ -84,37 +83,5 @@ impl<S: Scalar> Part<S> {
     /// Every instance, in the order they were placed.
     pub fn instances(&self) -> impl Iterator<Item = (InstanceId, &Instance<S>)> {
         self.store.instances().iter().map(|(&id, i)| (id, &**i))
-    }
-
-    /// Adds `mate` under `name`: a mate is no entity — nothing is built on
-    /// it — but its name keeps it apart from the other mates. Fails if the
-    /// name is taken.
-    pub fn add_mate(&mut self, mate: Mate, name: impl Into<String>) -> GeopResult<()> {
-        let name = name.into();
-        if self.store.has_mate(&name) {
-            return Err(GeopError::new(format!("Part already has a mate {name:?}")));
-        }
-        self.store.insert_mate(name, mate);
-        Ok(())
-    }
-
-    /// Whether a fixed mate holds the part placed at the path `instance` —
-    /// `bolt`, or `asm/bolt` for one placed in a part placed.
-    pub fn is_fixed(&self, instance: &str) -> bool {
-        self.mates().any(|(_, mate)| {
-            mate.is_fixed()
-                && mate
-                    .entities
-                    .iter()
-                    .any(|e| e.instance_path().as_deref() == Some(instance))
-        })
-    }
-
-    /// Every mate, by name.
-    pub fn mates(&self) -> impl Iterator<Item = (&str, &Mate)> {
-        self.store
-            .mates()
-            .iter()
-            .map(|(name, m)| (name.as_str(), m))
     }
 }
