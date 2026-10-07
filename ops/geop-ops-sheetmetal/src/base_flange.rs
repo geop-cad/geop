@@ -127,7 +127,7 @@ impl Operation for BaseFlange {
         if chain {
             f.formula(
                 "depth",
-                Number::formula("depth", &args.depth, before.inputs(), Unit::Length)
+                Number::formula("depth", &args.depth, before.state(), Unit::Length)
                     .range(0.0, 10.0),
                 |args, d| args.depth = d,
             );

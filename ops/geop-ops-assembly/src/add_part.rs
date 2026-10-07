@@ -9,10 +9,11 @@ use geop_core_math::{
     with_context,
 };
 use geop_ops::{
-    Context, Instance, Library, Namer, Part,
+    Context, EntityRef, Library, Namer, ORIGIN, Part,
     assembly::Mate,
     operation::INSTANCE_SEPARATOR,
     operation::Operation,
+    parameters::Parameter,
     part::{ParamValue, State, pose_parameter},
     ui::{CanvasEvent, Edit, Form},
 };
@@ -35,10 +36,14 @@ use crate::editor::{self, PartSession};
 /// to holding them as they get, as a sketch whose constraints conflict is —
 /// and the step's editor says which.
 ///
-/// Placed `flexible`, every parameter of the program placed becomes one of
-/// this program's, named behind the step's id and starting where that
-/// program has it, and the part is built with them (see
-/// [`geop_ops::Library::component`]).
+/// Every pose parameter of the program placed becomes one of this
+/// program's, named behind the step's id and starting where that program
+/// has it, and the part is built with them (see
+/// [`geop_ops::Library::instance`]): the parts placed in it are this
+/// program's to move.
+///
+/// A [`Mate::fixed`] among its mates, given no entity, holds the part this
+/// step places.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddPart;
 
@@ -48,16 +53,6 @@ pub struct AddPartArgs {
     /// own file; empty until one is chosen.
     #[serde(default)]
     pub file: String,
-    /// Never moved by any mate — this step's or a later one's.
-    #[serde(default)]
-    pub fixed: bool,
-    /// Whether the parts placed in the part placed are this program's to
-    /// move: their poses become parameters of this program's state, named behind the
-    /// step's id — `hinge/pin.pose` — and the mates holding them are solved
-    /// with this program's. Placed rigid, the part moves as one, its parts
-    /// where its own file puts them.
-    #[serde(default)]
-    pub flexible: bool,
     /// The mates this step adds, by an id of their own: `m1`, `m2`, ...
     /// Each is named `add_part(step,id)` in the part.
     #[serde(default)]
@@ -70,6 +65,29 @@ pub struct AddPartArgs {
     pub parameters: State,
 }
 
+impl AddPartArgs {
+    /// The step that also holds the part it places fixed.
+    pub fn fixed(mut self) -> Self {
+        self.set_fixed(true);
+        self
+    }
+
+    /// Holds the part this step places fixed, or — not `fixed` — frees it
+    /// of every fixed mate.
+    pub fn set_fixed(&mut self, fixed: bool) {
+        if fixed {
+            self.mates.insert("fixed".into(), Mate::fixed_here());
+        } else {
+            self.mates.retain(|_, mate| !mate.is_fixed());
+        }
+    }
+
+    /// Whether a fixed mate holds the part this step places.
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.mates.values().any(Mate::is_fixed)
+    }
+}
+
 impl Operation for AddPart {
     type Args = AddPartArgs;
     type Session = PartSession;
@@ -79,12 +97,11 @@ impl Operation for AddPart {
     /// No file yet; the first part placed is fixed, the ones after it are
     /// not — something has to stay put for the others to mate to.
     fn new_args<S: Scalar>(&self, before: &Part<S>) -> AddPartArgs {
-        AddPartArgs {
-            file: String::new(),
-            fixed: before.instances().next().is_none(),
-            flexible: false,
-            mates: BTreeMap::new(),
-            parameters: State::new(),
+        let args = AddPartArgs::default();
+        if before.instances().next().is_none() {
+            args.fixed()
+        } else {
+            args
         }
     }
 
@@ -99,41 +116,37 @@ impl Operation for AddPart {
         if args.file.is_empty() {
             return Err(GeopError::new("choose a file to place")).with_context(ctx);
         }
-        // Its parameters as this step gives them; placed flexibly, where
-        // its parts are is this program's too.
+        // Its parameters as this step gives them, and where its parts are
+        // is this program's too.
         let mut overrides = args.parameters.clone();
-        if args.flexible {
-            let own = library
-                .component(&args.file, &State::new())
-                .with_context(ctx)?;
-            for (name, value) in own.part.state() {
-                if let ParamValue::Pose(pose) = *value {
-                    let outer = format!("{operation_id}{INSTANCE_SEPARATOR}{name}");
-                    let pose = part.pose_parameter(&outer, pose).with_context(ctx)?;
-                    overrides.insert(name.clone(), ParamValue::Pose(pose));
-                }
+        let own = library
+            .instance(&args.file, &State::new())
+            .with_context(ctx)?;
+        for (name, value) in own.part.declared() {
+            if let ParamValue::Pose(pose) = *value {
+                let outer = format!("{operation_id}{INSTANCE_SEPARATOR}{name}");
+                let pose = part.pose_parameter(&outer, pose).with_context(ctx)?;
+                overrides.insert(name.clone(), ParamValue::Pose(pose));
             }
         }
-        let component = library
-            .component(&args.file, &overrides)
-            .with_context(ctx)?;
+        let mut instance = library.instance(&args.file, &overrides).with_context(ctx)?;
         let parameter = pose_parameter(operation_id);
         let pose = part
             .pose_parameter(&parameter, Pose::identity())
             .with_context(ctx)?;
-        let instance = Instance {
-            component,
-            pose: pose.cast(),
-            parameter: Some(parameter),
-            fixed: args.fixed,
-            flexible: args.flexible,
-        };
+        instance.pose = pose.cast();
+        instance.parameter = Some(Parameter::pose(parameter));
         part.add_instance(instance, operation_id)
             .with_context(ctx)?;
         let namer = Namer::new("add_part", operation_id)?;
+        let own_frame = EntityRef::datum(format!("{operation_id}{INSTANCE_SEPARATOR}{ORIGIN}"));
         for (mate_id, mate) in &args.mates {
+            let mut mate = mate.clone();
+            if mate.is_fixed() && mate.entities.is_empty() {
+                mate.entities.push(own_frame.clone());
+            }
             if mate.is_complete() {
-                part.add_mate(mate.clone(), namer.name(&[mate_id]))
+                part.add_mate(mate, namer.name(&[mate_id]))
                     .with_context(ctx)?;
             }
         }

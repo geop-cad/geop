@@ -591,7 +591,8 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
     let plate = part
         .instance(part.instance_id("plate").unwrap())
         .unwrap()
-        .part();
+        .part
+        .as_ref();
     let model = plate.topology();
     let hole = name_where(plate, |id| match id {
         RefId::Edge(e) => model.get_edge(e).unwrap().curve.as_arc().unwrap().is_some(),

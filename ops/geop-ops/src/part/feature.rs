@@ -19,7 +19,7 @@ use geop_core_math::{
 use geop_core_topology::build::BodySpec;
 use serde::{Deserialize, Serialize};
 
-use super::{BodyNames, Part, names::digest, operation_of};
+use super::{BodyNames, Part, names::digest};
 
 /// Which boolean to perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,16 +99,6 @@ impl<S: Scalar> Part<S> {
             }
         }
         FeatureFaces { steps }
-    }
-
-    /// The cosmetic threads the step `step` recorded — those named after
-    /// it — by name.
-    pub fn threads_of(&self, step: &str) -> Vec<String> {
-        self.threads
-            .keys()
-            .filter(|name| operation_of(name) == Some(step))
-            .cloned()
-            .collect()
     }
 }
 

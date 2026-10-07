@@ -656,7 +656,7 @@ fn collect<'p, S: Scalar>(
             "" => name.to_string(),
             _ => format!("{path}{INSTANCE_SEPARATOR}{name}"),
         };
-        collect(instance.part(), &path, Some(inner), bodies)?;
+        collect(&instance.part, &path, Some(inner), bodies)?;
     }
     Ok(())
 }

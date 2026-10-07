@@ -40,10 +40,10 @@ construction, not by the diligence of each caller.
 - **Lookups by name** (`vertex_id`, `edge_id`, `face_id`, `solid_id`,
   `sketch_id`, `datum_id`, and `coedge_id(edge, face)`) are what every
   operation that refers to existing entities is built on.
-- **Instances** are other parts placed in this one, each a `Component` —
-  what a program file builds, shared by every instance of it and drawn once
-  — at a `Pose`, `fixed` or free to be moved by the **mates**: constraints
-  between two entities (see the `assembly` module, which solves them with
+- **Instances** are other parts placed in this one — the part a program
+  file builds, shared by every instance of it and drawn once, with the file
+  it came from — at a `Pose`, free to be moved by the **mates**: constraints
+  between two entities, a `fixed` one among them holding a part in place (see the `assembly` module, which solves them with
   [geop-core-solve](../core/geop-core-solve.md)). A placed part is a
   part too, so a part is a tree. An entity of a placed part is named behind
   its instance's name — `bolt/extrude(head,end)` — and resolves where it is

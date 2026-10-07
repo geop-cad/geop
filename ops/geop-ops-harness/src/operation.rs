@@ -9,7 +9,6 @@ use geop_core_math::{
 use geop_ops::{
     Context, Library, Namer, Part,
     operation::{EntityRef, Operation, Role, frame_along},
-    part::{Cable, CutWire},
     ui::{Action, Choice, Form, ListItem, Number, Shape, Style, Tone, Unit, Value, Visual},
 };
 use geop_ops_extrude_revolve::{
@@ -20,6 +19,7 @@ use geop_ops_extrude_revolve::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    cable::{Cable, CutWire, PartCables},
     route::{Measure, RoutePath, Waypoint},
     wire::{GAUGES, Wire, WireSize, bundle_diameter},
 };
@@ -33,7 +33,7 @@ use crate::{
 /// the radius allowed.
 ///
 /// What the bundle is cut from is recorded on the part as the cable
-/// `route(R)` (see [`geop_ops::part::Cable`]): every wire with its cut
+/// `route(R)` (see [`Cable`]): every wire with its cut
 /// length, the route's length and a service loop at each end.
 ///
 /// The points may be of parts placed in the part: the route follows them

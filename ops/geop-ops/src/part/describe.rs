@@ -37,16 +37,6 @@ pub struct InstanceDescription {
     pub fixed: bool,
 }
 
-/// A cosmetic thread (see [`super::CosmeticThread`]): what it is called,
-/// the face it was put on, how far it runs, and whether in a hole.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ThreadDescription {
-    pub designation: String,
-    pub face: String,
-    pub length: f64,
-    pub internal: bool,
-}
-
 /// Everything about a part's topology that its names can express, and the
 /// positions of its vertices — with no internal id anywhere, so two parts
 /// built by the same program describe identically however their ids came
@@ -63,8 +53,10 @@ pub struct PartDescription {
     pub datums: Vec<String>,
     pub instances: BTreeMap<String, InstanceDescription>,
     pub mates: Vec<String>,
+    /// What the extensions list of what they kept (see
+    /// [`super::Extension::describe`]), by extension and entry.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub threads: BTreeMap<String, ThreadDescription>,
+    pub extensions: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
 impl PartDescription {
@@ -164,27 +156,16 @@ impl PartDescription {
         let instances = part
             .instances()
             .map(|(id, instance)| {
+                let instance_name = name(id.into())?;
                 let description = InstanceDescription {
-                    file: instance.component.file.clone(),
+                    file: instance.file.clone(),
                     pose: instance.pose.cast(),
-                    fixed: instance.fixed,
+                    fixed: part.is_fixed(&instance_name),
                 };
-                Ok((name(id.into())?, description))
+                Ok((instance_name, description))
             })
             .collect::<GeopResult<_>>()?;
         let mates = part.mates().map(|(name, _)| name.to_string()).collect();
-        let threads = part
-            .threads()
-            .map(|(name, t)| {
-                let description = ThreadDescription {
-                    designation: t.designation.clone(),
-                    face: t.face.clone(),
-                    length: t.length,
-                    internal: t.internal,
-                };
-                (name.to_string(), description)
-            })
-            .collect();
         Ok(Self {
             solids,
             faces,
@@ -194,7 +175,7 @@ impl PartDescription {
             datums,
             instances,
             mates,
-            threads,
+            extensions: part.extension_descriptions(),
         })
     }
 }

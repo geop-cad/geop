@@ -169,7 +169,7 @@ impl Operation for EdgeFlange {
                 }
             },
         );
-        let inputs = context.before.inputs();
+        let inputs = context.before.state();
         f.formula(
             "angle",
             Number::formula("angle", &args.angle, inputs, Unit::Angle).range(0.0, 180.0),

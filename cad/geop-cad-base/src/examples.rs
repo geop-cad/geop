@@ -819,11 +819,9 @@ pub fn pin_in_plate_assembly() -> Program {
         "plate",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
-            flexible: false,
-            mates: BTreeMap::new(),
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     let face = |name: &str| EntityRef::Face { name: name.into() };
     let mate = |kind, a: &str, b: &str| Mate::constraint(kind, vec![face(a), face(b)]);
@@ -831,8 +829,6 @@ pub fn pin_in_plate_assembly() -> Program {
         "pin",
         AddPartArgs {
             file: "pin.geop".into(),
-            fixed: false,
-            flexible: false,
             mates: BTreeMap::from([
                 (
                     "m1".into(),
@@ -943,17 +939,16 @@ fn pinned(link: &str, hole: usize, on: &str, pin: usize) -> Mate {
 
 /// A part placed from `file`, held by `mates`.
 fn placed(file: &str, fixed: bool, mates: Vec<Mate>) -> AddPartArgs {
-    AddPartArgs {
+    let args = AddPartArgs {
         file: file.into(),
-        fixed,
-        flexible: false,
         mates: mates
             .into_iter()
             .enumerate()
             .map(|(i, mate)| (format!("m{}", i + 1), mate))
             .collect(),
         ..Default::default()
-    }
+    };
+    if fixed { args.fixed() } else { args }
 }
 
 /// The assembly of `chain`: three links (`link.geop`, [`link`]), the first
@@ -1275,22 +1270,22 @@ pub fn plates_assembly() -> Program {
         "small",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     program.push(
         "large",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
             parameters: State::from([
                 ("width".to_string(), ParamValue::Number(n(5.0))),
                 ("screw".to_string(), ParamValue::Text("M6".into())),
                 ("color".to_string(), ParamValue::Text("#3e7bd0".into())),
             ]),
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     program.state = State::from([
         (
@@ -1376,9 +1371,9 @@ pub fn bolted_plate() -> Program {
         "plate",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     let mate = |kind, a: EntityRef, b: EntityRef| Mate::constraint(kind, vec![a, b]);
     let face = |name: String| EntityRef::Face { name };

@@ -542,7 +542,7 @@ impl<S: Scalar> Editing<'_, S> {
             self.s.prompt = None;
             return;
         }
-        let inputs = self.before.inputs();
+        let inputs = self.before.state();
         let value = match evaluate(text, |name| number(inputs, name)) {
             Ok(v) => v,
             Err(e) => {

@@ -51,7 +51,7 @@ fn built<S: Scalar>(
     args: &AddDatumArgs,
 ) -> Option<geop_core_math::primitives::CoordinateSystem<S>> {
     args.inputs(part)
-        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.inputs())))
+        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.state())))
         .ok()
 }
 
@@ -207,7 +207,7 @@ pub(crate) fn form<'a, S: Scalar>(
                     .unwrap_or(Formula::Plain(0.0));
                 f.formula(
                     name,
-                    Number::formula(name, &formula, part.inputs(), unit)
+                    Number::formula(name, &formula, part.state(), unit)
                         .range(min, max)
                         .handle(handles.remove(name)),
                     move |args, v| {

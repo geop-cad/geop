@@ -52,6 +52,15 @@ pub enum MateKind {
     Constraint(Kind<Design>),
     Joint(JointKind<Design>),
     Coupling(CouplingKind<Design>),
+    Anchor(Anchor),
+}
+
+/// What holds a part where it is, whatever the other mates ask: the part
+/// one entity of the mate is of never moves in a solve.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Anchor {
+    Fixed,
 }
 
 impl MateKind {
@@ -60,6 +69,7 @@ impl MateKind {
             MateKind::Constraint(kind) => kind.label(),
             MateKind::Joint(kind) => kind.label(),
             MateKind::Coupling(kind) => kind.label(),
+            MateKind::Anchor(Anchor::Fixed) => "Fixed",
         }
     }
 }
@@ -109,6 +119,31 @@ impl Mate {
         }
     }
 
+    /// The part `entity` is of, held fixed: any entity of it will do — the
+    /// part's frame [`crate::ORIGIN`], say.
+    pub fn fixed(entity: EntityRef) -> Self {
+        Mate {
+            kind: MateKind::Anchor(Anchor::Fixed),
+            entities: vec![entity],
+            joints: Vec::new(),
+        }
+    }
+
+    /// A fixed mate of no entity yet: in a step that places a part, it
+    /// holds that part (see `AddPart`).
+    pub fn fixed_here() -> Self {
+        Mate {
+            kind: MateKind::Anchor(Anchor::Fixed),
+            entities: Vec::new(),
+            joints: Vec::new(),
+        }
+    }
+
+    /// Whether it holds a part fixed.
+    pub fn is_fixed(&self) -> bool {
+        matches!(self.kind, MateKind::Anchor(Anchor::Fixed))
+    }
+
     /// A coupling of `kind` between the joints named `joints`.
     pub fn coupling(kind: CouplingKind<Design>, joints: Vec<String>) -> Self {
         Mate {
@@ -131,6 +166,7 @@ impl Mate {
     pub fn is_complete(&self) -> bool {
         match self.kind {
             MateKind::Coupling(_) => self.joints.len() == 2,
+            MateKind::Anchor(_) => self.entities.len() == 1,
             _ => self.pair().is_some(),
         }
     }
@@ -149,6 +185,7 @@ impl Mate {
             MateKind::Joint(_) => {
                 "a face, an edge, a point or a datum: where it is picked, a frame is put"
             }
+            MateKind::Anchor(_) => "an entity of the part to hold",
             MateKind::Coupling(CouplingKind::Gear { .. }) => "two joints that turn",
             MateKind::Coupling(_) => "a joint that turns, then one that slides",
         }
@@ -284,7 +321,7 @@ pub struct MateFreedom {
 pub(crate) fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
     let own = part.topology().vertices.values().map(|v| v.point.sharpen());
     let placed = part.instances().flat_map(|(_, instance)| {
-        let corners = instance.component.bounds().map(|[lo, hi]| {
+        let corners = instance.part.bounds().map(|[lo, hi]| {
             (0..8).map(move |i| {
                 let corner = Vector3::from_array(
                     [0, 1, 2].map(|k| if i >> k & 1 == 0 { lo[k] } else { hi[k] }),
@@ -303,8 +340,8 @@ pub(crate) fn bounds<S: Scalar>(part: &Part<S>) -> Option<[Vector3<S>; 2]> {
     })
 }
 
-/// A rigid body of a solve: a part placed in the part — or, inside one
-/// placed flexibly, a part placed in that, however deep.
+/// A rigid body of a solve: a part placed in the part — or a part placed
+/// in one of those, however deep.
 pub struct PlacedBody<'p, S: Scalar> {
     /// Its name in the part: `hinge/pin`.
     pub name: String,
@@ -313,7 +350,7 @@ pub struct PlacedBody<'p, S: Scalar> {
     /// where the pattern puts it.
     pub parameter: Option<String>,
     pub instance: &'p Instance<S>,
-    /// The body it is placed in, if it is placed in a flexible one.
+    /// The body it is placed in, if it is placed in a part placed.
     pub parent: Option<usize>,
     /// Where it is in the part.
     pub world: Pose<S>,
@@ -364,15 +401,17 @@ pub fn mates_resolved() -> usize {
     MATES_RESOLVED.get()
 }
 
-/// The bodies of a solve in `part`: its instances, and inside every
-/// flexible one, the instances of the part it places — named, and their
-/// parameters named, behind `prefix`, and placed in the body `parent` at
-/// `frame`.
+/// The bodies of a solve in `part`: its instances, and inside every one, the
+/// instances of the part it places — named, and their parameters named,
+/// behind `prefix`, and placed in the body `parent` at `frame`. Those
+/// placed in a copy of a pattern, which goes where the pattern puts it, go
+/// with it: they have no parameter either — unless `parametrized`.
 fn placed<'p, S: Scalar>(
     part: &'p Part<S>,
     prefix: &str,
     parent: Option<usize>,
     frame: &Pose<S>,
+    parametrized: bool,
     out: &mut Vec<PlacedBody<'p, S>>,
 ) {
     for (id, instance) in part.instances() {
@@ -380,37 +419,41 @@ fn placed<'p, S: Scalar>(
         let world = frame.compose(&instance.pose);
         out.push(PlacedBody {
             name: name.clone(),
-            parameter: instance.parameter.as_ref().map(|p| format!("{prefix}{p}")),
+            parameter: instance
+                .parameter
+                .as_ref()
+                .filter(|_| parametrized)
+                .map(|p| format!("{prefix}{}", p.name)),
             instance,
             parent,
             world,
         });
-        if instance.flexible {
-            let body = Some(out.len() - 1);
-            placed(
-                instance.part(),
-                &format!("{name}{INSTANCE_SEPARATOR}"),
-                body,
-                &world,
-                out,
-            );
-        }
+        let body = Some(out.len() - 1);
+        placed(
+            &instance.part,
+            &format!("{name}{INSTANCE_SEPARATOR}"),
+            body,
+            &world,
+            parametrized && instance.parameter.is_some(),
+            out,
+        );
     }
 }
 
 impl<S: Scalar> Part<S> {
-    /// The mates of the part, and of every part placed flexibly in it, as
-    /// the part names them: those of a part placed flexibly hold its parts
-    /// as they held them in it, named — and the joints a coupling of it
-    /// ties named — behind its name.
+    /// The mates of the part, and of every part placed in it, as the part
+    /// names them: those of a part placed hold its parts as they held them
+    /// in it, named — and the joints a coupling of it ties named — behind
+    /// its name. Not those that fix a part: what is fixed in a part placed
+    /// is where it is placed, which the part it is placed in decides.
     fn all_mates(&self, bodies: &[PlacedBody<'_, S>]) -> Vec<(String, Mate)> {
         let mut mates: Vec<(String, Mate)> = self
             .mates()
             .map(|(name, mate)| (name.to_string(), mate.clone()))
             .collect();
-        for body in bodies.iter().filter(|b| b.instance.flexible) {
+        for body in bodies {
             let behind = |name: &str| format!("{}{INSTANCE_SEPARATOR}{name}", body.name);
-            for (name, mate) in body.instance.part().mates() {
+            for (name, mate) in body.instance.part.mates().filter(|(_, m)| !m.is_fixed()) {
                 mates.push((
                     behind(name),
                     Mate {
@@ -437,10 +480,10 @@ impl<S: Scalar> Part<S> {
     }
 
     /// The mates as constraints, joints and couplings between rigid bodies
-    /// — its instances, and the instances of every part placed flexibly in
-    /// it, however deep (see [`placed`]) — each free unless fixed, a copy
-    /// of a pattern, or, with `only`, other than the one whose pose is that
-    /// parameter. A joint's coordinates are the state's, held if `held`
+    /// — its instances, and the instances of every part placed in it,
+    /// however deep (see [`placed`]) — each free unless a fixed mate holds
+    /// it, a copy of a pattern, or, with `only`, other than the one whose
+    /// pose is that parameter. A joint's coordinates are the state's, held if `held`
     /// names them, or measured where the state has none. Mates still
     /// missing an entity hold nothing, and are left out, and so are those
     /// `named` does not pick — with a coupling of a joint it does not.
@@ -451,11 +494,49 @@ impl<S: Scalar> Part<S> {
         named: &dyn Fn(&str) -> bool,
     ) -> GeopResult<Mechanism<'_, S>> {
         let mut bodies_of = Vec::new();
-        placed(self, "", None, &Pose::identity(), &mut bodies_of);
+        placed(self, "", None, &Pose::identity(), true, &mut bodies_of);
+        let body_named: std::collections::HashMap<&str, usize> = bodies_of
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.name.as_str(), i))
+            .collect();
+        // The body an entity moves with — the innermost one it is of — and
+        // the entity as that body's part names it.
+        let body_of = |entity: &EntityRef| -> (Option<usize>, EntityRef) {
+            let mut body: Option<usize> = None;
+            let mut rest = entity.clone();
+            while let Some((instance, inner)) = rest.split_instance() {
+                let name = match body {
+                    Some(b) => format!("{}{INSTANCE_SEPARATOR}{instance}", bodies_of[b].name),
+                    None => instance,
+                };
+                let Some(&found) = body_named.get(name.as_str()) else {
+                    break;
+                };
+                body = Some(found);
+                rest = inner;
+            }
+            (body, rest)
+        };
+        let mates = self.all_mates(&bodies_of);
+        let mut held_fast = vec![false; bodies_of.len()];
+        for (name, mate) in mates
+            .iter()
+            .filter(|(_, m)| m.is_fixed() && m.is_complete())
+        {
+            let entity = &mate.entities[0];
+            let Some(body) = body_of(entity).0 else {
+                return Err(GeopError::new(format!(
+                    "{entity} is of this part itself, which never moves: a fixed mate holds a part placed in it"
+                ))
+                .with_context(format!("mate {name:?}")));
+            };
+            held_fast[body] = true;
+        }
         let mut scale = S::ONE;
         let mut bodies = Vec::new();
-        for body in &bodies_of {
-            let center = match body.instance.component.bounds() {
+        for (b, body) in bodies_of.iter().enumerate() {
+            let center = match body.instance.part.bounds() {
                 Some([lo, hi]) => {
                     let diagonal = hi.sub(&lo).norm().sharpen();
                     if diagonal.definitely_greater(scale) {
@@ -467,7 +548,7 @@ impl<S: Scalar> Part<S> {
             };
             bodies.push(Body {
                 pose: body.world,
-                free: !body.instance.fixed
+                free: !held_fast[b]
                     && body
                         .parameter
                         .as_deref()
@@ -475,40 +556,21 @@ impl<S: Scalar> Part<S> {
                 center,
             });
         }
-        let mates = self.all_mates(&bodies_of);
         let mut assembly = Assembly::new(bodies, Vec::new(), scale);
         let (mut constraint_names, mut joint_names, mut coupling_names) =
             (Vec::new(), Vec::new(), Vec::new());
         let mut couplings = Vec::new();
-        let body_named: std::collections::HashMap<&str, usize> = bodies_of
-            .iter()
-            .enumerate()
-            .map(|(i, b)| (b.name.as_str(), i))
-            .collect();
         for (name, mate) in &mates {
             if !mate.is_complete() || !named(name) {
                 continue;
             }
             MATES_RESOLVED.set(MATES_RESOLVED.get() + 1);
             let ctx = with_context!("mate {name:?}");
-            // The body an entity moves with — the innermost one it is of —
-            // and what it is there.
+            // The body an entity moves with, and what it is there.
             let resolve = |entity: &EntityRef| -> GeopResult<Resolved<'_, S>> {
-                let mut body: Option<usize> = None;
-                let mut rest = entity.clone();
-                while let Some((instance, inner)) = rest.split_instance() {
-                    let name = match body {
-                        Some(b) => format!("{}{INSTANCE_SEPARATOR}{instance}", bodies_of[b].name),
-                        None => instance,
-                    };
-                    let Some(&found) = body_named.get(name.as_str()) else {
-                        break;
-                    };
-                    body = Some(found);
-                    rest = inner;
-                }
+                let (body, rest) = body_of(entity);
                 let (part, local) = match body {
-                    Some(b) => (bodies_of[b].instance.part(), rest),
+                    Some(b) => (&*bodies_of[b].instance.part, rest),
                     None => (self, entity.clone()),
                 };
                 let aspects = Aspects::of(&local, part)?;
@@ -562,7 +624,7 @@ impl<S: Scalar> Part<S> {
                             continue;
                         }
                         let parameter = joint_parameter(name, motion);
-                        let value = match self.inputs.get(&parameter) {
+                        let value = match self.state.get(&parameter) {
                             Some(ParamValue::Number(v)) => v.cast(),
                             Some(other) => {
                                 return Err(GeopError::new(format!(
@@ -583,6 +645,8 @@ impl<S: Scalar> Part<S> {
                 MateKind::Coupling(kind) => {
                     couplings.push((name.clone(), kind, mate.joints.clone()));
                 }
+                // Held already, above.
+                MateKind::Anchor(_) => {}
             }
         }
         for (name, kind, joints) in couplings {
@@ -710,7 +774,7 @@ impl<S: Scalar> Part<S> {
     /// closed loop, the other joints give way.
     pub fn solve_joints(&self, set: &[String]) -> GeopResult<(State, MateReport)> {
         let mut bodies = Vec::new();
-        placed(self, "", None, &Pose::identity(), &mut bodies);
+        placed(self, "", None, &Pose::identity(), true, &mut bodies);
         let mut every: Vec<String> = Vec::new();
         for (name, mate) in self.all_mates(&bodies) {
             if let MateKind::Joint(kind) = mate.kind {
@@ -823,7 +887,7 @@ impl<S: Scalar> Part<S> {
     /// the joints. What a program's file keeps of its state.
     pub fn solved_parameters(&self) -> Vec<String> {
         let mut bodies = Vec::new();
-        placed(self, "", None, &Pose::identity(), &mut bodies);
+        placed(self, "", None, &Pose::identity(), true, &mut bodies);
         let mut names: Vec<String> = bodies.iter().filter_map(|b| b.parameter.clone()).collect();
         for (name, mate) in self.all_mates(&bodies) {
             if let MateKind::Joint(kind) = mate.kind {

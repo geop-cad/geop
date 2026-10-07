@@ -41,6 +41,7 @@ use geop_core_math::{
 use geop_core_topology::Body;
 use geop_ops::{BooleanOp, Namer, Part, operation::EntityRef};
 use geop_ops_booleans::{Combine, Tool};
+use geop_ops_hole::PartThreads;
 
 /// The steps of the features `refs` refer to, each once, in the order the
 /// steps ran — the order a copy of each must be combined in, for a hole cut

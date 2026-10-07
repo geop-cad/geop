@@ -8,6 +8,8 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops.workspace = true
+# The cosmetic threads a pattern copies with the feature they are on.
+geop-ops-hole.workspace = true
 geop-ops-booleans.workspace = true
 serde.workspace = true
 

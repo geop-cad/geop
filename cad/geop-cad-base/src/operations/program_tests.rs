@@ -177,7 +177,7 @@ fn extrudes_follow_the_parameters_they_read() {
     assert_eq!(runner.built_anew(), 4);
     // The bottom, the hole's floor and the top.
     assert_heights(runner.part(), &[0.0, 0.5, 1.0]);
-    let read: Vec<&String> = runner.part().state().keys().collect();
+    let read: Vec<&String> = runner.part().declared().keys().collect();
     assert_eq!(read, ["depth", "height"]);
 
     set(&mut program, "depth", "0.25");

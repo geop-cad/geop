@@ -135,7 +135,7 @@ impl Operation for Fillet {
         _: &(),
         _: &[String],
     ) -> Form<'a, S, FilletArgs> {
-        let inputs = context.before.inputs();
+        let inputs = context.before.state();
         let mut f = Form::<S, FilletArgs>::new();
         edges_field(&mut f, &args.edges, |a| &mut a.edges);
         f.formula(
@@ -292,7 +292,7 @@ impl Operation for Chamfer {
         _: &(),
         _: &[String],
     ) -> Form<'a, S, ChamferArgs> {
-        let inputs = context.before.inputs();
+        let inputs = context.before.state();
         let mut f = Form::<S, ChamferArgs>::new();
         edges_field(&mut f, &args.edges, |a| &mut a.edges);
         f.formula(

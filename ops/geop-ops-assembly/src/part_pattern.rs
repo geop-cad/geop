@@ -164,11 +164,9 @@ impl Operation for PartPattern {
                 .with_context(ctx)?
                 .compose(&seed.pose);
             let copy = Instance {
-                component: seed.component.clone(),
                 pose,
                 parameter: None,
-                fixed: true,
-                flexible: false,
+                ..seed.clone()
             };
             part.add_instance(copy, namer.name(&[&k.to_string()]))
                 .with_context(ctx)?;

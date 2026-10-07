@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
@@ -9,7 +6,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops::{
-    Component, EntityRef, Operations,
+    EntityRef, Instance, Operations,
     assembly::{Drag, Kind, MateKind},
     operation::Aspects,
     part::{ParamValue, State, pose_parameter},
@@ -24,10 +21,10 @@ use super::*;
 use crate::editor::PART;
 
 /// Programs' parts by file name, built beforehand.
-struct Shelf(BTreeMap<String, Arc<Component<S>>>);
+struct Shelf(BTreeMap<String, Instance<S>>);
 
 impl Library<S> for Shelf {
-    fn component(&self, file: &str, _: &State) -> GeopResult<Arc<Component<S>>> {
+    fn instance(&self, file: &str, _: &State) -> GeopResult<Instance<S>> {
         self.0
             .get(file)
             .cloned()
@@ -51,19 +48,17 @@ fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
 fn shelf() -> Shelf {
     let mut part = Part::new();
     cube_solid(&mut part, "c", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
-    let component = Component::new(
+    let cube = Instance::of(
         "cube.geop".into(),
         part,
         BTreeSet::from(["cube.geop".into()]),
     );
-    Shelf(BTreeMap::from([("cube.geop".into(), Arc::new(component))]))
+    Shelf(BTreeMap::from([("cube.geop".into(), cube)]))
 }
 
 fn args(fixed: bool, mates: &[(&str, MateKind, [EntityRef; 2])]) -> AddPartArgs {
-    AddPartArgs {
+    let args = AddPartArgs {
         file: "cube.geop".into(),
-        fixed,
-        flexible: false,
         mates: mates
             .iter()
             .map(|(id, kind, entities)| {
@@ -76,7 +71,8 @@ fn args(fixed: bool, mates: &[(&str, MateKind, [EntityRef; 2])]) -> AddPartArgs 
             })
             .collect(),
         ..Default::default()
-    }
+    };
+    if fixed { args.fixed() } else { args }
 }
 
 fn n(x: f64) -> Design {
@@ -188,7 +184,7 @@ fn a_placed_part_is_where_its_pose_puts_it() {
     let part = place(Part::new(), "p", pose, &args(false, &[]), &library);
     part.check_names().unwrap();
     assert_eq!(
-        part.state().keys().collect::<Vec<_>>(),
+        part.declared().keys().collect::<Vec<_>>(),
         ["p.pose"],
         "the step declares where it puts the part"
     );
@@ -201,7 +197,7 @@ fn a_placed_part_is_where_its_pose_puts_it() {
         panic!("one part is placed: {:?}", view.instances);
     };
     assert_eq!(placed.name, "p");
-    let component = placed.component().view().unwrap();
+    let component = placed.part().view().unwrap();
     assert!(!component.faces.is_empty());
     // Turned a quarter about z, the cube spans x in [1, 2] and y in [0, 1].
     for p in component
@@ -360,7 +356,7 @@ fn a_drag_pulls_the_point_grabbed() {
     );
     let part = place(with_a(&library), "b", Pose::identity(), &mates, &library);
     let before = with_a(&library);
-    let state = part.inputs().clone();
+    let state = part.state().clone();
     let context = Context::new(&before, "b", &library)
         .state(&state)
         .built(Some(&part));
@@ -413,7 +409,7 @@ fn a_drag_pulls_the_point_grabbed() {
         args: &mut mates.clone(),
         session: &mut session,
         selection: &mut Vec::new(),
-        state: &mut part.inputs().clone(),
+        state: &mut part.state().clone(),
     };
     AddPart.event(context, edit, &CanvasEvent::Leave);
     assert!(

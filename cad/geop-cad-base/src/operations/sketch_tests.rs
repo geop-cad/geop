@@ -199,7 +199,7 @@ fn placed_parts_take_the_parameters_given() {
     );
     let colors: Vec<Option<String>> = part
         .instances()
-        .map(|(_, i)| i.part().color().map(str::to_string))
+        .map(|(_, i)| i.part.color().map(str::to_string))
         .collect();
     assert!(colors.contains(&Some("#3e7bd0".into())), "{colors:?}");
     assert!(colors.contains(&Some("#d0893e".into())), "{colors:?}");
@@ -207,15 +207,12 @@ fn placed_parts_take_the_parameters_given() {
     // built with.
     let large = part
         .instances()
-        .find(|(_, i)| i.part().color() == Some("#3e7bd0"))
+        .find(|(_, i)| i.part.color() == Some("#3e7bd0"))
         .unwrap()
         .1;
+    assert_eq!(large.part.state()["screw"], ParamValue::Text("M6".into()));
     assert_eq!(
-        large.part().inputs()["screw"],
-        ParamValue::Text("M6".into())
-    );
-    assert_eq!(
-        geop_ops::parameters::number(large.part().inputs(), "screw.clearance"),
+        geop_ops::parameters::number(large.part.state(), "screw.clearance"),
         Some(0.66)
     );
 }

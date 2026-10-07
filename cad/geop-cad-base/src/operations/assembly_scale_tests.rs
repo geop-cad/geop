@@ -86,8 +86,6 @@ fn face(instance: &str, face: &str) -> EntityRef {
 fn resting(file: &str, below: EntityRef, on: EntityRef) -> AddPartArgs {
     AddPartArgs {
         file: file.into(),
-        fixed: false,
-        flexible: false,
         mates: BTreeMap::from([(
             "m1".into(),
             Mate::constraint(Kind::Coincident, vec![below, on]),
@@ -105,9 +103,9 @@ fn assembly(parts: Vec<(String, &str, EntityRef, EntityRef, [f64; 3])>) -> Progr
         "plate",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     let mut state = State::from([(
         pose_parameter("plate"),
@@ -270,7 +268,7 @@ fn editing_a_file_rebuilds_only_what_places_it() {
         let mut part = &part;
         for instance in name.split('/') {
             let id = part.instance_id(instance).unwrap();
-            part = part.instance(id).unwrap().part();
+            part = &part.instance(id).unwrap().part;
         }
         part.clone()
     };
@@ -460,12 +458,12 @@ fn robot_timings() {
 /// step list of every placed part, each asking the whole assembly how
 /// free its part is, made a drag of a 2000-part robot take minutes. Counted
 /// in mates resolved (see [`geop_ops::assembly::mates_resolved`]), not
-/// timed, so it shows at a modest size: per mate of the top file, an edit
-/// resolves a few, however many there are.
+/// timed, so it shows at a modest size: per mate of the assembly — those
+/// of the parts placed in it included — an edit resolves a few, however
+/// many there are.
 #[test]
 fn an_edit_resolves_each_mate_a_few_times() {
     for screws in [20, 80] {
-        let mates = 1 + screws;
         let resolved = |f: &mut dyn FnMut()| {
             let before = geop_ops::assembly::mates_resolved();
             f();
@@ -474,6 +472,7 @@ fn an_edit_resolves_each_mate_a_few_times() {
         let mut editor = None;
         let load = resolved(&mut || editor = Some(robot_editor(1, screws).0));
         let mut editor = editor.unwrap();
+        let mates = editor.part().mechanism().unwrap().names.len();
         let drag = resolved(&mut || {
             editor.handle(Command::DragTool { on: true });
             let update = editor.handle(Command::Event {

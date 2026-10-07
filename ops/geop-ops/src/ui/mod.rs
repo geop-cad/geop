@@ -39,5 +39,5 @@ pub use event::{Button, CanvasEvent, Pointer, Reach, StepEditEvent, Value};
 pub use form::{Edit, Form, InHand};
 pub use gizmo::{Change, Gizmo, GizmoDrag, GizmoPart, GizmoView, Orientation};
 pub use step::{DRAG_SNAP, GIZMO_ORIENTATION, StepEditor};
-pub use view::{EMPTY_EXTENT, Extent, PartHit, PartView, ViewInstance, ViewThread};
+pub use view::{EMPTY_EXTENT, Extent, PartHit, PartView, ViewAnnotation, ViewInstance};
 pub use visual::{Presentation, Prompt, Shape, Style, TRIAD, Visual};

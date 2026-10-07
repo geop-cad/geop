@@ -256,7 +256,7 @@ fn project<S: Scalar>(
         // its own part has it, onto the plane where that part has it.
         let instance = part.instance(part.instance_id(&name)?)?;
         let local = instance.pose.inverse().motion().apply_frame(plane)?;
-        let inner = project(&inner, instance.part(), &local)?;
+        let inner = project(&inner, &instance.part, &local)?;
         let prefix = |key: String| inner_name(&name, &key);
         return Ok(Geometry {
             points: inner

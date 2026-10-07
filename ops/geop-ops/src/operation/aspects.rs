@@ -73,7 +73,7 @@ impl<S: Scalar> Aspects<S> {
         let ctx = with_context!("resolving {entity}");
         if let Some((name, inner)) = entity.split_instance() {
             let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
-            return Aspects::of(&inner, instance.part())
+            return Aspects::of(&inner, &instance.part)
                 .with_context(ctx)?
                 .placed(&instance.pose);
         }

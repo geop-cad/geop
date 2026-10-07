@@ -10,6 +10,8 @@ geop-core-topology.workspace = true
 # How a dimension is drawn: shared with the sketch editor.
 geop-core-sketch.workspace = true
 geop-ops.workspace = true
+# The cosmetic threads it draws.
+geop-ops-hole.workspace = true
 geop-ops-booleans.workspace = true
 # Entities of placed parts, resolved where they are placed.
 geop-ops-inspect.workspace = true

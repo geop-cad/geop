@@ -22,11 +22,12 @@ use geop_core_topology::Model;
 
 use crate::assembly::Mate;
 
-mod cable;
+mod cache;
 mod datum;
 mod describe;
 mod edit;
 mod euler;
+mod extension;
 mod feature;
 mod ids;
 mod instance;
@@ -36,21 +37,17 @@ mod resolve;
 mod sketch;
 mod sketch3d;
 mod state;
-mod thread;
 
-pub use cable::{Cable, CutWire};
-pub use describe::{
-    EdgeDescription, FaceDescription, InstanceDescription, PartDescription, ThreadDescription,
-};
+pub use describe::{EdgeDescription, FaceDescription, InstanceDescription, PartDescription};
 pub use edit::BodyNames;
+pub use extension::{Annotation, Extension};
 pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool};
 pub use ids::{DatumId, InstanceId, RefId, Sketch3dId, SketchId};
-pub use instance::{Component, Instance};
+pub use instance::Instance;
 pub use mesh::SolidMeshes;
 pub use names::{NameRegistry, Namer, operation_of, validate_operation_id};
 pub use sketch::PlacedSketch;
 pub use state::{ParamValue, State, pose_parameter};
-pub use thread::CosmeticThread;
 
 /// A complete, editable CAD part: its boundary-representation topology, the
 /// sketches — planar and 3-D — and datums used to build it — starting with the frame
@@ -80,20 +77,20 @@ pub struct Part<S: Scalar> {
     pub(crate) datums: BTreeMap<DatumId, Datum<S>>,
     pub(crate) instances: BTreeMap<InstanceId, Instance<S>>,
     pub(crate) mates: BTreeMap<String, Mate>,
-    /// The cables routed in it, by the name of the solid each is swept
-    /// into (see [`Cable`]).
-    pub(crate) cables: BTreeMap<String, Cable<S>>,
-    /// Its cosmetic threads, by name (see [`CosmeticThread`]).
-    pub(crate) threads: BTreeMap<String, CosmeticThread<S>>,
+    /// What the operation families kept in it for themselves (see
+    /// [`Part::ext`]).
+    extensions: extension::Extensions<S>,
     /// What each step that combined tools with a solid did, by the step's
     /// id, in the order the steps ran (see [`Feature`]).
     features: Vec<(String, Arc<Feature<S>>)>,
     /// The parameter values the part is built with (see [`Part::pose_parameter`]).
-    pub(crate) inputs: State,
+    pub(crate) state: State,
     /// The parameters its steps declared, with the values they read.
     declared: State,
     /// What its parameters are defined as (see [`Part::parameters`]).
     pub(crate) parameters: crate::parameters::Parameters,
+    /// What was worked out of it once placed (see [`Part::view`]).
+    cache: cache::Cache<S>,
     /// The next sketch, 3-D sketch, datum or instance id: ids count up in the order
     /// they are added, so iterating any of these maps goes oldest first.
     next_id: u64,
@@ -120,13 +117,13 @@ impl<S: Scalar> Part<S> {
             datums: BTreeMap::new(),
             instances: BTreeMap::new(),
             mates: BTreeMap::new(),
-            cables: BTreeMap::new(),
-            threads: BTreeMap::new(),
+            extensions: extension::Extensions::new(),
             features: Vec::new(),
-            inputs: State::new(),
+            state: State::new(),
             declared: State::new(),
             parameters: crate::parameters::Parameters::default(),
             body_data: BTreeMap::new(),
+            cache: cache::Cache::new(),
             next_id: 1,
             revision: 0,
         };

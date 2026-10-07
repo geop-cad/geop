@@ -101,7 +101,7 @@ impl Operation for Shell {
             Number::formula(
                 "thickness",
                 &args.thickness,
-                context.before.inputs(),
+                context.before.state(),
                 Unit::Length,
             )
             .range(0.0, 1.0),

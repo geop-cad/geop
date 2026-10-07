@@ -53,7 +53,7 @@ use geop_core_math::{
 use geop_core_solve::mates::{JointEnd, JointKind, Motion};
 use geop_core_topology::mass::MassProperties;
 use geop_ops::{
-    Component, Part,
+    Instance, Part,
     assembly::{Mechanism, PlacedBody},
 };
 use geop_ops_inspect::bodies::placed_solids;
@@ -235,11 +235,10 @@ fn slide<S: Scalar>(distance: S) -> Pose<S> {
     Pose::identity().with_position(Vector3::from_array([S::ZERO, S::ZERO, distance]))
 }
 
-/// The triangles of every solid of `part` — and, `with_placed`, of the
-/// parts placed in it, however deep — in its own frame, moved by `pose`.
+/// The triangles of every solid of `part` — not of the parts placed in it,
+/// which are bodies of their own — in its own frame, moved by `pose`.
 fn triangles<S: Scalar>(
     part: &Part<S>,
-    with_placed: bool,
     pose: &Pose<S>,
     quality: usize,
     out: &mut Vec<TriangleFace<S>>,
@@ -262,17 +261,6 @@ fn triangles<S: Scalar>(
             });
         }
     }
-    if with_placed {
-        for (_, instance) in part.instances() {
-            triangles(
-                instance.part(),
-                true,
-                &pose.compose(&instance.pose),
-                quality,
-                out,
-            )?;
-        }
-    }
     Ok(())
 }
 
@@ -280,33 +268,25 @@ fn triangles<S: Scalar>(
 /// whether its placed parts are in it — the mesh's path, if it has any
 /// triangles.
 struct Meshes {
-    paths: HashMap<(usize, bool), Option<String>>,
+    paths: HashMap<usize, Option<String>>,
     files: Vec<(String, Vec<u8>)>,
     quality: usize,
 }
 
 impl Meshes {
-    /// The path of the mesh of `part`, called `stem` — with its placed
-    /// parts if `with_placed` — written now if it was not yet; `None` if it
-    /// has no solids. `key` names the component.
+    /// The path of the mesh of `part`, called `stem`, written now if it was
+    /// not yet; `None` if it has no solids. `key` names the part.
     fn of<S: Scalar>(
         &mut self,
         key: usize,
         stem: &str,
         part: &Part<S>,
-        with_placed: bool,
     ) -> GeopResult<Option<String>> {
-        if let Some(path) = self.paths.get(&(key, with_placed)) {
+        if let Some(path) = self.paths.get(&key) {
             return Ok(path.clone());
         }
         let mut faces = Vec::new();
-        triangles(
-            part,
-            with_placed,
-            &Pose::identity(),
-            self.quality,
-            &mut faces,
-        )?;
+        triangles(part, &Pose::identity(), self.quality, &mut faces)?;
         let path = if faces.is_empty() {
             None
         } else {
@@ -324,14 +304,14 @@ impl Meshes {
             self.files.push((path.clone(), bytes));
             Some(path)
         };
-        self.paths.insert((key, with_placed), path.clone());
+        self.paths.insert(key, path.clone());
         Ok(path)
     }
 }
 
-/// The name of a component's file without folders or `.geop`: `link`.
-fn stem_of<S: Scalar>(component: &Arc<Component<S>>) -> String {
-    let file = component.file.rsplit(['/', ':']).next().unwrap_or_default();
+/// The name of an instance's file without folders or `.geop`: `link`.
+fn stem_of<S: Scalar>(instance: &Instance<S>) -> String {
+    let file = instance.file.rsplit(['/', ':']).next().unwrap_or_default();
     file.trim_end_matches(".geop").to_string()
 }
 
@@ -429,7 +409,7 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
                     e.with_context(format!("the mass of {}", solid.name))
                 })?);
             }
-            if let Some(mesh) = meshes.of(0, "base", part, false)? {
+            if let Some(mesh) = meshes.of(0, "base", part)? {
                 visuals.push(Visual {
                     name: "base".into(),
                     origin: Origin::of(&back),
@@ -440,24 +420,19 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
         for &b in &link.bodies {
             let body: &PlacedBody<S> = &mechanism.bodies[b];
             let instance = body.instance;
-            // A part placed flexibly is a body of its own solids: the parts
-            // placed in it are bodies of their own.
-            for solid in placed_solids(instance.part())?
+            // A part placed is a body of its own solids: the parts placed
+            // in it are bodies of their own.
+            for solid in placed_solids(&instance.part)?
                 .iter()
-                .filter(|s| !instance.flexible || s.pose.is_none())
+                .filter(|s| s.pose.is_none())
             {
                 let own = solid.mass_properties().with_context(&|e: GeopError| {
                     e.with_context(format!("the mass of {}/{}", body.name, solid.name))
                 })?;
                 masses.push(own.placed(&world[b])?);
             }
-            let key = Arc::as_ptr(&instance.component) as usize;
-            if let Some(mesh) = meshes.of(
-                key,
-                &stem_of(&instance.component),
-                instance.part(),
-                !instance.flexible,
-            )? {
+            let key = Arc::as_ptr(&instance.part) as usize;
+            if let Some(mesh) = meshes.of(key, &stem_of(instance), &instance.part)? {
                 visuals.push(Visual {
                     name: body.name.clone(),
                     origin: Origin::of(&back.compose(&world[b])),

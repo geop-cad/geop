@@ -13,6 +13,7 @@ use geop_ops::{
     ui::{Button, Control, Pointer, Reach, StepEditEvent, Tone, Value},
 };
 use geop_ops_booleans::Combine;
+use geop_ops_harness::PartCables;
 
 use crate::{Command, Editor, PartOperation, Program, Update, examples};
 
@@ -966,8 +967,8 @@ fn new_hole_from_the_dialog() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let scene = update.scene.expect("the scene changed");
-    assert_eq!(scene.part.threads.len(), 1);
-    assert_eq!(scene.part.threads[0].designation, "M5x0.8");
+    assert_eq!(scene.part.annotations.len(), 1);
+    assert_eq!(scene.part.annotations[0].label, "M5x0.8");
 }
 
 /// A boundary surface picks the box's four top edges, clicked from above
@@ -2767,7 +2768,7 @@ fn renaming_a_parameter_renames_what_reads_it() {
             solid: part.solid_id(&name).unwrap(),
             name,
             part,
-            component: None,
+            cached: false,
             pose: None,
         }
         .mass_properties()
@@ -3913,9 +3914,9 @@ fn a_file_opened_again_is_not_built_again() {
         "box",
         geop_ops_assembly::AddPartArgs {
             file: "part.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     let mut editor = Editor::<S>::new();
     let files = [

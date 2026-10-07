@@ -14,7 +14,6 @@ pub use library::{Cache, Files, FilesMut, Library, MemoryCache, NoFiles, Workspa
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashSet},
-    sync::Arc,
 };
 
 use geop_core_math::{
@@ -25,7 +24,7 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Component, Part,
+    Instance, Part,
     operation::Operations,
     parameters::{Parameters, names_in, parameter_of, rename_in, validate_name},
     part::State,
@@ -355,7 +354,7 @@ pub struct ProgramRunner<S: Scalar, O> {
     parts: Vec<Part<S>>,
     results: Vec<StepResult>,
     /// `reads[i]`: the files `steps[i]` built on — those of every part it
-    /// placed (see [`Component::files`]).
+    /// placed (see [`Instance::files`]).
     reads: Vec<BTreeSet<String>>,
     /// How many steps the last run covers.
     ran: usize,
@@ -374,12 +373,12 @@ struct Recording<'l, S: Scalar> {
 }
 
 impl<S: Scalar> Library<S> for Recording<'_, S> {
-    fn component(&self, file: &str, overrides: &State) -> GeopResult<Arc<Component<S>>> {
-        let component = self.library.component(file, overrides)?;
+    fn instance(&self, file: &str, overrides: &State) -> GeopResult<Instance<S>> {
+        let instance = self.library.instance(file, overrides)?;
         self.read
             .borrow_mut()
-            .extend(component.files.iter().cloned());
-        Ok(component)
+            .extend(instance.files.iter().cloned());
+        Ok(instance)
     }
 
     fn files(&self) -> Vec<String> {
@@ -465,7 +464,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
             // A step that failed may have failed for want of a value, and
             // what it would have read is not known: it runs again too.
             if let Some(first) = (0..common).find(|&i| {
-                let (before, after) = (self.parts[i].state(), self.parts[i + 1].state());
+                let (before, after) = (self.parts[i].declared(), self.parts[i + 1].declared());
                 self.results[i].error.is_some()
                     || after
                         .keys()
@@ -483,7 +482,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         // the values and the parameters the program has now — its colour,
         // what a program placing it offers, what the next step reads.
         for part in &mut self.parts {
-            part.inputs = self.inputs.clone();
+            part.state = self.inputs.clone();
             part.parameters = program.parameters.clone();
         }
 

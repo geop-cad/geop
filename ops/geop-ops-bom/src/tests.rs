@@ -1,7 +1,7 @@
 //! Bills of generated assemblies: repeated parts grouped, sub-assemblies
 //! flattened or indented, masses multiplied, sheet thickness and wires.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::collections::BTreeSet;
 
 use geop_core_math::{
     primitives::Pose,
@@ -9,11 +9,12 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops::{
-    Component, Instance, Part,
+    Instance, Part,
     parameters::{Material, Parameter, ParameterKind, Parameters, Row},
-    part::{Cable, CutWire, ParamValue, State},
+    part::{ParamValue, State},
 };
 use geop_ops_extrude_revolve::shapes::cube::cube_solid;
+use geop_ops_harness::{Cable, CutWire, PartCables};
 use geop_ops_sheetmetal::FlatPatternData;
 
 use crate::{Bom, LineKind, Structure, bom};
@@ -39,7 +40,7 @@ fn cube(part: &mut Part<S>, name: &str, side: f64) {
 
 /// A "standard" screw, a steel cube of side 1, built at the size `size`:
 /// called a test screw, and ordered as `TEST M4`.
-fn screw(size: &str) -> Arc<Component<S>> {
+fn screw(size: &str) -> Instance<S> {
     let mut parameters = steel();
     parameters.title = Some("Test screw".into());
     parameters.designation = Some("TEST".into());
@@ -71,26 +72,23 @@ fn screw(size: &str) -> Arc<Component<S>> {
     component("std:screw.geop", part)
 }
 
-fn component(file: &str, part: Part<S>) -> Arc<Component<S>> {
-    Arc::new(Component::new(file.into(), part, BTreeSet::new()))
+fn component(file: &str, part: Part<S>) -> Instance<S> {
+    Instance::of(file.into(), part, BTreeSet::new())
 }
 
 /// Places `component` in `part` under `name`, somewhere: where it is is no
 /// part of what it is.
-fn place(part: &mut Part<S>, component: &Arc<Component<S>>, name: &str, x: f64) {
+fn place(part: &mut Part<S>, component: &Instance<S>, name: &str, x: f64) {
     let pose = Pose::identity().with_position(Vector3::from_array([x, 0.0, 0.0].map(S::from_f64)));
     let instance = Instance {
-        component: component.clone(),
         pose,
-        parameter: None,
-        fixed: false,
-        flexible: false,
+        ..component.clone()
     };
     part.add_instance(instance, name).unwrap();
 }
 
 /// A bracket of side 2, with two M4 screws in it.
-fn bracket() -> Arc<Component<S>> {
+fn bracket() -> Instance<S> {
     let mut part = Part::new().with_parameters(steel());
     cube(&mut part, "body", 2.0);
     let m4 = screw("M4");

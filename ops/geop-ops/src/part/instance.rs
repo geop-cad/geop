@@ -2,132 +2,61 @@
 //! makes a part an assembly — and the mates that hold them together (see
 //! [`crate::assembly`]). Named like any other entity.
 
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::{
-        Arc, Mutex, OnceLock, PoisonError,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{collections::BTreeSet, sync::Arc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
     scalars::Scalar,
-    vector::Vector3,
 };
-
-use geop_core_topology::{SolidId, mass::MassProperties};
 
 use super::Part;
 use super::ids::InstanceId;
-use crate::{assembly::Mate, ui::PartView};
+use crate::{assembly::Mate, parameters::Parameter};
 
-/// What a program file builds, ready to be placed: the part, the file it
-/// came from, and every file that went into it.
+/// A part placed in another, at a [`Pose`] — every point `p` of it at
+/// `pose.apply(p)` — the value of the pose parameter `parameter` of the
+/// part it is placed in, which a solve of the mates may change unless a
+/// fixed mate holds it (see [`crate::assembly`]). A copy of a pattern of
+/// placed parts has no parameter: it goes where the pattern puts it.
 ///
-/// Shared — through an [`Arc`] — by every instance of it, and by every
-/// rebuild that places the same file unchanged, so it is built once and
-/// drawn once (see [`Component::view`]).
-pub struct Component<S: Scalar> {
-    /// Where its program is, as the library that built it names files.
+/// The part is shared — through an [`Arc`] — by every instance of it, and
+/// by every rebuild that places the same file unchanged, so it is built
+/// once and drawn once (see [`Part::view`]). The parts placed in it are
+/// the part's to move too: their poses are state of the part it is
+/// placed in, the part built with those, and its mates solved with the
+/// part's.
+#[derive(Clone)]
+pub struct Instance<S: Scalar> {
+    pub part: Arc<Part<S>>,
+    /// Where the program that built `part` is, as the library that built it
+    /// names files.
     pub file: String,
-    pub part: Part<S>,
     /// Its own file and every file it places, directly or through others:
     /// what placing it must not form a cycle with.
     pub files: BTreeSet<String>,
-    /// Which build of `file` it is: unique among every component made.
-    build: u64,
-    view: OnceLock<PartView<S>>,
-    bounds: OnceLock<Option<[Vector3<S>; 2]>>,
-    /// Its solids' mass properties, of density one, as far as asked for.
-    mass: Mutex<HashMap<SolidId, MassProperties<S>>>,
-}
-
-/// The build number the next component gets.
-static NEXT_BUILD: AtomicU64 = AtomicU64::new(1);
-
-impl<S: Scalar> Component<S> {
-    pub fn new(file: String, part: Part<S>, files: BTreeSet<String>) -> Self {
-        Self {
-            file,
-            part,
-            files,
-            build: NEXT_BUILD.fetch_add(1, Ordering::Relaxed),
-            view: OnceLock::new(),
-            bounds: OnceLock::new(),
-            mass: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// The mass properties of its part's solid `solid`, of density one
-    /// (see [`geop_core_topology::Model::mass_properties`]): integrated the
-    /// first time they are asked for, and kept for as long as the
-    /// component is — every bill of materials, mass report and robot
-    /// description of it, however often it is placed, integrates it once.
-    pub fn mass_properties(&self, solid: SolidId) -> GeopResult<MassProperties<S>> {
-        let kept = || self.mass.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(&properties) = kept().get(&solid) {
-            return Ok(properties);
-        }
-        let properties = self.part.topology.mass_properties(solid)?;
-        kept().insert(solid, properties);
-        Ok(properties)
-    }
-
-    /// The box around every vertex of the part and of the parts placed in
-    /// it, as placed — `None` for a part with none: found once, and kept
-    /// for as long as the component is (see [`crate::assembly`]).
-    pub fn bounds(&self) -> Option<[Vector3<S>; 2]> {
-        *self
-            .bounds
-            .get_or_init(|| crate::assembly::bounds(&self.part))
-    }
-
-    /// What tells it apart from every other component, a rebuild of the
-    /// same file included: `bolt.geop#7`. A viewer keeps a component's view
-    /// by it, so that it is sent once however often it is drawn.
-    pub fn key(&self) -> String {
-        format!("{}#{}", self.file, self.build)
-    }
-
-    /// The part as drawn, in its own frame: rasterized once, the first time
-    /// it is asked for, and kept for as long as the component is. Without
-    /// its sketches: what a part was drawn with is its own business, not
-    /// that of the parts it is placed in.
-    pub fn view(&self) -> GeopResult<&PartView<S>> {
-        if let Some(view) = self.view.get() {
-            return Ok(view);
-        }
-        let mut view = PartView::of(&self.part)?;
-        view.sketches.clear();
-        Ok(self.view.get_or_init(|| view))
-    }
-}
-
-/// A part placed in another: a [`Component`] at a [`Pose`] — every point
-/// `p` of it at `pose.apply(p)` — the value of the parameter
-/// `parameter` of the part it is placed in, which a solve of the mates may
-/// change unless the instance is `fixed`. A copy of a pattern of placed
-/// parts has no parameter: it goes where the pattern puts it.
-///
-/// Placed `flexible`, the parts placed in it are the part's to move too:
-/// their poses are state of the part it is placed in, its component
-/// built with those, and its mates solved with the part's (see
-/// [`crate::assembly`]). Placed rigid, it moves as one body, its parts
-/// where its own state puts them.
-#[derive(Clone)]
-pub struct Instance<S: Scalar> {
-    pub component: Arc<Component<S>>,
     pub pose: Pose<S>,
-    pub parameter: Option<String>,
-    pub fixed: bool,
-    pub flexible: bool,
+    pub parameter: Option<Parameter>,
 }
 
 impl<S: Scalar> Instance<S> {
-    pub fn part(&self) -> &Part<S> {
-        &self.component.part
+    /// The part built from the program in `file`, which reads `files`, at
+    /// the origin and no parameter: ready to be given a place.
+    pub fn of(file: String, part: Part<S>, files: BTreeSet<String>) -> Self {
+        Self {
+            part: Arc::new(part),
+            file,
+            files,
+            pose: Pose::identity(),
+            parameter: None,
+        }
+    }
+
+    /// What tells it apart from every other build of a file: `bolt.geop#7`.
+    /// A viewer keeps a part's view by it, so that it is sent once however
+    /// often it is drawn.
+    pub fn key(&self) -> String {
+        format!("{}#{}", self.file, self.part.revision())
     }
 }
 
@@ -166,6 +95,18 @@ impl<S: Scalar> Part<S> {
         }
         self.mates.insert(name, mate);
         Ok(())
+    }
+
+    /// Whether a fixed mate holds the part placed at the path `instance` —
+    /// `bolt`, or `asm/bolt` for one placed in a part placed.
+    pub fn is_fixed(&self, instance: &str) -> bool {
+        self.mates().any(|(_, mate)| {
+            mate.is_fixed()
+                && mate
+                    .entities
+                    .iter()
+                    .any(|e| e.instance_path().as_deref() == Some(instance))
+        })
     }
 
     /// Every mate, by name.

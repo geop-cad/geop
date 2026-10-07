@@ -185,6 +185,14 @@ impl EntityRef {
         Some((instance, inner))
     }
 
+    /// The path of the part placed it lies in — `asm/bolt` for the face
+    /// `asm/bolt/extrude(head,end)` — if it lies in one.
+    pub fn instance_path(&self) -> Option<String> {
+        let mut entity = self.clone();
+        let (path, _) = entity.name_mut()?.rsplit_once(INSTANCE_SEPARATOR)?;
+        Some(path.to_string())
+    }
+
     /// The entity, of the part placed as `instance`, as the part it is
     /// placed in names it.
     pub fn in_instance(&self, instance: &str) -> EntityRef {
@@ -343,7 +351,7 @@ impl EntityRef {
         let ctx = with_context!("resolving {self}");
         if let Some((name, inner)) = self.split_instance() {
             let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
-            let datum = inner.resolve_datum(instance.part()).with_context(ctx)?;
+            let datum = inner.resolve_datum(&instance.part).with_context(ctx)?;
             return Ok(Datum {
                 kind: datum.kind,
                 frame: instance.pose.motion().apply_frame(&datum.frame)?,
@@ -369,7 +377,7 @@ impl EntityRef {
         let ctx = with_context!("resolving the plane of {self}");
         if let Some((name, inner)) = self.split_instance() {
             let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
-            let plane = inner.resolve_plane(instance.part()).with_context(ctx)?;
+            let plane = inner.resolve_plane(&instance.part).with_context(ctx)?;
             return instance.pose.motion().apply_frame(&plane);
         }
         match self {
@@ -408,7 +416,7 @@ impl EntityRef {
         let ctx = with_context!("resolving the curves of {self}");
         if let Some((name, inner)) = self.split_instance() {
             let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
-            let chain = inner.resolve_chain(instance.part()).with_context(ctx)?;
+            let chain = inner.resolve_chain(&instance.part).with_context(ctx)?;
             let motion = instance.pose.motion();
             let prefix = |n: &String| format!("{name}{INSTANCE_SEPARATOR}{n}");
             return Ok(Chain {

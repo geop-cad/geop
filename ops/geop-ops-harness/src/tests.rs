@@ -2,6 +2,7 @@
 //! lengths against the analytical ones, their bends checked, their bundles
 //! valid solids.
 
+use crate::PartCables;
 use geop_core_math::{
     for_all_scalars,
     geop_error::GeopResult,

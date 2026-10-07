@@ -83,6 +83,10 @@ pub enum ParameterKind {
         rows: Vec<Row>,
         selected: String,
     },
+    /// Where a placed part is: a pose, in the frame of the part it is
+    /// placed in. Not defined by a formula but given — by a program, or by
+    /// the solve of the mates (see [`crate::assembly`]).
+    Pose,
 }
 
 /// A named parameter.
@@ -157,6 +161,16 @@ pub fn validate_color(color: &str) -> GeopResult<()> {
         )));
     }
     Ok(())
+}
+
+impl Parameter {
+    /// The parameter `name` that is where a placed part is.
+    pub fn pose(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: ParameterKind::Pose,
+        }
+    }
 }
 
 impl Parameters {
@@ -287,6 +301,8 @@ impl Parameters {
                     }
                     _ => numbers.push((&p.name, expression)),
                 },
+                // Given, not defined: nothing to resolve.
+                ParameterKind::Pose => {}
                 ParameterKind::Table {
                     columns,
                     rows,

@@ -67,7 +67,14 @@ fn the_pin_is_mated_into_the_plate() {
         ["pin", "plate"]
     );
     assert_eq!(description.instances["pin"].file, "pin.geop");
-    assert_eq!(description.mates, ["add_part(pin,m1)", "add_part(pin,m2)"]);
+    assert_eq!(
+        description.mates,
+        [
+            "add_part(pin,m1)",
+            "add_part(pin,m2)",
+            "add_part(plate,fixed)"
+        ]
+    );
 }
 
 /// A program placing a file that places it back — directly or through
@@ -80,11 +87,10 @@ fn files_must_not_place_each_other_in_a_cycle() {
             "placed",
             AddPartArgs {
                 file: file.into(),
-                fixed: true,
-                flexible: false,
                 mates: BTreeMap::new(),
                 ..Default::default()
-            },
+            }
+            .fixed(),
         );
         program
     };
@@ -266,7 +272,7 @@ fn a_fixed_part_follows_a_drag_of_several_events() {
         panic!("the pin is placed");
     };
     pin.mates.clear();
-    pin.fixed = true;
+    pin.set_fixed(true);
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
@@ -287,6 +293,52 @@ fn a_fixed_part_follows_a_drag_of_several_events() {
     editor.handle(Command::Commit);
     let pin = pose_of(editor.program(), "pin");
     assert_close(position(&pin), [5.0, 1.0, 0.0], 1e-9);
+}
+
+/// Adding a fixed mate in the step's dialog holds the part the step
+/// places, like the checkbox did: it goes where it is dragged, and the
+/// program survives being saved and read back.
+#[test]
+fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
+    let mut program = examples::pin_in_plate_assembly();
+    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
+        panic!("the pin is placed");
+    };
+    pin.mates.clear();
+    program
+        .state
+        .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
+    let mut editor = editor_on(program);
+    let update = editor.handle(Command::Open { id: "pin".into() });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(dialog("add_mate", Value::Choice("fixed".into())));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Drag {
+            from: down(3.5, 1.0),
+            to: down(5.0, 1.0),
+            done: true,
+            shift: false,
+        },
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::Commit);
+    assert_close(
+        position(&pose_of(editor.program(), "pin")),
+        [5.0, 1.0, 0.0],
+        1e-9,
+    );
+    let program = editor.program().clone();
+    assert_eq!(
+        Program::from_json(&program.to_json().unwrap())
+            .unwrap()
+            .steps,
+        program.steps
+    );
+    let part = program
+        .build(&Workspace::<S>::new(WithStandardParts(parts())).scope("assembly.geop"))
+        .unwrap();
+    assert!(part.is_fixed("pin") && part.is_fixed("plate"));
 }
 
 /// Where `pose` puts its body's origin.
@@ -342,11 +394,11 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
     let PartOperation::AddPart(plate) = &mut program.steps[0].operation else {
         panic!("the plate is placed");
     };
-    plate.fixed = false;
+    plate.set_fixed(false);
     let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
         panic!("the pin is placed");
     };
-    pin.fixed = true;
+    pin.set_fixed(true);
     program.steps.insert(
         1,
         Step {
@@ -395,7 +447,7 @@ fn a_mate_added_moves_the_part_of_its_step() {
     let PartOperation::AddPart(plate) = &mut program.steps[0].operation else {
         panic!("the plate is placed");
     };
-    plate.fixed = false;
+    plate.set_fixed(false);
     let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
         panic!("the pin is placed");
     };
@@ -492,11 +544,10 @@ fn a_file_left_is_placed_as_it_was_edited() {
         "pin",
         AddPartArgs {
             file: "pin.geop".into(),
-            fixed: true,
-            flexible: false,
             mates: BTreeMap::new(),
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     let update = editor.handle(Command::Load {
         program: assembly,
@@ -548,9 +599,8 @@ fn a_drag_is_answered_quickly() {
 
 /// `hinge.geop`: the plate, fixed, and the pin on the axis of its hole —
 /// free to slide along it and turn about it — and `top.geop`, which
-/// places the hinge, fixed, flexibly or not, and holds the pin's top 3
-/// above its own base.
-fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
+/// places the hinge, fixed, and holds the pin's top 3 above its own base.
+fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
     let mut hinge = examples::pin_in_plate_assembly();
     let PartOperation::AddPart(pin) = &mut hinge.steps[1].operation else {
         panic!("the pin is placed");
@@ -564,8 +614,6 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
         "hinge",
         AddPartArgs {
             file: "hinge.geop".into(),
-            fixed: true,
-            flexible,
             mates: BTreeMap::from([(
                 "m1".into(),
                 geop_ops::assembly::Mate::constraint(
@@ -584,7 +632,8 @@ fn hinge(flexible: bool) -> (BTreeMap<String, Option<String>>, Program) {
                 ),
             )]),
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     (files, top)
 }
@@ -600,12 +649,12 @@ fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: 
     editor
 }
 
-/// Placed flexibly, the parts of a sub-assembly are the program's to move:
+/// The parts of a sub-assembly are the program's to move:
 /// its mate slides the hinge's pin up — the pin's pose a parameter of the
 /// program, relative to the hinge — and the hinge is drawn with it there.
 #[test]
 fn a_flexible_sub_assembly_moves_its_parts() {
-    let (files, program) = hinge(true);
+    let (files, program) = hinge();
     let mut editor = editor_with(files, program, "top.geop");
     let pin = pose_of(editor.program(), "hinge/pin");
     assert_close(position(&pin), [1.0, 1.0, 1.0], 1e-7);
@@ -625,26 +674,6 @@ fn a_flexible_sub_assembly_moves_its_parts() {
     let drawn = &scene.part.instances[2].frame;
     assert!((drawn.origin()[2].to_f64() - 1.0).abs() < 1e-7);
     assert!((top(&mut editor, "hinge/pin") - 3.0).abs() < 1e-6);
-}
-
-/// Placed rigid, a sub-assembly moves as one: its pin stays where the hinge
-/// puts it, and the mate cannot hold.
-#[test]
-fn a_rigid_sub_assembly_moves_as_one() {
-    let (files, program) = hinge(false);
-    let editor = editor_with(files.clone(), program, "top.geop");
-    assert!(!editor.program().state.contains_key("hinge/pin.pose"));
-    let workspace = Workspace::<S>::new(WithStandardParts(
-        files
-            .into_iter()
-            .filter_map(|(path, text)| Some((path, text?)))
-            .collect(),
-    ));
-    let part = editor
-        .program()
-        .build(&workspace.scope("top.geop"))
-        .unwrap();
-    assert!(!part.check_mates(|_| true).unwrap().converged);
 }
 
 /// With the drag tool in hand and no step edited, any placed part is
@@ -1161,17 +1190,17 @@ fn six_pins_are_patterned_round_a_hole() {
         "plate",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     program.push(
         "pin",
         AddPartArgs {
             file: "pin.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     program.push(
         "pins",
@@ -1255,14 +1284,16 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
         )
     };
     let mut program = Program::new();
-    let placed = |fixed: bool, mates: Vec<(&str, Mate)>| AddPartArgs {
-        file: "link.geop".into(),
-        fixed,
-        mates: mates
-            .into_iter()
-            .map(|(id, m)| (id.to_string(), m))
-            .collect(),
-        ..Default::default()
+    let placed = |fixed: bool, mates: Vec<(&str, Mate)>| {
+        let args = AddPartArgs {
+            file: "link.geop".into(),
+            mates: mates
+                .into_iter()
+                .map(|(id, m)| (id.to_string(), m))
+                .collect(),
+            ..Default::default()
+        };
+        if fixed { args.fixed() } else { args }
     };
     program.push("base", placed(true, Vec::new()));
     program.push("driver", placed(false, vec![("m1", joint(0, "driver"))]));
@@ -1331,14 +1362,14 @@ fn a_kept_build_is_placed_without_building_its_file() {
     workspace.keep("part.geop", built, Default::default());
     let placed = workspace
         .scope("assembly.geop")
-        .component("part.geop", &State::new())
+        .instance("part.geop", &State::new())
         .expect("the kept build is placed");
     assert_eq!(placed.part.revision(), revision);
     assert!(workspace.write("part.geop", Some("still not a program".into())));
     assert!(
         workspace
             .scope("assembly.geop")
-            .component("part.geop", &State::new())
+            .instance("part.geop", &State::new())
             .is_err(),
         "written, the file is built again"
     );

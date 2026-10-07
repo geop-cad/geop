@@ -138,7 +138,7 @@ impl Operation for Extrude {
             "distance",
             |length, second| {
                 let label = if second { "distance 2" } else { "distance" };
-                let number = Number::formula(label, length, before.inputs(), Unit::Length);
+                let number = Number::formula(label, length, before.state(), Unit::Length);
                 let at = distance_handle(before, args, number.value, second);
                 number.range(-10.0, 10.0).handle(at)
             },

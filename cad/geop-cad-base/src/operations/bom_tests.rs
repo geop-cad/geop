@@ -248,7 +248,7 @@ fn the_bolted_plate_is_weighed_in_bounded_work() {
         .collect();
     let part = build(files, "bolted_plate.geop", &program);
     let mut parts = vec![&part];
-    parts.extend(part.instances().map(|(_, i)| i.part()));
+    parts.extend(part.instances().map(|(_, i)| &*i.part));
     let mut evaluations = Vec::new();
     for p in parts {
         for name in p.solid_names() {

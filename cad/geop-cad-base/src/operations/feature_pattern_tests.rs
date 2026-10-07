@@ -11,7 +11,7 @@ use geop_core_math::vector::Vector3;
 use geop_ops::{EntityRef, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
-use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
+use geop_ops_hole::{HoleArgs, HoleKind, PartThreads, Standard, iso::Fit};
 use geop_ops_pattern::{CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, Spacing};
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
 

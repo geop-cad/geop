@@ -245,7 +245,7 @@ impl Operation for Revolve {
             "angle",
             |angle, second| {
                 let label = if second { "angle 2" } else { "angle" };
-                Number::formula(label, angle, before.inputs(), Unit::Angle).range(-360.0, 360.0)
+                Number::formula(label, angle, before.state(), Unit::Angle).range(-360.0, 360.0)
             },
             360.0,
             |args| &mut args.extent,

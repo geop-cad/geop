@@ -125,9 +125,9 @@ those of the parts placed before or of the program's own part. Where each
 placed part is, is the program's `state`
 (`"pin.pose": {"position": [...], "rotation": [w, x, y, z]}`), which the
 editor solves the program's mates for after every edit, moving any part
-that is not fixed — so a later step's mates move an earlier part for every
-step. Dragging a placed part moves it as far as the mates allow, and placed
-`flexible`, a sub-assembly's own parts move with the program's mates too.
+that no `fixed` mate holds — so a later step's mates move an earlier part for
+every step. Dragging a placed part moves it as far as the mates allow, and a
+sub-assembly's own parts move with the program's mates too.
 Files place each other as a DAG: a file that places itself, directly or
 through others, is an error naming the cycle. `geop compile assembly.geop`
 reads the placed files next to it.

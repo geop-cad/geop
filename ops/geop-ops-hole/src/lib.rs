@@ -5,9 +5,11 @@
 //! metric thread on a cylindrical face, recorded as a cosmetic thread or
 //! modelled by sweeping its profile along a helix ([`thread`]).
 
+pub mod cosmetic;
 pub mod hole;
 pub mod iso;
 pub mod operation;
 pub mod thread;
 
+pub use cosmetic::{CosmeticThread, PartThreads, Threads};
 pub use operation::{Hole, HoleArgs, HoleKind, Standard, Thread, ThreadArgs};

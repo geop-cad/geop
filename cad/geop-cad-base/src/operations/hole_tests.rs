@@ -16,7 +16,7 @@ use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
 use geop_ops_hole::{
-    HoleArgs, HoleKind, Standard, ThreadArgs,
+    HoleArgs, HoleKind, PartThreads, Standard, ThreadArgs,
     iso::{Fit, SIZES, metric},
 };
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
@@ -292,10 +292,10 @@ fn tapped_hole_carries_a_cosmetic_thread() {
     assert!(thread.axis.direction.could_be_equal(&v([0.0, 0.0, -1.0])));
     // Drawn, and described.
     let view = geop_ops::ui::PartView::of(&part).unwrap();
-    assert_eq!(view.threads.len(), 1);
-    assert!(view.threads[0].polyline.len() > 8 * 4);
+    assert_eq!(view.annotations.len(), 1);
+    assert!(view.annotations[0].polyline.len() > 8 * 4);
     let description = geop_ops::PartDescription::of(&part).unwrap();
-    assert_eq!(description.threads.len(), 1);
+    assert_eq!(description.extensions["threads"].len(), 1);
 
     // Through all, the thread runs through the whole plate.
     let part = drilled(

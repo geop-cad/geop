@@ -23,14 +23,17 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, CoedgeGeometry, FaceId, SolidId};
-use geop_ops::{CosmeticThread, Namer, Part, operation::frame_along};
+use geop_ops::{Namer, Part, operation::frame_along};
 use geop_ops_extrude_revolve::{
     common::{Profile, polygon},
     revolve::screw,
     sweep::SweepLoop,
 };
 
-use crate::iso::{MetricSize, TRIANGLE_HEIGHT};
+use crate::{
+    cosmetic::CosmeticThread,
+    iso::{MetricSize, TRIANGLE_HEIGHT},
+};
 
 /// A cylindrical wall of a solid: the faces on one cylinder, joined across
 /// their edges — a hole's wall or a shaft's, whatever quarters and pieces

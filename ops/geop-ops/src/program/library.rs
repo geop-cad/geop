@@ -33,16 +33,17 @@ use geop_core_math::{
 use super::{Program, ProgramRunner};
 use crate::{
     operation::Operations,
-    part::{Component, Part, State},
+    part::{Instance, Part, State},
 };
 
 /// Where a program being built finds the parts it places.
 pub trait Library<S: Scalar> {
     /// The part the program in `file` builds — `file` relative to the
     /// program being built — with its state `overrides` instead of
-    /// its own: a part placed flexibly, whose parts the program placing it
-    /// moves (see [`crate::part::State`]).
-    fn component(&self, file: &str, overrides: &State) -> GeopResult<Arc<Component<S>>>;
+    /// its own, as an instance at the origin, ready to be placed: the parts
+    /// placed in it are the program placing it to move (see
+    /// [`crate::part::State`]).
+    fn instance(&self, file: &str, overrides: &State) -> GeopResult<Instance<S>>;
 
     /// The files the program being built could place or read, as it would
     /// name them: every file but its own — programs (see [`is_program`])
@@ -51,7 +52,7 @@ pub trait Library<S: Scalar> {
 
     /// The file `file`, relative to the program being built — a file a
     /// step reads as data, as an import reads a STEP file: its path, as
-    /// the library names files (see [`Component::files`]), and its text.
+    /// the library names files (see [`Instance::files`]), and its text.
     fn read(&self, file: &str) -> GeopResult<(String, String)>;
 
     /// Where a step keeps what is costly to work out from data it read,
@@ -104,7 +105,7 @@ pub fn is_program(path: &str) -> bool {
 pub struct NoFiles;
 
 impl<S: Scalar> Library<S> for NoFiles {
-    fn component(&self, file: &str, _: &State) -> GeopResult<Arc<Component<S>>> {
+    fn instance(&self, file: &str, _: &State) -> GeopResult<Instance<S>> {
         Err(GeopError::new(format!(
             "cannot place {file:?}: this program is built without any other files"
         )))
@@ -159,7 +160,7 @@ impl FilesMut for BTreeMap<String, String> {
 
 /// A build of a file with state overridden: which overrides, as their
 /// JSON, and what it built.
-type Variant<S> = (String, Arc<Component<S>>);
+type Variant<S> = (String, Instance<S>);
 
 /// The library of a set of files, whose programs are written in the
 /// operations `O`: [`Workspace::scope`] is the library a program of one of
@@ -174,13 +175,13 @@ type Variant<S> = (String, Arc<Component<S>>);
 ///
 /// Changing a file ([`Workspace::write`]) forgets only what was built from
 /// it: the file itself, and every file placing it, however deep — each
-/// component knows the files it was built from ([`Component::files`]). A
+/// instance knows the files it was built from ([`Instance::files`]). A
 /// runner forgets only the steps from the first that placed it (see
 /// [`ProgramRunner::forget`]). A file written as it already was changes
 /// nothing.
 pub struct Workspace<O, S: Scalar, F = BTreeMap<String, String>> {
     files: F,
-    built: RefCell<BTreeMap<String, Arc<Component<S>>>>,
+    built: RefCell<BTreeMap<String, Instance<S>>>,
     /// Per file: the last build of it with state overridden, and
     /// which overrides, as their JSON.
     variants: RefCell<BTreeMap<String, Variant<S>>>,
@@ -217,9 +218,9 @@ impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
     /// every runner from the first that read one (see
     /// [`ProgramRunner::forget`]).
     fn forget(&mut self, changed: &BTreeSet<String>) {
-        let reads = |component: &Component<S>| !component.files.is_disjoint(changed);
-        self.built.get_mut().retain(|_, c| !reads(c));
-        self.variants.get_mut().retain(|_, (_, c)| !reads(c));
+        let reads = |instance: &Instance<S>| !instance.files.is_disjoint(changed);
+        self.built.get_mut().retain(|_, i| !reads(i));
+        self.variants.get_mut().retain(|_, (_, i)| !reads(i));
         for runner in self.runners.get_mut().values_mut() {
             runner.forget(changed);
         }
@@ -236,7 +237,7 @@ impl<O: Operations, S: Scalar, F: Files> Workspace<O, S, F> {
         self.built
             .get_mut()
             .entry(path.clone())
-            .or_insert_with(|| Arc::new(Component::new(path, part, read)));
+            .or_insert_with(|| Instance::of(path, part, read));
     }
 
     /// The library the program of the file `file` is built with.
@@ -309,13 +310,13 @@ impl<O: Operations, S: Scalar, F: Files> Scope<'_, O, S, F> {
 
     /// `path` built with its state `overrides` — which change some —
     /// by its runner, from where the last such build left off.
-    fn rebuild(&self, path: &str, overrides: &State) -> GeopResult<Arc<Component<S>>> {
+    fn rebuild(&self, path: &str, overrides: &State) -> GeopResult<Instance<S>> {
         let key = serde_json::to_string(overrides)
             .map_err(|e| GeopError::new(format!("writing state: {e}")))?;
-        if let Some((built_with, component)) = self.workspace.variants.borrow().get(path)
+        if let Some((built_with, instance)) = self.workspace.variants.borrow().get(path)
             && *built_with == key
         {
-            return Ok(component.clone());
+            return Ok(instance.clone());
         }
         let child = self.child(path)?;
         let mut program = Program::<O>::from_json(&self.workspace.files.read(path)?)?;
@@ -340,15 +341,15 @@ impl<O: Operations, S: Scalar, F: Files> Scope<'_, O, S, F> {
         }
         let mut files = child.placed.into_inner();
         files.insert(path.to_string());
-        let component = Arc::new(Component::new(path.to_string(), part, files));
+        let instance = Instance::of(path.to_string(), part, files);
         self.workspace
             .variants
             .borrow_mut()
-            .insert(path.to_string(), (key, component.clone()));
-        Ok(component)
+            .insert(path.to_string(), (key, instance.clone()));
+        Ok(instance)
     }
 
-    fn build(&self, path: &str) -> GeopResult<Arc<Component<S>>> {
+    fn build(&self, path: &str) -> GeopResult<Instance<S>> {
         let child = self.child(path)?;
         let text = self.workspace.files.read(path)?;
         let part = Program::<O>::from_json(&text)
@@ -356,47 +357,48 @@ impl<O: Operations, S: Scalar, F: Files> Scope<'_, O, S, F> {
             .map_err(|e| e.with_context(format!("building {path}")))?;
         let mut files = child.placed.into_inner();
         files.insert(path.to_string());
-        let component = Arc::new(Component::new(path.to_string(), part, files));
+        let instance = Instance::of(path.to_string(), part, files);
         self.workspace
             .built
             .borrow_mut()
-            .insert(path.to_string(), component.clone());
-        Ok(component)
+            .insert(path.to_string(), instance.clone());
+        Ok(instance)
     }
 }
 
 impl<O: Operations, S: Scalar, F: Files> Library<S> for Scope<'_, O, S, F> {
-    fn component(&self, file: &str, overrides: &State) -> GeopResult<Arc<Component<S>>> {
+    fn instance(&self, file: &str, overrides: &State) -> GeopResult<Instance<S>> {
         let path = resolve(&self.file, file);
         let built = self.workspace.built.borrow().get(&path).cloned();
-        let mut component = match built {
-            Some(component) => component,
+        let mut instance = match built {
+            Some(instance) => instance,
             None => self.build(&path)?,
         };
         // Overriding a parameter with the value it was built with changes
-        // nothing.
-        let own = component.part.inputs();
+        // nothing: the value it read, or — one it did not read — the one
+        // it was given.
+        let (read, given) = (instance.part.declared(), instance.part.state());
         let changed: State = overrides
             .iter()
-            .filter(|(name, value)| own.get(*name) != Some(value))
+            .filter(|(name, value)| read.get(*name).or(given.get(*name)) != Some(value))
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         if !changed.is_empty() {
-            component = self.rebuild(&path, overrides)?;
+            instance = self.rebuild(&path, overrides)?;
         }
         // Built before, for another file, it may place one of those being
         // built here.
         if let Some(from) = self
             .building
             .iter()
-            .position(|f| component.files.contains(f))
+            .position(|f| instance.files.contains(f))
         {
             return Err(self.cycle(&path, from));
         }
         self.placed
             .borrow_mut()
-            .extend(component.files.iter().cloned());
-        Ok(component)
+            .extend(instance.files.iter().cloned());
+        Ok(instance)
     }
 
     fn files(&self) -> Vec<String> {

@@ -11,7 +11,7 @@ and those of what is already there.
 ```json
 { "steps": [
     { "id": "pin", "operation": "add_part",
-      "args": { "file": "pin.geop", "fixed": false, "flexible": false,
+      "args": { "file": "pin.geop",
                 "mates": {
                   "m1": { "type": "concentric",
                           "entities": [ { "type": "Face", "name": "pin/extrude(pin,pin_sketch,c1)" },
@@ -37,15 +37,17 @@ per set of values it is placed with — and its dialog offers each as what it
 is: the colour to pick, a number on a slider over its range, a table's row
 from a list to search, each showing the value the part is built with here.
 
-## Rigid and flexible
+## Fixed parts, and parts placed in parts
 
-Placed rigid, a part moves as one body, its own parts where its file puts
-them. Placed `flexible`, every parameter of the program placed becomes one
-of this program's, named behind the step's id — `hinge/pin.pose` — and the
-part is built with those: its parts are this program's to move, and its
-mates are solved with this program's. The file is rebuilt incrementally,
-only from the first step that reads a parameter that changed — for a file
-that only places parts, only its placements.
+A part no mate may move has a `fixed` mate: `{ "type": "fixed" }`, with no
+entity in an `add_part` step, where it holds the part the step places (the
+first part placed gets one). Every parameter of the program placed becomes
+one of this program's, named behind the step's id — `hinge/pin.pose` — and
+the part is built with those: its parts are this program's to move, and its
+mates are solved with this program's, but not its `fixed` mates: what is
+fixed in a part placed is where it is placed. The file is rebuilt
+incrementally, only from the first step that reads a parameter that
+changed — for a file that only places parts, only its placements.
 
 ## Editing
 
@@ -58,6 +60,5 @@ that only places parts, only its placements.
   placed part's own entities can be picked.
 - Dragging the placed part asks for the point grabbed to be pulled towards
   the pointer, in the plane through it facing the eye (`Form::drags`). The
-  editor solves the whole program with that pull, every part that is not
-  fixed free to give way: a linkage follows the link dragged. A fixed part
+  editor solves the whole program with that pull, every part that no fixed mate holds free to give way: a linkage follows the link dragged. A fixed part
   goes where it is dragged.

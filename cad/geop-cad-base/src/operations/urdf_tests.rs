@@ -374,16 +374,16 @@ fn pin_joint(on: &str, hole: usize, link: &str, link_hole: usize) -> Mate {
 }
 
 fn placed(file: &str, fixed: bool, mates: Vec<Mate>) -> AddPartArgs {
-    AddPartArgs {
+    let args = AddPartArgs {
         file: file.into(),
-        fixed,
         mates: mates
             .into_iter()
             .enumerate()
             .map(|(i, mate)| (format!("m{}", i + 1), mate))
             .collect(),
         ..Default::default()
-    }
+    };
+    if fixed { args.fixed() } else { args }
 }
 
 /// The four-bar of the examples, its bars pinned by revolute joints rather

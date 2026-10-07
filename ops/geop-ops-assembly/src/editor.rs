@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
 use geop_ops::{
     Context, Design, EntityRef,
-    assembly::{CouplingKind, Drag, JointInfo, JointKind, Kind, Mate, MateKind, Motion},
+    assembly::{Anchor, CouplingKind, Drag, JointInfo, JointKind, Kind, Mate, MateKind, Motion},
     operation::Role,
     parameters::{COLOR, ParameterKind, validate_color},
     part::{ParamValue, State, pose_parameter},
@@ -51,7 +51,7 @@ fn mate_roles(kind: &MateKind) -> &'static [Role] {
             &[Role::Line, Role::Plane, Role::Round]
         }
         MateKind::Joint(_) => &[Role::Frame],
-        MateKind::Coupling(_) => &[],
+        MateKind::Coupling(_) | MateKind::Anchor(_) => &[],
     }
 }
 
@@ -62,6 +62,12 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
     let joint = |name, kind, doc| (name, MateKind::Joint(kind), doc, "Joint");
     let coupling = |name, kind, doc| (name, MateKind::Coupling(kind), doc, "Couple");
     vec![
+        (
+            "fixed",
+            MateKind::Anchor(Anchor::Fixed),
+            "The part stays where it is: no mate moves it.",
+            "Add",
+        ),
         constraint(
             "coincident",
             Kind::Coincident,
@@ -337,6 +343,15 @@ fn selected<'a, S: Scalar>(
         return;
     }
 
+    if mate.is_fixed() {
+        f.text(
+            "mate_hint",
+            "No mate moves this part: it goes where it is dragged.",
+            Tone::Hint,
+        );
+        return;
+    }
+
     let mate_id = id.to_string();
     f.reference(
         &format!("mate:{id}:entities"),
@@ -475,18 +490,18 @@ fn parameters<S: Scalar>(
         return;
     }
     // As placed here: what a number not given reads follows what is.
-    let Ok(component) = context
+    let Ok(placed) = context
         .library
-        .component(&args.file, &args.parameters)
-        .or_else(|_| context.library.component(&args.file, &State::new()))
+        .instance(&args.file, &args.parameters)
+        .or_else(|_| context.library.instance(&args.file, &State::new()))
     else {
         return;
     };
-    let defined = component.part.parameters();
+    let defined = placed.part.parameters();
     if defined.is_empty() {
         return;
     }
-    let built = component.part.inputs();
+    let built = placed.part.state();
     let given = |name: &str| args.parameters.get(name).or(built.get(name));
     f.heading("parameters_heading", "Parameters");
     let set = |name: String| {
@@ -524,6 +539,8 @@ fn parameters<S: Scalar>(
                     set(args, ParamValue::Number(Design::from_f64(v)))
                 });
             }
+            // Where a part is is set by dragging it, not here.
+            ParameterKind::Pose => {}
             ParameterKind::Table { rows, selected, .. } => {
                 let value = match given(&p.name) {
                     Some(ParamValue::Text(row)) => row.clone(),
@@ -585,15 +602,6 @@ pub(crate) fn form<'a, S: Scalar>(
         options,
         true,
         |args, file| args.file = file.to_string(),
-    );
-    f.checkbox("fixed", "fixed in place", args.fixed, |args, fixed| {
-        args.fixed = fixed;
-    });
-    f.checkbox(
-        "flexible",
-        "flexible: its parts move with this program's mates",
-        args.flexible,
-        |args, flexible| args.flexible = flexible,
     );
 
     parameters(&mut f, context, args);
@@ -684,7 +692,8 @@ pub(crate) fn form<'a, S: Scalar>(
             });
             let mut item = ListItem::new(key, mate.kind.label());
             let holds = !failed.contains(&namer(id));
-            let complete = mate.is_complete();
+            // A fixed mate holds this step's part: it needs no entity.
+            let complete = mate.is_complete() || mate.is_fixed();
             // Two entities of one part keep where they are to each other
             // whatever moves: such a mate holds nothing together.
             let one_part = mate.pair().and_then(|[a, b]| {
@@ -692,6 +701,7 @@ pub(crate) fn form<'a, S: Scalar>(
                 (a == b).then_some(a)
             });
             let what = match mate.kind {
+                MateKind::Anchor(_) => "holds this part where it is".to_string(),
                 MateKind::Coupling(_) => mate.joints.join(" & "),
                 _ => {
                     let entities: Vec<String> =
@@ -788,17 +798,13 @@ pub(crate) fn form<'a, S: Scalar>(
     f.holds.extend(session.held.iter().cloned());
 
     // A fixed part is moved by the event itself; nothing is solved for it.
-    f.drags.extend(
-        session
-            .drags
-            .iter()
-            .filter(|_| !args.fixed)
-            .map(|drag| Drag {
-                parameter: drag.parameter.clone(),
-                local: drag.local.map(|c| c.cast()),
-                target: drag.target.map(|c| c.cast()),
-            }),
-    );
+    let fixed = args.is_fixed();
+    f.drags
+        .extend(session.drags.iter().filter(|_| !fixed).map(|drag| Drag {
+            parameter: drag.parameter.clone(),
+            local: drag.local.map(|c| c.cast()),
+            target: drag.target.map(|c| c.cast()),
+        }));
     if built.is_some() {
         let shape = Shape::Instance {
             name: context.id.to_string(),
@@ -838,6 +844,7 @@ pub(crate) fn event<S: Scalar>(
         state,
         ..
     } = edit;
+    let fixed = args.is_fixed();
     if std::mem::take(&mut session.released) {
         session.drags.clear();
     }
@@ -856,7 +863,7 @@ pub(crate) fn event<S: Scalar>(
                 Some(drag) => drag.local,
                 None => pose.inverse().apply(&from.map(|c| c.cast())).sharpen(),
             };
-            if args.fixed {
+            if fixed {
                 // Nothing mates move: the part goes where it is dragged.
                 let at = pose.apply(&local);
                 let moved = pose.with_position(pose.position().add(&target.sub(&at)).sharpen());
@@ -880,7 +887,7 @@ pub(crate) fn event<S: Scalar>(
             };
             let pose = pose_of(context);
             let moved = motion.cast::<Design>().compose(&pose).map(|c| c.sharpen());
-            if args.fixed {
+            if fixed {
                 state.insert(pose_parameter(context.id), ParamValue::Pose(moved));
             }
             session.held.clear();

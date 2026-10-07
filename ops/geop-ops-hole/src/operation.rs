@@ -28,6 +28,7 @@ use geop_ops_extrude_revolve::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    cosmetic::PartThreads,
     hole::{Head, HoleDepth, HoleShape, hole_tool},
     iso::{Fit, MetricSize, SIZES, metric},
     thread::{ThreadPlacement, Wall, thread_tool},
@@ -511,7 +512,7 @@ impl Operation for Hole {
         if let Extent::Blind(depth) = &args.end {
             f.formula(
                 "depth",
-                Number::formula("depth", depth, before.inputs(), Unit::Length).range(0.0, 100.0),
+                Number::formula("depth", depth, before.state(), Unit::Length).range(0.0, 100.0),
                 |args, d| args.end = Extent::Blind(d),
             );
             f.checkbox(
@@ -523,7 +524,7 @@ impl Operation for Hole {
         }
         if args.kind == HoleKind::Tapped {
             let full = match &args.end {
-                Extent::Blind(depth) => depth.peek(before.inputs()).ok(),
+                Extent::Blind(depth) => depth.peek(before.state()).ok(),
                 _ => None,
             };
             let length = args.thread_length.or(full);

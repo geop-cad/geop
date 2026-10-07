@@ -15,8 +15,8 @@ export const FACE_COLOR = 0x4472c4;
 /** Sketch curves: profile geometry and construction geometry. */
 export const SKETCH_COLOR = 0xffa040;
 export const CONSTRUCTION_COLOR = 0x808080;
-/** Cosmetic threads: the helix each is drawn as on its face. */
-const THREAD_COLOR = 0x2a2a2a;
+/** What the extensions of a part draw: a cosmetic thread as the helix it runs along. */
+const ANNOTATION_COLOR = 0x2a2a2a;
 
 /**
  * A part as flat buffers, each element colored and tagged with the name of
@@ -95,8 +95,8 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     const color = e.sketch == null ? EDGE_COLOR : SKETCH_COLOR;
     for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], color, e.sketch, null, e.name);
   }
-  for (const t of part.threads) {
-    for (let i = 1; i < t.polyline.length; i++) line(t.polyline[i - 1], t.polyline[i], THREAD_COLOR, null, null, null);
+  for (const t of part.annotations) {
+    for (let i = 1; i < t.polyline.length; i++) line(t.polyline[i - 1], t.polyline[i], ANNOTATION_COLOR, null, null, null);
   }
   part.faces.forEach((f) => {
     if (!shown(f.solid) || (f.solid == null && hidden.includes(f.name))) return;

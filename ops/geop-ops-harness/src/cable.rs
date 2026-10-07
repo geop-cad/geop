@@ -1,4 +1,5 @@
-//! A [`Part`]'s cables: what a routed harness is cut from — its wires, each
+//! A part's cables, kept in it as the extension [`Cables`] and read and
+//! written through [`PartCables`]: what a routed harness is cut from — its wires, each
 //! with the length to cut it to — recorded by the step that routed it, for
 //! its editor to show and a bill of materials to read.
 
@@ -8,8 +9,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-
-use super::Part;
+use geop_ops::{Extension, Part};
 
 /// One wire of a [`Cable`], and the length to cut it to.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,30 +40,58 @@ pub struct Cable<S: Scalar> {
     pub wires: Vec<CutWire<S>>,
 }
 
-impl<S: Scalar> Part<S> {
+/// A part's cables, by the name of the solid each is swept into.
+#[derive(Clone, Debug)]
+pub struct Cables<S: Scalar>(BTreeMap<String, Cable<S>>);
+
+impl<S: Scalar> Default for Cables<S> {
+    fn default() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl<S: Scalar> Extension<S> for Cables<S> {
+    const NAME: &'static str = "cables";
+}
+
+/// A part's cables (see the module).
+pub trait PartCables<S: Scalar> {
     /// Records `cable` under `name` — the name of the solid it is swept
     /// into.
-    pub fn add_cable(&mut self, name: impl Into<String>, cable: Cable<S>) -> GeopResult<()> {
+    fn add_cable(&mut self, name: impl Into<String>, cable: Cable<S>) -> GeopResult<()>;
+
+    /// The cable `name`.
+    fn cable(&self, name: &str) -> GeopResult<&Cable<S>>;
+
+    /// Every cable of the part itself — not of the parts placed in it — by
+    /// name.
+    fn cables(&self) -> impl Iterator<Item = (&str, &Cable<S>)>;
+}
+
+impl<S: Scalar> PartCables<S> for Part<S> {
+    fn add_cable(&mut self, name: impl Into<String>, cable: Cable<S>) -> GeopResult<()> {
         let name = name.into();
-        if self.cables.contains_key(&name) {
+        if self
+            .ext::<Cables<S>>()
+            .is_some_and(|c| c.0.contains_key(&name))
+        {
             return Err(GeopError::new(format!(
                 "Part::add_cable: there is a cable {name:?} already"
             )));
         }
-        self.cables.insert(name, cable);
+        self.ext_mut::<Cables<S>>().0.insert(name, cable);
         Ok(())
     }
 
-    /// The cable `name`.
-    pub fn cable(&self, name: &str) -> GeopResult<&Cable<S>> {
-        self.cables
-            .get(name)
+    fn cable(&self, name: &str) -> GeopResult<&Cable<S>> {
+        self.ext::<Cables<S>>()
+            .and_then(|cables| cables.0.get(name))
             .ok_or_else(|| GeopError::new(format!("there is no cable {name:?}")))
     }
 
-    /// Every cable of the part itself — not of the parts placed in it — by
-    /// name.
-    pub fn cables(&self) -> &BTreeMap<String, Cable<S>> {
-        &self.cables
+    fn cables(&self) -> impl Iterator<Item = (&str, &Cable<S>)> {
+        self.ext::<Cables<S>>()
+            .into_iter()
+            .flat_map(|cables| cables.0.iter().map(|(name, c)| (name.as_str(), c)))
     }
 }

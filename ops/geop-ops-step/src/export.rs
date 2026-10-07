@@ -31,7 +31,7 @@ use geop_core_math::{
 use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
 };
-use geop_ops::{Component, Part, RefId};
+use geop_ops::{Part, RefId};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 
@@ -317,27 +317,27 @@ impl Writer {
         self.placement(origin, axis, reference)
     }
 
-    /// The part `part` as the product `name`, and each component placed in
+    /// The part `part` as the product `name`, and each part placed in
     /// it as a product of its own — once, however often it is placed:
-    /// `written` keeps those already written, by component.
+    /// `written` keeps those already written, by part.
     fn assembly<S: Scalar>(
         &mut self,
         part: &Part<S>,
         name: &str,
         context: &Context,
-        written: &mut HashMap<*const Component<S>, Written>,
+        written: &mut HashMap<*const Part<S>, Written>,
     ) -> GeopResult<Written> {
         let mut placed = Vec::new();
         for (id, instance) in part.instances() {
-            let key = Arc::as_ptr(&instance.component);
+            let key = Arc::as_ptr(&instance.part);
             let child = match written.get(&key) {
                 Some(&child) => child,
                 None => {
-                    let name = instance.part().designation();
+                    let name = instance.part.designation();
                     let name = name
                         .as_deref()
-                        .unwrap_or_else(|| component_name(&instance.component.file));
-                    let child = self.assembly(instance.part(), name, context, written)?;
+                        .unwrap_or_else(|| component_name(&instance.file));
+                    let child = self.assembly(&instance.part, name, context, written)?;
                     written.insert(key, child);
                     child
                 }

@@ -175,7 +175,7 @@ impl Direction {
         );
         // Moving the spacing's handle by the unit direction adds one to it;
         // the count's, by one step, adds an instance.
-        let inputs = before.inputs();
+        let inputs = before.state();
         let unit = self.unit(before).ok();
         let measured = self.measure(|f| f.peek(inputs)).ok();
         let handles = at.zip(unit);

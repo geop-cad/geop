@@ -697,7 +697,7 @@ impl<S: Scalar> Editor<S> {
                 }
                 if !used.contains(&instance.component)
                     && !components.contains_key(&instance.component)
-                    && let Ok(view) = instance.component().view()
+                    && let Ok(view) = instance.part().view()
                 {
                     components.insert(instance.component.clone(), view.clone());
                 }
@@ -1380,11 +1380,11 @@ impl<S: Scalar> Editor<S> {
             Some(open) => {
                 let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
                     .built(self.runner.built(open.index));
-                let declared = self.runner.part_at(open.index).state();
+                let declared = self.runner.part_at(open.index).declared();
                 let own: Vec<String> = self
                     .runner
                     .part_at(open.index + 1)
-                    .state()
+                    .declared()
                     .keys()
                     .filter(|name| !declared.contains_key(*name))
                     .cloned()
@@ -1437,7 +1437,7 @@ impl<S: Scalar> Editor<S> {
             // numbers its steps read are its parameters', defined apart
             // from its state.
             let declared: State = part
-                .state()
+                .declared()
                 .iter()
                 .filter(|(_, value)| matches!(value, ParamValue::Pose(_)))
                 .map(|(name, value)| (name.clone(), value.clone()))
@@ -1643,7 +1643,7 @@ impl<S: Scalar> Editor<S> {
                         part.name_of(id).unwrap_or_default(),
                         geop_ops::operation::INSTANCE_SEPARATOR
                     );
-                    let inner = instance.part();
+                    let inner = &instance.part;
                     out.extend(
                         inner
                             .datums()

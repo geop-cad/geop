@@ -521,7 +521,7 @@ fn refresh<S: Scalar>(
     let drawn = args.sketch.clone();
     args.ensure_frame();
     let _ = args.update_references(before, frame);
-    let inputs = before.inputs();
+    let inputs = before.state();
     let _ = args.apply_formulas(|formula| {
         geop_ops::parameters::evaluate(formula, |name| geop_ops::parameters::number(inputs, name))
     });

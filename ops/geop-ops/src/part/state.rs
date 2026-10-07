@@ -41,9 +41,9 @@ pub fn pose_parameter(instance: &str) -> String {
 }
 
 impl<S: geop_core_math::scalars::Scalar> Part<S> {
-    /// The part, to be built with the parameter values `inputs`.
-    pub fn with_state(mut self, inputs: State) -> Self {
-        self.inputs = inputs;
+    /// The part, to be built with the parameter values `state`.
+    pub fn with_state(mut self, state: State) -> Self {
+        self.state = state;
         self
     }
 
@@ -55,7 +55,7 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
         name: &str,
         default: Pose<Design>,
     ) -> GeopResult<Pose<Design>> {
-        let value = match self.inputs.get(name) {
+        let value = match self.state.get(name) {
             None => default,
             Some(ParamValue::Pose(pose)) => *pose,
             Some(other) => {
@@ -83,12 +83,12 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
     pub fn evaluate(&mut self, expression: &str) -> GeopResult<f64> {
         let mut read = Vec::new();
         let value = crate::parameters::evaluate(expression, |name| {
-            let v = crate::parameters::number(&self.inputs, name)?;
+            let v = crate::parameters::number(&self.state, name)?;
             read.push(name.to_string());
             Some(v)
         });
         for name in read {
-            let value = self.inputs[&name].clone();
+            let value = self.state[&name].clone();
             self.declared.entry(name).or_insert(value);
         }
         value
@@ -108,7 +108,7 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
 
     /// The part's colour, `#rrggbb`, if it is given one.
     pub fn color(&self) -> Option<&str> {
-        match self.inputs.get(crate::parameters::COLOR) {
+        match self.state.get(crate::parameters::COLOR) {
             Some(ParamValue::Text(c)) => Some(c),
             _ => None,
         }
@@ -123,7 +123,7 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
     /// What the part, as built, is ordered as, if it is given: `ISO 4762
     /// M4x12` (see [`crate::parameters::Parameters::designate`]).
     pub fn designation(&self) -> Option<String> {
-        self.parameters.designate(&self.inputs)
+        self.parameters.designate(&self.state)
     }
 
     /// What the part is made of, if it is given (see
@@ -134,12 +134,12 @@ impl<S: geop_core_math::scalars::Scalar> Part<S> {
 
     /// Every parameter the part's steps declared, with the value it was
     /// built with.
-    pub fn state(&self) -> &State {
+    pub fn declared(&self) -> &State {
         &self.declared
     }
 
     /// The values the part is built with, declared or not.
-    pub fn inputs(&self) -> &State {
-        &self.inputs
+    pub fn state(&self) -> &State {
+        &self.state
     }
 }

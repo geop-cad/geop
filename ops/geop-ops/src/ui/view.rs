@@ -34,7 +34,7 @@ use serde::Serialize;
 use super::{Pointer, hit::nearer};
 use crate::Design;
 use crate::{
-    Component, Part,
+    Part,
     operation::{Aspects, EntityRef, INSTANCE_SEPARATOR, Role},
 };
 
@@ -190,29 +190,14 @@ pub struct ViewDatum<S: Scalar> {
     pub frame: CoordinateSystem<S>,
 }
 
-/// A cosmetic thread of the part (see [`crate::CosmeticThread`]), drawn as
-/// the helix it runs along on its face, and what it is called.
+/// Something an extension of the part draws (see
+/// [`crate::part::Extension::annotations`]), and what it is called.
 #[derive(Clone, Debug, Serialize)]
 #[serde(bound = "S: Scalar")]
-pub struct ViewThread<S: Scalar> {
+pub struct ViewAnnotation<S: Scalar> {
     pub name: String,
-    pub designation: String,
+    pub label: String,
     pub polyline: Vec<Vector3<S>>,
-}
-
-/// Segments a cosmetic thread's helix is drawn with per span of a quarter
-/// turn.
-const THREAD_SEGMENTS: usize = 8;
-
-/// The helix of `thread` as a polyline.
-fn thread_polyline<S: Scalar>(thread: &crate::CosmeticThread<S>) -> GeopResult<Vec<Vector3<S>>> {
-    let helix = thread.helix()?;
-    // A span between every pair of the double interior knots.
-    let spans = (helix.control_points.len() - 1) / 2;
-    let n = (spans * THREAD_SEGMENTS) as i64;
-    (0..=n)
-        .map(|i| helix.evaluate(S::from_ratio(i, n)?))
-        .collect()
 }
 
 /// Where the drawing is and how big: the center and diagonal (at least 1)
@@ -233,25 +218,25 @@ pub struct Extent<S: Scalar> {
 }
 
 /// A part placed in the part drawn — directly or in a part placed in it —
-/// drawn as its component's own view ([`Component::view`]) moved to where
-/// it is. Serialized, a viewer gets the component by its key
-/// ([`Component::key`]) and where to draw it.
+/// drawn as its part's own view ([`Part::view`]) moved to where it is.
+/// Serialized, a viewer gets the part by its key ([`Instance::key`]) and
+/// where to draw it.
 #[derive(Clone, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct ViewInstance<S: Scalar> {
     /// Its name in the part drawn: `bolt`, or `asm/bolt` for one placed in
     /// a placed part.
     pub name: String,
-    /// The key of its component.
+    /// The key of its part.
     pub component: String,
     /// Where it is: its own frame in the part drawn.
     pub frame: CoordinateSystem<S>,
     #[serde(skip)]
     pose: Pose<S>,
     #[serde(skip)]
-    source: Arc<Component<S>>,
-    /// The parameter of the part drawn its pose is — `None` for a part
-    /// placed in one placed rigid, whose pose is that part's own.
+    source: Arc<Part<S>>,
+    /// The parameter of the part drawn its pose is — `None` for a copy of
+    /// a pattern, which goes where the pattern puts it.
     #[serde(skip)]
     parameter: Option<String>,
     /// Whether no mate moves it.
@@ -270,8 +255,8 @@ impl<S: Scalar> std::fmt::Debug for ViewInstance<S> {
 }
 
 impl<S: Scalar> ViewInstance<S> {
-    /// Its component.
-    pub fn component(&self) -> &Arc<Component<S>> {
+    /// Its part.
+    pub fn part(&self) -> &Arc<Part<S>> {
         &self.source
     }
 
@@ -296,8 +281,8 @@ pub struct PartView<S: Scalar> {
     pub faces: Vec<ViewFace<S>>,
     pub sketches: Vec<ViewSketch<S>>,
     pub datums: Vec<ViewDatum<S>>,
-    /// Its cosmetic threads.
-    pub threads: Vec<ViewThread<S>>,
+    /// What its extensions draw besides its topology: cosmetic threads.
+    pub annotations: Vec<ViewAnnotation<S>>,
     /// The part's solids, oldest first.
     pub solids: Vec<String>,
     /// Every part placed in it, and in those, however deep. Not
@@ -411,7 +396,7 @@ impl<S: Scalar> PartView<S> {
             faces: Vec::new(),
             sketches: Vec::new(),
             datums: Vec::new(),
-            threads: Vec::new(),
+            annotations: Vec::new(),
             solids: Vec::new(),
             instances: Vec::new(),
             extent,
@@ -595,16 +580,15 @@ impl<S: Scalar> PartView<S> {
                     frame: datum.frame.clone(),
                 })
                 .collect(),
-            threads: part
-                .threads()
-                .map(|(name, thread)| {
-                    Ok(ViewThread {
-                        name: name.to_string(),
-                        designation: thread.designation.clone(),
-                        polyline: thread_polyline(thread)?,
-                    })
+            annotations: part
+                .annotations()?
+                .into_iter()
+                .map(|annotation| ViewAnnotation {
+                    name: annotation.name,
+                    label: annotation.label,
+                    polyline: annotation.polyline,
                 })
-                .collect::<GeopResult<_>>()?,
+                .collect(),
             solids: solids.into_iter().map(|s| name(s.into())).collect(),
             instances: Vec::new(),
             extent: Extent {
@@ -613,47 +597,47 @@ impl<S: Scalar> PartView<S> {
             },
             color: part.color().map(str::to_string),
         };
-        // The views of the components placed, each drawn once: natively,
-        // the distinct ones side by side — each is its own part, and
-        // [`Component::view`] keeps the first drawn.
+        // The views of the parts placed, each drawn once: natively, the
+        // distinct ones side by side — each is its own part, and
+        // [`Part::view`] keeps the first drawn.
         #[cfg(not(target_arch = "wasm32"))]
         {
             use rayon::prelude::*;
-            let mut distinct: Vec<&Arc<Component<S>>> = Vec::new();
+            let mut distinct: Vec<&Arc<Part<S>>> = Vec::new();
             for (_, instance) in part.instances() {
-                if !distinct.iter().any(|c| Arc::ptr_eq(c, &instance.component)) {
-                    distinct.push(&instance.component);
+                if !distinct.iter().any(|p| Arc::ptr_eq(p, &instance.part)) {
+                    distinct.push(&instance.part);
                 }
             }
-            distinct.par_iter().for_each(|component| {
+            distinct.par_iter().for_each(|placed| {
                 // A view that cannot be drawn fails again below, saying why.
-                let _ = component.view();
+                let _ = placed.view();
             });
         }
         for (id, instance) in part.instances() {
             let instance_name = name(id.into());
             view.add_instance(
+                part,
                 instance_name.clone(),
                 instance.pose,
-                &instance.component,
-                instance.parameter.clone(),
-                instance.fixed,
+                instance.key(),
+                &instance.part,
+                instance.parameter.as_ref().map(|p| p.name.clone()),
             )?;
-            // Those placed in it, where it puts them: its view has them all
-            // already, however deep — their poses parameters of this part's state
-            // only if it is placed flexibly.
-            for nested in &instance.component.view()?.instances {
-                let parameter = nested
-                    .parameter
-                    .as_ref()
-                    .filter(|_| instance.flexible)
-                    .map(|p| format!("{instance_name}{INSTANCE_SEPARATOR}{p}"));
+            // Those placed in it, where it puts it: its view has them all
+            // already, however deep — their poses parameters of this part's
+            // state.
+            for nested in &instance.part.view()?.instances {
                 view.add_instance(
+                    part,
                     format!("{instance_name}{INSTANCE_SEPARATOR}{}", nested.name),
                     instance.pose.compose(&nested.pose),
+                    nested.component.clone(),
                     &nested.source,
-                    parameter,
-                    nested.fixed,
+                    nested
+                        .parameter
+                        .as_ref()
+                        .map(|p| format!("{instance_name}{INSTANCE_SEPARATOR}{p}")),
                 )?;
             }
         }
@@ -661,24 +645,27 @@ impl<S: Scalar> PartView<S> {
         Ok(view)
     }
 
+    /// Adds the part `source`, placed as `name` — a path in `part`, the part
+    /// drawn — at `pose`.
     fn add_instance(
         &mut self,
+        part: &Part<S>,
         name: String,
         pose: Pose<S>,
-        component: &Arc<Component<S>>,
+        key: String,
+        source: &Arc<Part<S>>,
         parameter: Option<String>,
-        fixed: bool,
     ) -> GeopResult<()> {
         self.instances.push(ViewInstance {
+            fixed: part.is_fixed(&name),
             name,
-            component: component.key(),
+            component: key,
             frame: pose
                 .motion()
                 .apply_frame(&CoordinateSystem::world_at(Vector3::zero()))?,
             pose,
-            source: component.clone(),
+            source: source.clone(),
             parameter,
-            fixed,
         });
         Ok(())
     }

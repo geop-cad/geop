@@ -11,7 +11,7 @@ use geop_core_math::{
 };
 use geop_ops_rasterize::rasterize;
 
-use super::{Component, Part};
+use super::Part;
 use crate::operation::INSTANCE_SEPARATOR;
 
 /// Solids, each by name with its triangles.
@@ -22,7 +22,7 @@ impl<S: Scalar> Part<S> {
     /// placed part's behind its instance's name — as triangles in the part's
     /// frame, meshed `quality` fine (see [`rasterize`]), in name order so a
     /// file written from them does not depend on how the part stores them.
-    /// A component placed many times is meshed once.
+    /// A part placed many times is meshed once.
     pub fn solid_meshes(&self, quality: usize) -> GeopResult<SolidMeshes<S>> {
         let mut out = Vec::new();
         let own = self.own_solid_meshes(quality)?;
@@ -61,14 +61,14 @@ impl<S: Scalar> Part<S> {
 
     /// The part's own solids `own`, and those of the parts placed in it,
     /// moved by `pose` and named behind `prefix`, into `out`. `meshed` keeps
-    /// each component's own solids, by the component.
+    /// each placed part's own solids, by the part.
     fn placed_solid_meshes(
         &self,
         own: &SolidMeshes<S>,
         pose: &Pose<S>,
         prefix: &str,
         quality: usize,
-        meshed: &mut HashMap<*const Component<S>, Arc<SolidMeshes<S>>>,
+        meshed: &mut HashMap<*const Part<S>, Arc<SolidMeshes<S>>>,
         out: &mut SolidMeshes<S>,
     ) -> GeopResult<()> {
         let motion = pose.motion();
@@ -88,12 +88,12 @@ impl<S: Scalar> Part<S> {
         for (id, instance) in self.instances() {
             let name = self.name_of(id).unwrap_or_default();
             let prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
-            let key = Arc::as_ptr(&instance.component);
+            let key = Arc::as_ptr(&instance.part);
             if let std::collections::hash_map::Entry::Vacant(e) = meshed.entry(key) {
-                e.insert(Arc::new(instance.part().own_solid_meshes(quality)?));
+                e.insert(Arc::new(instance.part.own_solid_meshes(quality)?));
             }
             let inner = meshed[&key].clone();
-            instance.part().placed_solid_meshes(
+            instance.part.placed_solid_meshes(
                 &inner,
                 &pose.compose(&instance.pose),
                 &prefix,

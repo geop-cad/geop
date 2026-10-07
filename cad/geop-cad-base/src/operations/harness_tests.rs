@@ -14,7 +14,7 @@ use geop_ops::{
     ui::{StepEditEvent, Value},
 };
 use geop_ops_assembly::AddPartArgs;
-use geop_ops_harness::{RouteArgs, Wire, WireSize};
+use geop_ops_harness::{PartCables, RouteArgs, Wire, WireSize};
 
 use crate::examples::pose;
 use crate::{Command, Editor, Program, examples};
@@ -29,9 +29,9 @@ fn assembly() -> Program {
         "a",
         AddPartArgs {
             file: "plate.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     let xy = |instance: &str| {
         EntityRef::datum_component(

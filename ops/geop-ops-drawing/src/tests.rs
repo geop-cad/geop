@@ -135,7 +135,7 @@ fn a_threaded_shaft_draws_its_thread() {
         sheet::{Layer, Shape, Stroke},
     };
     use geop_core_geometry::{nurb_curve::Handedness, shape::Axis};
-    use geop_ops::CosmeticThread;
+    use geop_ops_hole::{CosmeticThread, PartThreads};
 
     let mut part = Part::<S>::new();
     revolved_cylinder(
@@ -246,33 +246,26 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     );
 }
 
-/// A block `size` on a side, as a component to place.
-fn block(size: f64) -> std::sync::Arc<geop_ops::Component<S>> {
+/// A block `size` on a side, as a part to place.
+fn block(size: f64) -> geop_ops::Instance<S> {
     let mut part = Part::<S>::new();
     cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(size, size, size)).unwrap();
-    std::sync::Arc::new(geop_ops::Component::new(
-        "block.geop".into(),
-        part,
-        Default::default(),
-    ))
+    geop_ops::Instance::of("block.geop".into(), part, Default::default())
 }
 
-/// Places `component` in `part` as `name`, at `at`, turned `degrees` about
+/// Places `block` in `part` as `name`, at `at`, turned `degrees` about
 /// `x`, `y` and `z`.
 fn place(
     part: &mut Part<S>,
-    component: &std::sync::Arc<geop_ops::Component<S>>,
+    block: &geop_ops::Instance<S>,
     name: &str,
     at: Vector3<S>,
     degrees: [f64; 3],
 ) {
     let pose = geop_core_math::primitives::Pose::from_euler(at, degrees.map(S::from_f64)).unwrap();
     let instance = geop_ops::Instance {
-        component: component.clone(),
         pose,
-        parameter: None,
-        fixed: true,
-        flexible: false,
+        ..block.clone()
     };
     part.add_instance(instance, name).unwrap();
 }

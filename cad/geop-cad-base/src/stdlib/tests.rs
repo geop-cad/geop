@@ -525,9 +525,9 @@ fn gear_drive() -> Program {
         "motor",
         AddPartArgs {
             file: "std:nema17_stepper.geop".into(),
-            fixed: true,
             ..Default::default()
-        },
+        }
+        .fixed(),
     );
     // The axes the gears turn about: the motor's, and one 13.5 along `x`,
     // through points 10 up.

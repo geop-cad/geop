@@ -113,7 +113,7 @@ fn middle_of<S: Scalar>(entity: &EntityRef, part: &Part<S>) -> GeopResult<Vector
         let instance = part
             .instance(part.instance_id(&name).with_context(ctx)?)
             .with_context(ctx)?;
-        let local = middle_of(&inner, instance.part()).with_context(ctx)?;
+        let local = middle_of(&inner, &instance.part).with_context(ctx)?;
         return Ok(instance.pose.motion().apply(&local));
     }
     if let EntityRef::Face { name } = entity {

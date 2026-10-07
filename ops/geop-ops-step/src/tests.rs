@@ -842,17 +842,14 @@ fn a_sheet_round_trips() {
     assert!(back.topology().solids.is_empty());
 }
 
-/// `component` placed at `pose`.
+/// `instance` placed at `pose`.
 fn placed(
-    component: &std::sync::Arc<geop_ops::Component<S>>,
+    instance: &geop_ops::Instance<S>,
     pose: geop_core_math::primitives::Pose<S>,
 ) -> geop_ops::Instance<S> {
     geop_ops::Instance {
-        component: component.clone(),
         pose,
-        parameter: None,
-        fixed: true,
-        flexible: false,
+        ..instance.clone()
     }
 }
 
@@ -863,13 +860,9 @@ fn placed(
 #[test]
 fn an_assembly_is_written_as_products_and_occurrences() {
     use geop_core_math::primitives::{Pose, Quaternion};
-    use std::{collections::BTreeSet, sync::Arc};
+    use std::collections::BTreeSet;
     let component = |file: &str, part: Part<S>| {
-        Arc::new(geop_ops::Component::new(
-            file.into(),
-            part,
-            BTreeSet::from([file.to_string()]),
-        ))
+        geop_ops::Instance::of(file.into(), part, BTreeSet::from([file.to_string()]))
     };
     let mut peg = Part::new();
     revolved_cylinder(

@@ -18,6 +18,7 @@ use geop_core_math::{
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_ops::{EntityRef, Part};
+use geop_ops_hole::PartThreads;
 use geop_ops_inspect::bodies::resolve;
 use serde::{Deserialize, Serialize};
 
@@ -934,7 +935,7 @@ struct Seen<'a, 'p, S: Scalar> {
 fn draw_thread<S: Scalar>(
     sheet: &mut Sheet,
     seen: &Seen<'_, '_, S>,
-    thread: &geop_ops::part::CosmeticThread<S>,
+    thread: &geop_ops_hole::CosmeticThread<S>,
     start: Vector3<S>,
     along: Vector3<S>,
     label: bool,

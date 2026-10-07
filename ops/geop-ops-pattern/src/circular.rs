@@ -156,7 +156,7 @@ impl Operation for CircularPattern {
         f.checkbox("reversed", "reverse direction", args.reversed, |args, b| {
             args.reversed = b
         });
-        let inputs = before.inputs();
+        let inputs = before.state();
         count_field(&mut f, "count", &args.count, inputs, None, |args, count| {
             args.count = count
         });
