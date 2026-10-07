@@ -17,7 +17,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops::{
-    EntityRef, ORIGIN,
+    EntityRef, ORIGIN, Part, PartDescription,
     assembly::{Kind, Mate},
     part::{ParamValue, State, pose_parameter},
     program::library::{Files, FilesMut},
@@ -30,7 +30,7 @@ use geop_ops_sketch::{AddSketchArgs, Sketch};
 
 use crate::examples::{circle, pose, rectangle, solved};
 use crate::stdlib::WithStandardParts;
-use crate::{Command, Editor, Program, Update, Workspace};
+use crate::{Command, Editor, Program, ProgramRunner, Update, Workspace};
 
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z
 /// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`
@@ -291,6 +291,56 @@ fn editing_a_file_rebuilds_only_what_places_it() {
         .map(|f| (f.to_string(), 1))
         .into();
     assert_eq!(workspace.files().take(), rebuilt);
+}
+
+/// Moving one screw of an assembly builds again the step that places it and
+/// what reads where it is, not the placing of the others: and the part is
+/// what a build from scratch makes.
+#[test]
+fn moving_a_part_builds_again_only_what_reads_where_it_is() {
+    let mut files = robot(0, 30);
+    let robot = Program::from_json(&files.remove("robot.geop").unwrap()).unwrap();
+    let workspace = Workspace::<S, Counted>::new(WithStandardParts(Counted {
+        files,
+        ..Default::default()
+    }));
+    let library = workspace.scope("robot.geop");
+    let mut runner = ProgramRunner::<S>::new();
+    runner.run(&robot, None, &library);
+    assert!(
+        runner.results().iter().all(|r| r.error.is_none()),
+        "{:?}",
+        runner.results()
+    );
+    assert_eq!(runner.built_anew(), 31, "the plate and its 30 screws");
+
+    let mut moved = robot.clone();
+    moved.state.insert(
+        pose_parameter("screw7"),
+        ParamValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
+    );
+    runner.run(&moved, None, &library);
+    assert!(
+        runner.results().iter().all(|r| r.error.is_none()),
+        "{:?}",
+        runner.results()
+    );
+    assert_eq!(
+        runner.built_anew(),
+        1,
+        "only the step placing screw7 reads where it is"
+    );
+
+    let scratch = moved.build(&library).unwrap();
+    assert_eq!(
+        PartDescription::of(runner.part()).unwrap(),
+        PartDescription::of(&scratch).unwrap()
+    );
+    let at = |part: &Part<S>| {
+        let id = part.instance_id("screw7").unwrap();
+        part.instance(id).unwrap().pose
+    };
+    assert_eq!(at(runner.part()), at(&scratch));
 }
 
 /// What the editor sends, as the front end gets it: its size in bytes,

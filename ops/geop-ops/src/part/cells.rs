@@ -14,7 +14,7 @@
 //!   unique across all of them. Two parts with the same version of a cell
 //!   hold the same content of it. A write is also a read: an operation that
 //!   changes a cell is taken to depend on it. (Adding an entry under a new
-//!   name reads that name, absent.)
+//!   name reads that name, absent.) The exception is a collection, below.
 //! - Reading a whole collection (every instance, every name) is a read of
 //!   the collection's own cell, which any write to a member bumps.
 //!
@@ -64,7 +64,9 @@ pub enum Cell {
     /// What operation families recorded on solids (see
     /// [`Part::body_data`](super::Part::body_data)).
     BodyData,
-    /// Every mate.
+    /// The mate under one name.
+    Mate(String),
+    /// Every mate: the list of them.
     Mates,
     /// What the steps that combined tools with a solid did.
     Features,
@@ -82,11 +84,23 @@ pub enum Cell {
     Ext(&'static str),
 }
 
+impl Cell {
+    /// Whether the cell is a list of others (see the module): writing one
+    /// of them is not reading the list, or every step that adds a name
+    /// would depend on the one before it.
+    fn is_collection(&self) -> bool {
+        matches!(
+            self,
+            Cell::Names | Cell::Instances | Cell::Mates | Cell::Inputs
+        )
+    }
+}
+
 /// What a step read and wrote of a part: see [`Log::take`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Access {
     pub reads: BTreeSet<Cell>,
-    /// The cells it wrote, which it also read.
+    /// The cells it wrote. Those that are no collection it also read.
     pub writes: BTreeSet<Cell>,
 }
 
@@ -116,7 +130,9 @@ impl Log {
     }
 
     fn write(&self, cell: &Cell) {
-        self.read(cell);
+        if !cell.is_collection() {
+            self.read(cell);
+        }
         let mut access = self.access.lock().unwrap_or_else(PoisonError::into_inner);
         access.writes.insert(cell.clone());
     }
@@ -380,14 +396,22 @@ impl<S: Scalar> Store<S> {
         &mut self.body_data
     }
 
+    /// Every mate, to list.
     pub(super) fn mates(&self) -> &BTreeMap<String, Mate> {
         self.read(Cell::Mates);
         &self.mates
     }
 
-    pub(super) fn mates_mut(&mut self) -> &mut BTreeMap<String, Mate> {
+    /// Whether there is a mate named `name`.
+    pub(super) fn has_mate(&self, name: &str) -> bool {
+        self.read(Cell::Mate(name.to_string()));
+        self.mates.contains_key(name)
+    }
+
+    pub(super) fn insert_mate(&mut self, name: String, mate: Mate) {
+        self.write(Cell::Mate(name.clone()));
         self.write(Cell::Mates);
-        &mut self.mates
+        self.mates.insert(name, mate);
     }
 
     pub(super) fn features(&self) -> &[(String, Arc<Feature<S>>)] {
@@ -459,6 +483,82 @@ impl<S: Scalar> Store<S> {
         self.parameters = parameters;
     }
 
+    // --- replaying ---
+
+    /// Puts into this part what a step wrote when it last ran: the `writes`
+    /// of the step, which turned the part `before` into the part `after`.
+    /// This part is the one the step would run on now, and has each cell
+    /// the step read as `before` had it, so the step would write the same.
+    pub(super) fn replay(&mut self, before: &Self, after: &Self, writes: &BTreeSet<Cell>) {
+        for cell in writes {
+            match cell {
+                Cell::Topology => self.topology = after.topology.clone(),
+                Cell::Name(name) => {
+                    let names = Arc::make_mut(&mut self.names);
+                    if let Some(id) = names.id_of(name) {
+                        names.remove(id);
+                    }
+                    if let Some(id) = after.names.id_of(name) {
+                        names
+                            .insert(id, name.as_str())
+                            .expect("the name was freed, and the id is the one of a name");
+                    }
+                }
+                Cell::Sketches => {
+                    self.sketches = after.sketches.clone();
+                    self.sketches3d = after.sketches3d.clone();
+                }
+                Cell::Datums => self.datums = after.datums.clone(),
+                Cell::BodyData => self.body_data = after.body_data.clone(),
+                Cell::Mate(name) => match after.mates.get(name) {
+                    Some(mate) => {
+                        self.mates.insert(name.clone(), mate.clone());
+                    }
+                    None => {
+                        self.mates.remove(name);
+                    }
+                },
+                Cell::Features => self.features = after.features.clone(),
+                Cell::Instance(name) => {
+                    let id = InstanceId::named(name);
+                    self.instances.shift_remove(&id);
+                    if let Some(instance) = after.instances.get(&id) {
+                        self.instances.insert(id, instance.clone());
+                    }
+                }
+                Cell::Ext(name) => self.extensions.copy_entry(&after.extensions, name),
+                // Lists have nothing of their own to copy; the program's
+                // inputs and parameters are not written by a step.
+                Cell::Names | Cell::Instances | Cell::Mates | Cell::Inputs => {}
+                Cell::State(_) | Cell::Parameters => {}
+            }
+        }
+        // What a step declared it read (see `Part::declared`).
+        for (name, value) in after.declared.iter() {
+            if !before.declared.contains_key(name) {
+                self.declared.insert(name.clone(), value.clone());
+            }
+        }
+        // A cell is as the step left it only if what it was written onto is
+        // what it was written onto before; else it is another content.
+        let versions = Arc::make_mut(&mut self.versions);
+        for cell in writes {
+            let same_base = versions.get(cell) == before.versions.get(cell);
+            let version = if same_base {
+                after.version(cell)
+            } else {
+                NEXT_VERSION.fetch_add(1, Ordering::Relaxed)
+            };
+            versions.insert(cell.clone(), version);
+        }
+    }
+
+    /// Whether every cell has the version it has in `other`: the two hold
+    /// the same content.
+    pub(super) fn same_versions(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.versions, &other.versions) || self.versions == other.versions
+    }
+
     // --- extensions ---
 
     pub(super) fn extensions(&self) -> &Extensions<S> {
@@ -501,14 +601,12 @@ mod tests {
         part.add_instance(instance(), "second").unwrap();
         let access = log.take();
 
-        let touched = cells([
-            Cell::Name("second".into()),
-            Cell::Names,
-            Cell::Instance("second".into()),
-            Cell::Instances,
-        ]);
-        assert_eq!(access.reads, touched);
-        assert_eq!(access.writes, touched);
+        // The lists it adds to, it does not read.
+        let own = cells([Cell::Name("second".into()), Cell::Instance("second".into())]);
+        assert_eq!(access.reads, own);
+        let mut writes = own;
+        writes.extend([Cell::Names, Cell::Instances]);
+        assert_eq!(access.writes, writes);
     }
 
     /// Looking at the topology is a read of all of it, and building in it a

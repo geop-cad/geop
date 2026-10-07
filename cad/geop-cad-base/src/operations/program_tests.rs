@@ -256,3 +256,69 @@ fn a_pasted_step_takes_its_state_along() {
     assert!(!program.state.contains_key(&format!("{}_width", ids[0])));
     program.validate().unwrap();
 }
+
+/// A runner that takes steps from what it built before must build what
+/// building from scratch builds: after a step is dropped from the middle of
+/// a program and put back, and after a number a step reads is changed. A
+/// step skipped for reading what did not change would otherwise show here
+/// as a part that differs, or an error that is missing.
+#[test]
+fn a_runner_builds_what_building_from_scratch_builds() {
+    use crate::examples;
+    use geop_ops::parameters::ParameterKind;
+
+    let examples = [
+        "box_with_drill_hole",
+        "bracket",
+        "cross_drilled_shaft",
+        "split_plate",
+        "parametric_plate",
+        "pin",
+        "patterned_plate",
+        "rounded_box",
+        "hole_plate",
+    ];
+    let describe = |part: &Part<S>| PartDescription::of(part).unwrap();
+    for (name, make) in examples::all() {
+        if !examples.contains(&name) {
+            continue;
+        }
+        let original = make();
+        let mut edits = Vec::new();
+        for index in [0, original.steps.len() / 2, original.steps.len() - 1] {
+            let mut dropped = original.clone();
+            dropped.steps.remove(index);
+            edits.push((format!("drop step {index}"), dropped));
+            edits.push(("restore".to_string(), original.clone()));
+        }
+        for (k, parameter) in original.parameters.values.iter().enumerate() {
+            if let ParameterKind::Number { expression, .. } = &parameter.kind
+                && let Ok(value) = expression.parse::<f64>()
+            {
+                let mut scaled = original.clone();
+                if let ParameterKind::Number { expression, .. } =
+                    &mut scaled.parameters.values[k].kind
+                {
+                    *expression = (value * 1.25).to_string();
+                }
+                edits.push((format!("scale {}", parameter.name), scaled));
+                edits.push(("restore".to_string(), original.clone()));
+            }
+        }
+
+        let mut runner = ProgramRunner::<S>::new();
+        runner.run(&original, None, &NoFiles);
+        for (edit, program) in edits {
+            let context = format!("{name}, {edit}");
+            runner.run(&program, None, &NoFiles);
+            let failed = runner.results().iter().any(|r| r.error.is_some());
+            match program.build::<S>(&NoFiles) {
+                Ok(scratch) => {
+                    assert!(!failed, "{context}: {:?}", runner.results());
+                    assert_eq!(describe(runner.part()), describe(&scratch), "{context}");
+                }
+                Err(_) => assert!(failed, "{context}: building from scratch fails"),
+            }
+        }
+    }
+}

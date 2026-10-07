@@ -91,10 +91,10 @@ impl<S: Scalar> Part<S> {
     /// name is taken.
     pub fn add_mate(&mut self, mate: Mate, name: impl Into<String>) -> GeopResult<()> {
         let name = name.into();
-        if self.store.mates().contains_key(&name) {
+        if self.store.has_mate(&name) {
             return Err(GeopError::new(format!("Part already has a mate {name:?}")));
         }
-        self.store.mates_mut().insert(name, mate);
+        self.store.insert_mate(name, mate);
         Ok(())
     }
 

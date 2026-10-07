@@ -31,6 +31,7 @@ mod ids;
 mod instance;
 mod mesh;
 mod names;
+mod replay;
 mod resolve;
 mod sketch;
 mod sketch3d;

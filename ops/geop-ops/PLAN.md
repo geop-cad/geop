@@ -48,8 +48,12 @@ interpret it?* Datums, sketches, mates, cables, threads and features do not.
    `describe`. `Cable`, `CutWire` move to `geop-ops-harness`, `CosmeticThread`
    to `geop-ops-hole`; their `Part` methods become extension traits there.
    The viewer's `threads` becomes generic `annotations`.
-2. [ ] **Cells: reads and writes of a step, detected, and a runner that skips
-   what does not read what changed.** See "Cells" below. Replaces the
+2. [x] **Cells: reads and writes of a step, detected, and a runner that skips
+   what does not read what changed.** Done: `part/cells.rs` (`Store`, `Cell`,
+   `Log`, versions), `part/replay.rs`, records in `ProgramRunner`. Moving one
+   of 30 screws builds one step. Not yet: early cutoff by content (a rebuilt
+   step always writes new versions), and `declared` is still kept beside the
+   `State(k)` reads it duplicates. See "Cells" below. Replaces the
    prefix-only reuse of `ProgramRunner::run`.
 3. [ ] **Constraints solved over the runner.** A part exposes residuals `r`
    and Jacobian `J` over its variables (parameters, instance poses); the

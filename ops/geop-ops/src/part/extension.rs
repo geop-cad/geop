@@ -86,6 +86,20 @@ impl<S: Scalar> Extensions<S> {
     }
 }
 
+impl<S: Scalar> Extensions<S> {
+    /// Takes the extension `name` as `from` has it: none, if it has none.
+    pub(super) fn copy_entry(&mut self, from: &Self, name: &str) {
+        match from.0.get_key_value(name) {
+            Some((&name, extension)) => {
+                self.0.insert(name, extension.clone_box());
+            }
+            None => {
+                self.0.remove(name);
+            }
+        }
+    }
+}
+
 impl<S: Scalar> Clone for Extensions<S> {
     fn clone(&self) -> Self {
         Self(

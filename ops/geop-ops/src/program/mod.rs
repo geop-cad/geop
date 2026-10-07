@@ -13,7 +13,8 @@ pub use library::{Cache, Files, FilesMut, Library, MemoryCache, NoFiles, Workspa
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    sync::Arc,
 };
 
 use geop_core_math::{
@@ -27,7 +28,7 @@ use crate::{
     Instance, Part,
     operation::Operations,
     parameters::{Parameters, names_in, parameter_of, rename_in, validate_name},
-    part::State,
+    part::{Access, Log, State},
     validate_operation_id,
 };
 
@@ -279,7 +280,7 @@ impl<O: Operations> Program<O> {
         self.validate()?;
         let mut part = self.start();
         for (index, step) in self.steps.iter().enumerate() {
-            part = run_step(part, index, step, library)?;
+            part = run_step(part, index, step, library, None)?.0;
         }
         Ok(part)
     }
@@ -299,21 +300,29 @@ impl<O: Operations> Program<O> {
     }
 }
 
-/// Step `index` of a program applied to `part`, with every name checked.
+/// Step `index` of a program applied to `part`, with every name checked —
+/// and, if `log` is given, what the step read and wrote of `part` (see
+/// [`crate::part::Cell`]): `None` if that is not known, because the step
+/// returned a part that is no copy of the one it was given.
 fn run_step<S: Scalar, O: Operations>(
-    part: Part<S>,
+    mut part: Part<S>,
     index: usize,
     step: &Step<O>,
     library: &dyn Library<S>,
-) -> GeopResult<Part<S>> {
+    log: Option<&Arc<Log>>,
+) -> GeopResult<(Part<S>, Option<Access>)> {
     let ctx = with_context!("program step {index} ({:?})", step.id);
+    if let Some(log) = log {
+        part.record(log);
+    }
     let mut part = step
         .operation
         .apply(part, &step.id, library)
         .with_context(ctx)?;
+    let access = log.and_then(|log| part.finish_recording(log));
     part.check_names().with_context(ctx)?;
     part.renew_revision();
-    Ok(part)
+    Ok((part, access))
 }
 
 /// How one step of a run went.
@@ -327,42 +336,51 @@ pub struct StepResult {
 /// Builds a program the way an editor needs it built: incrementally, and
 /// only as far as asked.
 ///
-/// It keeps the part after every step it has run. Running again after an
-/// edit reuses the part after the longest unchanged prefix of steps, so
-/// changing the last step replays one step, not the whole history. And a
-/// run can stop early — while a step in the middle is being edited, only
-/// the steps up to it need to run, however long the rest of the program is.
-/// Parts past the stop are kept, not discarded, so moving the stop back
-/// again costs nothing.
+/// It keeps, for every step it has run, the part before and after it, and
+/// what the step read and wrote of the part (see [`crate::part::Cell`]).
+/// Running again after an edit takes a step as it was built if it is the
+/// same step and each cell of the part it read is as it was then: so
+/// changing the last step runs one step, and changing a step in the middle
+/// runs the steps after it that read what it wrote — not those that did
+/// not, like the placing of an unrelated part. And a run can stop early —
+/// while a step in the middle is being edited, only the steps up to it need
+/// to run, however long the rest of the program is. What was built past the
+/// stop is kept, so moving the stop back again costs nothing.
 ///
 /// A run stops at the first step that fails: the steps after it would only
 /// fail too, for want of what it should have built.
 ///
-/// What a step builds can depend on more than the step: on the program's
-/// inputs it reads (see [`Program::inputs`]) — when those change, it runs
-/// again from the first step that read one that did, and nothing runs again
-/// for a change nothing read, like the part's colour — and on the files its
+/// What a step builds can depend on more than the part: on the files its
 /// library reads, which it notes per step: when some change,
-/// [`ProgramRunner::forget`] runs again from the first step that read one.
+/// [`ProgramRunner::forget`] runs again the steps that read one.
 pub struct ProgramRunner<S: Scalar, O> {
-    /// The steps the cache was built from.
+    /// The steps the last run covers.
     steps: Vec<Step<O>>,
-    /// The inputs the cache was built with.
-    inputs: State,
     /// `parts[i]`: the part after `steps[..i]`. A failed step leaves the
     /// part as it was, so this stays one longer than `steps`.
-    parts: Vec<Part<S>>,
+    parts: Vec<Arc<Part<S>>>,
     results: Vec<StepResult>,
     /// `reads[i]`: the files `steps[i]` built on — those of every part it
     /// placed (see [`Instance::files`]).
     reads: Vec<BTreeSet<String>>,
+    /// What every step that was built, and did not fail, did, by its id.
+    records: HashMap<String, Record<S, O>>,
     /// How many steps the last run covers.
     ran: usize,
-    /// How many steps the last run built, rather than took from the parts
-    /// earlier runs built.
+    /// How many steps the last run built, rather than took from earlier
+    /// runs.
     built_anew: usize,
     /// How many steps every run so far built, together.
     steps_built: usize,
+}
+
+/// What a step did when it was built (see [`ProgramRunner`]).
+struct Record<S: Scalar, O> {
+    step: Step<O>,
+    before: Arc<Part<S>>,
+    after: Arc<Part<S>>,
+    access: Access,
+    files: BTreeSet<String>,
 }
 
 /// A library that notes the files of every part it gives out: what a step
@@ -400,10 +418,10 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
     pub fn new() -> Self {
         Self {
             steps: Vec::new(),
-            inputs: State::new(),
-            parts: vec![Part::new()],
+            parts: vec![Arc::new(Part::new())],
             results: Vec::new(),
             reads: Vec::new(),
+            records: HashMap::new(),
             ran: 0,
             built_anew: 0,
             steps_built: 0,
@@ -415,11 +433,12 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
         *self = Self::new();
     }
 
-    /// Forgets the parts built from the first step that read one of the
+    /// Forgets what was built from the first step that read one of the
     /// files `changed` — as the library names them — or failed, which it
     /// may have for want of one: those steps may build something else now.
     /// The steps before it read none, and are kept.
     pub fn forget(&mut self, changed: &BTreeSet<String>) {
+        self.records.retain(|_, r| r.files.is_disjoint(changed));
         let first = self
             .reads
             .iter()
@@ -446,78 +465,97 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
     }
 
     /// Runs the first `stop` steps of `program` — all of them if `None` —
-    /// with `library`, reusing whatever the previous runs built that still
+    /// with `library`, taking from what earlier runs built whatever still
     /// applies. See [`ProgramRunner::part`] and [`ProgramRunner::results`]
     /// for the outcome.
     pub fn run(&mut self, program: &Program<O>, stop: Option<usize>, library: &dyn Library<S>) {
-        let mut common = self
-            .steps
-            .iter()
-            .zip(&program.steps)
-            .take_while(|(a, b)| a == b)
-            .count();
-        let inputs = program.inputs();
-        if self.inputs != inputs {
-            // From the first step that read a parameter whose value is
-            // different now — what it declared is what it read.
-            let changed = |name: &String| self.inputs.get(name) != inputs.get(name);
-            // A step that failed may have failed for want of a value, and
-            // what it would have read is not known: it runs again too.
-            if let Some(first) = (0..common).find(|&i| {
-                let (before, after) = (self.parts[i].declared(), self.parts[i + 1].declared());
-                self.results[i].error.is_some()
-                    || after
-                        .keys()
-                        .any(|name| !before.contains_key(name) && changed(name))
-            }) {
-                common = first;
-            }
-            self.inputs = inputs;
-        }
-        self.steps.truncate(common);
-        self.parts.truncate(common + 1);
-        self.results.truncate(common);
-        self.reads.truncate(common);
-        // What is kept read nothing that changed: it is the same part, with
-        // the values and the parameters the program has now — its colour,
-        // what a program placing it offers, what the next step reads.
-        for part in &mut self.parts {
-            part.set_state(self.inputs.clone());
-            part.set_parameters(program.parameters.clone());
-        }
+        let ids: HashSet<&str> = program.steps.iter().map(|s| s.id.as_str()).collect();
+        self.records.retain(|id, _| ids.contains(id.as_str()));
+
+        // The empty part the program starts from, with the values it is
+        // built with: each input that differs from what it was gets a new
+        // version, so what read it is built again.
+        let mut start = (*self.parts[0]).clone();
+        start.set_state(program.inputs());
+        start.set_parameters(program.parameters.clone());
 
         let target = stop.unwrap_or(program.steps.len()).min(program.steps.len());
-        let failed = |results: &[StepResult]| results.iter().any(|r| r.error.is_some());
+        let mut parts = vec![Arc::new(start)];
+        let mut steps = Vec::new();
+        let mut results = Vec::new();
+        let mut reads = Vec::new();
         self.built_anew = 0;
-        while self.steps.len() < target && !failed(&self.results) {
-            let index = self.steps.len();
+        for index in 0..target {
             let step = &program.steps[index];
-            let before = self.parts.last().expect("parts is never empty");
-            let before = before.clone().with_state(self.inputs.clone());
-            let recording = Recording {
-                library,
-                read: RefCell::new(BTreeSet::new()),
+            let before = parts.last().expect("parts is never empty").clone();
+            let taken = self
+                .records
+                .get(&step.id)
+                .filter(|r| r.step == *step && before.would_write_the_same(&r.before, &r.access))
+                .map(|r| {
+                    (
+                        before.replayed(&r.before, &r.after, &r.access),
+                        r.files.clone(),
+                    )
+                });
+            let (after, error, files) = match taken {
+                Some((after, files)) => (after, None, files),
+                None => {
+                    let recording = Recording {
+                        library,
+                        read: RefCell::new(BTreeSet::new()),
+                    };
+                    let log = Log::new();
+                    let built = run_step((*before).clone(), index, step, &recording, Some(&log));
+                    let files = recording.read.into_inner();
+                    self.built_anew += 1;
+                    self.steps_built += 1;
+                    match built {
+                        Ok((after, access)) => {
+                            let after = Arc::new(after);
+                            match access {
+                                Some(access) => {
+                                    self.records.insert(
+                                        step.id.clone(),
+                                        Record {
+                                            step: step.clone(),
+                                            before: before.clone(),
+                                            after: after.clone(),
+                                            access,
+                                            files: files.clone(),
+                                        },
+                                    );
+                                }
+                                None => {
+                                    self.records.remove(&step.id);
+                                }
+                            }
+                            (after, None, files)
+                        }
+                        Err(e) => {
+                            self.records.remove(&step.id);
+                            (before.clone(), Some(e.to_string()), files)
+                        }
+                    }
+                }
             };
-            let (part, error) = match run_step(before.clone(), index, step, &recording) {
-                Ok(part) => (part, None),
-                Err(e) => (before.clone(), Some(e.to_string())),
-            };
-            self.built_anew += 1;
-            self.steps_built += 1;
-            self.steps.push(step.clone());
-            self.parts.push(part);
-            self.reads.push(recording.read.into_inner());
-            self.results.push(StepResult {
+            let failed = error.is_some();
+            steps.push(step.clone());
+            parts.push(after);
+            reads.push(files);
+            results.push(StepResult {
                 id: step.id.clone(),
                 error,
             });
+            if failed {
+                break;
+            }
         }
-        // Up to the stop, or up to and including the first failure.
-        let first_failure = self.results.iter().position(|r| r.error.is_some());
-        self.ran = match first_failure {
-            Some(f) if f < target => f + 1,
-            _ => target.min(self.steps.len()),
-        };
+        self.ran = steps.len();
+        self.steps = steps;
+        self.parts = parts;
+        self.results = results;
+        self.reads = reads;
     }
 
     /// The part the last run built.
@@ -535,7 +573,7 @@ impl<S: Scalar, O: Operations> ProgramRunner<S, O> {
     /// not reach it, or it failed.
     pub fn built(&self, index: usize) -> Option<&Part<S>> {
         let ran = self.results().get(index)?;
-        ran.error.is_none().then(|| &self.parts[index + 1])
+        ran.error.is_none().then(|| &*self.parts[index + 1])
     }
 
     /// One result per step the last run covered.
