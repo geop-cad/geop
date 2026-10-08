@@ -10,69 +10,69 @@ use crate::{PartOperation, ProgramRunner, examples};
 // /// Every operation is offered, under the kind its steps serialize with.
 // #[test]
 // fn every_operation_is_offered() {
-    // let infos = PartOperation::infos();
-    // let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
-    // assert_eq!(
-        // kinds,
-        // [
-            // "add_sketch",
-            // "add_sketch3d",
-            // "add_datum",
-            // "extrude",
-            // "revolve",
-            // "sweep",
-            // "loft",
-            // "hole",
-            // "thread",
-            // "rib",
-            // "fillet",
-            // "chamfer",
-            // "shell",
-            // "draft",
-            // "lip",
-            // "groove",
-            // "boolean",
-            // "split",
-            // "linear_pattern",
-            // "circular_pattern",
-            // "mirror",
-            // "move_body",
-            // "delete_body",
-            // "boundary_surface",
-            // "offset_surface",
-            // "thicken",
-            // "knit",
-            // "trim_surface",
-            // "extend_surface",
-            // "extract_face",
-            // "project_curve",
-            // "base_flange",
-            // "edge_flange",
-            // "sheet_cut",
-            // "hem",
-            // "flat_pattern",
-            // "subd",
-            // "add_part",
-            // "part_pattern",
-            // "route",
-            // "drawing",
-            // "import_step",
-            // "network_surface"
-        // ]
-    // );
-    // assert_eq!(infos[0].label, "Sketch");
-    // assert!(
-        // infos[3].doc.starts_with("Sweep a sketch"),
-        // "{}",
-        // infos[3].doc
-    // );
-    // for (_, program) in examples::all() {
-        // for step in &program().steps {
-            // let json = serde_json::to_value(&step.operation).unwrap();
-            // assert_eq!(json["operation"], step.operation.kind());
-            // assert!(kinds.contains(&step.operation.kind()));
-        // }
-    // }
+// let infos = PartOperation::infos();
+// let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
+// assert_eq!(
+// kinds,
+// [
+// "add_sketch",
+// "add_sketch3d",
+// "add_datum",
+// "extrude",
+// "revolve",
+// "sweep",
+// "loft",
+// "hole",
+// "thread",
+// "rib",
+// "fillet",
+// "chamfer",
+// "shell",
+// "draft",
+// "lip",
+// "groove",
+// "boolean",
+// "split",
+// "linear_pattern",
+// "circular_pattern",
+// "mirror",
+// "move_body",
+// "delete_body",
+// "boundary_surface",
+// "offset_surface",
+// "thicken",
+// "knit",
+// "trim_surface",
+// "extend_surface",
+// "extract_face",
+// "project_curve",
+// "base_flange",
+// "edge_flange",
+// "sheet_cut",
+// "hem",
+// "flat_pattern",
+// "subd",
+// "add_part",
+// "part_pattern",
+// "route",
+// "drawing",
+// "import_step",
+// "network_surface"
+// ]
+// );
+// assert_eq!(infos[0].label, "Sketch");
+// assert!(
+// infos[3].doc.starts_with("Sweep a sketch"),
+// "{}",
+// infos[3].doc
+// );
+// for (_, program) in examples::all() {
+// for step in &program().steps {
+// let json = serde_json::to_value(&step.operation).unwrap();
+// assert_eq!(json["operation"], step.operation.kind());
+// assert!(kinds.contains(&step.operation.kind()));
+// }
+// }
 // }
 
 /// A new step starts from what the steps before it built.

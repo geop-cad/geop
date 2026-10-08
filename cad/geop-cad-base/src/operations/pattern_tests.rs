@@ -320,51 +320,51 @@ fn tool_moved_into_place_and_cut() {
 // #[test]
 // #[ignore = "slow: circular patterns of up to 24 copies at awkward angles — run with `cargo test -- --ignored`"]
 // fn circular_patterns_sweep() {
-    // for (count, angle, joined) in [
-        // (24, Spacing::extent(360.0), false),
-        // (7, Spacing::step(37.3), false),
-        // (5, Spacing::extent(-251.7), false),
-        // (2, Spacing::step(13.0), true),
-        // (12, Spacing::extent(360.0), true),
-    // ] {
-        // let mut program = Program::new();
-        // extruded(
-            // &mut program,
-            // "b",
-            // polygon(&[[2.0, -0.4], [3.0, -0.4], [3.0, 0.4], [2.0, 0.4]]),
-            // Extents::blind(1.0),
-        // );
-        // program.push(
-            // "r",
-            // CircularPatternArgs {
-                // features: Vec::new(),
-                // bodies: solid("extrude(b)"),
-                // axis: axis(FrameAxis::Z),
-                // reversed: false,
-                // count: (count as f64).into(),
-                // angle: angle.clone(),
-                // combine: if joined {
-                    // Combine::Union {
-                        // target: "extrude(b)".into(),
-                    // }
-                // } else {
-                    // Combine::NewBody
-                // },
-            // },
-        // );
-        // let part = program
-            // .build::<S>(&NoFiles)
-            // .unwrap_or_else(|e| panic!("{count} at {angle:?}: {e:?}"));
-        // assert_valid(&part);
-        // let solids = part.solid_names();
-        // assert_eq!(solids.len(), if joined { 1 } else { count }, "{solids:?}");
-        // if !joined {
-            // for name in &solids {
-                // let got = volume(&part, name);
-                // assert!((got - 0.8).abs() < 1e-6, "{name}: {got}");
-            // }
-        // }
-    // }
+// for (count, angle, joined) in [
+// (24, Spacing::extent(360.0), false),
+// (7, Spacing::step(37.3), false),
+// (5, Spacing::extent(-251.7), false),
+// (2, Spacing::step(13.0), true),
+// (12, Spacing::extent(360.0), true),
+// ] {
+// let mut program = Program::new();
+// extruded(
+// &mut program,
+// "b",
+// polygon(&[[2.0, -0.4], [3.0, -0.4], [3.0, 0.4], [2.0, 0.4]]),
+// Extents::blind(1.0),
+// );
+// program.push(
+// "r",
+// CircularPatternArgs {
+// features: Vec::new(),
+// bodies: solid("extrude(b)"),
+// axis: axis(FrameAxis::Z),
+// reversed: false,
+// count: (count as f64).into(),
+// angle: angle.clone(),
+// combine: if joined {
+// Combine::Union {
+// target: "extrude(b)".into(),
+// }
+// } else {
+// Combine::NewBody
+// },
+// },
+// );
+// let part = program
+// .build::<S>(&NoFiles)
+// .unwrap_or_else(|e| panic!("{count} at {angle:?}: {e:?}"));
+// assert_valid(&part);
+// let solids = part.solid_names();
+// assert_eq!(solids.len(), if joined { 1 } else { count }, "{solids:?}");
+// if !joined {
+// for name in &solids {
+// let got = volume(&part, name);
+// assert!((got - 0.8).abs() < 1e-6, "{name}: {got}");
+// }
+// }
+// }
 // }
 
 /// Three boxes, each turned 13° further about `z` than the last, drawn

@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Constraint3d, CurveKind3d, Enclosure3d, End, Sketch3d,
-    geometry::{Arc3, across, length, unit},
+    geometry::{Arc3, across},
 };
 use crate::{
     ConstraintId, CurveId, PointId,
@@ -222,7 +222,7 @@ fn tangent_of<S: Scalar, T: Scalar>(
         Some(arc) => arc.tangent(end == End::End),
         None => {
             let (s, e) = line_of(sketch, layout, x, c);
-            unit(&e.sub(&s))
+            e.sub(&s).normalize()
         }
     }
 }
@@ -390,10 +390,10 @@ impl<'a, S: Scalar> Problem<'a, S> {
             } => {
                 out.push(point(q)[axis.index()].sub(c(value)));
             }
-            Distance { a, b, value } => out.push(length(&point(b).sub(&point(a)))?.sub(c(value))),
+            Distance { a, b, value } => out.push(point(b).sub(&point(a)).try_norm()?.sub(c(value))),
             Length { line, value } => {
                 let (s, e) = line_of(sketch, layout, x, line);
-                out.push(length(&e.sub(&s))?.sub(c(value)));
+                out.push(e.sub(&s).try_norm()?.sub(c(value)));
             }
             Radius { arc, value } => {
                 let arc = arc_of(sketch, layout, x, arc).expect("validated");
@@ -402,11 +402,11 @@ impl<'a, S: Scalar> Problem<'a, S> {
             Parallel { a, b } => {
                 let (sa, ea) = line_of(sketch, layout, x, a);
                 let (sb, eb) = line_of(sketch, layout, x, b);
-                parallel(&unit(&ea.sub(&sa))?, &unit(&eb.sub(&sb))?, out);
+                parallel(&ea.sub(&sa).normalize()?, &eb.sub(&sb).normalize()?, out);
             }
             ParallelTo { line, direction } => {
                 let (s, e) = line_of(sketch, layout, x, line);
-                parallel(&unit(&e.sub(&s))?, &unit(&direction.map(c))?, out);
+                parallel(&e.sub(&s).normalize()?, &direction.map(c).normalize()?, out);
             }
             TangentTo {
                 curve,
@@ -414,7 +414,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 direction,
             } => {
                 let t = tangent_of(sketch, layout, x, curve, end)?;
-                parallel(&t, &unit(&direction.map(c))?, out);
+                parallel(&t, &direction.map(c).normalize()?, out);
             }
             OnCurve { point: q, curve } => {
                 let q = point(q);
@@ -423,7 +423,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                         let arc = arc_of(sketch, layout, x, curve).expect("an arc");
                         let center = arc.center()?;
                         out.push(q.sub(&arc.m).prod_dot(&arc.normal()?));
-                        out.push(length(&q.sub(&center))?.sub(arc.radius()?));
+                        out.push(q.sub(&center).try_norm()?.sub(arc.radius()?));
                         return Ok(());
                     }
                     (CurveKind3d::Line { .. }, Some(&t)) => {

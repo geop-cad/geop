@@ -57,17 +57,17 @@ enum Command {
     Compile(CompileArgs),
     /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
     Examples(ExamplesArgs),
-//     /// Build a program and write a 2-D drawing of its part — views with
-//     /// hidden lines, dimensions, a title block — as SVG or DXF.
-//     Drawing(DrawingCliArgs),
-//     /// Build an assembly and write it as a URDF robot — links, joints,
-//     /// inertia and meshes — for simulators: a directory of `robot.urdf`
-//     /// and `meshes/*.stl`, or one `.zip` of them.
-//     Urdf(UrdfArgs),
-//     /// Build an assembly and write its bill of materials as CSV: every
-//     /// part with its quantity, designation, material and mass, and every
-//     /// wire of its harnesses cut to length.
-//     Bom(BomArgs),
+    //     /// Build a program and write a 2-D drawing of its part — views with
+    //     /// hidden lines, dimensions, a title block — as SVG or DXF.
+    //     Drawing(DrawingCliArgs),
+    //     /// Build an assembly and write it as a URDF robot — links, joints,
+    //     /// inertia and meshes — for simulators: a directory of `robot.urdf`
+    //     /// and `meshes/*.stl`, or one `.zip` of them.
+    //     Urdf(UrdfArgs),
+    //     /// Build an assembly and write its bill of materials as CSV: every
+    //     /// part with its quantity, designation, material and mass, and every
+    //     /// wire of its harnesses cut to length.
+    //     Bom(BomArgs),
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
@@ -833,35 +833,35 @@ mod tests {
     // /// program next to it imports back to as many solids.
     // #[test]
     // fn compiles_to_step_and_imports_it_back() {
-        // let dir = scratch("step");
-        // let program = examples::all()
-            // .into_iter()
-            // .find(|(name, _)| *name == "box_with_drill_hole")
-            // .unwrap()
-            // .1();
-        // let path = dir.join("box.geop");
-        // std::fs::write(&path, program.to_json().unwrap()).unwrap();
-        // let compiled = compile(&CompileArgs {
-            // output: Some(dir.join("box.step")),
-            // ..args(path)
-        // })
-        // .unwrap();
-        // let text = std::fs::read_to_string(&compiled.output).unwrap();
-        // assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
-        // assert!(text.contains("MANIFOLD_SOLID_BREP"));
+    // let dir = scratch("step");
+    // let program = examples::all()
+    // .into_iter()
+    // .find(|(name, _)| *name == "box_with_drill_hole")
+    // .unwrap()
+    // .1();
+    // let path = dir.join("box.geop");
+    // std::fs::write(&path, program.to_json().unwrap()).unwrap();
+    // let compiled = compile(&CompileArgs {
+    // output: Some(dir.join("box.step")),
+    // ..args(path)
+    // })
+    // .unwrap();
+    // let text = std::fs::read_to_string(&compiled.output).unwrap();
+    // assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
+    // assert!(text.contains("MANIFOLD_SOLID_BREP"));
 
-        // let mut import = geop_cad_base::Program::default();
-        // import.push(
-            // "imp",
-            // geop_cad_base::PartOperation::ImportStep(geop_ops_step::ImportStepArgs {
-                // file: "box.step".into(),
-            // }),
-        // );
-        // let path = dir.join("import.geop");
-        // std::fs::write(&path, import.to_json().unwrap()).unwrap();
-        // let back = compile(&args(path)).unwrap();
-        // assert_eq!(back.solids, compiled.solids);
-        // assert!(back.triangles > 0);
+    // let mut import = geop_cad_base::Program::default();
+    // import.push(
+    // "imp",
+    // geop_cad_base::PartOperation::ImportStep(geop_ops_step::ImportStepArgs {
+    // file: "box.step".into(),
+    // }),
+    // );
+    // let path = dir.join("import.geop");
+    // std::fs::write(&path, import.to_json().unwrap()).unwrap();
+    // let back = compile(&args(path)).unwrap();
+    // assert_eq!(back.solids, compiled.solids);
+    // assert!(back.triangles > 0);
     // }
 
     #[test]
@@ -911,68 +911,68 @@ mod tests {
     // /// archive of the same files when asked for a `.zip`.
     // #[test]
     // fn exports_the_arm_as_urdf() {
-        // let dir = scratch("urdf");
-        // let (_, files) = examples::workspaces()
-            // .into_iter()
-            // .find(|(name, _)| *name == "arm")
-            // .unwrap();
-        // let files = files();
-        // for (file, program) in &files {
-            // std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-        // }
-        // let args = UrdfArgs {
-            // program: dir.join("arm.geop"),
-            // output: None,
-            // quality: 8,
-        // };
-        // let (output, links, joints) = urdf(&args).unwrap();
-        // assert_eq!(output, dir.join("arm_urdf"));
-        // assert_eq!((links, joints), (3, 2));
-        // let text = std::fs::read_to_string(output.join("robot.urdf")).unwrap();
-        // assert!(text.contains(r#"<robot name="arm">"#), "{text}");
-        // assert!(output.join("meshes/link.stl").is_file());
+    // let dir = scratch("urdf");
+    // let (_, files) = examples::workspaces()
+    // .into_iter()
+    // .find(|(name, _)| *name == "arm")
+    // .unwrap();
+    // let files = files();
+    // for (file, program) in &files {
+    // std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+    // }
+    // let args = UrdfArgs {
+    // program: dir.join("arm.geop"),
+    // output: None,
+    // quality: 8,
+    // };
+    // let (output, links, joints) = urdf(&args).unwrap();
+    // assert_eq!(output, dir.join("arm_urdf"));
+    // assert_eq!((links, joints), (3, 2));
+    // let text = std::fs::read_to_string(output.join("robot.urdf")).unwrap();
+    // assert!(text.contains(r#"<robot name="arm">"#), "{text}");
+    // assert!(output.join("meshes/link.stl").is_file());
 
-        // let zip = dir.join("arm.zip");
-        // urdf(&UrdfArgs {
-            // output: Some(zip.clone()),
-            // ..args
-        // })
-        // .unwrap();
-        // let bytes = std::fs::read(zip).unwrap();
-        // assert!(bytes.starts_with(b"PK\x03\x04"));
-        // let urdf_at = bytes.windows(10).position(|w| w == b"robot.urdf");
-        // assert!(urdf_at.is_some());
+    // let zip = dir.join("arm.zip");
+    // urdf(&UrdfArgs {
+    // output: Some(zip.clone()),
+    // ..args
+    // })
+    // .unwrap();
+    // let bytes = std::fs::read(zip).unwrap();
+    // assert!(bytes.starts_with(b"PK\x03\x04"));
+    // let urdf_at = bytes.windows(10).position(|w| w == b"robot.urdf");
+    // assert!(urdf_at.is_some());
     // }
 
     // /// The bolted plate's bill of materials, written as CSV: its plate,
     // /// screw and nut, the standard parts by their norms.
     // #[test]
     // fn writes_the_bill_of_materials_of_the_bolted_plate() {
-        // let dir = scratch("bom");
-        // let (_, files) = examples::workspaces()
-            // .into_iter()
-            // .find(|(name, _)| *name == "bolted_plate")
-            // .unwrap();
-        // let files = files();
-        // for (file, program) in &files {
-            // std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-        // }
-        // let output = dir.join("bom.csv");
-        // let args = BomArgs {
-            // program: dir.join("bolted_plate.geop"),
-            // output: Some(output.clone()),
-            // indented: false,
-        // };
-        // let listed = bom(&args).unwrap();
-        // assert_eq!(listed.lines.len(), 3);
-        // let csv = std::fs::read_to_string(&output).unwrap();
-        // let rows: Vec<&str> = csv.lines().collect();
-        // assert_eq!(rows.len(), 5, "{csv}");
-        // assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
-        // assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
-        // let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
-        // assert!(rows[2].contains(screw), "{csv}");
-        // assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
+    // let dir = scratch("bom");
+    // let (_, files) = examples::workspaces()
+    // .into_iter()
+    // .find(|(name, _)| *name == "bolted_plate")
+    // .unwrap();
+    // let files = files();
+    // for (file, program) in &files {
+    // std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
+    // }
+    // let output = dir.join("bom.csv");
+    // let args = BomArgs {
+    // program: dir.join("bolted_plate.geop"),
+    // output: Some(output.clone()),
+    // indented: false,
+    // };
+    // let listed = bom(&args).unwrap();
+    // assert_eq!(listed.lines.len(), 3);
+    // let csv = std::fs::read_to_string(&output).unwrap();
+    // let rows: Vec<&str> = csv.lines().collect();
+    // assert_eq!(rows.len(), 5, "{csv}");
+    // assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
+    // assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
+    // let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
+    // assert!(rows[2].contains(screw), "{csv}");
+    // assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
     // }
 
     /// An assembly compiles with the parts it places, each where it is
@@ -1061,36 +1061,36 @@ mod tests {
     // /// drawing written in the format its name says, the views asked for.
     // #[test]
     // fn draws_a_program() {
-        // let dir = scratch("drawing");
-        // let path = dir.join("bracket.geop");
-        // std::fs::write(&path, examples::bracket().to_json().unwrap()).unwrap();
-        // let args = |output: &str, views: &[&str]| DrawingCliArgs {
-            // program: path.clone(),
-            // output: Some(dir.join(output)),
-            // step: None,
-            // views: views.iter().map(|v| v.to_string()).collect(),
-            // first_angle: true,
-            // scale: Some("2:1".into()),
-            // sheet: None,
-            // name: None,
-            // material: Some("6061-T6".into()),
-            // bom: false,
-            // flat_pattern: None,
-        // };
-        // let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
-        // let dxf = std::fs::read_to_string(written).unwrap();
-        // assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
-        // for text in ["bracket", "6061-T6", "2:1", "FIRST ANGLE"] {
-            // assert!(dxf.contains(&format!("\n{text}\n")), "{text}");
-        // }
-        // let svg = std::fs::read_to_string(drawing(&args("bracket.svg", &[])).unwrap()).unwrap();
-        // assert!(svg.starts_with("<svg"));
-        // let err = drawing(&args("bracket.png", &[])).unwrap_err();
-        // assert!(err.to_string().contains(".svg nor .dxf"), "{err}");
-        // let err = drawing(&args("bracket.svg", &["side"])).unwrap_err();
-        // assert!(err.to_string().contains("front"), "{err}");
-        // assert_eq!(parse_scale("1:5").unwrap(), 0.2);
-        // assert_eq!(today().len(), 10);
+    // let dir = scratch("drawing");
+    // let path = dir.join("bracket.geop");
+    // std::fs::write(&path, examples::bracket().to_json().unwrap()).unwrap();
+    // let args = |output: &str, views: &[&str]| DrawingCliArgs {
+    // program: path.clone(),
+    // output: Some(dir.join(output)),
+    // step: None,
+    // views: views.iter().map(|v| v.to_string()).collect(),
+    // first_angle: true,
+    // scale: Some("2:1".into()),
+    // sheet: None,
+    // name: None,
+    // material: Some("6061-T6".into()),
+    // bom: false,
+    // flat_pattern: None,
+    // };
+    // let written = drawing(&args("bracket.dxf", &["front", "top"])).unwrap();
+    // let dxf = std::fs::read_to_string(written).unwrap();
+    // assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
+    // for text in ["bracket", "6061-T6", "2:1", "FIRST ANGLE"] {
+    // assert!(dxf.contains(&format!("\n{text}\n")), "{text}");
+    // }
+    // let svg = std::fs::read_to_string(drawing(&args("bracket.svg", &[])).unwrap()).unwrap();
+    // assert!(svg.starts_with("<svg"));
+    // let err = drawing(&args("bracket.png", &[])).unwrap_err();
+    // assert!(err.to_string().contains(".svg nor .dxf"), "{err}");
+    // let err = drawing(&args("bracket.svg", &["side"])).unwrap_err();
+    // assert!(err.to_string().contains("front"), "{err}");
+    // assert_eq!(parse_scale("1:5").unwrap(), 0.2);
+    // assert_eq!(today().len(), 10);
     // }
 
     // /// `geop drawing sheet_metal_bracket.geop --flat-pattern`: the
@@ -1098,33 +1098,33 @@ mod tests {
     // /// outline and holes on the CUT layer, its two bends on the BEND layer.
     // #[test]
     // fn writes_a_flat_pattern_for_cutting() {
-        // let dir = scratch("flat-pattern");
-        // let path = dir.join("sheet_metal_bracket.geop");
-        // std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
-        // let args = DrawingCliArgs {
-            // program: path.clone(),
-            // output: None,
-            // step: None,
-            // views: Vec::new(),
-            // first_angle: false,
-            // scale: None,
-            // sheet: None,
-            // name: None,
-            // material: None,
-            // bom: false,
-            // flat_pattern: Some(String::new()),
-        // };
-        // let written = drawing(&args).unwrap();
-        // assert_eq!(written, dir.join("sheet_metal_bracket_flat.dxf"));
-        // let dxf = std::fs::read_to_string(written).unwrap();
-        // assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
-        // assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
-        // let err = drawing(&DrawingCliArgs {
-            // output: Some(dir.join("flat.svg")),
-            // ..args
-        // })
-        // .unwrap_err();
-        // assert!(err.to_string().contains("no .dxf"), "{err}");
+    // let dir = scratch("flat-pattern");
+    // let path = dir.join("sheet_metal_bracket.geop");
+    // std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
+    // let args = DrawingCliArgs {
+    // program: path.clone(),
+    // output: None,
+    // step: None,
+    // views: Vec::new(),
+    // first_angle: false,
+    // scale: None,
+    // sheet: None,
+    // name: None,
+    // material: None,
+    // bom: false,
+    // flat_pattern: Some(String::new()),
+    // };
+    // let written = drawing(&args).unwrap();
+    // assert_eq!(written, dir.join("sheet_metal_bracket_flat.dxf"));
+    // let dxf = std::fs::read_to_string(written).unwrap();
+    // assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
+    // assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
+    // let err = drawing(&DrawingCliArgs {
+    // output: Some(dir.join("flat.svg")),
+    // ..args
+    // })
+    // .unwrap_err();
+    // assert!(err.to_string().contains("no .dxf"), "{err}");
     // }
 
     #[test]

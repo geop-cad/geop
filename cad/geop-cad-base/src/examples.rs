@@ -20,9 +20,7 @@ use geop_ops::{
 use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, Motion, joint_parameter};
 use geop_ops_booleans::{Combine, SplitArgs};
 // use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{
-    Extent, Extents, ExtrudeArgs, Orientation, RevolveArgs, SweepArgs,
-};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Orientation, RevolveArgs, SweepArgs};
 use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
 use geop_ops_pattern::{Direction, LinearPatternArgs, Spacing};
@@ -2304,25 +2302,25 @@ mod tests {
     // /// curves and face surfaces as their full `Debug` enclosures — equal only
     // /// if the two parts agree to the last bit of every interval.
     // fn geometry_by_name(part: &Part<S>) -> BTreeMap<String, String> {
-        // let model = part.topology();
-        // part.names()
-            // .iter()
-            // .filter_map(|(id, name)| {
-                // let geometry = match id {
-                    // RefId::Vertex(v) => format!("{:?}", model.get_vertex(v).ok()?.point),
-                    // RefId::Edge(e) => format!("{:?}", model.get_edge(e).ok()?.curve),
-                    // RefId::Face(f) => format!("{:?}", model.get_face(f).ok()?.surface),
-                    // RefId::Solid(_)
-                    // | RefId::Sketch(_)
-                    // | RefId::Sketch3d(_)
-                    // | RefId::Datum(_)
-                    // | RefId::Instance(_) => {
-                        // return None;
-                    // }
-                // };
-                // Some((name.to_string(), geometry))
-            // })
-            // .collect()
+    // let model = part.topology();
+    // part.names()
+    // .iter()
+    // .filter_map(|(id, name)| {
+    // let geometry = match id {
+    // RefId::Vertex(v) => format!("{:?}", model.get_vertex(v).ok()?.point),
+    // RefId::Edge(e) => format!("{:?}", model.get_edge(e).ok()?.curve),
+    // RefId::Face(f) => format!("{:?}", model.get_face(f).ok()?.surface),
+    // RefId::Solid(_)
+    // | RefId::Sketch(_)
+    // | RefId::Sketch3d(_)
+    // | RefId::Datum(_)
+    // | RefId::Instance(_) => {
+    // return None;
+    // }
+    // };
+    // Some((name.to_string(), geometry))
+    // })
+    // .collect()
     // }
 
     // /// Builds `program`, writes it and a description of the part it builds
@@ -2331,54 +2329,54 @@ mod tests {
     // /// the very same part: every name, every piece of topology between
     // /// names, and every bit of geometry.
     // fn build_and_round_trip(name: &str, program: &Program) -> Part<S> {
-        // let part = program.build::<S>(&NoFiles).unwrap();
-        // let validation = ValidationParameters::default();
-        // if let Err(errors) = validate(&validation, part.topology()) {
-            // panic!(
-                // "{name}: {} validation error(s): {}",
-                // errors.len(),
-                // errors[0]
-            // );
-        // }
+    // let part = program.build::<S>(&NoFiles).unwrap();
+    // let validation = ValidationParameters::default();
+    // if let Err(errors) = validate(&validation, part.topology()) {
+    // panic!(
+    // "{name}: {} validation error(s): {}",
+    // errors.len(),
+    // errors[0]
+    // );
+    // }
 
-        // let json = program.to_json().unwrap();
-        // let dir = outputs_dir();
-        // std::fs::write(dir.join(format!("{name}.geop")), &json).unwrap();
-        // let description = PartDescription::of(&part).unwrap();
-        // std::fs::write(
-            // dir.join(format!("{name}.part.json")),
-            // serde_json::to_string_pretty(&description).unwrap(),
-        // )
-        // .unwrap();
-        // geop_ops_rasterize::rasterize(part.topology(), 16)
-            // .unwrap()
-            // .scene(|_| geop_ops_rasterize::debug::Color10::Blue)
-            // .save_to_file(dir.join(format!("{name}.html")).to_str().unwrap())
-            // .unwrap();
+    // let json = program.to_json().unwrap();
+    // let dir = outputs_dir();
+    // std::fs::write(dir.join(format!("{name}.geop")), &json).unwrap();
+    // let description = PartDescription::of(&part).unwrap();
+    // std::fs::write(
+    // dir.join(format!("{name}.part.json")),
+    // serde_json::to_string_pretty(&description).unwrap(),
+    // )
+    // .unwrap();
+    // geop_ops_rasterize::rasterize(part.topology(), 16)
+    // .unwrap()
+    // .scene(|_| geop_ops_rasterize::debug::Color10::Blue)
+    // .save_to_file(dir.join(format!("{name}.html")).to_str().unwrap())
+    // .unwrap();
 
-        // let read_back = Program::from_json(&json).unwrap();
-        // assert_eq!(
-            // &read_back, program,
-            // "{name}: JSON round trip changed the program"
-        // );
-        // assert_eq!(
-            // read_back.to_json().unwrap(),
-            // json,
-            // "{name}: JSON is not stable"
-        // );
+    // let read_back = Program::from_json(&json).unwrap();
+    // assert_eq!(
+    // &read_back, program,
+    // "{name}: JSON round trip changed the program"
+    // );
+    // assert_eq!(
+    // read_back.to_json().unwrap(),
+    // json,
+    // "{name}: JSON is not stable"
+    // );
 
-        // let rebuilt = read_back.build::<S>(&NoFiles).unwrap();
-        // assert_eq!(
-            // PartDescription::of(&rebuilt).unwrap(),
-            // description,
-            // "{name}: the read-back program built a different part"
-        // );
-        // assert_eq!(
-            // geometry_by_name(&rebuilt),
-            // geometry_by_name(&part),
-            // "{name}: the read-back program built different geometry"
-        // );
-        // part
+    // let rebuilt = read_back.build::<S>(&NoFiles).unwrap();
+    // assert_eq!(
+    // PartDescription::of(&rebuilt).unwrap(),
+    // description,
+    // "{name}: the read-back program built a different part"
+    // );
+    // assert_eq!(
+    // geometry_by_name(&rebuilt),
+    // geometry_by_name(&part),
+    // "{name}: the read-back program built different geometry"
+    // );
+    // part
     // }
 
     fn inside(part: &Part<S>, solid: &str, p: [f64; 3]) -> PointClassification {
@@ -2400,159 +2398,159 @@ mod tests {
     // /// to its last line, at `z = 4` — hollow nowhere and solid all along.
     // #[test]
     // fn pipe_round_trips() {
-        // let part = build_and_round_trip("pipe", &pipe());
-        // let validation = ValidationParameters::default();
-        // if let Err(errors) =
-            // geop_core_topology::validation::validate_manifold(&validation, part.topology())
-        // {
-            // panic!("{errors:?}");
-        // }
-        // let description = PartDescription::of(&part).unwrap();
-        // assert_eq!(
-            // description.solids.keys().collect::<Vec<_>>(),
-            // ["sweep(pipe)"]
-        // );
-        // assert_eq!(description.faces.len(), 5 * 4 + 2);
-        // let model = part.topology();
-        // let end = part.face_id("sweep(pipe,end)").unwrap();
-        // assert!(model.iterate_face_coedges(end).all(|c| {
-            // model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
-        // }));
-        // let half = std::f64::consts::FRAC_1_SQRT_2;
-        // for (p, expected) in [
-            // ([1.5, 0.0, 0.0], PointClassification::Inside),
-            // ([1.5, 0.4, 0.0], PointClassification::Outside),
-            // ([3.0 + half, 1.0 - half, 0.0], PointClassification::Inside),
-            // ([4.0, 2.0, 0.2], PointClassification::Inside),
-            // ([4.0, 3.0 + half, 1.0 - half], PointClassification::Inside),
-            // ([4.0, 4.0, 3.0], PointClassification::Inside),
-            // ([4.0, 4.0, 4.2], PointClassification::Outside),
-        // ] {
-            // assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
-        // }
+    // let part = build_and_round_trip("pipe", &pipe());
+    // let validation = ValidationParameters::default();
+    // if let Err(errors) =
+    // geop_core_topology::validation::validate_manifold(&validation, part.topology())
+    // {
+    // panic!("{errors:?}");
+    // }
+    // let description = PartDescription::of(&part).unwrap();
+    // assert_eq!(
+    // description.solids.keys().collect::<Vec<_>>(),
+    // ["sweep(pipe)"]
+    // );
+    // assert_eq!(description.faces.len(), 5 * 4 + 2);
+    // let model = part.topology();
+    // let end = part.face_id("sweep(pipe,end)").unwrap();
+    // assert!(model.iterate_face_coedges(end).all(|c| {
+    // model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
+    // }));
+    // let half = std::f64::consts::FRAC_1_SQRT_2;
+    // for (p, expected) in [
+    // ([1.5, 0.0, 0.0], PointClassification::Inside),
+    // ([1.5, 0.4, 0.0], PointClassification::Outside),
+    // ([3.0 + half, 1.0 - half, 0.0], PointClassification::Inside),
+    // ([4.0, 2.0, 0.2], PointClassification::Inside),
+    // ([4.0, 3.0 + half, 1.0 - half], PointClassification::Inside),
+    // ([4.0, 4.0, 3.0], PointClassification::Inside),
+    // ([4.0, 4.0, 4.2], PointClassification::Outside),
+    // ] {
+    // assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
+    // }
     // }
 
     // /// The examples drawn in the editor build valid parts and round-trip,
     // /// as the ones written here do.
     // #[test]
     // fn drawn_examples_round_trip() {
-        // let drawn = ["turbine_blade", "cool_flange", "edge_part", "conebox"];
-        // for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
-            // build_and_round_trip(name, &program());
-        // }
+    // let drawn = ["turbine_blade", "cool_flange", "edge_part", "conebox"];
+    // for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
+    // build_and_round_trip(name, &program());
+    // }
     // }
 
     // #[test]
     // fn box_with_drill_hole_round_trips() {
-        // let part = build_and_round_trip("box_with_drill_hole", &box_with_drill_hole());
-        // let description = PartDescription::of(&part).unwrap();
+    // let part = build_and_round_trip("box_with_drill_hole", &box_with_drill_hole());
+    // let description = PartDescription::of(&part).unwrap();
 
-        // // One solid, named after the step that cut the hole.
-        // assert_eq!(
-            // description.solids.keys().collect::<Vec<_>>(),
-            // ["extrude(hole)"]
-        // );
-        // // The box's top keeps its name, and now has the hole in it.
-        // let top = &description.faces["extrude(box,end)"];
-        // assert_eq!(top.holes.len(), 1, "{top:?}");
-        // // The hole's bottom is the hole tool's end cap; its wall is the
-        // // four quarters swept by the circle.
-        // assert!(description.faces.contains_key("extrude(hole,end)"));
-        // let circle = box_with_drill_hole().steps[2].clone();
-        // let crate::PartOperation::AddSketch(args) = circle.operation else {
-            // unreachable!()
-        // };
-        // let circle_id = *args.sketch.curves.keys().next().unwrap();
-        // for piece in ["", "#1", "#2", "#3"] {
-            // let wall = format!("extrude(hole,hole_sketch,{circle_id}{piece})");
-            // assert!(description.faces.contains_key(&wall), "no face {wall}");
-        // }
+    // // One solid, named after the step that cut the hole.
+    // assert_eq!(
+    // description.solids.keys().collect::<Vec<_>>(),
+    // ["extrude(hole)"]
+    // );
+    // // The box's top keeps its name, and now has the hole in it.
+    // let top = &description.faces["extrude(box,end)"];
+    // assert_eq!(top.holes.len(), 1, "{top:?}");
+    // // The hole's bottom is the hole tool's end cap; its wall is the
+    // // four quarters swept by the circle.
+    // assert!(description.faces.contains_key("extrude(hole,end)"));
+    // let circle = box_with_drill_hole().steps[2].clone();
+    // let crate::PartOperation::AddSketch(args) = circle.operation else {
+    // unreachable!()
+    // };
+    // let circle_id = *args.sketch.curves.keys().next().unwrap();
+    // for piece in ["", "#1", "#2", "#3"] {
+    // let wall = format!("extrude(hole,hole_sketch,{circle_id}{piece})");
+    // assert!(description.faces.contains_key(&wall), "no face {wall}");
+    // }
 
-        // assert_eq!(
-            // inside(&part, "extrude(hole)", [0.3, 0.3, 0.5]),
-            // PointClassification::Inside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(hole)", [1.0, 1.0, 0.8]),
-            // PointClassification::Outside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(hole)", [1.0, 1.0, 0.3]),
-            // PointClassification::Inside
-        // );
+    // assert_eq!(
+    // inside(&part, "extrude(hole)", [0.3, 0.3, 0.5]),
+    // PointClassification::Inside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(hole)", [1.0, 1.0, 0.8]),
+    // PointClassification::Outside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(hole)", [1.0, 1.0, 0.3]),
+    // PointClassification::Inside
+    // );
     // }
 
     // #[test]
     // fn cross_drilled_shaft_round_trips() {
-        // let part = build_and_round_trip("cross_drilled_shaft", &cross_drilled_shaft());
-        // let description = PartDescription::of(&part).unwrap();
-        // assert_eq!(
-            // description.solids.keys().collect::<Vec<_>>(),
-            // ["extrude(bore)"]
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(bore)", [0.0, 0.8, 0.5]),
-            // PointClassification::Inside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(bore)", [0.0, 0.0, 2.2]),
-            // PointClassification::Outside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(bore)", [0.0, 0.0, 2.7]),
-            // PointClassification::Inside
-        // );
+    // let part = build_and_round_trip("cross_drilled_shaft", &cross_drilled_shaft());
+    // let description = PartDescription::of(&part).unwrap();
+    // assert_eq!(
+    // description.solids.keys().collect::<Vec<_>>(),
+    // ["extrude(bore)"]
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(bore)", [0.0, 0.8, 0.5]),
+    // PointClassification::Inside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(bore)", [0.0, 0.0, 2.2]),
+    // PointClassification::Outside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(bore)", [0.0, 0.0, 2.7]),
+    // PointClassification::Inside
+    // );
     // }
 
     // #[test]
     // fn split_plate_round_trips() {
-        // let part = build_and_round_trip("split_plate", &split_plate());
-        // let description = PartDescription::of(&part).unwrap();
-        // assert_eq!(
-            // description.solids.keys().collect::<Vec<_>>(),
-            // ["split(halves,0)", "split(halves,1)"]
-        // );
-        // // The face it was cut with stays, standing on its own.
-        // assert_eq!(part.sheet_face_names(), ["extrude(cut,cut_sketch,c2)"]);
-        // // One half each side of the cut at x = 2, neither in the hole.
-        // let at = |p: [f64; 3]| {
-            // ["split(halves,0)", "split(halves,1)"]
-                // .map(|half| inside(&part, half, p) == PointClassification::Inside)
-        // };
-        // let (left, right) = (at([0.2, 0.2, 0.0]), at([2.5, 0.5, 0.1]));
-        // assert!(
-            // left[0] != left[1] && right == [left[1], left[0]],
-            // "{left:?} {right:?}"
-        // );
-        // assert_eq!(at([0.75, 0.5, 0.0]), [false, false]);
+    // let part = build_and_round_trip("split_plate", &split_plate());
+    // let description = PartDescription::of(&part).unwrap();
+    // assert_eq!(
+    // description.solids.keys().collect::<Vec<_>>(),
+    // ["split(halves,0)", "split(halves,1)"]
+    // );
+    // // The face it was cut with stays, standing on its own.
+    // assert_eq!(part.sheet_face_names(), ["extrude(cut,cut_sketch,c2)"]);
+    // // One half each side of the cut at x = 2, neither in the hole.
+    // let at = |p: [f64; 3]| {
+    // ["split(halves,0)", "split(halves,1)"]
+    // .map(|half| inside(&part, half, p) == PointClassification::Inside)
+    // };
+    // let (left, right) = (at([0.2, 0.2, 0.0]), at([2.5, 0.5, 0.1]));
+    // assert!(
+    // left[0] != left[1] && right == [left[1], left[0]],
+    // "{left:?} {right:?}"
+    // );
+    // assert_eq!(at([0.75, 0.5, 0.0]), [false, false]);
     // }
 
     // #[test]
     // fn boss_on_reference_plane_round_trips() {
-        // let part = build_and_round_trip("boss_on_reference_plane", &boss_on_reference_plane());
-        // let description = PartDescription::of(&part).unwrap();
-        // assert_eq!(
-            // description.solids.keys().collect::<Vec<_>>(),
-            // ["extrude(boss)"]
-        // );
-        // assert_eq!(description.datums, ["lifted", "origin"]);
-        // // The boss stands on the box: from the box's top up to the plane.
-        // assert_eq!(
-            // inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),
-            // PointClassification::Inside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(boss)", [1.0, 1.0, 1.6]),
-            // PointClassification::Outside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(boss)", [0.2, 0.2, 1.3]),
-            // PointClassification::Outside
-        // );
-        // assert_eq!(
-            // inside(&part, "extrude(boss)", [0.2, 0.2, 0.5]),
-            // PointClassification::Inside
-        // );
+    // let part = build_and_round_trip("boss_on_reference_plane", &boss_on_reference_plane());
+    // let description = PartDescription::of(&part).unwrap();
+    // assert_eq!(
+    // description.solids.keys().collect::<Vec<_>>(),
+    // ["extrude(boss)"]
+    // );
+    // assert_eq!(description.datums, ["lifted", "origin"]);
+    // // The boss stands on the box: from the box's top up to the plane.
+    // assert_eq!(
+    // inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),
+    // PointClassification::Inside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(boss)", [1.0, 1.0, 1.6]),
+    // PointClassification::Outside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(boss)", [0.2, 0.2, 1.3]),
+    // PointClassification::Outside
+    // );
+    // assert_eq!(
+    // inside(&part, "extrude(boss)", [0.2, 0.2, 0.5]),
+    // PointClassification::Inside
+    // );
     // }
 
     // /// The names of a program's entities don't depend on its numbers: a
@@ -2562,29 +2560,29 @@ mod tests {
     // /// outside the solid at every height.
     // #[test]
     // fn bracket_round_trips() {
-        // let part = build_and_round_trip("bracket", &bracket());
-        // let description = PartDescription::of(&part).unwrap();
+    // let part = build_and_round_trip("bracket", &bracket());
+    // let description = PartDescription::of(&part).unwrap();
 
-        // assert_eq!(
-            // description.solids.keys().collect::<Vec<_>>(),
-            // ["extrude(hole)"]
-        // );
-        // for cap in ["extrude(block,start)", "extrude(block,end)"] {
-            // let face = &description.faces[cap];
-            // assert_eq!(face.holes.len(), 1, "{cap}: {face:?}");
-        // }
-        // assert!(!description.faces.contains_key("extrude(hole,end)"));
-        // for z in [1.0, 5.0, 9.0] {
-            // assert_eq!(
-                // inside(&part, "extrude(hole)", [20.0, 20.0, z]),
-                // PointClassification::Outside,
-                // "z = {z}"
-            // );
-        // }
-        // assert_eq!(
-            // inside(&part, "extrude(hole)", [5.0, 5.0, 5.0]),
-            // PointClassification::Inside
-        // );
+    // assert_eq!(
+    // description.solids.keys().collect::<Vec<_>>(),
+    // ["extrude(hole)"]
+    // );
+    // for cap in ["extrude(block,start)", "extrude(block,end)"] {
+    // let face = &description.faces[cap];
+    // assert_eq!(face.holes.len(), 1, "{cap}: {face:?}");
+    // }
+    // assert!(!description.faces.contains_key("extrude(hole,end)"));
+    // for z in [1.0, 5.0, 9.0] {
+    // assert_eq!(
+    // inside(&part, "extrude(hole)", [20.0, 20.0, z]),
+    // PointClassification::Outside,
+    // "z = {z}"
+    // );
+    // }
+    // assert_eq!(
+    // inside(&part, "extrude(hole)", [5.0, 5.0, 5.0]),
+    // PointClassification::Inside
+    // );
     // }
 
     #[test]
@@ -2656,27 +2654,27 @@ mod tests {
     // /// walk is now seeded where the curve actually starts on the surface.
     // #[test]
     // fn handle_with_hole_round_trips() {
-        // build_and_round_trip("handle_with_hole", &handle_with_hole());
+    // build_and_round_trip("handle_with_hole", &handle_with_hole());
     // }
 
     // #[test]
     // fn luggage_tag_round_trips() {
-        // build_and_round_trip("luggage_tag", &luggage_tag());
+    // build_and_round_trip("luggage_tag", &luggage_tag());
     // }
 
     // /// Every edge rounded, and a ball's piece at each of the eight corners.
     // #[test]
     // fn rounded_box_round_trips() {
-        // let part = build_and_round_trip("rounded_box", &rounded_box());
-        // assert_eq!(part.solid_names(), ["fillet(round)"]);
-        // let corners = part
-            // .topology()
-            // .faces
-            // .keys()
-            // .filter_map(|&f| part.name_of(f))
-            // .filter(|name| name.ends_with(",corner)"))
-            // .count();
-        // assert_eq!(corners, 8);
+    // let part = build_and_round_trip("rounded_box", &rounded_box());
+    // assert_eq!(part.solid_names(), ["fillet(round)"]);
+    // let corners = part
+    // .topology()
+    // .faces
+    // .keys()
+    // .filter_map(|&f| part.name_of(f))
+    // .filter(|name| name.ends_with(",corner)"))
+    // .count();
+    // assert_eq!(corners, 8);
     // }
 
     // /// The motor flange is a ring with six bolt holes through it: solid in
@@ -2687,110 +2685,110 @@ mod tests {
     // /// two, a point above the saddle in one and one below it in the other.
     // #[test]
     // fn curved_panel_round_trips() {
-        // let part = build_and_round_trip("curved_panel", &curved_panel());
-        // let description = PartDescription::of(&part).unwrap();
-        // assert_eq!(
-            // description.solids.len(),
-            // 2,
-            // "{:?}",
-            // description.solids.keys()
-        // );
-        // for (p, expected) in [
-            // ([20.0, 10.0, 15.0], [true, false]),
-            // ([20.0, 2.0, 15.0], [false, true]),
-        // ] {
-            // let inside = ["split(shaped,0)", "split(shaped,1)"]
-                // .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
-            // assert!(
-                // inside == expected || inside == [expected[1], expected[0]],
-                // "at {p:?}: {inside:?}"
-            // );
-        // }
-        // let face = part.face_id("network(panel)").unwrap();
-        // let surface = &part.topology().get_face(face).unwrap().surface;
-        // let middle = Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
-        // assert!(
-            // geop_core_geometry::contains::surface::surface_could_contain(
-                // surface,
-                // &middle,
-                // 10_000,
-                // S::from_f64(1e-7)
-            // )
-            // .unwrap()
-            // .is_some()
-        // );
+    // let part = build_and_round_trip("curved_panel", &curved_panel());
+    // let description = PartDescription::of(&part).unwrap();
+    // assert_eq!(
+    // description.solids.len(),
+    // 2,
+    // "{:?}",
+    // description.solids.keys()
+    // );
+    // for (p, expected) in [
+    // ([20.0, 10.0, 15.0], [true, false]),
+    // ([20.0, 2.0, 15.0], [false, true]),
+    // ] {
+    // let inside = ["split(shaped,0)", "split(shaped,1)"]
+    // .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
+    // assert!(
+    // inside == expected || inside == [expected[1], expected[0]],
+    // "at {p:?}: {inside:?}"
+    // );
+    // }
+    // let face = part.face_id("network(panel)").unwrap();
+    // let surface = &part.topology().get_face(face).unwrap().surface;
+    // let middle = Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
+    // assert!(
+    // geop_core_geometry::contains::surface::surface_could_contain(
+    // surface,
+    // &middle,
+    // 10_000,
+    // S::from_f64(1e-7)
+    // )
+    // .unwrap()
+    // .is_some()
+    // );
     // }
 
     // #[test]
     // fn motor_flange_round_trips() {
-        // let part = build_and_round_trip("motor_flange", &motor_flange());
-        // let solid = "extrude(flange)";
-        // let at = |angle: f64, r: f64| {
-            // let a = angle.to_radians();
-            // [r * a.cos(), r * a.sin(), 1.25]
-        // };
-        // for (p, expected) in [
-            // (at(30.0, 11.0), PointClassification::Inside),
-            // (at(0.0, 7.0), PointClassification::Inside),
-            // (at(0.0, 0.0), PointClassification::Outside),
-            // (at(0.0, 11.0), PointClassification::Outside),
-            // (at(120.0, 11.0), PointClassification::Outside),
-            // (at(300.0, 11.0), PointClassification::Outside),
-            // (at(0.0, 16.0), PointClassification::Outside),
-        // ] {
-            // assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
-        // }
+    // let part = build_and_round_trip("motor_flange", &motor_flange());
+    // let solid = "extrude(flange)";
+    // let at = |angle: f64, r: f64| {
+    // let a = angle.to_radians();
+    // [r * a.cos(), r * a.sin(), 1.25]
+    // };
+    // for (p, expected) in [
+    // (at(30.0, 11.0), PointClassification::Inside),
+    // (at(0.0, 7.0), PointClassification::Inside),
+    // (at(0.0, 0.0), PointClassification::Outside),
+    // (at(0.0, 11.0), PointClassification::Outside),
+    // (at(120.0, 11.0), PointClassification::Outside),
+    // (at(300.0, 11.0), PointClassification::Outside),
+    // (at(0.0, 16.0), PointClassification::Outside),
+    // ] {
+    // assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
+    // }
     // }
 
     // /// Reproduces the real bug report described on `revolved_cone_on_box`.
     // #[test]
     // fn airfoil_wing_round_trips() {
-        // let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
-        // assert_eq!(part.solid_names(), ["loft(wing)"]);
+    // let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
+    // assert_eq!(part.solid_names(), ["loft(wing)"]);
     // }
 
     // #[test]
     // fn patterned_plate_round_trips() {
-        // let part = build_and_round_trip("patterned_plate", &patterned_plate());
-        // assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
-        // for (p, expected) in [
-            // ([5.0, 1.5, 0.25], PointClassification::Outside),
-            // ([5.0, 1.9, 0.25], PointClassification::Inside),
-            // ([7.0, 1.5, 0.25], PointClassification::Outside),
-            // ([6.0, 1.5, 0.25], PointClassification::Inside),
-        // ] {
-            // assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
-        // }
+    // let part = build_and_round_trip("patterned_plate", &patterned_plate());
+    // assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
+    // for (p, expected) in [
+    // ([5.0, 1.5, 0.25], PointClassification::Outside),
+    // ([5.0, 1.9, 0.25], PointClassification::Inside),
+    // ([7.0, 1.5, 0.25], PointClassification::Outside),
+    // ([6.0, 1.5, 0.25], PointClassification::Inside),
+    // ] {
+    // assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
+    // }
     // }
 
     // #[test]
     // fn revolved_cone_on_box_round_trips() {
-        // let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());
-        // // The side face is the plane x = 2.2456, with sketch x along world y
-        // // and sketch y along world z. The triangle's centroid, turned a
-        // // quarter around the axis, lies 0.654 off that plane on either side.
-        // for (p, expected) in [
-            // ([2.9, -0.198, 1.471], PointClassification::Inside),
-            // ([1.59, -0.198, 1.471], PointClassification::Inside),
-            // ([2.9, 1.0, 0.3], PointClassification::Outside),
-            // ([-0.669, 0.049, 1.0], PointClassification::Outside),
-            // ([1.5, -1.0, 1.0], PointClassification::Inside),
-        // ] {
-            // assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
-        // }
+    // let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());
+    // // The side face is the plane x = 2.2456, with sketch x along world y
+    // // and sketch y along world z. The triangle's centroid, turned a
+    // // quarter around the axis, lies 0.654 off that plane on either side.
+    // for (p, expected) in [
+    // ([2.9, -0.198, 1.471], PointClassification::Inside),
+    // ([1.59, -0.198, 1.471], PointClassification::Inside),
+    // ([2.9, 1.0, 0.3], PointClassification::Outside),
+    // ([-0.669, 0.049, 1.0], PointClassification::Outside),
+    // ([1.5, -1.0, 1.0], PointClassification::Inside),
+    // ] {
+    // assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
+    // }
     // }
 
     // /// A mouse's sole is flat: the crease around its bottom keeps the
     // /// bottom face in the cage's bottom plane.
     // #[test]
     // fn subd_mouse_round_trips() {
-        // let part = build_and_round_trip("subd_mouse", &subd_mouse());
-        // assert_eq!(part.solid_names(), ["subd(mouse)"]);
-        // let sole = part.face_id("subd(mouse,f8)").unwrap();
-        // let surface = &part.topology().get_face(sole).unwrap().surface;
-        // let p = surface
-            // .evaluate(S::from_f64(0.7), S::from_f64(1.2))
-            // .unwrap();
-        // assert!(p[2].could_be_equal(S::from_f64(-0.4)), "{p:?}");
+    // let part = build_and_round_trip("subd_mouse", &subd_mouse());
+    // assert_eq!(part.solid_names(), ["subd(mouse)"]);
+    // let sole = part.face_id("subd(mouse,f8)").unwrap();
+    // let surface = &part.topology().get_face(sole).unwrap().surface;
+    // let p = surface
+    // .evaluate(S::from_f64(0.7), S::from_f64(1.2))
+    // .unwrap();
+    // assert!(p[2].could_be_equal(S::from_f64(-0.4)), "{p:?}");
     // }
 }

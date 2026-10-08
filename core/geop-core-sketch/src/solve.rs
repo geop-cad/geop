@@ -21,7 +21,7 @@
 //! genuinely undecidable (a division or square root at the edge of its
 //! domain) makes that point infeasible.
 use crate::{
-    geometry::{Arc, V, line_distance},
+    geometry::{Arc, line_distance},
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, Enclosure, PointId, Sketch},
 };
 use geop_core_math::solvers::system::{self, Mobility, Param, Phase, Pull, Residual, Value};
@@ -180,11 +180,11 @@ impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
             .map(|(_, t)| *t)
             .expect("every variable a constraint reads is seeded")
     }
-    fn point(&self, p: PointId) -> V<T> {
+    fn point(&self, p: PointId) -> Vector2<T> {
         let i = self.layout.point_var[&p];
-        V::new(self.var(i), self.var(i + 1))
+        Vector2::from_array([self.var(i), self.var(i + 1)])
     }
-    fn line(&self, c: CurveId) -> (V<T>, V<T>) {
+    fn line(&self, c: CurveId) -> (Vector2<T>, Vector2<T>) {
         match &self.sketch.curves[&c].kind {
             CurveKind::Line { start, end } => (self.point(*start), self.point(*end)),
             k => unreachable!("validated to be a line: {k:?}"),
@@ -201,7 +201,7 @@ impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
         }
     }
     /// `(center, radius)` of a circle or arc.
-    fn round(&self, c: CurveId) -> GeopResult<(V<T>, T)> {
+    fn round(&self, c: CurveId) -> GeopResult<(Vector2<T>, T)> {
         Ok(match &self.sketch.curves[&c].kind {
             CurveKind::Circle { center, .. } => (
                 self.point(*center),
@@ -216,11 +216,11 @@ impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
     }
     /// Unit tangent of an open curve at its start (`at_end = false`) or end,
     /// in the direction of travel.
-    fn end_tangent(&self, c: CurveId, at_end: bool) -> GeopResult<V<T>> {
+    fn end_tangent(&self, c: CurveId, at_end: bool) -> GeopResult<Vector2<T>> {
         Ok(match &self.sketch.curves[&c].kind {
             CurveKind::Line { .. } => {
                 let (s, e) = self.line(c);
-                e.sub(s).unit()?
+                e.sub(&s).normalize()?
             }
             CurveKind::Arc { .. } => {
                 let a = self.arc(c).unwrap();
@@ -237,7 +237,7 @@ impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
                 } else {
                     (control_points[0], control_points[1])
                 };
-                self.point(q).sub(self.point(p)).unit()?
+                self.point(q).sub(&self.point(p)).normalize()?
             }
             k => unreachable!("validated to be an open curve: {k:?}"),
         })
@@ -414,7 +414,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
             seeded: &seeded,
         };
         let ((ca, ra), (cb, rb)) = (geo.round(a)?, geo.round(b)?);
-        let d = ca.sub(cb).norm()?;
+        let d = ca.sub(&cb).try_norm()?;
         let internal = d.sub(ra.sub(rb).abs()).abs();
         let external = d.sub(ra.add(rb)).abs();
         Ok(TangentMode::RoundRound {
@@ -439,13 +439,17 @@ impl<'a, S: Scalar> Problem<'a, S> {
             }
             Fix { point, x, y } => {
                 let q = geo.point(point);
-                out.extend([q.x.sub(c(x)), q.y.sub(c(y))]);
+                out.extend([q[0].sub(c(x)), q[1].sub(c(y))]);
             }
             Distance { a, b, value } => {
-                out.push(geo.point(b).sub(geo.point(a)).norm()?.sub(c(value)))
+                out.push(geo.point(b).sub(&geo.point(a)).try_norm()?.sub(c(value)))
             }
-            DistanceX { a, b, value } => out.push(geo.point(b).x.sub(geo.point(a).x).sub(c(value))),
-            DistanceY { a, b, value } => out.push(geo.point(b).y.sub(geo.point(a).y).sub(c(value))),
+            DistanceX { a, b, value } => {
+                out.push(geo.point(b)[0].sub(geo.point(a)[0]).sub(c(value)))
+            }
+            DistanceY { a, b, value } => {
+                out.push(geo.point(b)[1].sub(geo.point(a)[1]).sub(c(value)))
+            }
             PointOnCurve { point, curve } => {
                 let q = geo.point(point);
                 out.push(match &self.sketch.curves[&curve].kind {
@@ -456,7 +460,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     CurveKind::Arc { .. } => geo.arc(curve).unwrap().circle_residual(q)?,
                     _ => {
                         let (c, r) = geo.round(curve)?;
-                        q.sub(c).norm()?.sub(r)
+                        q.sub(&c).try_norm()?.sub(r)
                     }
                 });
             }
@@ -466,21 +470,21 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     Some(a) => a.arc_mid()?,
                     None => {
                         let (s, e) = geo.line(curve);
-                        s.add(e).scale(half)
+                        s.add(&e).prod_scalar(half)
                     }
                 };
-                out.extend([q.x.sub(m.x), q.y.sub(m.y)]);
+                out.extend([q[0].sub(m[0]), q[1].sub(m[1])]);
             }
             Center { point, curve } => {
                 let (q, center) = (geo.point(point), geo.round(curve)?.0);
-                out.extend([q.x.sub(center.x), q.y.sub(center.y)]);
+                out.extend([q[0].sub(center[0]), q[1].sub(center[1])]);
             }
             Symmetric { a, b, line } => {
                 let (pa, pb) = (geo.point(a), geo.point(b));
                 let (s, e) = geo.line(line);
-                let mid = pa.add(pb).scale(half);
+                let mid = pa.add(&pb).prod_scalar(half);
                 out.push(line_distance(s, e, mid)?);
-                out.push(pb.sub(pa).dot(e.sub(s).unit()?));
+                out.push(pb.sub(&pa).prod_dot(&e.sub(&s).normalize()?));
             }
             Moved { a, b, by } => {
                 // The motion carrying `by`'s start `s` onto its end `e`:
@@ -491,15 +495,15 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 let image = match geo.arc(by) {
                     Some(arc) => {
                         let turn = arc.half.mul(c(S::TWO));
-                        arc.e.add(from.sub(arc.s).rotate(turn.cos(), turn.sin()))
+                        arc.e.add(&from.sub(&arc.s).rotate(turn.cos(), turn.sin()))
                     }
                     None => {
                         let (s, e) = geo.line(by);
-                        e.add(from.sub(s))
+                        e.add(&from.sub(&s))
                     }
                 };
                 let to = geo.point(b);
-                out.extend([to.x.sub(image.x), to.y.sub(image.y)]);
+                out.extend([to[0].sub(image[0]), to[1].sub(image[1])]);
             }
             EqualSweep { a, b } => {
                 let half = |k: CurveId| geo.var(self.layout.curve_var[&k]);
@@ -517,7 +521,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 }
                 _ => {
                     let ((ca, ra), (cb, rb)) = (geo.round(a)?, geo.round(b)?);
-                    out.extend([ca.x.sub(cb.x), ca.y.sub(cb.y)]);
+                    out.extend([ca[0].sub(cb[0]), ca[1].sub(cb[1])]);
                     out.push(rb.sub(ra).abs().sub(c(value)));
                 }
             },
@@ -527,17 +531,17 @@ impl<'a, S: Scalar> Problem<'a, S> {
             }
             Horizontal { line } => {
                 let (s, e) = geo.line(line);
-                out.push(e.y.sub(s.y));
+                out.push(e[1].sub(s[1]));
             }
             Vertical { line } => {
                 let (s, e) = geo.line(line);
-                out.push(e.x.sub(s.x));
+                out.push(e[0].sub(s[0]));
             }
             Parallel { a, b } | Perpendicular { a, b } | Angle { a, b, .. } => {
                 let (sa, ea) = geo.line(a);
                 let (sb, eb) = geo.line(b);
-                let (ua, ub) = (ea.sub(sa).unit()?, eb.sub(sb).unit()?);
-                let (cross, dot) = (ua.cross(ub), ua.dot(ub));
+                let (ua, ub) = (ea.sub(&sa).normalize()?, eb.sub(&sb).normalize()?);
+                let (cross, dot) = (ua.prod_cross(&ub), ua.prod_dot(&ub));
                 // sin(angle(a, b) - target), in units of length.
                 let r = match *p.constraint {
                     Parallel { .. } => cross,
@@ -556,7 +560,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
             Tangent { a, b } => match p.tangent.unwrap() {
                 TangentMode::Endpoint { a_end, b_end } => {
                     let (ta, tb) = (geo.end_tangent(a, a_end)?, geo.end_tangent(b, b_end)?);
-                    out.push(ta.cross(tb).mul(scale));
+                    out.push(ta.prod_cross(&tb).mul(scale));
                 }
                 TangentMode::LineRound { line, round } => {
                     let (s, e) = geo.line(line);
@@ -565,7 +569,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 }
                 TangentMode::RoundRound { internal } => {
                     let ((ca, ra), (cb, rb)) = (geo.round(a)?, geo.round(b)?);
-                    let d = ca.sub(cb).norm()?;
+                    let d = ca.sub(&cb).try_norm()?;
                     out.push(if internal {
                         d.sub(ra.sub(rb).abs())
                     } else {
@@ -578,7 +582,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     Ok(match &self.sketch.curves[&c].kind {
                         CurveKind::Line { .. } => {
                             let (s, e) = geo.line(c);
-                            e.sub(s).norm()?
+                            e.sub(&s).try_norm()?
                         }
                         _ => geo.round(c)?.1,
                     })
@@ -587,14 +591,14 @@ impl<'a, S: Scalar> Problem<'a, S> {
             }
             Concentric { a, b } => {
                 let (ca, cb) = (geo.round(a)?.0, geo.round(b)?.0);
-                out.extend([ca.x.sub(cb.x), ca.y.sub(cb.y)]);
+                out.extend([ca[0].sub(cb[0]), ca[1].sub(cb[1])]);
             }
             Length { curve, value } => {
                 let length = match geo.arc(curve) {
                     Some(a) => a.length()?,
                     None => {
                         let (s, e) = geo.line(curve);
-                        e.sub(s).norm()?
+                        e.sub(&s).try_norm()?
                     }
                 };
                 out.push(length.sub(c(value)));

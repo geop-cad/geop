@@ -126,51 +126,51 @@ fn extrude_slot_plate_with_hole() {
 // /// a boss on a block.
 // #[test]
 // fn boss_on_block_top_face() {
-    // let mut block = Sketch::new();
-    // polygon(
-        // &mut block,
-        // &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-    // );
-    // let mut boss = Sketch::new();
-    // let c = boss.add_point(n(0.5), n(0.5));
-    // boss.add_circle(c, n(0.3));
-    // let mut program = Program::new();
-    // program.push(
-        // "base",
-        // sketch(
-            // EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            // block,
-        // ),
-    // );
-    // program.push("block", extrude("base", 1.0, false));
-    // program.push(
-        // "boss_sketch",
-        // sketch(
-            // EntityRef::Face {
-                // name: "extrude(block,end)".into(),
-            // },
-            // boss,
-        // ),
-    // );
-    // program.push("boss", extrude("boss_sketch", 0.4, false));
-    // program.push(
-        // "join",
-        // BooleanArgs {
-            // a: "extrude(block)".into(),
-            // b: "extrude(boss)".into(),
-            // op: BooleanOp::Union,
-        // },
-    // );
-    // let part = program.build::<S>(&NoFiles).unwrap();
-    // assert_valid(&part);
-    // assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
-    // // The boss sits on top of the block, not below the sketch plane.
-    // assert!(
-        // part.topology()
-            // .vertices
-            // .values()
-            // .any(|v| v.point[2].could_be_equal(S::from_f64(1.4)))
-    // );
+// let mut block = Sketch::new();
+// polygon(
+// &mut block,
+// &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+// );
+// let mut boss = Sketch::new();
+// let c = boss.add_point(n(0.5), n(0.5));
+// boss.add_circle(c, n(0.3));
+// let mut program = Program::new();
+// program.push(
+// "base",
+// sketch(
+// EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+// block,
+// ),
+// );
+// program.push("block", extrude("base", 1.0, false));
+// program.push(
+// "boss_sketch",
+// sketch(
+// EntityRef::Face {
+// name: "extrude(block,end)".into(),
+// },
+// boss,
+// ),
+// );
+// program.push("boss", extrude("boss_sketch", 0.4, false));
+// program.push(
+// "join",
+// BooleanArgs {
+// a: "extrude(block)".into(),
+// b: "extrude(boss)".into(),
+// op: BooleanOp::Union,
+// },
+// );
+// let part = program.build::<S>(&NoFiles).unwrap();
+// assert_valid(&part);
+// assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
+// // The boss sits on top of the block, not below the sketch plane.
+// assert!(
+// part.topology()
+// .vertices
+// .values()
+// .any(|v| v.point[2].could_be_equal(S::from_f64(1.4)))
+// );
 // }
 
 /// A rectangle beside a construction axis, with its inner edge constrained
@@ -710,86 +710,86 @@ fn on_block(
 // /// cut into the block, it cuts up to where it comes out of it.
 // #[test]
 // fn extrude_up_to_next() {
-    // let up_to_next = |combine: Combine| -> crate::PartOperation {
-        // ExtrudeArgs {
-            // extent: Extents {
-                // side1: Extent::UpToNext,
-                // symmetric: false,
-                // side2: None,
-                // reversed: false,
-            // },
-            // combine,
-            // ..extrude("post_sketch", 1.0, false)
-        // }
-        // .into()
-    // };
-    // let target = || "extrude(block)".to_string();
-    // let heights = |part: &Part<S>| {
-        // let mut z: Vec<i64> = part
-            // .topology()
-            // .vertices
-            // .values()
-            // .map(|v| (v.point[2].to_f64() * 1000.0).round() as i64)
-            // .collect();
-        // z.sort();
-        // z.dedup();
-        // z
-    // };
+// let up_to_next = |combine: Combine| -> crate::PartOperation {
+// ExtrudeArgs {
+// extent: Extents {
+// side1: Extent::UpToNext,
+// symmetric: false,
+// side2: None,
+// reversed: false,
+// },
+// combine,
+// ..extrude("post_sketch", 1.0, false)
+// }
+// .into()
+// };
+// let target = || "extrude(block)".to_string();
+// let heights = |part: &Part<S>| {
+// let mut z: Vec<i64> = part
+// .topology()
+// .vertices
+// .values()
+// .map(|v| (v.point[2].to_f64() * 1000.0).round() as i64)
+// .collect();
+// z.sort();
+// z.dedup();
+// z
+// };
 
-    // let joined = on_block(
-        // 2.0,
-        // 3.0,
-        // vec![("post", up_to_next(Combine::Union { target: target() }))],
-    // )
-    // .unwrap();
-    // assert_valid(&joined);
-    // assert_eq!(joined.solid_names(), ["extrude(post)"]);
-    // // The post's foot on the sketch, its head on the block's bottom: none of
-    // // the tool past that is left.
-    // assert_eq!(heights(&joined), [0, 2000, 3000]);
-    // // The block's six faces, the post's four walls and its foot — and the
-    // // block's top face in two: the tool, built long enough to reach past
-    // // the block, was imprinted on it where it came out again, and the
-    // // pieces it leaves are not merged back.
-    // assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
+// let joined = on_block(
+// 2.0,
+// 3.0,
+// vec![("post", up_to_next(Combine::Union { target: target() }))],
+// )
+// .unwrap();
+// assert_valid(&joined);
+// assert_eq!(joined.solid_names(), ["extrude(post)"]);
+// // The post's foot on the sketch, its head on the block's bottom: none of
+// // the tool past that is left.
+// assert_eq!(heights(&joined), [0, 2000, 3000]);
+// // The block's six faces, the post's four walls and its foot — and the
+// // block's top face in two: the tool, built long enough to reach past
+// // the block, was imprinted on it where it came out again, and the
+// // pieces it leaves are not merged back.
+// assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
 
-    // let cut = on_block(
-        // 0.0,
-        // 1.0,
-        // vec![("post", up_to_next(Combine::Difference { target: target() }))],
-    // )
-    // .unwrap();
-    // assert_valid(&cut);
-    // assert_eq!(heights(&cut), [0, 1000]);
-    // assert_eq!(cut.topology().faces.len(), 6 + 4);
+// let cut = on_block(
+// 0.0,
+// 1.0,
+// vec![("post", up_to_next(Combine::Difference { target: target() }))],
+// )
+// .unwrap();
+// assert_valid(&cut);
+// assert_eq!(heights(&cut), [0, 1000]);
+// assert_eq!(cut.topology().faces.len(), 6 + 4);
 
-    // // Nothing ahead to stop at.
-    // let Err(error) = on_block(
-        // -2.0,
-        // -1.0,
-        // vec![("post", up_to_next(Combine::Union { target: target() }))],
-    // ) else {
-        // panic!("extruded");
-    // };
-    // assert!(error.root_message().contains("nothing"), "{error:?}");
+// // Nothing ahead to stop at.
+// let Err(error) = on_block(
+// -2.0,
+// -1.0,
+// vec![("post", up_to_next(Combine::Union { target: target() }))],
+// ) else {
+// panic!("extruded");
+// };
+// assert!(error.root_message().contains("nothing"), "{error:?}");
 
-    // // A new body stops at the next face of any solid, as a body of its
-    // // own, the block left as it was.
-    // let apart = on_block(2.0, 3.0, vec![("post", up_to_next(Combine::NewBody))]).unwrap();
-    // assert_valid(&apart);
-    // assert_eq!(apart.solid_names(), ["extrude(block)", "extrude(post)"]);
-    // let block = apart.solid_id("extrude(block)").unwrap();
-    // assert_eq!(apart.topology().solid_faces(block).unwrap().len(), 6);
-    // let post = apart.solid_id("extrude(post)").unwrap();
-    // let mut post_heights: Vec<i64> = apart
-        // .topology()
-        // .iter_body_vertices(post)
-        // .unwrap()
-        // .map(|v| (apart.topology().vertices[&v].point[2].to_f64() * 1000.0).round() as i64)
-        // .collect();
-    // post_heights.sort();
-    // post_heights.dedup();
-    // assert_eq!(post_heights, [0, 2000]);
+// // A new body stops at the next face of any solid, as a body of its
+// // own, the block left as it was.
+// let apart = on_block(2.0, 3.0, vec![("post", up_to_next(Combine::NewBody))]).unwrap();
+// assert_valid(&apart);
+// assert_eq!(apart.solid_names(), ["extrude(block)", "extrude(post)"]);
+// let block = apart.solid_id("extrude(block)").unwrap();
+// assert_eq!(apart.topology().solid_faces(block).unwrap().len(), 6);
+// let post = apart.solid_id("extrude(post)").unwrap();
+// let mut post_heights: Vec<i64> = apart
+// .topology()
+// .iter_body_vertices(post)
+// .unwrap()
+// .map(|v| (apart.topology().vertices[&v].point[2].to_f64() * 1000.0).round() as i64)
+// .collect();
+// post_heights.sort();
+// post_heights.dedup();
+// assert_eq!(post_heights, [0, 2000]);
 // }
 
 /// A square beside the z-axis turned up to the next face of the walls

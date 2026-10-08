@@ -18,17 +18,6 @@ pub struct Arc3<T: Scalar> {
     pub e: Vector3<T>,
 }
 
-/// `|v|`, failing where it could be zero rather than differentiating a
-/// square root there.
-pub fn length<T: Scalar>(v: &Vector3<T>) -> GeopResult<T> {
-    v.norm_sq().sqrt()
-}
-
-/// `v / |v|`.
-pub fn unit<T: Scalar>(v: &Vector3<T>) -> GeopResult<Vector3<T>> {
-    Ok(v.prod_scalar(T::ONE.div(length(v)?)?))
-}
-
 impl<T: Scalar> Arc3<T> {
     fn legs(&self) -> (Vector3<T>, Vector3<T>) {
         (self.s.sub(&self.m), self.e.sub(&self.m))
@@ -38,26 +27,26 @@ impl<T: Scalar> Arc3<T> {
     /// runs counter-clockwise about it.
     pub fn normal(&self) -> GeopResult<Vector3<T>> {
         let (a, b) = self.legs();
-        unit(&b.prod_cross(&a))
+        b.prod_cross(&a).normalize()
     }
 
     /// `cos` and `sin` of half its sweep.
     pub fn half_sweep(&self) -> GeopResult<(T, T)> {
         let (a, b) = self.legs();
-        let ab = length(&a)?.mul(length(&b)?);
+        let ab = a.try_norm()?.mul(b.try_norm()?);
         Ok((
             a.prod_dot(&b).neg().div(ab)?,
-            length(&a.prod_cross(&b))?.div(ab)?,
+            a.prod_cross(&b).try_norm()?.div(ab)?,
         ))
     }
 
     /// Its radius: `|a| |b| |e - s| / (2 |a x b|)`.
     pub fn radius(&self) -> GeopResult<T> {
         let (a, b) = self.legs();
-        length(&a)?
-            .mul(length(&b)?)
-            .mul(length(&self.e.sub(&self.s))?)
-            .div(T::TWO.mul(length(&a.prod_cross(&b))?))
+        a.try_norm()?
+            .mul(b.try_norm()?)
+            .mul(self.e.sub(&self.s).try_norm()?)
+            .div(T::TWO.mul(a.prod_cross(&b).try_norm()?))
     }
 
     /// Its center: `m + (|a|^2 b - |b|^2 a) x (a x b) / (2 |a x b|^2)`.
@@ -73,7 +62,7 @@ impl<T: Scalar> Arc3<T> {
     /// the chord's direction turned back (at the start) or on (at the end)
     /// by half the sweep, in the arc's plane.
     pub fn tangent(&self, at_end: bool) -> GeopResult<Vector3<T>> {
-        let chord = unit(&self.e.sub(&self.s))?;
+        let chord = self.e.sub(&self.s).normalize()?;
         let side = self.normal()?.prod_cross(&chord);
         let (cos, sin) = self.half_sweep()?;
         let sin = if at_end { sin } else { sin.neg() };

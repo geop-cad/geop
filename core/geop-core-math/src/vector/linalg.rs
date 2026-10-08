@@ -76,8 +76,14 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
         self.norm_sq().sqrt().expect("Norm cannot be negative")
     }
 
+    /// `|self|`, failing where [`Scalar::sqrt`] refuses the squared length
+    /// instead of panicking like [`Self::norm`].
+    pub fn try_norm(&self) -> GeopResult<S> {
+        self.norm_sq().sqrt()
+    }
+
     pub fn normalize(&self) -> GeopResult<Self> {
-        let n = self.norm();
+        let n = self.try_norm()?;
         if n.could_be_equal(S::ZERO) {
             return Err(GeopError::new("Cannot normalize zero-length vector"));
         }
@@ -154,5 +160,18 @@ impl<S: Scalar> Vector2<S> {
     /// of `self`.
     pub fn prod_cross(&self, other: &Self) -> S {
         self[0].mul(other[1]).sub(self[1].mul(other[0]))
+    }
+
+    /// Rotated 90 degrees counter-clockwise.
+    pub fn perp(&self) -> Self {
+        Self::from_array([S::ZERO.sub(self[1]), self[0]])
+    }
+
+    /// Rotated counter-clockwise by the angle with cosine `c` and sine `s`.
+    pub fn rotate(&self, c: S, s: S) -> Self {
+        Self::from_array([
+            self[0].mul(c).sub(self[1].mul(s)),
+            self[0].mul(s).add(self[1].mul(c)),
+        ])
     }
 }

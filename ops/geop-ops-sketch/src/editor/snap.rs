@@ -34,14 +34,14 @@ pub(super) fn curve_mid(sketch: &Sketch, curve: CurveId) -> Option<P2> {
             0.5,
         )),
         CurveKind::Arc { start, end, sweep } => {
-            use geop_core_sketch::geometry::{Arc, V};
+            use geop_core_sketch::geometry::Arc;
             let arc = Arc {
-                s: V::of(&sketch.points[&start].xy()),
-                e: V::of(&sketch.points[&end].xy()),
+                s: sketch.points[&start].xy(),
+                e: sketch.points[&end].xy(),
                 half: Design::from_f64(sweep.to_f64() / 2.0),
             };
             let m = arc.arc_mid().ok()?;
-            Some([m.x.to_f64(), m.y.to_f64()])
+            Some([m[0].to_f64(), m[1].to_f64()])
         }
         _ => None,
     }

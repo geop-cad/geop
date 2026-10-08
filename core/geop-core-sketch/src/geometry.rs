@@ -19,83 +19,29 @@
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
-/// A 2-D vector.
-#[derive(Clone, Copy, Debug)]
-pub struct V<T> {
-    pub x: T,
-    pub y: T,
-}
-
-// `add`/`sub`/`dot`/... mirror the kernel's own `Vector` API, so the same
-// formulas read the same way here as they do there.
-#[allow(clippy::should_implement_trait)]
-impl<T: Scalar> V<T> {
-    pub fn new(x: T, y: T) -> Self {
-        V { x, y }
-    }
-    pub fn of(p: &Vector2<T>) -> Self {
-        V::new(p[0], p[1])
-    }
-    pub fn add(self, o: Self) -> Self {
-        V::new(self.x.add(o.x), self.y.add(o.y))
-    }
-    pub fn sub(self, o: Self) -> Self {
-        V::new(self.x.sub(o.x), self.y.sub(o.y))
-    }
-    pub fn scale(self, s: T) -> Self {
-        V::new(self.x.mul(s), self.y.mul(s))
-    }
-    pub fn dot(self, o: Self) -> T {
-        self.x.mul(o.x).add(self.y.mul(o.y))
-    }
-    pub fn cross(self, o: Self) -> T {
-        self.x.mul(o.y).sub(self.y.mul(o.x))
-    }
-    pub fn norm(self) -> GeopResult<T> {
-        self.dot(self).sqrt()
-    }
-    /// Rotated 90 degrees counter-clockwise.
-    pub fn perp(self) -> Self {
-        V::new(T::ZERO.sub(self.y), self.x)
-    }
-    pub fn unit(self) -> GeopResult<Self> {
-        Ok(self.scale(T::ONE.div(self.norm()?)?))
-    }
-    /// Rotated by the angle with cosine `c` and sine `s`.
-    pub fn rotate(self, c: T, s: T) -> Self {
-        V::new(
-            self.x.mul(c).sub(self.y.mul(s)),
-            self.x.mul(s).add(self.y.mul(c)),
-        )
-    }
-    pub fn vector(self) -> Vector2<T> {
-        Vector2::from_array([self.x, self.y])
-    }
-}
-
 /// A circular arc from `s` to `e`, turning counter-clockwise by `2 * half`
 /// (clockwise if negative).
 #[derive(Clone, Copy, Debug)]
 pub struct Arc<T> {
-    pub s: V<T>,
-    pub e: V<T>,
+    pub s: Vector2<T>,
+    pub e: Vector2<T>,
     pub half: T,
 }
 
 impl<T: Scalar> Arc<T> {
-    pub fn chord(&self) -> V<T> {
-        self.e.sub(self.s)
+    pub fn chord(&self) -> Vector2<T> {
+        self.e.sub(&self.s)
     }
     pub fn chord_length(&self) -> GeopResult<T> {
-        self.chord().norm()
+        self.chord().try_norm()
     }
-    pub fn chord_mid(&self) -> V<T> {
-        self.s.add(self.e).scale(half::<T>())
+    pub fn chord_mid(&self) -> Vector2<T> {
+        self.s.add(&self.e).prod_scalar(half::<T>())
     }
     /// Unit normal to the chord, pointing to its left: the side the center is
     /// on for a counter-clockwise minor arc.
-    pub fn left(&self) -> GeopResult<V<T>> {
-        Ok(self.chord().unit()?.perp())
+    pub fn left(&self) -> GeopResult<Vector2<T>> {
+        Ok(self.chord().normalize()?.perp())
     }
     pub fn curvature(&self) -> GeopResult<T> {
         T::TWO.mul(self.half.sin()).div(self.chord_length()?)
@@ -107,19 +53,19 @@ impl<T: Scalar> Arc<T> {
     /// Center: `chord_mid + left * (L / 2) cot(half)`. Infinitely far for a
     /// straight arc, so only for constraints that are meaningless there
     /// anyway (concentricity, tangency to a circle).
-    pub fn center(&self) -> GeopResult<V<T>> {
+    pub fn center(&self) -> GeopResult<Vector2<T>> {
         let d = self
             .chord_length()?
             .mul(half::<T>())
             .mul(self.half.cos())
             .div(self.half.sin())?;
-        Ok(self.chord_mid().add(self.left()?.scale(d)))
+        Ok(self.chord_mid().add(&self.left()?.prod_scalar(d)))
     }
     /// The point halfway along the arc: `chord_mid - left * (L / 2) tan(half / 2)`.
-    pub fn arc_mid(&self) -> GeopResult<V<T>> {
+    pub fn arc_mid(&self) -> GeopResult<Vector2<T>> {
         let tan_quarter = self.half.sin().div(T::ONE.add(self.half.cos()))?;
         let sagitta = self.chord_length()?.mul(half::<T>()).mul(tan_quarter);
-        Ok(self.chord_mid().sub(self.left()?.scale(sagitta)))
+        Ok(self.chord_mid().sub(&self.left()?.prod_scalar(sagitta)))
     }
     /// Signed distance-like residual of `p` against the arc's full circle,
     /// finite and smooth for every `half` including a straight arc.
@@ -130,24 +76,24 @@ impl<T: Scalar> Arc<T> {
     /// `G = k |q|^2 - 2 cos(half) (left . q) - k L^2 / 4`, which is a line's
     /// equation at `k = 0`. Near the circle `G ≈ ±2 dist`, so `G / 2` is a
     /// distance.
-    pub fn circle_residual(&self, p: V<T>) -> GeopResult<T> {
-        let q = p.sub(self.chord_mid());
+    pub fn circle_residual(&self, p: Vector2<T>) -> GeopResult<T> {
+        let q = p.sub(&self.chord_mid());
         let k = self.curvature()?;
         let l = self.chord_length()?;
         let g = k
-            .mul(q.dot(q))
-            .sub(T::TWO.mul(self.half.cos()).mul(self.left()?.dot(q)))
+            .mul(q.norm_sq())
+            .sub(T::TWO.mul(self.half.cos()).mul(self.left()?.prod_dot(&q)))
             .sub(k.mul(l).mul(l).mul(half::<T>().mul(half::<T>())));
         Ok(g.mul(half::<T>()))
     }
     /// Unit tangent at `s`, in the direction of travel.
-    pub fn tangent_start(&self) -> GeopResult<V<T>> {
-        let c = self.chord().unit()?;
-        Ok(c.rotate(self.half.cos(), T::ZERO.sub(self.half.sin())))
+    pub fn tangent_start(&self) -> GeopResult<Vector2<T>> {
+        let c = self.chord().normalize()?;
+        Ok(c.rotate(self.half.cos(), self.half.sin().neg()))
     }
     /// Unit tangent at `e`, in the direction of travel.
-    pub fn tangent_end(&self) -> GeopResult<V<T>> {
-        let c = self.chord().unit()?;
+    pub fn tangent_end(&self) -> GeopResult<Vector2<T>> {
+        let c = self.chord().normalize()?;
         Ok(c.rotate(self.half.cos(), self.half.sin()))
     }
     /// Arc length `L * half / sin(half)`.
@@ -186,9 +132,9 @@ fn half<T: Scalar>() -> T {
 
 /// Signed distance of `p` from the line through `a` and `b`, positive on its
 /// left.
-pub fn line_distance<T: Scalar>(a: V<T>, b: V<T>, p: V<T>) -> GeopResult<T> {
-    let d = b.sub(a);
-    d.cross(p.sub(a)).div(d.norm()?)
+pub fn line_distance<T: Scalar>(a: Vector2<T>, b: Vector2<T>, p: Vector2<T>) -> GeopResult<T> {
+    let d = b.sub(&a);
+    d.prod_cross(&p.sub(&a)).div(d.try_norm()?)
 }
 
 #[cfg(test)]
@@ -196,16 +142,20 @@ mod tests {
     use super::*;
     use geop_core_math::scalars::scal_in_f64::ScalInF64;
 
+    fn vec2(x: ScalInF64, y: ScalInF64) -> Vector2<ScalInF64> {
+        Vector2::from_array([x, y])
+    }
+
     fn quarter() -> Arc<ScalInF64> {
         Arc {
-            s: V::new(ScalInF64::from_f64(1.0), ScalInF64::from_f64(0.0)),
-            e: V::new(ScalInF64::from_f64(0.0), ScalInF64::from_f64(1.0)),
+            s: vec2(ScalInF64::from_f64(1.0), ScalInF64::from_f64(0.0)),
+            e: vec2(ScalInF64::from_f64(0.0), ScalInF64::from_f64(1.0)),
             half: ScalInF64::from_f64(std::f64::consts::FRAC_PI_4),
         }
     }
 
-    fn close(a: V<ScalInF64>, b: [f64; 2]) -> bool {
-        (a.x.to_f64() - b[0]).abs() < 1e-12 && (a.y.to_f64() - b[1]).abs() < 1e-12
+    fn close(a: Vector2<ScalInF64>, b: [f64; 2]) -> bool {
+        (a[0].to_f64() - b[0]).abs() < 1e-12 && (a[1].to_f64() - b[1]).abs() < 1e-12
     }
 
     #[test]
@@ -220,7 +170,7 @@ mod tests {
         assert!(close(a.tangent_end().unwrap(), [-1.0, 0.0]));
         assert!((a.length().unwrap().to_f64() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         assert!(
-            a.circle_residual(V::new(ScalInF64::from_f64(-s), ScalInF64::from_f64(-s)))
+            a.circle_residual(vec2(ScalInF64::from_f64(-s), ScalInF64::from_f64(-s)))
                 .unwrap()
                 .to_f64()
                 .abs()
@@ -228,7 +178,7 @@ mod tests {
         );
         // Outside the circle by 1: residual ≈ distance (exactly `(ρ² - 1)/2`).
         assert!(
-            (a.circle_residual(V::new(ScalInF64::from_f64(2.0), ScalInF64::from_f64(0.0)))
+            (a.circle_residual(vec2(ScalInF64::from_f64(2.0), ScalInF64::from_f64(0.0)))
                 .unwrap()
                 .to_f64()
                 - 1.5)
@@ -256,7 +206,7 @@ mod tests {
         assert!((a.length().unwrap().to_f64() - 2f64.sqrt()).abs() < 1e-12);
         // On the chord's line: zero; to its left by `h`: `-h` (G ≈ -2 left·q).
         assert!(
-            a.circle_residual(V::new(ScalInF64::from_f64(0.5), ScalInF64::from_f64(0.5)))
+            a.circle_residual(vec2(ScalInF64::from_f64(0.5), ScalInF64::from_f64(0.5)))
                 .unwrap()
                 .to_f64()
                 .abs()

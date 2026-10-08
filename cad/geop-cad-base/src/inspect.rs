@@ -76,11 +76,7 @@ pub enum Inspection<S: Scalar> {
 
 /// The answer to `query` about `part`, which the program `file` builds:
 /// none, while the crates that answer are out of the workspace.
-pub fn answer<S: Scalar>(
-    _query: Query,
-    _part: &Part<S>,
-    _file: &str,
-) -> GeopResult<Inspection<S>> {
+pub fn answer<S: Scalar>(_query: Query, _part: &Part<S>, _file: &str) -> GeopResult<Inspection<S>> {
     Err(geop_core_math::geop_error::GeopError::new(
         "mass properties, interference and the bill of materials are not available while their crates are out of the workspace",
     ))

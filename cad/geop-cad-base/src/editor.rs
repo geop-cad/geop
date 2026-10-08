@@ -1726,7 +1726,6 @@ impl<S: Scalar> Editor<S> {
             .map(|f| f.trim_end_matches(".geop").to_string())
             .filter(|s| !s.is_empty())
     }
-
 }
 
 /// What a command changed.

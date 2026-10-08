@@ -513,25 +513,25 @@ struct Bracket {
 // /// The first bracket: a torus around its line turns a half turn out of the
 // /// bracket, partly lands on its slanted arm, and partly passes on.
 // const PARTLY_STOPPED: Bracket = Bracket {
-    // corners: [
-        // (-1.643567, -2.654248),
-        // (-2.560606, 1.310979),
-        // (-3.335569, 1.033284),
-        // (-2.231247, -3.816692),
-    // ],
-    // line: (-1.050451, 1.550927, 0.42898),
+// corners: [
+// (-1.643567, -2.654248),
+// (-2.560606, 1.310979),
+// (-3.335569, 1.033284),
+// (-2.231247, -3.816692),
+// ],
+// line: (-1.050451, 1.550927, 0.42898),
 // };
 
 // /// The second: the arm is wide enough to stop the torus all round after a
 // /// half turn.
 // const FULLY_STOPPED: Bracket = Bracket {
-    // corners: [
-        // (-1.367377992154214, -2.470121649185356),
-        // (-2.2844172960685256, 1.4951046367539953),
-        // (-3.5606118527937647, 0.9514499643977747),
-        // (-2.456289874136388, -3.898525509120877),
-    // ],
-    // line: (-1.306181007097579, 1.7657405500456889, 0.6437934059762662),
+// corners: [
+// (-1.367377992154214, -2.470121649185356),
+// (-2.2844172960685256, 1.4951046367539953),
+// (-3.5606118527937647, 0.9514499643977747),
+// (-2.456289874136388, -3.898525509120877),
+// ],
+// line: (-1.306181007097579, 1.7657405500456889, 0.6437934059762662),
 // };
 
 // // /// A bracket-like outline extruded both ways from the X plane, a round hole
@@ -673,9 +673,9 @@ struct Bracket {
 
 // /// Joined to the bracket.
 // fn joined() -> Combine {
-    // Combine::Union {
-        // target: "extrude(extrude2)".into(),
-    // }
+// Combine::Union {
+// target: "extrude(extrude2)".into(),
+// }
 // }
 
 // #[test]
@@ -718,43 +718,43 @@ struct Bracket {
 // /// `around_x_axis` or its line, combined every way: a new body, joined,
 // /// cut, intersected.
 // fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool) {
-    // let target = || "extrude(extrude2)".to_string();
-    // for reversed in [false, true] {
-        // for combine in [
-            // Combine::NewBody,
-            // Combine::Union { target: target() },
-            // Combine::Difference { target: target() },
-            // Combine::Intersection { target: target() },
-        // ] {
-            // let program =
-                // torus_turned_up_to_next(bracket, around_x_axis, reversed, combine.clone());
-            // let built = std::panic::catch_unwind(|| assert_builds_valid(&program));
-            // assert!(
-                // built.is_ok(),
-                // "around_x_axis={around_x_axis}, reversed={reversed}, {combine:?}"
-            // );
-        // }
-    // }
+// let target = || "extrude(extrude2)".to_string();
+// for reversed in [false, true] {
+// for combine in [
+// Combine::NewBody,
+// Combine::Union { target: target() },
+// Combine::Difference { target: target() },
+// Combine::Intersection { target: target() },
+// ] {
+// let program =
+// torus_turned_up_to_next(bracket, around_x_axis, reversed, combine.clone());
+// let built = std::panic::catch_unwind(|| assert_builds_valid(&program));
+// assert!(
+// built.is_ok(),
+// "around_x_axis={around_x_axis}, reversed={reversed}, {combine:?}"
+// );
+// }
+// }
 // }
 
 // /// Stopped all round after a half turn: the piece up to there, cut from
 // /// the bracket.
 // #[test]
 // fn torus_up_to_next_stopped_all_round() {
-    // let target = "extrude(extrude2)".to_string();
-    // assert_builds_valid(&torus_turned_up_to_next(
-        // &FULLY_STOPPED,
-        // false,
-        // false,
-        // Combine::Difference { target },
-    // ));
+// let target = "extrude(extrude2)".to_string();
+// assert_builds_valid(&torus_turned_up_to_next(
+// &FULLY_STOPPED,
+// false,
+// false,
+// Combine::Difference { target },
+// ));
 // }
 
 // /// [`torus_up_to_next_stopped_all_round`] either way, combined every way.
 // #[test]
 // #[ignore = "slow: eight booleans with a torus (10 s) — run with `cargo test -- --ignored`"]
 // fn torus_up_to_next_stopped_all_round_every_way() {
-    // torus_up_to_next(&FULLY_STOPPED, false);
+// torus_up_to_next(&FULLY_STOPPED, false);
 // }
 
 // /// Stopped by only part of the profile: as far as it first meets the
@@ -771,13 +771,13 @@ struct Bracket {
 // /// that is already there.
 // #[test]
 // fn torus_up_to_next_partly_stopped() {
-    // let target = "extrude(extrude2)".to_string();
-    // assert_builds_valid(&torus_turned_up_to_next(
-        // &PARTLY_STOPPED,
-        // true,
-        // true,
-        // Combine::Difference { target },
-    // ));
+// let target = "extrude(extrude2)".to_string();
+// assert_builds_valid(&torus_turned_up_to_next(
+// &PARTLY_STOPPED,
+// true,
+// true,
+// Combine::Difference { target },
+// ));
 // }
 
 // /// [`torus_up_to_next_partly_stopped`] around either axis, either way,
@@ -785,8 +785,8 @@ struct Bracket {
 // #[test]
 // #[ignore = "slow: sixteen booleans with a torus (30 s) — run with `cargo test -- --ignored`"]
 // fn torus_up_to_next_partly_stopped_every_way() {
-    // torus_up_to_next(&PARTLY_STOPPED, false);
-    // torus_up_to_next(&PARTLY_STOPPED, true);
+// torus_up_to_next(&PARTLY_STOPPED, false);
+// torus_up_to_next(&PARTLY_STOPPED, true);
 // }
 
 // /// The box of the user's conebox part, and a spindle revolved a full turn

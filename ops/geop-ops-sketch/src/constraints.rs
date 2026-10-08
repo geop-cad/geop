@@ -14,7 +14,7 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar},
     vector::Vector2,
 };
-use geop_core_sketch::{CurveId, PointId, dimension::Measure, geometry::Arc, geometry::V};
+use geop_core_sketch::{CurveId, PointId, dimension::Measure, geometry::Arc};
 use geop_ops::Design;
 
 use crate::{
@@ -570,8 +570,8 @@ fn line_points(sketch: &Sketch, kind: &CurveKind) -> Option<(Vector2<Design>, Ve
 /// An arc, as the sketch's own geometry has it.
 fn arc(sketch: &Sketch, start: PointId, end: PointId, sweep: Design) -> Option<Arc<Design>> {
     Some(Arc {
-        s: V::of(&pt(sketch, start)),
-        e: V::of(&pt(sketch, end)),
+        s: pt(sketch, start),
+        e: pt(sketch, end),
         half: sweep.div(Design::TWO).ok()?,
     })
 }
@@ -605,7 +605,7 @@ fn length(sketch: &Sketch, curve: CurveId) -> Option<Design> {
 /// constraint: sharp.
 fn point_line_distance(sketch: &Sketch, point: PointId, line: CurveId) -> Option<Design> {
     let (a, b) = line_points(sketch, &sketch.curves[&line].kind)?;
-    geop_core_sketch::geometry::line_distance(V::of(&a), V::of(&b), V::of(&pt(sketch, point)))
+    geop_core_sketch::geometry::line_distance(a, b, pt(sketch, point))
         .ok()
         .map(|d| d.abs().sharpen())
 }
@@ -734,7 +734,7 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
             CurveKind::Arc { start, end, sweep } => {
                 let a = arc(sketch, start, end, sweep)?;
                 let c = a.center().ok()?;
-                Some(([c.x.to_f64(), c.y.to_f64()], a.radius().ok()?.to_f64()))
+                Some(([c[0].to_f64(), c[1].to_f64()], a.radius().ok()?.to_f64()))
             }
             _ => None,
         }

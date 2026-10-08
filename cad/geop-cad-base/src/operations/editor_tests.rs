@@ -2035,50 +2035,50 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 // /// hold: the error names them.
 // #[test]
 // fn an_assembly_is_exported_as_urdf() {
-    // let mut editor = Editor::<S>::new();
-    // let update = editor.handle(Command::LoadWorkspaceExample {
-        // name: "arm".into(),
-        // folder: None,
-    // });
-    // assert!(update.error.is_none(), "{:?}", update.error);
-    // let json = editor.handle_json(r#"{"command": "export_urdf"}"#).unwrap();
-    // let update: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // assert!(update["error"].is_null(), "{}", update["error"]);
-    // let export = &update["export"];
-    // assert_eq!(export["name"], "arm.zip");
-    // assert!(export["text"].is_null());
-    // // "PK\x03\x04", a ZIP archive's first local header, in base64.
-    // let bytes = export["bytes"].as_str().unwrap();
-    // assert!(bytes.starts_with("UEsDBA"), "{}", &bytes[..16]);
-    // assert_eq!(bytes.len() % 4, 0);
+// let mut editor = Editor::<S>::new();
+// let update = editor.handle(Command::LoadWorkspaceExample {
+// name: "arm".into(),
+// folder: None,
+// });
+// assert!(update.error.is_none(), "{:?}", update.error);
+// let json = editor.handle_json(r#"{"command": "export_urdf"}"#).unwrap();
+// let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+// assert!(update["error"].is_null(), "{}", update["error"]);
+// let export = &update["export"];
+// assert_eq!(export["name"], "arm.zip");
+// assert!(export["text"].is_null());
+// // "PK\x03\x04", a ZIP archive's first local header, in base64.
+// let bytes = export["bytes"].as_str().unwrap();
+// assert!(bytes.starts_with("UEsDBA"), "{}", &bytes[..16]);
+// assert_eq!(bytes.len() % 4, 0);
 
-    // let crate::editor::Content::Bytes(zip) =
-        // editor.handle(Command::ExportUrdf).export.unwrap().content
-    // else {
-        // panic!("a binary file");
-    // };
-    // let text = String::from_utf8_lossy(&zip);
-    // assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
-    // assert!(text.contains(r#"<joint name="add_part(fore,m1)" type="revolute">"#));
-    // assert!(text.contains(r#"<joint name="add_part(hand,m1)" type="revolute">"#));
+// let crate::editor::Content::Bytes(zip) =
+// editor.handle(Command::ExportUrdf).export.unwrap().content
+// else {
+// panic!("a binary file");
+// };
+// let text = String::from_utf8_lossy(&zip);
+// assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
+// assert!(text.contains(r#"<joint name="add_part(fore,m1)" type="revolute">"#));
+// assert!(text.contains(r#"<joint name="add_part(hand,m1)" type="revolute">"#));
 
-    // editor.handle(Command::Open { id: "fore".into() });
-    // let refused = editor.handle(Command::ExportUrdf);
-    // assert!(refused.export.is_none());
-    // assert!(refused.error.unwrap().contains("finish editing"));
-    // editor.handle(Command::Cancel);
+// editor.handle(Command::Open { id: "fore".into() });
+// let refused = editor.handle(Command::ExportUrdf);
+// assert!(refused.export.is_none());
+// assert!(refused.error.unwrap().contains("finish editing"));
+// editor.handle(Command::Cancel);
 
-    // editor.handle(Command::LoadWorkspaceExample {
-        // name: "four_bar".into(),
-        // folder: None,
-    // });
-    // let refused = editor.handle(Command::ExportUrdf);
-    // assert!(refused.export.is_none());
-    // let error = refused.error.unwrap();
-    // assert!(
-        // error.contains("free to move") && error.contains("coupler"),
-        // "{error}"
-    // );
+// editor.handle(Command::LoadWorkspaceExample {
+// name: "four_bar".into(),
+// folder: None,
+// });
+// let refused = editor.handle(Command::ExportUrdf);
+// assert!(refused.export.is_none());
+// let error = refused.error.unwrap();
+// assert!(
+// error.contains("free to move") && error.contains("coupler"),
+// "{error}"
+// );
 // }
 
 /// "Download STEP" writes the part shown; stored next to a new program in a
@@ -2440,56 +2440,56 @@ fn formulas_are_typed_into_dialog_fields() {
 // /// the file.
 // #[test]
 // fn the_bill_of_materials_is_asked_for_and_exported() {
-    // let mut editor = Editor::<S>::new();
-    // let update = editor.handle(Command::LoadWorkspaceExample {
-        // name: "bolted_plate".into(),
-        // folder: None,
-    // });
-    // assert!(update.error.is_none(), "{:?}", update.error);
-    // let ask = r#"{"command": "inspect", "query": {"bom": {"structure": "flat"}}}"#;
-    // let json = editor.handle_json(ask).unwrap();
-    // let update: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // assert!(update["error"].is_null(), "{}", update["error"]);
-    // let bom = &update["inspection"];
-    // assert_eq!(bom["kind"], "bom");
-    // assert_eq!(bom["structure"], "flat");
-    // let designations: Vec<&str> = bom["lines"]
-        // .as_array()
-        // .unwrap()
-        // .iter()
-        // .map(|l| l["designation"].as_str().unwrap_or("-"))
-        // .collect();
-    // assert_eq!(designations, ["-", "ISO 4762 M4x12", "ISO 4032 M4"]);
-    // let screw = &bom["lines"][1];
-    // assert_eq!(
-        // (&screw["kind"], &screw["quantity"]),
-        // (&"part".into(), &1.into())
-    // );
-    // assert_eq!(screw["material"], "Steel");
-    // assert!(screw["unit_mass"]["value"].as_f64().unwrap() > 0.0);
-    // assert!(bom["total_mass"]["value"].as_f64().unwrap() > 0.0);
+// let mut editor = Editor::<S>::new();
+// let update = editor.handle(Command::LoadWorkspaceExample {
+// name: "bolted_plate".into(),
+// folder: None,
+// });
+// assert!(update.error.is_none(), "{:?}", update.error);
+// let ask = r#"{"command": "inspect", "query": {"bom": {"structure": "flat"}}}"#;
+// let json = editor.handle_json(ask).unwrap();
+// let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+// assert!(update["error"].is_null(), "{}", update["error"]);
+// let bom = &update["inspection"];
+// assert_eq!(bom["kind"], "bom");
+// assert_eq!(bom["structure"], "flat");
+// let designations: Vec<&str> = bom["lines"]
+// .as_array()
+// .unwrap()
+// .iter()
+// .map(|l| l["designation"].as_str().unwrap_or("-"))
+// .collect();
+// assert_eq!(designations, ["-", "ISO 4762 M4x12", "ISO 4032 M4"]);
+// let screw = &bom["lines"][1];
+// assert_eq!(
+// (&screw["kind"], &screw["quantity"]),
+// (&"part".into(), &1.into())
+// );
+// assert_eq!(screw["material"], "Steel");
+// assert!(screw["unit_mass"]["value"].as_f64().unwrap() > 0.0);
+// assert!(bom["total_mass"]["value"].as_f64().unwrap() > 0.0);
 
-    // // Up to the screw: no nut yet.
-    // editor.handle(Command::Seek { marker: Some(2) });
-    // let json = editor.handle_json(ask).unwrap();
-    // let update: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // assert_eq!(update["inspection"]["lines"].as_array().unwrap().len(), 2);
-    // editor.handle(Command::Seek { marker: None });
+// // Up to the screw: no nut yet.
+// editor.handle(Command::Seek { marker: Some(2) });
+// let json = editor.handle_json(ask).unwrap();
+// let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+// assert_eq!(update["inspection"]["lines"].as_array().unwrap().len(), 2);
+// editor.handle(Command::Seek { marker: None });
 
-    // let json = editor
-        // .handle_json(r#"{"command": "export_bom", "structure": "indented"}"#)
-        // .unwrap();
-    // let update: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // assert!(update["error"].is_null(), "{}", update["error"]);
-    // assert_eq!(update["export"]["name"], "bolted_plate_bom.csv");
-    // let csv = update["export"]["text"].as_str().unwrap();
-    // let rows: Vec<&str> = csv.lines().collect();
-    // assert_eq!(rows.len(), 1 + 3 + 1, "{csv}");
-    // assert!(
-        // rows[2].starts_with("2,1,1,ISO 4762 socket head cap screw,ISO 4762 M4x12,"),
-        // "{csv}"
-    // );
-    // assert!(rows[4].contains("Total"), "{csv}");
+// let json = editor
+// .handle_json(r#"{"command": "export_bom", "structure": "indented"}"#)
+// .unwrap();
+// let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+// assert!(update["error"].is_null(), "{}", update["error"]);
+// assert_eq!(update["export"]["name"], "bolted_plate_bom.csv");
+// let csv = update["export"]["text"].as_str().unwrap();
+// let rows: Vec<&str> = csv.lines().collect();
+// assert_eq!(rows.len(), 1 + 3 + 1, "{csv}");
+// assert!(
+// rows[2].starts_with("2,1,1,ISO 4762 socket head cap screw,ISO 4762 M4x12,"),
+// "{csv}"
+// );
+// assert!(rows[4].contains("Total"), "{csv}");
 // }
 
 // /// The arm, exported as STEP the way the front end asks: one product for
@@ -3428,46 +3428,46 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
 // /// then those only in the group's menu.
 // #[test]
 // fn operations_are_offered_by_group() {
-    // use geop_ops::{OperationTier, Operations};
-    // let (_, update) = editor();
-    // let operations = update.program.expect("the program is sent").operations;
-    // assert_eq!(operations.len(), PartOperation::infos().len());
-    // let order: Vec<_> = operations.iter().map(|o| (o.group, o.tier)).collect();
-    // assert!(
-        // order.is_sorted(),
-        // "not group by group, the most used first: {order:?}"
-    // );
-    // let big: Vec<&str> = operations
-        // .iter()
-        // .filter(|o| o.tier == OperationTier::Big)
-        // .map(|o| o.kind)
-        // .collect();
-    // assert_eq!(
-        // big,
-        // [
-            // "add_sketch",
-            // "extrude",
-            // "revolve",
-            // "hole",
-            // "fillet",
-            // "boolean",
-            // "linear_pattern",
-            // "subd",
-            // "base_flange",
-            // "add_part",
-            // "drawing",
-        // ]
-    // );
-    // let json = serde_json::to_value(&operations[0]).unwrap();
-    // assert_eq!(json["group"], "Sketch");
-    // assert_eq!(json["tier"], "Big");
-    // let hem = operations.iter().find(|o| o.kind == "hem").unwrap();
-    // assert_eq!(serde_json::to_value(hem).unwrap()["group"], "Sheet metal");
-    // let mirror = operations.iter().find(|o| o.kind == "mirror").unwrap();
-    // assert_eq!(
-        // serde_json::to_value(mirror).unwrap()["group"],
-        // "Pattern & bodies"
-    // );
+// use geop_ops::{OperationTier, Operations};
+// let (_, update) = editor();
+// let operations = update.program.expect("the program is sent").operations;
+// assert_eq!(operations.len(), PartOperation::infos().len());
+// let order: Vec<_> = operations.iter().map(|o| (o.group, o.tier)).collect();
+// assert!(
+// order.is_sorted(),
+// "not group by group, the most used first: {order:?}"
+// );
+// let big: Vec<&str> = operations
+// .iter()
+// .filter(|o| o.tier == OperationTier::Big)
+// .map(|o| o.kind)
+// .collect();
+// assert_eq!(
+// big,
+// [
+// "add_sketch",
+// "extrude",
+// "revolve",
+// "hole",
+// "fillet",
+// "boolean",
+// "linear_pattern",
+// "subd",
+// "base_flange",
+// "add_part",
+// "drawing",
+// ]
+// );
+// let json = serde_json::to_value(&operations[0]).unwrap();
+// assert_eq!(json["group"], "Sketch");
+// assert_eq!(json["tier"], "Big");
+// let hem = operations.iter().find(|o| o.kind == "hem").unwrap();
+// assert_eq!(serde_json::to_value(hem).unwrap()["group"], "Sheet metal");
+// let mirror = operations.iter().find(|o| o.kind == "mirror").unwrap();
+// assert_eq!(
+// serde_json::to_value(mirror).unwrap()["group"],
+// "Pattern & bodies"
+// );
 // }
 
 /// A click of the primary button with `pointer`.

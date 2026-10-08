@@ -11,10 +11,7 @@ use geop_core_math::{
     with_context,
 };
 
-use super::{
-    Constraint3d, CurveKind3d, Enclosure3d, End, Sketch3d,
-    geometry::{Arc3, unit},
-};
+use super::{Constraint3d, CurveKind3d, Enclosure3d, End, Sketch3d, geometry::Arc3};
 use crate::{CurveId, PointId, ProfileEdge, ProfileJoint};
 
 /// Samples per piece of a curve drawn as a polyline.
@@ -89,8 +86,10 @@ fn chord_frame<T: Scalar>(
 ) -> GeopResult<(Vector3<T>, Vector3<T>)> {
     let half = T::ONE.div(T::TWO)?;
     let chord = q.sub(p);
-    let out =
-        unit(&chord.prod_cross(normal))?.prod_scalar(super::geometry::length(&chord)?.mul(half));
+    let out = chord
+        .prod_cross(normal)
+        .normalize()?
+        .prod_scalar(chord.try_norm()?.mul(half));
     Ok((p.add(q).prod_scalar(half), out))
 }
 
