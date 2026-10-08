@@ -1,0 +1,6 @@
+[package]
+name = "geop-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

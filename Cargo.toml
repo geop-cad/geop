@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "core/geop-core",
     "core/geop-core-math",
     "core/geop-core-geometry",
     "core/geop-core-topology",
@@ -39,6 +40,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+geop-core = { path = "core/geop-core" }
 geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }

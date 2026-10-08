@@ -228,6 +228,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "geop-core"
+version = "0.1.0"
+
+[[package]]
 name = "geop-core-geometry"
 version = "0.1.0"
 dependencies = [
