@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use indexmap::IndexSet;
 
@@ -29,7 +29,7 @@ pub trait State: Clone + PartialEq + Default + std::fmt::Debug + 'static {
 
 /// Counts the runs of a part, starting at 1. Revision 0 is before the first
 /// run: what was never set has not changed since then.
-pub type Revision = u64;
+pub(crate) type Revision = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Dependency {
@@ -43,8 +43,8 @@ pub(crate) enum Dependency {
 }
 
 /// A value given to a run from outside, and the run in which it last changed.
-/// A value that is removed stays as `None`, so that what read it sees the
-/// change.
+/// A value that is removed stays as `None` while anything depends on it, so
+/// that what read it sees the change.
 struct Given<T> {
     value: Option<T>,
     changed_at: Revision,
@@ -76,15 +76,6 @@ fn changed_at<T>(given: &BTreeMap<String, Given<T>>, name: &str) -> Revision {
     given.get(name).map_or(0, |entry| entry.changed_at)
 }
 
-/// Where in the last run a read looks from.
-#[derive(Clone, Copy)]
-enum At {
-    /// Where the run is now: it sees every version made so far.
-    Now,
-    /// Before the step at this index: it sees the versions earlier steps made.
-    BeforeStep(usize),
-}
-
 /// What a program builds, and what it builds from. Each run states its
 /// inputs and state in full. Its steps define targets, in order, and may
 /// revise [`Revisable`] targets earlier steps defined; every revision is a
@@ -102,9 +93,8 @@ pub struct Part<I, S> {
     /// identifies it across runs; its position only orders it within one.
     steps: IndexSet<String>,
     targets: TargetRegistry,
-    /// For each target, the step that made its latest version so far in
-    /// this run.
-    heads: HashMap<String, String>,
+    /// The constraints the steps of the current or last run defined.
+    constraints: BTreeSet<String>,
     inputs: BTreeMap<String, Given<I>>,
     state: BTreeMap<String, Given<S>>,
 }
@@ -115,7 +105,7 @@ impl<I, S> Default for Part<I, S> {
             revision: 0,
             steps: IndexSet::new(),
             targets: TargetRegistry::default(),
-            heads: HashMap::new(),
+            constraints: BTreeSet::new(),
             inputs: BTreeMap::new(),
             state: BTreeMap::new(),
         }
@@ -126,7 +116,7 @@ impl<I: Input, S: State> Part<I, S> {
     pub(crate) fn begin_run(&mut self, inputs: &BTreeMap<String, I>, state: &BTreeMap<String, S>) {
         self.revision += 1;
         self.steps.clear();
-        self.heads.clear();
+        self.constraints.clear();
         replace_given(&mut self.inputs, inputs, self.revision);
         replace_given(&mut self.state, state, self.revision);
     }
@@ -142,19 +132,22 @@ impl<I: Input, S: State> Part<I, S> {
         Ok(())
     }
 
-    /// Deletes the versions no step of this run made.
+    /// Deletes the versions no step of this run made, and the removed inputs
+    /// and state no version left depends on.
     pub(crate) fn end_run(&mut self) {
         let revision = self.revision;
         self.targets.retain(|target| target.verified_at == revision);
+        let read: HashSet<&Dependency> = self.targets.dependencies().collect();
+        self.inputs.retain(|name, entry| {
+            entry.value.is_some() || read.contains(&Dependency::Input(name.clone()))
+        });
+        self.state.retain(|name, entry| {
+            entry.value.is_some() || read.contains(&Dependency::State(name.clone()))
+        });
     }
 
     fn step(&self) -> &str {
         self.steps.last().map_or("", String::as_str)
-    }
-
-    /// Where `step` came in the current or last run.
-    fn position(&self, step: &str) -> Option<usize> {
-        self.steps.get_index_of(step)
     }
 
     /// The part as it is now: during a run, with what the steps so far made;
@@ -162,55 +155,49 @@ impl<I: Input, S: State> Part<I, S> {
     pub fn current(&self) -> View<'_, I, S> {
         View {
             part: self,
-            at: At::Now,
+            before: self.steps.len(),
         }
     }
 
-    /// The part as it was before the step at `step_index` of the last run.
-    pub fn view(&self, step_index: usize) -> View<'_, I, S> {
-        View {
-            part: self,
-            at: At::BeforeStep(step_index),
-        }
+    /// The part as it was before the step `step` of the last run.
+    pub fn view_before(&self, step: &str) -> GeopResult<View<'_, I, S>> {
+        let before = (self.steps.get_index_of(step))
+            .ok_or_else(|| GeopError::new(format!("step `{step}` is not in the last run")))?;
+        Ok(View { part: self, before })
     }
 
-    /// The latest version of `name` made so far in this run.
-    fn head(&self, name: &str) -> Option<&Target> {
-        self.targets.get(name, self.heads.get(name)?)
+    /// The version of `name` a read sees before the step at position
+    /// `before` of this run: of the versions this run made, the one whose
+    /// step came last.
+    fn resolve(&self, name: &str, before: usize) -> GeopResult<&Target> {
+        self.targets
+            .versions(name)
+            .filter(|target| target.verified_at == self.revision)
+            .filter_map(|target| Some((self.steps.get_index_of(&target.step)?, target)))
+            .filter(|&(position, _)| position < before)
+            .max_by_key(|&(position, _)| position)
+            .map(|(_, target)| target)
+            .ok_or_else(|| {
+                let reader = match self.steps.get_index(before) {
+                    Some(step) => format!("before step `{step}`"),
+                    None => format!("in step `{}` or before", self.step()),
+                };
+                GeopError::new(format!("target `{name}` is not defined {reader}"))
+            })
     }
 
-    /// The version of `name` a read at `at` sees.
-    fn resolve(&self, name: &str, at: At) -> GeopResult<&Target> {
-        let found = match at {
-            At::Now => self.head(name),
-            At::BeforeStep(index) => self
-                .targets
-                .versions(name)
-                .filter(|target| target.verified_at == self.revision)
-                .filter_map(|target| Some((self.position(&target.step)?, target)))
-                .filter(|&(position, _)| position < index)
-                .max_by_key(|&(position, _)| position)
-                .map(|(_, target)| target),
-        };
-        found.ok_or_else(|| {
-            let before = match at {
-                At::Now => format!("step `{}`", self.step()),
-                At::BeforeStep(index) => match self.steps.get_index(index) {
-                    Some(step) => format!("step `{step}`"),
-                    None => "the end".to_string(),
-                },
-            };
-            GeopError::new(format!("target `{name}` is not defined before {before}"))
-        })
+    /// The version of `name` a read sees now.
+    fn latest(&self, name: &str) -> Option<&Target> {
+        self.resolve(name, self.steps.len()).ok()
     }
 
     fn lookup<T: 'static>(
         &self,
         reference: &TargetReference<T>,
-        at: At,
+        before: usize,
     ) -> GeopResult<(&Target, &T)> {
         let name = reference.name();
-        let target = self.resolve(name, at)?;
+        let target = self.resolve(name, before)?;
         let data = target.data.as_ref().map_err(|e| {
             GeopError::new(format!(
                 "target `{name}` failed in step `{}`: {e}",
@@ -244,10 +231,9 @@ impl<I: Input, S: State> Part<I, S> {
     /// than `revision`.
     fn unchanged_since(&self, dependency: &Dependency, revision: Revision) -> bool {
         match dependency {
-            Dependency::Target { name, step } => {
-                self.heads.get(name) == Some(step)
-                    && (self.targets.get(name, step)).is_some_and(|t| t.changed_at <= revision)
-            }
+            Dependency::Target { name, step } => self
+                .latest(name)
+                .is_some_and(|target| &target.step == step && target.changed_at <= revision),
             Dependency::Input(name) => changed_at(&self.inputs, name) <= revision,
             Dependency::State(name) => changed_at(&self.state, name) <= revision,
         }
@@ -262,10 +248,10 @@ impl<I: Input, S: State> Part<I, S> {
         generator: impl FnOnce(&mut Reader<I, S>, &Args) -> GeopResult<Out>,
     ) -> GeopResult<()> {
         let name = reference.name();
-        if let Some(head) = self.head(name) {
+        if let Some(latest) = self.latest(name) {
             return Err(GeopError::new(format!(
                 "target `{name}` is defined twice: by step `{}` and by step `{}`",
-                head.step,
+                latest.step,
                 self.step()
             )));
         }
@@ -283,8 +269,8 @@ impl<I: Input, S: State> Part<I, S> {
         generator: impl FnOnce(Out, &mut Reader<I, S>, &Args) -> GeopResult<Out>,
     ) -> GeopResult<()> {
         let name = reference.name();
-        if let Some(head) = self.head(name)
-            && head.step == self.step()
+        if let Some(latest) = self.latest(name)
+            && latest.step == self.step()
         {
             return Err(GeopError::new(format!(
                 "target `{name}` is made twice by step `{}`",
@@ -298,7 +284,7 @@ impl<I: Input, S: State> Part<I, S> {
     }
 
     /// Makes this step's version of `reference`, reusing the last run's when
-    /// nothing it read has changed, and makes it the head.
+    /// nothing it read has changed.
     fn make_version<Out: PartialEq + 'static, Args: PartialEq + Clone + 'static>(
         &mut self,
         reference: &TargetReference<Out>,
@@ -319,7 +305,6 @@ impl<I: Input, S: State> Part<I, S> {
         });
         if reusable && let Some(target) = self.targets.get_mut(name, &step) {
             target.verified_at = revision;
-            self.heads.insert(name.to_string(), step);
             return Ok(());
         }
 
@@ -353,7 +338,7 @@ impl<I: Input, S: State> Part<I, S> {
         self.targets.insert(
             name,
             Target {
-                step: step.clone(),
+                step,
                 args: Box::new(args.clone()),
                 dependencies,
                 data,
@@ -361,13 +346,13 @@ impl<I: Input, S: State> Part<I, S> {
                 verified_at: revision,
             },
         );
-        self.heads.insert(name.to_string(), step);
         result
     }
 
     /// Defines the constraint `name` as what `generator` makes of `args`.
     /// A constraint is a target like any other: rebuilt only when what it
-    /// read changes, the state above all.
+    /// read changes, the state above all. Only what is defined here is
+    /// reported as a constraint, and only after its derivatives are checked.
     pub fn define_constraint<Args: PartialEq + Clone + 'static>(
         &mut self,
         name: &str,
@@ -383,15 +368,17 @@ impl<I: Input, S: State> Part<I, S> {
                     .contains(&Dependency::State(state.to_string()))
             })?;
             Ok(constraint)
-        })
+        })?;
+        self.constraints.insert(name.to_string());
+        Ok(())
     }
 
     /// The constraints defined so far in this run, or in the last.
     pub fn constraints(&self) -> BTreeMap<&str, &Constraint<S>> {
-        self.heads
+        self.constraints
             .iter()
-            .filter_map(|(name, step)| {
-                let data = self.targets.get(name, step)?.data.as_ref().ok()?;
+            .filter_map(|name| {
+                let data = self.latest(name)?.data.as_ref().ok()?;
                 Some((name.as_str(), data.downcast_ref::<Constraint<S>>()?))
             })
             .collect()
@@ -410,7 +397,7 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         &mut self,
         reference: &TargetReference<T>,
     ) -> GeopResult<&'a T> {
-        let (target, data) = self.part.lookup(reference, At::Now)?;
+        let (target, data) = self.part.lookup(reference, self.part.steps.len())?;
         self.dependencies.push(Dependency::Target {
             name: reference.name().to_string(),
             step: target.step.clone(),
@@ -429,18 +416,19 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     }
 }
 
-/// The part read at one position: now ([`Part::current`]), or before one
-/// step of the last run ([`Part::view`]), which is what that step is edited
-/// against and what scrubbing the timeline shows. Reading builds nothing, so
-/// a view shows the same however the editor got there.
+/// The part read before one position of the run: now ([`Part::current`]),
+/// or before one step of the last run ([`Part::view_before`]), which is what
+/// that step is edited against and what scrubbing the timeline shows.
+/// Reading builds nothing, so a view shows the same however the editor got
+/// there.
 pub struct View<'a, I, S> {
     part: &'a Part<I, S>,
-    at: At,
+    before: usize,
 }
 
 impl<'a, I: Input, S: State> View<'a, I, S> {
     pub fn retrieve_target<T: 'static>(&self, reference: &TargetReference<T>) -> GeopResult<&'a T> {
-        Ok(self.part.lookup(reference, self.at)?.1)
+        Ok(self.part.lookup(reference, self.before)?.1)
     }
 
     pub fn retrieve_input(&self, name: &str) -> Option<I> {
@@ -449,5 +437,39 @@ impl<'a, I: Input, S: State> View<'a, I, S> {
 
     pub fn retrieve_state(&self, name: &str) -> S {
         self.part.state(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::{Pose, Sc};
+    use geop_core_math::scalars::Scalar;
+
+    /// A removed input is kept, as gone, while a version depends on it, and
+    /// forgotten once none does.
+    #[test]
+    fn removed_input_is_forgotten_once_nothing_reads_it() {
+        let mut part = Part::<Sc, Pose>::default();
+        let x = BTreeMap::from([("x".to_string(), Sc::ONE)]);
+        let reads_x = |part: &mut Part<Sc, Pose>| {
+            part.begin_step("s").unwrap();
+            let reference = TargetReference::<Option<Sc>>::new("a");
+            part.define_target(&reference, &(), |reader, _| Ok(reader.retrieve_input("x")))
+                .unwrap();
+        };
+
+        part.begin_run(&x, &BTreeMap::new());
+        reads_x(&mut part);
+        part.end_run();
+
+        part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        reads_x(&mut part);
+        part.end_run();
+        assert!(part.inputs.contains_key("x"));
+
+        part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        part.end_run();
+        assert!(!part.inputs.contains_key("x"));
     }
 }

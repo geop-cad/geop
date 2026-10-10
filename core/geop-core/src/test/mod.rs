@@ -169,13 +169,10 @@ fn frame(runner: &ProgramRunner<Sc, Pose>, name: &str) -> Vector3<Sc> {
 }
 
 /// The frame `name` as it was before the step at `step_index`.
-fn frame_before(runner: &ProgramRunner<Sc, Pose>, step_index: usize, name: &str) -> Vector3<Sc> {
+fn frame_before(runner: &ProgramRunner<Sc, Pose>, step: &str, name: &str) -> Vector3<Sc> {
     let reference = TargetReference::<Frame>::new(name);
-    runner
-        .view(step_index)
-        .retrieve_target(&reference)
-        .unwrap()
-        .data
+    let view = runner.part.view_before(step).unwrap();
+    view.retrieve_target(&reference).unwrap().data
 }
 
 /// The failed steps and what went wrong at the root.
@@ -259,7 +256,7 @@ fn step_reads_only_targets_defined_before_it() {
     let middle = || middle_frame("step2", "step1_1", "step1_2");
     let not_defined = vec![(
         "step2".to_string(),
-        "target `step1_1` is not defined before step `step2`".to_string(),
+        "target `step1_1` is not defined in step `step2` or before".to_string(),
     )];
 
     ok(runner.run(
@@ -383,9 +380,9 @@ fn revisions_are_versions() {
     assert_eq!(take_built(), ["a@a", "a@s1", "m@m", "a@s2"]);
     assert_encloses(frame(&runner, "m"), [2.0, 0.0, 0.0]);
     assert_encloses(frame(&runner, "a"), [12.0, 0.0, 0.0]);
-    assert_encloses(frame_before(&runner, 1, "a"), [1.0, 0.0, 0.0]);
-    assert_encloses(frame_before(&runner, 2, "a"), [2.0, 0.0, 0.0]);
-    assert_encloses(frame_before(&runner, 4, "a"), [12.0, 0.0, 0.0]);
+    assert_encloses(frame_before(&runner, "s1", "a"), [1.0, 0.0, 0.0]);
+    assert_encloses(frame_before(&runner, "m", "a"), [2.0, 0.0, 0.0]);
+    assert_encloses(frame_before(&runner, "s2", "a"), [2.0, 0.0, 0.0]);
 
     ok(runner.run(&program(2.0), &inputs(&[("x", 1.0)]), &no_state()));
     assert_eq!(take_built(), ["a@s1", "m@m", "a@s2"]);
@@ -448,7 +445,7 @@ fn revision_needs_an_earlier_definition() {
         errors(&output),
         [(
             "s".into(),
-            "target `a` is not defined before step `s`".into()
+            "target `a` is not defined in step `s` or before".into()
         )]
     );
 }
@@ -487,10 +484,10 @@ fn user_event_sees_the_part_before_its_step() {
     ]);
     ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
 
-    for (step_index, by) in [(2, -2.0), (1, -1.0), (2, -2.0)] {
-        let state = runner.initial_state(&program, step_index).unwrap();
+    for (step, by) in [("s2", -2.0), ("s1", -1.0), ("s2", -2.0)] {
+        let state = runner.initial_state(&program, step).unwrap();
         let edited = runner
-            .process_user_event(&program, step_index, &*state, UserEvent::PointAndClick)
+            .process_user_event(&program, step, &*state, UserEvent::PointAndClick)
             .unwrap();
         let args = edited.args.downcast_ref::<ShiftFrameArgs>().unwrap();
         assert_encloses(args.by, [by, 0.0, 0.0]);
@@ -651,4 +648,61 @@ fn step_id_used_twice_is_an_error() {
     assert_encloses(frame(&runner, "c"), [1.0, 0.0, 0.0]);
     let reference = TargetReference::<Frame>::new("b");
     assert!(runner.part.current().retrieve_target(&reference).is_err());
+}
+
+/// The editor finds a step's view by its id, so a program edited since the
+/// last run still edits each step against its own view, and a step the last
+/// run did not have is named.
+#[test]
+fn edited_program_finds_each_step_by_id() {
+    let mut runner = runner();
+    let program = Program::new(vec![
+        input_frame("a", "a", "x"),
+        shift_frame("s1", "a", 1.0),
+        shift_frame("s2", "a", 5.0),
+    ]);
+    ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
+
+    let edited = Program::new(vec![
+        input_frame("a", "a", "x"),
+        shift_frame("new", "a", 7.0),
+        shift_frame("s1", "a", 1.0),
+        shift_frame("s2", "a", 5.0),
+    ]);
+    let click = |step| {
+        let state = runner.initial_state(&edited, step)?;
+        runner.process_user_event(&edited, step, &*state, UserEvent::PointAndClick)
+    };
+    let edited_s2 = click("s2").unwrap();
+    let args = edited_s2.args.downcast_ref::<ShiftFrameArgs>().unwrap();
+    assert_encloses(args.by, [-2.0, 0.0, 0.0]);
+    assert_eq!(
+        click("new").err().unwrap().root_message(),
+        "step `new` is not in the last run"
+    );
+}
+
+/// Only `define_constraint` makes a constraint: a target that merely holds
+/// one has not had its derivatives checked, and is not reported.
+#[test]
+fn only_defined_constraints_are_reported() {
+    let mut part = Part::<Sc, Pose>::default();
+    part.begin_run(&BTreeMap::new(), &pose_at(0.0));
+    part.begin_step("s").unwrap();
+    let unchecked = TargetReference::<Constraint<Pose>>::new("unchecked");
+    part.define_target(&unchecked, &(), |_, _| {
+        Ok(Constraint {
+            residuals: vec![Sc::ZERO],
+            jacobian: BTreeMap::from([("body".to_string(), vec![])]),
+        })
+    })
+    .unwrap();
+    part.define_constraint("checked", &(), |_, _| {
+        Ok(Constraint {
+            residuals: vec![Sc::ZERO],
+            jacobian: BTreeMap::new(),
+        })
+    })
+    .unwrap();
+    assert_eq!(part.constraints().keys().collect::<Vec<_>>(), [&"checked"]);
 }

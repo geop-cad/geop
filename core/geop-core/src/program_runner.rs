@@ -6,7 +6,7 @@ use crate::{
     constraint::Constraint,
     operation::{Edited, EditingPresentation, ErasedOperation, UserEvent},
     operation_registry::OperationRegistry,
-    part::{Input, Part, State, View},
+    part::{Input, Part, State},
     program::{Program, ProgramStep},
 };
 
@@ -61,51 +61,46 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
         }
     }
 
-    /// The part as it was before the step at `step_index` of the last run;
-    /// `program.steps.len()` for the finished part.
-    pub fn view(&self, step_index: usize) -> View<'_, I, S> {
-        self.part.view(step_index)
-    }
-
+    /// The step `step` of `program` and its operation. Steps are found by
+    /// id, and so is the view an editor reads them against
+    /// ([`Part::view_before`]): a program edited since the last run still
+    /// edits each step against its own view, or fails naming it.
     fn step<'a>(
         &self,
         program: &'a Program,
-        step_index: usize,
+        step: &str,
     ) -> GeopResult<(&'a ProgramStep, &dyn ErasedOperation<I, S>)> {
-        let step = program
-            .steps
-            .get(step_index)
-            .ok_or_else(|| GeopError::new(format!("the program has no step {step_index}")))?;
-        Ok((step, self.registry.get(step.operation)?))
+        let program_step = (program.steps.iter().find(|s| s.id == step))
+            .ok_or_else(|| GeopError::new(format!("the program has no step `{step}`")))?;
+        Ok((program_step, self.registry.get(program_step.operation)?))
     }
 
-    /// The editing state a step starts with.
-    pub fn initial_state(&self, program: &Program, step_index: usize) -> GeopResult<Box<dyn Any>> {
-        Ok(self.step(program, step_index)?.1.initial_state())
+    /// The editing state the step `step` starts with.
+    pub fn initial_state(&self, program: &Program, step: &str) -> GeopResult<Box<dyn Any>> {
+        Ok(self.step(program, step)?.1.initial_state())
     }
 
-    /// What the editor shows while the step at `step_index` is edited.
-    /// `program` is the program last run.
+    /// What the editor shows while the step `step` is edited.
     pub fn presentation(
         &self,
         program: &Program,
-        step_index: usize,
+        step: &str,
         state: &dyn Any,
     ) -> GeopResult<EditingPresentation> {
-        let (step, operation) = self.step(program, step_index)?;
-        operation.presentation(&self.view(step_index), &*step.args, state)
+        let (program_step, operation) = self.step(program, step)?;
+        operation.presentation(&self.part.view_before(step)?, &*program_step.args, state)
     }
 
-    /// The arguments and editing state of the step at `step_index` after
-    /// `event`. `program` is the program last run.
+    /// The arguments and editing state of the step `step` after `event`.
     pub fn process_user_event(
         &self,
         program: &Program,
-        step_index: usize,
+        step: &str,
         state: &dyn Any,
         event: UserEvent,
     ) -> GeopResult<Edited> {
-        let (step, operation) = self.step(program, step_index)?;
-        operation.process_user_event(&self.view(step_index), &*step.args, state, event)
+        let (program_step, operation) = self.step(program, step)?;
+        let view = self.part.view_before(step)?;
+        operation.process_user_event(&view, &*program_step.args, state, event)
     }
 }

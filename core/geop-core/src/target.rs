@@ -122,6 +122,11 @@ impl TargetRegistry {
         }
     }
 
+    /// What the versions read, all of them.
+    pub(crate) fn dependencies(&self) -> impl Iterator<Item = &Dependency> {
+        (self.0.values().flatten()).flat_map(|target| &target.dependencies)
+    }
+
     pub(crate) fn retain(&mut self, keep: impl Fn(&Target) -> bool) {
         self.0.retain(|_, versions| {
             versions.retain(|target| keep(target));
