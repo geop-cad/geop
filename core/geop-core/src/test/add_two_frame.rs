@@ -1,51 +1,49 @@
-use crate::operation::Operation;
-use crate::target::TargetReference;
-use crate::test::{Frame, record_built};
+use geop_core_math::geop_error::GeopResult;
+use geop_core_math::vector::Vector3;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+use crate::operation::{EditingPresentation, Operation, UserEvent};
+use crate::part::{Part, View};
+use crate::target::TargetReference;
+use crate::test::{Frame, Pose, Sc, no_presentation, record_built};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AddTwoFrameArgs {
-    pub data1: [f64; 3],
-    pub data2: [f64; 3],
+    pub data1: Vector3<Sc>,
+    pub data2: Vector3<Sc>,
 }
 
-pub struct AddTwoFrameOperation {}
+/// Defines the targets `<step>_1` and `<step>_2` as frames at the two points.
+pub struct AddTwoFrameOperation;
 
 impl Operation for AddTwoFrameOperation {
+    const NAME: &'static str = "add_two_frame";
     type Args = AddTwoFrameArgs;
-
     type EditingState = ();
+    type Input = Sc;
+    type State = Pose;
 
-    fn run(
-        id: &str,
-        part: &mut crate::part::Part,
-        args: &Self::Args,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
         for (suffix, data) in [("_1", &args.data1), ("_2", &args.data2)] {
-            let name = id.to_string() + suffix;
-            part.define_target(
-                TargetReference::<Frame>::new(name.clone()),
-                data,
-                |_, data| {
-                    record_built(&name);
-                    Ok(Frame { data: *data })
-                },
-            )?;
+            let reference = TargetReference::<Frame>::new(step.to_string() + suffix);
+            part.define_target(&reference, data, |_, data| {
+                record_built(reference.name(), step);
+                Ok(Frame { data: *data })
+            })?;
         }
         Ok(())
     }
 
-    fn presentation(
-        _args: &Self::Args,
-        _state: &Self::EditingState,
-    ) -> crate::operation::EditingPresentation {
-        todo!()
+    fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {
+        Ok(no_presentation())
     }
 
     fn process_user_event(
-        _args: &Self::Args,
-        _state: &Self::EditingState,
-        _event: crate::operation::UserEvent,
-    ) -> (Self::Args, Self::EditingState) {
-        todo!()
+        _: &View<Sc, Pose>,
+        args: &Self::Args,
+        _: &(),
+        _: UserEvent,
+    ) -> GeopResult<(Self::Args, ())> {
+        Ok((args.clone(), ()))
     }
 }

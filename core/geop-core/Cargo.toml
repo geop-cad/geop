@@ -4,5 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# A deleted target's key must not find a later target in its slot.
-slotmap.workspace = true
+geop-core-math.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The steps of a run: in order, and found by id.
+indexmap.workspace = true

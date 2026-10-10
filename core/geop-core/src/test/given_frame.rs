@@ -1,94 +1,94 @@
-use crate::operation::Operation;
-use crate::target::TargetReference;
-use crate::test::{Frame, record_built};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector3,
+};
+use serde::{Deserialize, Serialize};
 
-/// Defines the target `target` as the frame at `(input, 0, 0)`.
-#[derive(Debug, Clone, PartialEq)]
+use crate::operation::{EditingPresentation, Operation, UserEvent};
+use crate::part::{Part, View};
+use crate::target::TargetReference;
+use crate::test::{Frame, Pose, Sc, no_presentation, record_built};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputFrameArgs {
     pub target: String,
     pub input: String,
 }
 
-pub struct InputFrameOperation {}
+/// Defines the target `target` as the frame at `(input, 0, 0)`.
+pub struct InputFrameOperation;
 
 impl Operation for InputFrameOperation {
+    const NAME: &'static str = "input_frame";
     type Args = InputFrameArgs;
-
     type EditingState = ();
+    type Input = Sc;
+    type State = Pose;
 
-    fn run(
-        _id: &str,
-        part: &mut crate::part::Part,
-        args: &Self::Args,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let frame_id = TargetReference::<Frame>::new(args.target.clone());
-        part.define_target(frame_id, args, |part, args| {
-            record_built(&args.target);
+    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+        let reference = TargetReference::<Frame>::new(&args.target);
+        part.define_target(&reference, args, |part, args| {
+            record_built(&args.target, step);
             let x = part
                 .retrieve_input(&args.input)
-                .ok_or_else(|| format!("input `{}` is not given", args.input))?;
+                .ok_or_else(|| GeopError::new(format!("input `{}` is not given", args.input)))?;
             Ok(Frame {
-                data: [x, 0.0, 0.0],
+                data: Vector3::from_array([x, Sc::ZERO, Sc::ZERO]),
             })
         })
     }
 
-    fn presentation(
-        _args: &Self::Args,
-        _state: &Self::EditingState,
-    ) -> crate::operation::EditingPresentation {
-        todo!()
+    fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {
+        Ok(no_presentation())
     }
 
     fn process_user_event(
-        _args: &Self::Args,
-        _state: &Self::EditingState,
-        _event: crate::operation::UserEvent,
-    ) -> (Self::Args, Self::EditingState) {
-        todo!()
+        _: &View<Sc, Pose>,
+        args: &Self::Args,
+        _: &(),
+        _: UserEvent,
+    ) -> GeopResult<(Self::Args, ())> {
+        Ok((args.clone(), ()))
     }
 }
 
-/// Defines the step's target as the frame at the first three components of
-/// the state `state`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateFrameArgs {
     pub state: String,
 }
 
-pub struct StateFrameOperation {}
+/// Defines the step's target as the frame at the first three components of
+/// the state `state`.
+pub struct StateFrameOperation;
 
 impl Operation for StateFrameOperation {
+    const NAME: &'static str = "state_frame";
     type Args = StateFrameArgs;
-
     type EditingState = ();
+    type Input = Sc;
+    type State = Pose;
 
-    fn run(
-        id: &str,
-        part: &mut crate::part::Part,
-        args: &Self::Args,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let frame_id = TargetReference::<Frame>::new(id.to_string());
-        part.define_target(frame_id, args, |part, args| {
-            record_built(id);
+    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+        part.define_target(&TargetReference::<Frame>::new(step), args, |part, args| {
+            record_built(step, step);
             let pose = part.retrieve_state(&args.state);
-            let [x, y, z, ..] = *pose.dual_quaternion();
-            Ok(Frame { data: [x, y, z] })
+            Ok(Frame {
+                data: pose.dual_quaternion().head::<3>(),
+            })
         })
     }
 
-    fn presentation(
-        _args: &Self::Args,
-        _state: &Self::EditingState,
-    ) -> crate::operation::EditingPresentation {
-        todo!()
+    fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {
+        Ok(no_presentation())
     }
 
     fn process_user_event(
-        _args: &Self::Args,
-        _state: &Self::EditingState,
-        _event: crate::operation::UserEvent,
-    ) -> (Self::Args, Self::EditingState) {
-        todo!()
+        _: &View<Sc, Pose>,
+        args: &Self::Args,
+        _: &(),
+        _: UserEvent,
+    ) -> GeopResult<(Self::Args, ())> {
+        Ok((args.clone(), ()))
     }
 }

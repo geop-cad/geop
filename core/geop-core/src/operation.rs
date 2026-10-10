@@ -1,4 +1,9 @@
-use crate::part::Part;
+use std::any::Any;
+
+use geop_core_math::geop_error::{GeopError, GeopResult};
+use serde::{Serialize, de::DeserializeOwned};
+
+use crate::part::{self, Part, View};
 
 pub enum UserEvent {
     PointAndClick,
@@ -12,87 +17,138 @@ pub struct EditingPresentation {
 }
 
 pub trait Operation: 'static {
-    type Args;
-    type EditingState;
+    /// The name programs store the operation's steps under.
+    const NAME: &'static str;
+    /// What a step of the operation is given. It is saved with the program,
+    /// so it names targets and entities, never holds their internal ids.
+    type Args: Serialize + DeserializeOwned + 'static;
+    /// What the editor remembers about a step while it is edited, starting
+    /// from the default.
+    type EditingState: Default + 'static;
+    /// The inputs and state of the parts the operation builds.
+    type Input: part::Input;
+    type State: part::State;
 
-    fn run(id: &str, part: &mut Part, args: &Self::Args) -> Result<(), Box<dyn std::error::Error>>;
-    fn presentation(args: &Self::Args, state: &Self::EditingState) -> EditingPresentation;
+    fn run(
+        step: &str,
+        part: &mut Part<Self::Input, Self::State>,
+        args: &Self::Args,
+    ) -> GeopResult<()>;
+    /// What the editor shows while the step is edited, given the part as it
+    /// was before the step.
+    fn presentation(
+        part: &View<Self::Input, Self::State>,
+        args: &Self::Args,
+        state: &Self::EditingState,
+    ) -> GeopResult<EditingPresentation>;
+    /// The step's arguments and state after `event`, given the part as it was
+    /// before the step.
     fn process_user_event(
+        part: &View<Self::Input, Self::State>,
         args: &Self::Args,
         state: &Self::EditingState,
         event: UserEvent,
-    ) -> (Self::Args, Self::EditingState);
+    ) -> GeopResult<(Self::Args, Self::EditingState)>;
 }
 
-pub trait ErasedOperation {
-    fn run(
-        &self,
-        id: &str,
-        part: &mut Part,
-        args: &dyn std::any::Any,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+/// A step's arguments and editing state after a user event, type erased.
+pub struct Edited {
+    pub args: Box<dyn Any>,
+    pub state: Box<dyn Any>,
+}
+
+/// An [`Operation`] with its types erased, so that operations of all kinds
+/// can be kept in one [`crate::operation_registry::OperationRegistry`]. Every operation is
+/// one, through its value.
+pub trait ErasedOperation<I, S> {
+    fn name(&self) -> &'static str;
+    fn run(&self, step: &str, part: &mut Part<I, S>, args: &dyn Any) -> GeopResult<()>;
+    fn initial_state(&self) -> Box<dyn Any>;
     fn presentation(
         &self,
-        args: &dyn std::any::Any,
-        state: &dyn std::any::Any,
-    ) -> Result<EditingPresentation, Box<dyn std::error::Error>>;
+        part: &View<I, S>,
+        args: &dyn Any,
+        state: &dyn Any,
+    ) -> GeopResult<EditingPresentation>;
     fn process_user_event(
         &self,
-        args: &dyn std::any::Any,
-        state: &dyn std::any::Any,
+        part: &View<I, S>,
+        args: &dyn Any,
+        state: &dyn Any,
         event: UserEvent,
-    ) -> Result<(Box<dyn std::any::Any>, Box<dyn std::any::Any>), Box<dyn std::error::Error>>;
+    ) -> GeopResult<Edited>;
+    fn args_from_json(&self, json: serde_json::Value) -> GeopResult<Box<dyn Any>>;
+    fn args_to_json(&self, args: &dyn Any) -> GeopResult<serde_json::Value>;
 }
 
-pub struct Registered<O>(std::marker::PhantomData<fn() -> O>);
+fn downcast<'a, O: Operation, T: 'static>(value: &'a dyn Any, what: &str) -> GeopResult<&'a T> {
+    value.downcast_ref::<T>().ok_or_else(|| {
+        GeopError::new(format!(
+            "operation `{}` was given {what} that are not `{}`",
+            O::NAME,
+            std::any::type_name::<T>()
+        ))
+    })
+}
 
-impl<O: Operation> Registered<O> {
-    pub fn boxed() -> Box<dyn ErasedOperation> {
-        Box::new(Registered::<O>(std::marker::PhantomData))
+impl<O: Operation> ErasedOperation<O::Input, O::State> for O {
+    fn name(&self) -> &'static str {
+        O::NAME
     }
-}
 
-impl<O: Operation> ErasedOperation for Registered<O> {
     fn run(
         &self,
-        id: &str,
-        part: &mut Part,
-        args: &dyn std::any::Any,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let args = args
-            .downcast_ref::<O::Args>()
-            .ok_or("Failed to downcast args")?;
-        O::run(id, part, args)?;
-        Ok(())
+        step: &str,
+        part: &mut Part<O::Input, O::State>,
+        args: &dyn Any,
+    ) -> GeopResult<()> {
+        <O as Operation>::run(step, part, downcast::<O, O::Args>(args, "arguments")?)
+    }
+
+    fn initial_state(&self) -> Box<dyn Any> {
+        Box::new(O::EditingState::default())
     }
 
     fn presentation(
         &self,
-        args: &dyn std::any::Any,
-        state: &dyn std::any::Any,
-    ) -> Result<EditingPresentation, Box<dyn std::error::Error>> {
-        let args = args
-            .downcast_ref::<O::Args>()
-            .ok_or("Failed to downcast args")?;
-        let state = state
-            .downcast_ref::<O::EditingState>()
-            .ok_or("Failed to downcast state")?;
-        Ok(O::presentation(args, state))
+        part: &View<O::Input, O::State>,
+        args: &dyn Any,
+        state: &dyn Any,
+    ) -> GeopResult<EditingPresentation> {
+        <O as Operation>::presentation(
+            part,
+            downcast::<O, O::Args>(args, "arguments")?,
+            downcast::<O, O::EditingState>(state, "an editing state")?,
+        )
     }
 
     fn process_user_event(
         &self,
-        args: &dyn std::any::Any,
-        state: &dyn std::any::Any,
+        part: &View<O::Input, O::State>,
+        args: &dyn Any,
+        state: &dyn Any,
         event: UserEvent,
-    ) -> Result<(Box<dyn std::any::Any>, Box<dyn std::any::Any>), Box<dyn std::error::Error>> {
-        let args = args
-            .downcast_ref::<O::Args>()
-            .ok_or("Failed to downcast args")?;
-        let state = state
-            .downcast_ref::<O::EditingState>()
-            .ok_or("Failed to downcast state")?;
-        let (new_args, new_state) = O::process_user_event(args, state, event);
-        Ok((Box::new(new_args), Box::new(new_state)))
+    ) -> GeopResult<Edited> {
+        let (args, state) = <O as Operation>::process_user_event(
+            part,
+            downcast::<O, O::Args>(args, "arguments")?,
+            downcast::<O, O::EditingState>(state, "an editing state")?,
+            event,
+        )?;
+        Ok(Edited {
+            args: Box::new(args),
+            state: Box::new(state),
+        })
+    }
+
+    fn args_from_json(&self, json: serde_json::Value) -> GeopResult<Box<dyn Any>> {
+        let args: O::Args = serde_json::from_value(json)
+            .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::NAME)))?;
+        Ok(Box::new(args))
+    }
+
+    fn args_to_json(&self, args: &dyn Any) -> GeopResult<serde_json::Value> {
+        serde_json::to_value(downcast::<O, O::Args>(args, "arguments")?)
+            .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::NAME)))
     }
 }
