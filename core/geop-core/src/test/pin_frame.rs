@@ -7,7 +7,7 @@ use crate::constraint::Constraint;
 use crate::operation::{EditingPresentation, Operation, UserEvent};
 use crate::part::{Part, View};
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PinFrameArgs {
@@ -27,8 +27,9 @@ impl Operation for PinFrameOperation {
     type State = Pose;
 
     fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
-        part.define_constraint(step, args, |part, args| {
-            record_built(step, step);
+        let args = (label(step, step), args.clone());
+        part.define_constraint(step, &args, |part, (label, args)| {
+            record_built(label);
             let frame = part.retrieve_target(&TargetReference::<Frame>::new(&args.frame))?;
             let pose = part.retrieve_state(&args.state);
             let position = pose.dual_quaternion().head::<3>();

@@ -84,8 +84,14 @@ thread_local! {
     static BUILT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-fn record_built(target: &str, step: &str) {
-    BUILT.with(|built| built.borrow_mut().push(format!("{target}@{step}")));
+/// The label a version is logged under when built. Generators capture
+/// nothing, so it travels in their arguments.
+fn label(target: &str, step: &str) -> String {
+    format!("{target}@{step}")
+}
+
+fn record_built(label: &str) {
+    BUILT.with(|built| built.borrow_mut().push(label.to_string()));
 }
 
 fn take_built() -> Vec<String> {
@@ -591,12 +597,10 @@ fn inconsistent_constraint_is_an_error() {
     let mut part = Part::<Sc, Pose>::default();
     part.begin_run(&BTreeMap::new(), &pose_at(0.0));
     part.begin_step("s").unwrap();
-    let row = Vector::zero();
-
     let unread = part.define_constraint("unread", &(), |_, _| {
         Ok(Constraint::<Pose> {
             residuals: vec![Sc::ZERO],
-            jacobian: BTreeMap::from([("body".to_string(), vec![row])]),
+            jacobian: BTreeMap::from([("body".to_string(), vec![Vector::zero()])]),
         })
     });
     assert_eq!(
@@ -608,7 +612,7 @@ fn inconsistent_constraint_is_an_error() {
         part.retrieve_state("body");
         Ok(Constraint::<Pose> {
             residuals: vec![Sc::ZERO; 2],
-            jacobian: BTreeMap::from([("body".to_string(), vec![row])]),
+            jacobian: BTreeMap::from([("body".to_string(), vec![Vector::zero()])]),
         })
     });
     assert_eq!(

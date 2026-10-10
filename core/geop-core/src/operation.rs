@@ -61,7 +61,6 @@ pub struct Edited {
 /// can be kept in one [`crate::operation_registry::OperationRegistry`]. Every operation is
 /// one, through its value.
 pub trait ErasedOperation<I, S> {
-    fn name(&self) -> &'static str;
     fn run(&self, step: &str, part: &mut Part<I, S>, args: &dyn Any) -> GeopResult<()>;
     fn initial_state(&self) -> Box<dyn Any>;
     fn presentation(
@@ -92,10 +91,6 @@ fn downcast<'a, O: Operation, T: 'static>(value: &'a dyn Any, what: &str) -> Geo
 }
 
 impl<O: Operation> ErasedOperation<O::Input, O::State> for O {
-    fn name(&self) -> &'static str {
-        O::NAME
-    }
-
     fn run(
         &self,
         step: &str,

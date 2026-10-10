@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::operation::{EditingPresentation, Operation, UserEvent};
 use crate::part::{Part, View};
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShiftFrameArgs {
@@ -27,8 +27,9 @@ impl Operation for ShiftFrameOperation {
     fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
         for target in &args.targets {
             let reference = TargetReference::<Frame>::new(target);
-            part.revise_target(&reference, &args.by, |frame, _, by| {
-                record_built(target, step);
+            let args = (label(target, step), args.by);
+            part.revise_target(&reference, &args, |frame, _, (label, by)| {
+                record_built(label);
                 Ok(Frame {
                     data: frame.data.add(by),
                 })

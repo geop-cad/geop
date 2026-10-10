@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::operation::{EditingPresentation, Operation, UserEvent};
 use crate::part::{Part, View};
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputFrameArgs {
@@ -28,8 +28,9 @@ impl Operation for InputFrameOperation {
 
     fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
         let reference = TargetReference::<Frame>::new(&args.target);
-        part.define_target(&reference, args, |part, args| {
-            record_built(&args.target, step);
+        let args = (label(&args.target, step), args.clone());
+        part.define_target(&reference, &args, |part, (label, args)| {
+            record_built(label);
             let x = part
                 .retrieve_input(&args.input)
                 .ok_or_else(|| GeopError::new(format!("input `{}` is not given", args.input)))?;
@@ -70,13 +71,18 @@ impl Operation for StateFrameOperation {
     type State = Pose;
 
     fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
-        part.define_target(&TargetReference::<Frame>::new(step), args, |part, args| {
-            record_built(step, step);
-            let pose = part.retrieve_state(&args.state);
-            Ok(Frame {
-                data: pose.dual_quaternion().head::<3>(),
-            })
-        })
+        let args = (label(step, step), args.clone());
+        part.define_target(
+            &TargetReference::<Frame>::new(step),
+            &args,
+            |part, (label, args)| {
+                record_built(label);
+                let pose = part.retrieve_state(&args.state);
+                Ok(Frame {
+                    data: pose.dual_quaternion().head::<3>(),
+                })
+            },
+        )
     }
 
     fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {

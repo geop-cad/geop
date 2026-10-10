@@ -68,11 +68,17 @@ impl<I, S> OperationRegistry<I, S> {
             .into_iter()
             .map(|step| {
                 let context = |e: GeopError| e.with_context(format!("loading step `{}`", step.id));
-                let operation = self.get(&step.operation).map_err(context)?;
+                let (&name, operation) = (self.0.get_key_value(step.operation.as_str()))
+                    .ok_or_else(|| {
+                        context(GeopError::new(format!(
+                            "unknown operation `{}`",
+                            step.operation
+                        )))
+                    })?;
                 Ok(ProgramStep {
                     args: operation.args_from_json(step.args).map_err(context)?,
                     id: step.id,
-                    operation: operation.name(),
+                    operation: name,
                 })
             })
             .collect::<GeopResult<_>>()?;

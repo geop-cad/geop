@@ -1,5 +1,19 @@
-use crate::part::{Dependency, Revision};
 use std::{any::Any, collections::HashMap};
+
+/// Counts the runs of a part, starting at 1. Revision 0 is before the first
+/// run: what was never set has not changed since then.
+pub(crate) type Revision = u64;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum Dependency {
+    /// The version of target `name` that step `step` made.
+    Target {
+        name: String,
+        step: String,
+    },
+    Input(String),
+    State(String),
+}
 
 /// The stable name of a target, as programs and arguments refer to it, and
 /// the type of its value.

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::operation::{EditingPresentation, Operation, UserEvent};
 use crate::part::{Part, View};
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AddTwoFrameArgs {
@@ -26,8 +26,9 @@ impl Operation for AddTwoFrameOperation {
     fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
         for (suffix, data) in [("_1", &args.data1), ("_2", &args.data2)] {
             let reference = TargetReference::<Frame>::new(step.to_string() + suffix);
-            part.define_target(&reference, data, |_, data| {
-                record_built(reference.name(), step);
+            let args = (label(reference.name(), step), *data);
+            part.define_target(&reference, &args, |_, (label, data)| {
+                record_built(label);
                 Ok(Frame { data: *data })
             })?;
         }

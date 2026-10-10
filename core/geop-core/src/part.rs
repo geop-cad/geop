@@ -6,7 +6,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     constraint::Constraint,
-    target::{Revisable, Target, TargetReference, TargetRegistry},
+    target::{Dependency, Revisable, Revision, Target, TargetReference, TargetRegistry},
 };
 
 /// A value a run is given by name, which no step changes: a parameter.
@@ -25,21 +25,6 @@ pub trait State: Clone + PartialEq + Default + std::fmt::Debug + 'static {
     /// What a constraint's derivative by a value of the state is: for a pose,
     /// its twist.
     type Tangent: Clone + PartialEq + std::fmt::Debug + 'static;
-}
-
-/// Counts the runs of a part, starting at 1. Revision 0 is before the first
-/// run: what was never set has not changed since then.
-pub(crate) type Revision = u64;
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Dependency {
-    /// The version of target `name` that step `step` made.
-    Target {
-        name: String,
-        step: String,
-    },
-    Input(String),
-    State(String),
 }
 
 /// A value given to a run from outside, and the run in which it last changed.
@@ -178,9 +163,10 @@ impl<I: Input, S: State> Part<I, S> {
             .max_by_key(|&(position, _)| position)
             .map(|(_, target)| target)
             .ok_or_else(|| {
-                let reader = match self.steps.get_index(before) {
-                    Some(step) => format!("before step `{step}`"),
-                    None => format!("in step `{}` or before", self.step()),
+                let reader = match (self.steps.get_index(before), self.steps.last()) {
+                    (Some(step), _) => format!("before step `{step}`"),
+                    (None, Some(last)) => format!("in step `{last}` or before"),
+                    (None, None) => "before any step".to_string(),
                 };
                 GeopError::new(format!("target `{name}` is not defined {reader}"))
             })
@@ -241,7 +227,31 @@ impl<I: Input, S: State> Part<I, S> {
 
     /// Defines the target `reference` as what `generator` makes of `args`.
     /// Fails if a step has defined it before in this run.
+    ///
+    /// A generator is a plain function, not a closure: what it makes may
+    /// depend only on `args`, which a reuse compares, and on what it reads,
+    /// which is recorded. A value captured from outside would be neither, and
+    /// the version would be reused after it changed:
+    ///
+    /// ```compile_fail
+    /// # use geop_core::{part::{Input, Part, State}, target::TargetReference};
+    /// fn define<I: Input, S: State>(part: &mut Part<I, S>, outside: u32) {
+    ///     let reference = TargetReference::<u32>::new("t");
+    ///     part.define_target(&reference, &(), |_, _| Ok(outside));
+    /// }
+    /// ```
     pub fn define_target<Out: PartialEq + 'static, Args: PartialEq + Clone + 'static>(
+        &mut self,
+        reference: &TargetReference<Out>,
+        args: &Args,
+        generator: Generator<I, S, Args, Out>,
+    ) -> GeopResult<()> {
+        self.define(reference, args, generator)
+    }
+
+    /// [`Part::define_target`], for the framework's own generators, which
+    /// wrap an operation's.
+    fn define<Out: PartialEq + 'static, Args: PartialEq + Clone + 'static>(
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
@@ -262,11 +272,12 @@ impl<I: Input, S: State> Part<I, S> {
     /// what `generator` makes of its latest version and `args`. The latest
     /// version stays as it is, for the steps that read it and for the next
     /// run; the generator revises a copy of it ([`Revisable::to_revise`]).
+    /// A plain function, like [`Part::define_target`]'s.
     pub fn revise_target<Out: Revisable, Args: PartialEq + Clone + 'static>(
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
-        generator: impl FnOnce(Out, &mut Reader<I, S>, &Args) -> GeopResult<Out>,
+        generator: fn(Out, &mut Reader<I, S>, &Args) -> GeopResult<Out>,
     ) -> GeopResult<()> {
         let name = reference.name();
         if let Some(latest) = self.latest(name)
@@ -353,14 +364,15 @@ impl<I: Input, S: State> Part<I, S> {
     /// A constraint is a target like any other: rebuilt only when what it
     /// read changes, the state above all. Only what is defined here is
     /// reported as a constraint, and only after its derivatives are checked.
+    /// A plain function, like [`Part::define_target`]'s.
     pub fn define_constraint<Args: PartialEq + Clone + 'static>(
         &mut self,
         name: &str,
         args: &Args,
-        generator: impl FnOnce(&mut Reader<I, S>, &Args) -> GeopResult<Constraint<S>>,
+        generator: Generator<I, S, Args, Constraint<S>>,
     ) -> GeopResult<()> {
         let reference = TargetReference::<Constraint<S>>::new(name);
-        self.define_target(&reference, args, |reader, args| {
+        self.define(&reference, args, |reader, args| {
             let constraint = generator(reader, args)?;
             constraint.check(name, |state| {
                 reader
@@ -384,6 +396,9 @@ impl<I: Input, S: State> Part<I, S> {
             .collect()
     }
 }
+
+/// What makes a target's value from its arguments and what it reads.
+pub type Generator<I, S, Args, Out> = fn(&mut Reader<I, S>, &Args) -> GeopResult<Out>;
 
 /// What a target's generator reads the part through. It records each read,
 /// so that the target is rebuilt when any of it changes.
