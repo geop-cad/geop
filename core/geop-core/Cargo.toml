@@ -4,3 +4,5 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# A deleted target's key must not find a later target in its slot.
+slotmap.workspace = true

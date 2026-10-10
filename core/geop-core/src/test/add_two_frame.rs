@@ -1,6 +1,6 @@
 use crate::operation::Operation;
 use crate::target::TargetReference;
-use crate::test::Frame;
+use crate::test::{Frame, record_built};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddTwoFrameArgs {
@@ -16,26 +16,21 @@ impl Operation for AddTwoFrameOperation {
     type EditingState = ();
 
     fn run(
-        id: &String,
+        id: &str,
         part: &mut crate::part::Part,
         args: &Self::Args,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        Self: Sized,
-    {
-        let frame_id1 = TargetReference::<Frame>::new(id.clone() + "_1");
-        part.define_target(frame_id1, &args.data1, |_part, args| {
-            let frame = Frame { data: args.clone() };
-            println!("Created frame1: {:?}", frame);
-            Ok(frame)
-        })?;
-
-        let frame_id2 = TargetReference::<Frame>::new(id.to_string() + "_2");
-        part.define_target(frame_id2, &args.data2, |_part, args| {
-            let frame = Frame { data: args.clone() };
-            println!("Created frame2: {:?}", frame);
-            Ok(frame)
-        })?;
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for (suffix, data) in [("_1", &args.data1), ("_2", &args.data2)] {
+            let name = id.to_string() + suffix;
+            part.define_target(
+                TargetReference::<Frame>::new(name.clone()),
+                data,
+                |_, data| {
+                    record_built(&name);
+                    Ok(Frame { data: *data })
+                },
+            )?;
+        }
         Ok(())
     }
 

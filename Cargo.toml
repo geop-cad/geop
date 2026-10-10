@@ -72,6 +72,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"
 indexmap = "2"
+# Stable generational keys for entries that come and go (see
+# `geop_core::target::TargetRegistry`).
+slotmap = "1"
 # A compact binary form for what steps keep between builds (see
 # `geop_ops::Cache`).
 postcard = { version = "1", default-features = false, features = ["alloc"] }

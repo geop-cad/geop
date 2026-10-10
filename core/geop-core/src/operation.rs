@@ -15,13 +15,7 @@ pub trait Operation: 'static {
     type Args;
     type EditingState;
 
-    fn run(
-        id: &String,
-        part: &mut Part,
-        args: &Self::Args,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        Self: Sized;
+    fn run(id: &str, part: &mut Part, args: &Self::Args) -> Result<(), Box<dyn std::error::Error>>;
     fn presentation(args: &Self::Args, state: &Self::EditingState) -> EditingPresentation;
     fn process_user_event(
         args: &Self::Args,
@@ -33,7 +27,7 @@ pub trait Operation: 'static {
 pub trait ErasedOperation {
     fn run(
         &self,
-        id: &String,
+        id: &str,
         part: &mut Part,
         args: &dyn std::any::Any,
     ) -> Result<(), Box<dyn std::error::Error>>;
@@ -61,7 +55,7 @@ impl<O: Operation> Registered<O> {
 impl<O: Operation> ErasedOperation for Registered<O> {
     fn run(
         &self,
-        id: &String,
+        id: &str,
         part: &mut Part,
         args: &dyn std::any::Any,
     ) -> Result<(), Box<dyn std::error::Error>> {

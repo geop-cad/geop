@@ -22,11 +22,13 @@ impl Program {
 
 pub struct ProgramRunner {
     pub operation_registry: BTreeMap<String, Box<dyn ErasedOperation>>,
-    pub program: Program,
     pub part: Part,
 }
 
 pub struct RunOutput {
+    /// The steps that failed, in program order, with why. A failed step does
+    /// not stop the run: later steps that do not depend on it still build.
+    pub step_errors: Vec<(String, Box<dyn std::error::Error>)>,
     pub residuals: BTreeMap<String, Vec<f64>>, // Error in any constraints TODO: Make this Scalar trait.
     pub jacobian_state: BTreeMap<String, Vec<Vec<[f64; 6]>>>, // How each value in state affects the residuals // TODO: Make this Scalar trait.
 }
@@ -35,38 +37,40 @@ impl ProgramRunner {
     pub fn new(operation_registry: BTreeMap<String, Box<dyn ErasedOperation>>) -> Self {
         Self {
             operation_registry,
-            program: Program { steps: Vec::new() },
-            part: Part::new(),
+            part: Part::default(),
         }
     }
 
+    /// Runs `program` on the given `inputs` and `state`, which are complete:
+    /// what a previous run gave and this one does not is removed.
     pub fn run(
         &mut self,
         program: &Program,
         inputs: &BTreeMap<String, f64>,
-        state: &BTreeMap<String, Box<Pose>>,
-    ) -> Result<RunOutput, Box<dyn std::error::Error>> {
-        self.part.clear_changed_dependencies();
-
-        for (id, value) in inputs {
-            self.part.update_input(id, *value);
-        }
-
-        for (id, value) in state {
-            self.part.update_state(id, (**value).clone());
-        }
-
+        state: &BTreeMap<String, Pose>,
+    ) -> RunOutput {
+        self.part.begin_run(inputs, state);
+        let mut step_errors = Vec::new();
         for step in &program.steps {
-            // Implementation for processing each program step goes here
-            self.operation_registry
-                .get(&step.operation_name)
-                .unwrap()
-                .run(&step.id, &mut self.part, &*step.args)?;
+            if let Err(e) = self.run_step(step) {
+                step_errors.push((step.id.clone(), e));
+            }
         }
+        self.part.end_run();
 
-        Ok(RunOutput {
+        RunOutput {
+            step_errors,
             residuals: self.part.get_residuals().clone(),
             jacobian_state: self.part.get_jacobian_state().clone(),
-        })
+        }
+    }
+
+    fn run_step(&mut self, step: &ProgramStep) -> Result<(), Box<dyn std::error::Error>> {
+        self.part.begin_step(&step.id);
+        let operation = self
+            .operation_registry
+            .get(&step.operation_name)
+            .ok_or_else(|| format!("unknown operation `{}`", step.operation_name))?;
+        operation.run(&step.id, &mut self.part, &*step.args)
     }
 }
