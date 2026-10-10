@@ -1,5 +1,5 @@
 use crate::operation::Operation;
-use crate::target::TargetId;
+use crate::target::TargetReference;
 use crate::test::Frame;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,10 +23,10 @@ impl Operation for MiddleFrameOperation {
     where
         Self: Sized,
     {
-        let frame_id = TargetId::<Frame>::new(id.clone());
+        let frame_id = TargetReference::<Frame>::new(id.clone());
         part.define_target(frame_id, args, |part, args| {
-            let frame1id = TargetId::<Frame>::new(args.frame1ref.clone());
-            let frame2id = TargetId::<Frame>::new(args.frame2ref.clone());
+            let frame1id = TargetReference::<Frame>::new(args.frame1ref.clone());
+            let frame2id = TargetReference::<Frame>::new(args.frame2ref.clone());
             let frame1 = part.retrieve_target(&frame1id)?;
             let frame2 = part.retrieve_target(&frame2id)?;
             let frame = Frame {

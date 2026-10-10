@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, HashSet},
 };
 
-use crate::target::{Target, TargetId, TargetRegistry};
+use crate::target::{ErasedTargetId, Target, TargetId, TargetReference, TargetRegistry};
 
 // Default
 #[derive(Default, Clone, PartialEq)]
@@ -13,7 +13,7 @@ pub struct Pose {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Dependency {
-    Target(String),
+    Target(ErasedTargetId),
     Input(String),
     State(String),
 }
@@ -51,12 +51,13 @@ impl Part {
 
     pub fn retrieve_target<T: 'static>(
         &self,
-        id: &TargetId<T>,
+        id: &TargetReference<T>,
     ) -> Result<&T, Box<dyn std::error::Error>> {
+        let (id, data) = self.targets.retrieve_target_by_reference::<T>(id)?;
         self.recorded_dependencies
             .borrow_mut()
-            .push(Dependency::Target(id.0.clone()));
-        self.targets.retrieve_target_content::<T>(id)
+            .push(Dependency::Target(id.erased_id()));
+        Ok(data)
     }
 
     pub fn retrieve_input(&self, id: &str) -> Option<f64> {
@@ -111,7 +112,7 @@ impl Part {
 
     pub fn define_target<Out: 'static, Args: 'static + PartialEq + Clone>(
         &mut self,
-        id: TargetId<Out>,
+        id: TargetReference<Out>,
         args: &Args,
         generator: impl Fn(&Part, &Args) -> Result<Out, Box<dyn std::error::Error>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -136,16 +137,11 @@ impl Part {
         let data = generator(self, args)?;
         let dependencies = self.stop_recording();
         // insert or update
+        let id = self
+            .targets
+            .upsert_target::<Args, Out>(id, Target::new(args.clone(), dependencies, Ok(data)));
         self.changed_dependencies
-            .insert(Dependency::Target(id.0.clone()));
-        self.targets.upsert_target::<Args, Out>(
-            id,
-            Target {
-                args: args.clone(),
-                depends_on: dependencies,
-                data: Ok(data),
-            },
-        );
+            .insert(Dependency::Target(id.erased_id()));
         Ok(())
     }
 

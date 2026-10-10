@@ -1,5 +1,5 @@
 use crate::operation::Operation;
-use crate::target::TargetId;
+use crate::target::TargetReference;
 use crate::test::Frame;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,14 +23,14 @@ impl Operation for AddTwoFrameOperation {
     where
         Self: Sized,
     {
-        let frame_id1 = TargetId::<Frame>::new(id.clone() + "_1");
+        let frame_id1 = TargetReference::<Frame>::new(id.clone() + "_1");
         part.define_target(frame_id1, &args.data1, |_part, args| {
             let frame = Frame { data: args.clone() };
             println!("Created frame1: {:?}", frame);
             Ok(frame)
         })?;
 
-        let frame_id2 = TargetId::<Frame>::new(id.to_string() + "_2");
+        let frame_id2 = TargetReference::<Frame>::new(id.to_string() + "_2");
         part.define_target(frame_id2, &args.data2, |_part, args| {
             let frame = Frame { data: args.clone() };
             println!("Created frame2: {:?}", frame);
