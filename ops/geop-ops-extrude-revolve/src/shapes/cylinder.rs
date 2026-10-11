@@ -281,16 +281,14 @@ mod tests {
 
     /// The same cylinder far off its axis, at `(1000, -500, 50)`, is valid.
     ///
-    /// In fixed point it is not, along `Y` and `Z` (along `X` it is): each
-    /// radial edge of a cap against the two quarters of that cap it only
-    /// touches at the centre exhausts `curve_surface_crossings`' node budget
-    /// ("edge 11 x face 37", ...). Not the evaluation of curves or surfaces
-    /// far from the origin, which is relative to the span now and fails the
-    /// same way without that. What is known: those are the cases whose cap
-    /// lies in a plane with coordinates of 1000 in it, where a homogeneous
-    /// control point `w x` carries the weight's fixed-point rounding
-    /// (`2^-32`) times 1000, about 2e-7, in the cap's own plane; the edge
-    /// lies in that plane and meets the quarters at a pole.
+    /// In fixed point it was not, along `Y` and `Z`: validation's edge x
+    /// face check of each radial edge of a cap against the two quarters of
+    /// that cap it only touches at the centre (their pole, where every `u`
+    /// is a solution) exhausted `curve_surface_crossings`' node budget. Its
+    /// bisection split `u` below the width the fixed-point weight carries
+    /// once the edge and `v` could not be split further (see
+    /// `fat_line::stalled` and the curve-surface test
+    /// `spoke_touching_cap_quadrant_at_its_pole_far_from_the_origin`).
     fn check_revolved_cylinder_far_from_the_origin_is_valid<S: Scalar>() {
         let params = ValidationParameters::default();
         let f = S::from_f64;
@@ -309,7 +307,6 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "fails in fixed point: a cap's radial edge against the quarters it touches at the centre exhausts curve_surface_crossings far from the origin, see the doc comment"]
     fn revolved_cylinder_far_from_the_origin_is_valid() {
         for_all_scalars!(check_revolved_cylinder_far_from_the_origin_is_valid);
     }

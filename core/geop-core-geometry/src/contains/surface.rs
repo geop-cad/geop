@@ -199,19 +199,19 @@ pub fn surface_could_contain<S: Scalar>(
         }
 
         let ranges = [patch.domain_u(), patch.domain_v()];
-        if let Some(b) = restriction(&[u_hat, v_hat], &ranges)?
-            && let Ok(restricted) = patch.sub_surface(b[0], b[1])
-        {
-            queue.push_back(restricted);
-            continue;
-        }
-
         let sizes = surface_extents(&patch);
         // The query point's own width counts too, like a second object's.
         let point_width = (0..3)
             .map(|k| point[k].width().to_f64())
             .fold(0.0, f64::max);
         let carried = carried_width(&patch.control_points).max(point_width);
+        if let Some(b) = restriction(&[u_hat, v_hat], &ranges, &sizes, carried)?
+            && let Ok(restricted) = patch.sub_surface(b[0], b[1])
+        {
+            queue.push_back(restricted);
+            continue;
+        }
+
         let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
             Stalled::Converged => {
                 report((u_hat, v_hat));

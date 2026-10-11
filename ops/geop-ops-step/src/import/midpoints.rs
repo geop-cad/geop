@@ -7,7 +7,12 @@
 //! never an answer the kernel relies on (see `Scalar::sharpen`).
 
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
-use geop_core_math::scalars::Scalar;
+use std::convert::Infallible;
+
+use geop_core_math::{
+    scalars::Scalar,
+    solvers::iterate::{Repeat, Step, iterate},
+};
 
 use super::geometry::{P3, dot, norm, sub};
 
@@ -147,7 +152,7 @@ impl SurfaceMidpoints {
     /// at its domain's ends or middle, which at a pole is the same point on
     /// another meridian (as `NurbSurface::project` leaves a pole). Where
     /// none does, the search has arrived.
-    pub fn project(&self, target: P3, mut u: f64, mut v: f64) -> (f64, f64) {
+    pub fn project(&self, target: P3, u: f64, v: f64) -> (f64, f64) {
         let (u0, u1) = self.domain_u();
         let (v0, v1) = self.domain_v();
         // How far from `target` the point with partials `(p, su, sv)` is,
@@ -156,53 +161,62 @@ impl SurfaceMidpoints {
             let r = sub(target, p);
             (norm(r), dot(su, r).powi(2) + dot(sv, r).powi(2))
         };
+        // The partials at the seed, carried from the step that led there.
         let mut now = self.partials(u, v);
-        for _ in 0..PROJECT_ITERATIONS {
-            let (distance_now, residual_now) = progress(now);
-            // Where a step from `(u, v)`, with the partials there, leads:
-            // the full one, or along `S_u` or `S_v` alone.
-            let step = |(u, v): (f64, f64), (p, su, sv): (P3, P3, P3), along: Option<bool>| {
-                let r = sub(target, p);
-                let (a11, a12, a22) = (dot(su, su), dot(su, sv), dot(sv, sv));
-                let (b1, b2) = (dot(su, r), dot(sv, r));
-                let (du, dv) = match along {
-                    None => {
-                        let det = a11 * a22 - a12 * a12;
-                        ((b1 * a22 - b2 * a12) / det, (a11 * b2 - a12 * b1) / det)
-                    }
-                    Some(true) => (b1 / a11, 0.0),
-                    Some(false) => (0.0, b2 / a22),
+        let iterated = iterate(
+            (u, v),
+            (u, v),
+            PROJECT_ITERATIONS,
+            Repeat::Never,
+            |&next| (next, next),
+            |&(u, v)| -> Result<Step<(f64, f64)>, Infallible> {
+                let (distance_now, residual_now) = progress(now);
+                // Where a step from `(u, v)`, with the partials there, leads:
+                // the full one, or along `S_u` or `S_v` alone.
+                let step = |(u, v): (f64, f64), (p, su, sv): (P3, P3, P3), along: Option<bool>| {
+                    let r = sub(target, p);
+                    let (a11, a12, a22) = (dot(su, su), dot(su, sv), dot(sv, sv));
+                    let (b1, b2) = (dot(su, r), dot(sv, r));
+                    let (du, dv) = match along {
+                        None => {
+                            let det = a11 * a22 - a12 * a12;
+                            ((b1 * a22 - b2 * a12) / det, (a11 * b2 - a12 * b1) / det)
+                        }
+                        Some(true) => (b1 / a11, 0.0),
+                        Some(false) => (0.0, b2 / a22),
+                    };
+                    ((u + du).clamp(u0, u1), (v + dv).clamp(v0, v1))
                 };
-                ((u + du).clamp(u0, u1), (v + dv).clamp(v0, v1))
-            };
-            let here = [None, Some(true), Some(false)]
-                .into_iter()
-                .map(|along| step((u, v), now, along));
-            let elsewhere = [(u, v0), (u, (v0 + v1) / 2.0), (u, v1)]
-                .into_iter()
-                .map(|from| (from, Some(true)))
-                .chain(
-                    [(u0, v), ((u0 + u1) / 2.0, v), (u1, v)]
-                        .into_iter()
-                        .map(|from| (from, Some(false))),
-                )
-                .map(|(from, along)| step(from, self.partials(from.0, from.1), along));
-            let Some((next, partials)) = here.chain(elsewhere).find_map(|next| {
-                if !(next.0.is_finite() && next.1.is_finite()) {
-                    return None;
-                }
-                let partials = self.partials(next.0, next.1);
-                let (distance, residual) = progress(partials);
-                let nearer = distance < distance_now;
-                let closer = distance <= distance_now && residual < residual_now;
-                (nearer || closer).then_some((next, partials))
-            }) else {
-                break;
-            };
-            (u, v) = next;
-            now = partials;
-        }
-        (u, v)
+                let here = [None, Some(true), Some(false)]
+                    .into_iter()
+                    .map(|along| step((u, v), now, along));
+                let elsewhere = [(u, v0), (u, (v0 + v1) / 2.0), (u, v1)]
+                    .into_iter()
+                    .map(|from| (from, Some(true)))
+                    .chain(
+                        [(u0, v), ((u0 + u1) / 2.0, v), (u1, v)]
+                            .into_iter()
+                            .map(|from| (from, Some(false))),
+                    )
+                    .map(|(from, along)| step(from, self.partials(from.0, from.1), along));
+                let Some((next, partials)) = here.chain(elsewhere).find_map(|next| {
+                    if !(next.0.is_finite() && next.1.is_finite()) {
+                        return None;
+                    }
+                    let partials = self.partials(next.0, next.1);
+                    let (distance, residual) = progress(partials);
+                    let nearer = distance < distance_now;
+                    let closer = distance <= distance_now && residual < residual_now;
+                    (nearer || closer).then_some((next, partials))
+                }) else {
+                    return Ok(Step::Stuck);
+                };
+                now = partials;
+                Ok(Step::Next(next))
+            },
+        );
+        let Ok(iterated) = iterated;
+        iterated.seed
     }
 }
 

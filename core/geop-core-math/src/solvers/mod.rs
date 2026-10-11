@@ -4,6 +4,11 @@
 //! - [`linear`]: dense linear algebra in honest enclosures — the linear
 //!   solves, eliminations, null spaces and inverses every other solver
 //!   builds on.
+//! - [`iterate`]: fixed-point iteration from sharp seeds, keeping the
+//!   honest answer beside the seed — the loop of every Newton-type method.
+//! - [`bisect`]: bisection of a bracket, in plain numbers or sharp scalars.
+//! - [`minimize`]: damped descent and golden-section search for a point
+//!   that is a free choice.
 //! - [`newton`]: Newton refinement of a root a subdivision search has
 //!   isolated.
 //! - [`least_squares`]: constrained Levenberg–Marquardt over any scalar.
@@ -13,7 +18,10 @@
 //!   the state of programs alike. A solve holds the constraints exactly,
 //!   and prefers pulls and staying put among where they hold.
 
+pub mod bisect;
+pub mod iterate;
 pub mod least_squares;
 pub mod linear;
+pub mod minimize;
 pub mod newton;
 pub mod system;

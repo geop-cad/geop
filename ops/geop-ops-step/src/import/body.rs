@@ -48,6 +48,11 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::{
+        bisect::{Bracket, bisect},
+        iterate::{Repeat, Step, iterate},
+        minimize::GoldenSection,
+    },
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
@@ -1563,20 +1568,11 @@ impl<S: Scalar> Builder<'_, S> {
                         .ok_or_else(|| GeopError::new("its loop runs through its axis"))?;
                     Ok(cut + (a - cut + PI).rem_euclid(TAU) - PI)
                 };
-                let (mut ta, mut tb) = (t0, t1);
-                let below = angle_at(ta)? < cut;
-                for _ in 0..100 {
-                    let mid = 0.5 * (ta + tb);
-                    if mid == ta || mid == tb {
-                        break;
-                    }
-                    if (angle_at(mid)? < cut) == below {
-                        ta = mid;
-                    } else {
-                        tb = mid;
-                    }
-                }
-                let t = 0.5 * (ta + tb);
+                let below = angle_at(t0)? < cut;
+                let Bracket { lo, hi, .. } = bisect(t0, t1, 100, true, |mid| -> GeopResult<_> {
+                    Ok(Some((angle_at(mid)? < cut) == below))
+                })?;
+                let t = 0.5 * (lo + hi);
                 let v = revolved
                     .chart(super::geometry::point_at(&self.edges[u.0].curve, t)?)
                     .1;
@@ -1814,22 +1810,12 @@ impl<S: Scalar> Builder<'_, S> {
                             })?;
                             Ok(near(angle, x) - x)
                         };
-                        let (mut t0, mut t1) = (t_prev, t);
-                        let mut g0 = theta(t0)?;
-                        for _ in 0..100 {
-                            let mid = 0.5 * (t0 + t1);
-                            if mid == t0 || mid == t1 {
-                                break;
-                            }
-                            let g = theta(mid)?;
-                            if (g <= 0.0) == (g0 <= 0.0) {
-                                t0 = mid;
-                                g0 = g;
-                            } else {
-                                t1 = mid;
-                            }
-                        }
-                        return Ok((u.0, 0.5 * (t0 + t1)));
+                        let below = theta(t_prev)? <= 0.0;
+                        let Bracket { lo, hi, .. } =
+                            bisect(t_prev, t, 100, true, |mid| -> GeopResult<_> {
+                                Ok(Some((theta(mid)? <= 0.0) == below))
+                            })?;
+                        return Ok((u.0, 0.5 * (lo + hi)));
                     }
                 }
                 last = Some((t, a));
@@ -2868,45 +2854,48 @@ const MEET_DAMPING: f64 = 1e-6;
 /// caller to check ([`off`]): surfaces that do not meet leave it where they
 /// come nearest to each other.
 fn meet<S: Scalar>(start: P3, surfaces: &[(&NurbSurface3D<S>, &Grid)]) -> GeopResult<P3> {
-    let mut x = start;
-    for _ in 0..MEET_ITERATIONS {
-        // (Σ n nᵀ + μ I) dx = -Σ n (n · (x - f)).
-        let mut a: [[f64; 3]; 3] = std::array::from_fn(|i| {
-            std::array::from_fn(|j| if i == j { MEET_DAMPING } else { 0.0 })
-        });
-        let mut b = [0.0f64; 3];
-        for (surface, grid) in surfaces {
-            let (f, normal) = foot(surface, grid, x)?;
-            // Off the surface, the way to its nearest point is its normal
-            // there, whatever the surface's own: what an apex has instead.
-            let Some(n) = normal.or_else(|| normalize(sub(x, f))) else {
-                continue;
-            };
-            let r = dot(n, sub(x, f));
-            for i in 0..3 {
-                for j in 0..3 {
-                    a[i][j] += n[i] * n[j];
+    // In plain numbers, so a step that changes nothing is a fixed point.
+    Ok(iterate(
+        start,
+        start,
+        MEET_ITERATIONS,
+        Repeat::FixedPoint,
+        |&next| (next, next),
+        |&x| -> GeopResult<Step<P3>> {
+            // (Σ n nᵀ + μ I) dx = -Σ n (n · (x - f)).
+            let mut a: [[f64; 3]; 3] = std::array::from_fn(|i| {
+                std::array::from_fn(|j| if i == j { MEET_DAMPING } else { 0.0 })
+            });
+            let mut b = [0.0f64; 3];
+            for (surface, grid) in surfaces {
+                let (f, normal) = foot(surface, grid, x)?;
+                // Off the surface, the way to its nearest point is its normal
+                // there, whatever the surface's own: what an apex has instead.
+                let Some(n) = normal.or_else(|| normalize(sub(x, f))) else {
+                    continue;
+                };
+                let r = dot(n, sub(x, f));
+                for i in 0..3 {
+                    for j in 0..3 {
+                        a[i][j] += n[i] * n[j];
+                    }
+                    b[i] -= n[i] * r;
                 }
-                b[i] -= n[i] * r;
             }
-        }
-        let det = |m: [[f64; 3]; 3]| dot(m[0], cross(m[1], m[2]));
-        let d = det(a);
-        // Cramer's rule: `a` is symmetric positive definite.
-        let dx: P3 = std::array::from_fn(|c| {
-            let mut m = a;
-            for (row, value) in m.iter_mut().zip(b) {
-                row[c] = value;
-            }
-            det(m) / d
-        });
-        let next = add(x, dx);
-        if next == x {
-            break;
-        }
-        x = next;
-    }
-    Ok(x)
+            let det = |m: [[f64; 3]; 3]| dot(m[0], cross(m[1], m[2]));
+            let d = det(a);
+            // Cramer's rule: `a` is symmetric positive definite.
+            let dx: P3 = std::array::from_fn(|c| {
+                let mut m = a;
+                for (row, value) in m.iter_mut().zip(b) {
+                    row[c] = value;
+                }
+                det(m) / d
+            });
+            Ok(Step::Next(add(x, dx)))
+        },
+    )?
+    .seed)
 }
 
 /// Samples along an edge rebuilt where its faces' surfaces meet, at first
@@ -3444,34 +3433,15 @@ fn edge_gap<S: Scalar>(
         // The midpoints in `f64` narrow the window, which is cheap; the
         // enclosure's own midpoints, which the gap is measured against,
         // decide its last bits, where the two differ by roundings.
-        let (mut a, mut b) = ((seed - step).max(c0f), (seed + step).min(c1f));
-        let gap_at = |t: f64, k: usize| -> GeopResult<f64> {
-            if k + NEAREST_ON_ENCLOSURE < NEAREST_ITERATIONS {
-                Ok(distance(midpoints.point(t), target))
-            } else {
-                Ok(distance(super::geometry::point_at(curve, t)?, target))
-            }
-        };
-        let ratio = (5f64.sqrt() - 1.0) / 2.0;
-        let (mut x, mut y) = (b - ratio * (b - a), a + ratio * (b - a));
-        let (mut fx, mut fy) = (gap_at(x, 0)?, gap_at(y, 0)?);
-        for k in 0..NEAREST_ITERATIONS {
-            if k + NEAREST_ON_ENCLOSURE == NEAREST_ITERATIONS {
-                // From here on, on the enclosure.
-                (fx, fy) = (gap_at(x, k)?, gap_at(y, k)?);
-            }
-            if fx <= fy {
-                b = y;
-                (y, fy) = (x, fx);
-                x = b - ratio * (b - a);
-                fx = gap_at(x, k)?;
-            } else {
-                a = x;
-                (x, fx) = (y, fy);
-                y = a + ratio * (b - a);
-                fy = gap_at(y, k)?;
-            }
-        }
+        let mut search = GoldenSection::new((seed - step).max(c0f), (seed + step).min(c1f));
+        search.narrow(NEAREST_ITERATIONS - NEAREST_ON_ENCLOSURE, |t| {
+            Ok::<_, GeopError>(distance(midpoints.point(t), target))
+        })?;
+        // The last steps on the enclosure.
+        search.narrow(NEAREST_ON_ENCLOSURE, |t| {
+            Ok::<_, GeopError>(distance(super::geometry::point_at(curve, t)?, target))
+        })?;
+        let GoldenSection { a, b, .. } = search;
         // The ends are the domain's own. The pcurve's own ends are pinned
         // where the edge ends, at its vertices: they are measured against
         // the curve's nearer end, never a point next to it — which can be

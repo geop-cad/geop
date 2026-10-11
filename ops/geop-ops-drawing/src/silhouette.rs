@@ -34,6 +34,10 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::{
+        bisect::bisect,
+        iterate::{End, Repeat, Step, iterate},
+    },
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
@@ -113,17 +117,32 @@ fn correct<S: Scalar>(
 ) -> GeopResult<(S, S)> {
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
-    let (mut u, mut v) = (start.0.clamped(u_lo, u_hi), start.1.clamped(v_lo, v_hi));
+    let seed = (start.0.clamped(u_lo, u_hi), start.1.clamped(v_lo, v_hi));
     let mut last = None;
-    for _ in 0..CORRECTOR_ITERATIONS {
-        let (g, gu, gv) = contour(surface, d, u, v)?;
-        if g.could_be_equal(S::ZERO) {
-            return Ok((u, v));
-        }
-        let scale = g.div(gu.mul(gu).add(gv.mul(gv)))?;
-        last = Some((u, v, g, gu, gv));
-        u = u.sub(gu.mul(scale)).sharpen().clamped(u_lo, u_hi);
-        v = v.sub(gv.mul(scale)).sharpen().clamped(v_lo, v_hi);
+    let corrected = iterate(
+        seed,
+        seed,
+        CORRECTOR_ITERATIONS,
+        Repeat::Never,
+        |&(u, v)| {
+            let sharp = (
+                u.sharpen().clamped(u_lo, u_hi),
+                v.sharpen().clamped(v_lo, v_hi),
+            );
+            (sharp, sharp)
+        },
+        |&(u, v)| -> GeopResult<Step<(S, S)>> {
+            let (g, gu, gv) = contour(surface, d, u, v)?;
+            if g.could_be_equal(S::ZERO) {
+                return Ok(Step::Done);
+            }
+            let scale = g.div(gu.mul(gu).add(gv.mul(gv)))?;
+            last = Some((u, v, g, gu, gv));
+            Ok(Step::Next((u.sub(gu.mul(scale)), v.sub(gv.mul(scale)))))
+        },
+    )?;
+    if corrected.end == End::Done {
+        return Ok(corrected.seed);
     }
     Err(GeopError::new(format!(
         "the point does not converge onto the silhouette: from {start:?}, the last \
@@ -138,23 +157,37 @@ fn correct<S: Scalar>(
 fn correct_on_boundary<S: Scalar>(
     surface: &NurbSurface3D<S>,
     d: &Vector3<S>,
-    (mut u, mut v): (S, S),
+    (u, v): (S, S),
     u_fixed: bool,
 ) -> Option<(S, S)> {
-    let (u_lo, u_hi) = surface.domain_u();
-    let (v_lo, v_hi) = surface.domain_v();
-    for _ in 0..CORRECTOR_ITERATIONS {
-        let (g, gu, gv) = contour(surface, d, u, v).ok()?;
-        if g.could_be_equal(S::ZERO) {
-            return Some((u, v));
-        }
-        if u_fixed {
-            v = v.sub(g.div(gv).ok()?).sharpen().clamped(v_lo, v_hi);
-        } else {
-            u = u.sub(g.div(gu).ok()?).sharpen().clamped(u_lo, u_hi);
-        }
-    }
-    None
+    // The parameter that moves, the bounds it moves in, and the point at it.
+    let (moving, (lo, hi)) = if u_fixed {
+        (v, surface.domain_v())
+    } else {
+        (u, surface.domain_u())
+    };
+    let at = |t: S| if u_fixed { (u, t) } else { (t, v) };
+    let corrected = iterate(
+        moving,
+        moving,
+        CORRECTOR_ITERATIONS,
+        Repeat::Never,
+        |next| {
+            let sharp = next.sharpen().clamped(lo, hi);
+            (sharp, sharp)
+        },
+        |&t| -> Result<Step<S>, ()> {
+            let (u, v) = at(t);
+            let (g, gu, gv) = contour(surface, d, u, v).map_err(|_| ())?;
+            if g.could_be_equal(S::ZERO) {
+                return Ok(Step::Done);
+            }
+            let slope = if u_fixed { gv } else { gu };
+            Ok(Step::Next(t.sub(g.div(slope).map_err(|_| ())?)))
+        },
+    )
+    .ok()?;
+    (corrected.end == End::Done).then(|| at(corrected.seed))
 }
 
 /// An iso line of the domain the seeds are sampled along.
@@ -268,22 +301,19 @@ fn seed<S: Scalar>(
     line: &GridLine<S>,
     (lo, hi): (usize, usize),
 ) -> Option<(S, S)> {
-    let (mut a, mut b) = (line.params[lo], line.params[hi]);
+    let (a, b) = (line.params[lo], line.params[hi]);
     let (u, v) = line.point(a);
     let sign_a = sign(surface, d, u, v)?;
-    for _ in 0..BISECTIONS {
-        let mid = a.add(b).div(S::TWO).ok()?.sharpen();
+    let bracket = bisect(a, b, BISECTIONS, false, |mid| -> GeopResult<_> {
         let (u, v) = line.point(mid);
-        match sign(surface, d, u, v) {
-            Some(s) if s == sign_a => a = mid,
-            Some(_) => b = mid,
-            None => {
-                a = mid;
-                b = mid;
-                break;
-            }
-        }
-    }
+        Ok(sign(surface, d, u, v).map(|s| s == sign_a))
+    })
+    .ok()?;
+    // Where the sign cannot be told, the silhouette is there.
+    let (a, b) = match bracket.undecided {
+        Some(mid) => (mid, mid),
+        None => (bracket.lo, bracket.hi),
+    };
     let t = a.add(b).div(S::TWO).ok()?.sharpen();
     correct(surface, d, line.point(t)).ok()
 }
@@ -673,20 +703,13 @@ pub fn edge_crossings<S: Scalar>(
         if let Some((a, previous)) = last
             && previous != s
         {
-            let (mut lo, mut hi) = (a, t);
-            for _ in 0..BISECTIONS {
-                let mid = lo.add(hi).div(S::TWO)?.sharpen();
-                match sign_at(mid) {
-                    Some(m) if m == previous => lo = mid,
-                    Some(_) => hi = mid,
-                    None => {
-                        lo = mid;
-                        hi = mid;
-                        break;
-                    }
-                }
-            }
-            crossings.push(lo.union(hi));
+            let bracket = bisect(a, t, BISECTIONS, false, |mid| -> GeopResult<_> {
+                Ok(sign_at(mid).map(|m| m == previous))
+            })?;
+            crossings.push(match bracket.undecided {
+                Some(mid) => mid,
+                None => bracket.lo.union(bracket.hi),
+            });
         }
         last = Some((t, s));
     }

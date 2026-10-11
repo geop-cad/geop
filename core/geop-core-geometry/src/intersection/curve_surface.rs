@@ -202,16 +202,16 @@ pub fn curve_surface_crossings<S: Scalar>(
         }
 
         let ranges = [c.domain(), s.domain_u(), s.domain_v()];
-        if let Some(b) = restriction(&hats, &ranges)?
+        let [size_u, size_v] = surface_extents(&s);
+        let sizes = [extent([c.control_points.clone()]), size_u, size_v];
+        let carried = carried_width(&c.control_points).max(carried_width(&s.control_points));
+        if let Some(b) = restriction(&hats, &ranges, &sizes, carried)?
             && let (Ok(rc), Ok(rs)) = (c.sub_curve(b[0].0, b[0].1), s.sub_surface(b[1], b[2]))
         {
             queue.push_back((rc, rs));
             continue;
         }
 
-        let [size_u, size_v] = surface_extents(&s);
-        let sizes = [extent([c.control_points.clone()]), size_u, size_v];
-        let carried = carried_width(&c.control_points).max(carried_width(&s.control_points));
         let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
             Stalled::Converged => {
                 // The pieces' whole domains, not the tighter clip, so pieces
@@ -704,6 +704,137 @@ mod tests {
     #[test]
     fn spoke_touching_cap_quadrant_at_its_pole() {
         for_all_scalars!(check_spoke_touching_cap_quadrant_at_its_pole);
+    }
+
+    /// The same far from the origin, in the layout a revolve gives a cap:
+    /// the bottom cap of `revolved_cylinder_far_from_the_origin_is_valid`'s
+    /// `Y` case, radius 3 in the plane `y = -500` around `(1000, -500, 50)`,
+    /// rim along `v = 0` and pole along `v = 1`, its homogeneous coordinates
+    /// rounded as the revolve rounds them (`w x` in the scalar type). The
+    /// spoke runs on from the quadrant's `u = 0` side through the pole.
+    ///
+    /// In fixed point, the weight's rounding times 1000 makes the patch carry
+    /// a width of about 5e-7, and clipping stalls near the pole with the
+    /// spoke and `v` at `min_subdivision_size` but, at a speed of 3, still
+    /// wider in space than it. Bisection then split `u`, whose extent was
+    /// already below that carried width, into thousands of pieces each still
+    /// containing the pole, and exhausted the node budget (see
+    /// `fat_line::stalled`).
+    fn check_spoke_touching_cap_quadrant_at_its_pole_far_from_the_origin<S: Scalar>() {
+        let f = S::from_f64;
+        let w = f(std::f64::consts::FRAC_1_SQRT_2);
+        let at = |x: f64, z: f64, w: S| {
+            let p = [x, -500., z].map(|c| f(c).mul(w));
+            Vector4::from_array([p[0], p[1], p[2], w])
+        };
+        let quadrant = NurbSurface::try_new(
+            2,
+            1,
+            vec![
+                at(1000., 53., S::ONE),
+                at(1000., 50., S::ONE),
+                at(997., 53., w),
+                at(1000., 50., w),
+                at(997., 50., S::ONE),
+                at(1000., 50., S::ONE),
+            ],
+            knots(&[0., 0., 0., 1., 1., 1.]),
+            knots(&[0., 0., 1., 1.]),
+        )
+        .unwrap();
+        let spoke = line::<S>([1000., -500., 47.], [1000., -500., 50.]);
+        let r = curve_surface_intersect(&spoke, &quadrant, 7, 5000, S::from_f64(1e-4)).unwrap();
+        assert!(!r.is_coincident() && !r.is_empty(), "{r:?}");
+        for (t, uv) in r.as_slice() {
+            assert!(
+                t.could_be_equal(S::ONE) && uv[1].could_be_equal(S::ONE),
+                "{r:?}"
+            );
+        }
+    }
+    #[test]
+    fn spoke_touching_cap_quadrant_at_its_pole_far_from_the_origin() {
+        for_all_scalars!(check_spoke_touching_cap_quadrant_at_its_pole_far_from_the_origin);
+    }
+
+    /// A blended bar's cap, 461 from the origin, as the press handle's
+    /// rounded rim leaves it: the spoke of the cap's shrunken quarter, 2 long
+    /// over the domain `[0, 2/3]`, against the neighbouring quadrant of
+    /// radius 3, whose pole is its `v = 0` row, which the spoke runs on from
+    /// along `u = 1`. The enclosures are the ones the blend built.
+    fn check_blended_spoke_touching_cap_quadrant_at_its_pole<S: Scalar>() {
+        let i = |lo: f64, hi: f64| S::from_f64(lo).union(S::from_f64(hi));
+        let x = i(460.99999999999983, 461.00000000000017);
+        let tiny = |e: f64| i(-e, e);
+        let w = i(0.7071067811865475, 0.7071067811865477);
+        let centre = Vector4::from_array([
+            x,
+            tiny(6.675221575521606e-308),
+            tiny(6.675221575521606e-308),
+            S::ONE,
+        ]);
+        let quadrant = NurbSurface::try_new(
+            2,
+            1,
+            vec![
+                centre,
+                Vector4::from_array([
+                    x,
+                    tiny(1.7800590868057623e-307),
+                    i(-3.0000000000000027, -2.999999999999998),
+                    S::ONE,
+                ]),
+                Vector4::from_array([
+                    i(325.97622612699826, 325.9762261269986),
+                    tiny(4.720094441974079e-308),
+                    tiny(4.720094441974079e-308),
+                    w,
+                ]),
+                Vector4::from_array([
+                    i(325.97622612699826, 325.9762261269986),
+                    i(-2.121320343559646, -2.1213203435596406),
+                    i(-2.121320343559646, -2.1213203435596406),
+                    w,
+                ]),
+                centre,
+                Vector4::from_array([
+                    x,
+                    i(-3.0000000000000027, -2.999999999999998),
+                    tiny(1.7800590868057623e-307),
+                    S::ONE,
+                ]),
+            ],
+            knots(&[0., 0., 0., 1., 1., 1.]),
+            knots(&[0., 0., 1., 1.]),
+        )
+        .unwrap();
+        let two_thirds = i(0.6666666666619685, 0.6666666666713679);
+        let spoke = NurbCurve::try_new(
+            1,
+            vec![
+                centre,
+                Vector4::from_array([
+                    i(460.99999999999955, 461.00000000000045),
+                    i(1.9999999999859022, 2.000000000014108),
+                    tiny(1.4092134437327347e-307),
+                    i(0.9999999999999999, 1.0000000000000002),
+                ]),
+            ],
+            vec![S::ZERO, S::ZERO, two_thirds, two_thirds],
+        )
+        .unwrap();
+        let r = curve_surface_intersect(&spoke, &quadrant, 7, 5000, S::from_f64(1e-4)).unwrap();
+        assert!(!r.is_coincident() && !r.is_empty(), "{r:?}");
+        for (t, uv) in r.as_slice() {
+            assert!(
+                t.could_be_equal(S::ZERO) && uv[1].could_be_equal(S::ZERO),
+                "{r:?}"
+            );
+        }
+    }
+    #[test]
+    fn blended_spoke_touching_cap_quadrant_at_its_pole() {
+        for_all_scalars!(check_blended_spoke_touching_cap_quadrant_at_its_pole);
     }
 
     /// The test suite of the old `curve_surface` search, run unchanged against the

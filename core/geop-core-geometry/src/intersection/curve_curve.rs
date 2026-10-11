@@ -171,7 +171,12 @@ where
         }
 
         let ranges = [a.domain(), b.domain()];
-        if let Some(bounds) = restriction(&hats, &ranges)?
+        let sizes = [
+            extent([a.control_points.clone()]),
+            extent([b.control_points.clone()]),
+        ];
+        let carried = carried_width(&a.control_points).max(carried_width(&b.control_points));
+        if let Some(bounds) = restriction(&hats, &ranges, &sizes, carried)?
             && let (Ok(ra), Ok(rb)) = (
                 a.sub_curve(bounds[0].0, bounds[0].1),
                 b.sub_curve(bounds[1].0, bounds[1].1),
@@ -181,11 +186,6 @@ where
             continue;
         }
 
-        let sizes = [
-            extent([a.control_points.clone()]),
-            extent([b.control_points.clone()]),
-        ];
-        let carried = carried_width(&a.control_points).max(carried_width(&b.control_points));
         let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
             Stalled::Converged => {
                 // The pieces' whole domains, not the tighter clip: pieces the

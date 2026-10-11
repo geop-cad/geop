@@ -1,7 +1,9 @@
 //! [`NurbSurface::closest_point`]: the point of a surface nearest a given
 //! point.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::GeopResult, scalars::Scalar, solvers::minimize::descend, vector::Vector3,
+};
 
 use super::NurbSurface;
 
@@ -93,61 +95,55 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// one parameter that still moves the point. A step that does not
     /// bring the point nearer is halved, and the search stops once halving
     /// does not help. Every iterate is clamped into the domain.
-    fn refine_closest(&self, target: &Vector3<S>, mut u: S, mut v: S) -> GeopResult<(S, S)> {
+    fn refine_closest(&self, target: &Vector3<S>, u: S, v: S) -> GeopResult<(S, S)> {
         let ((u_lo, u_hi), (v_lo, v_hi)) = (self.domain_u(), self.domain_v());
-        let distance = |u: S, v: S| -> GeopResult<f64> {
-            Ok(self.evaluate(u, v)?.sub(target).norm_sq().to_f64())
-        };
         let positive = |a: S, b: S, c: S| {
             a.definitely_greater(S::ZERO) && a.mul(c).sub(b.mul(b)).definitely_greater(S::ZERO)
         };
-        let mut current = distance(u, v)?;
-        for _ in 0..NEWTON_STEPS {
-            let r = self.evaluate(u, v)?.sub(target);
-            let (su, sv) = self.derivatives(u, v)?;
-            let [suu, suv, svv] = self.second_derivatives(u, v)?;
-            let (gu, gv) = (r.prod_dot(&su), r.prod_dot(&sv));
-            let (a11, a12, a22) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
-            let (h11, h12, h22) = (
-                a11.add(r.prod_dot(&suu)),
-                a12.add(r.prod_dot(&suv)),
-                a22.add(r.prod_dot(&svv)),
-            );
-            let solve = |m11: S, m12: S, m22: S| -> GeopResult<(S, S)> {
-                let det = m11.mul(m22).sub(m12.mul(m12));
-                Ok((
-                    gv.mul(m12).sub(gu.mul(m22)).div(det)?,
-                    gu.mul(m12).sub(gv.mul(m11)).div(det)?,
-                ))
-            };
-            let (du, dv) = if positive(h11, h12, h22) {
-                solve(h11, h12, h22)?
-            } else if positive(a11, a12, a22) {
-                solve(a11, a12, a22)?
-            } else if a11.definitely_greater(S::ZERO) {
-                (gu.neg().div(a11)?, S::ZERO)
-            } else if a22.definitely_greater(S::ZERO) {
-                (S::ZERO, gv.neg().div(a22)?)
-            } else {
-                break;
-            };
-            let mut scale = S::ONE;
-            let mut moved = false;
-            for _ in 0..HALVINGS {
-                let nu = u.add(du.mul(scale)).sharpen().clamped(u_lo, u_hi);
-                let nv = v.add(dv.mul(scale)).sharpen().clamped(v_lo, v_hi);
-                let d = distance(nu, nv)?;
-                if d < current {
-                    (u, v, current, moved) = (nu, nv, d, true);
-                    break;
-                }
-                scale = scale.div(S::TWO)?;
-            }
-            if !moved {
-                break;
-            }
-        }
-        Ok((u, v))
+        descend(
+            (u, v),
+            NEWTON_STEPS,
+            HALVINGS,
+            |&(u, v)| -> GeopResult<f64> {
+                Ok(self.evaluate(u, v)?.sub(target).norm_sq().to_f64())
+            },
+            |&(u, v)| -> GeopResult<_> {
+                let r = self.evaluate(u, v)?.sub(target);
+                let (su, sv) = self.derivatives(u, v)?;
+                let [suu, suv, svv] = self.second_derivatives(u, v)?;
+                let (gu, gv) = (r.prod_dot(&su), r.prod_dot(&sv));
+                let (a11, a12, a22) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
+                let (h11, h12, h22) = (
+                    a11.add(r.prod_dot(&suu)),
+                    a12.add(r.prod_dot(&suv)),
+                    a22.add(r.prod_dot(&svv)),
+                );
+                let solve = |m11: S, m12: S, m22: S| -> GeopResult<(S, S)> {
+                    let det = m11.mul(m22).sub(m12.mul(m12));
+                    Ok((
+                        gv.mul(m12).sub(gu.mul(m22)).div(det)?,
+                        gu.mul(m12).sub(gv.mul(m11)).div(det)?,
+                    ))
+                };
+                let (du, dv) = if positive(h11, h12, h22) {
+                    solve(h11, h12, h22)?
+                } else if positive(a11, a12, a22) {
+                    solve(a11, a12, a22)?
+                } else if a11.definitely_greater(S::ZERO) {
+                    (gu.neg().div(a11)?, S::ZERO)
+                } else if a22.definitely_greater(S::ZERO) {
+                    (S::ZERO, gv.neg().div(a22)?)
+                } else {
+                    return Ok(None);
+                };
+                Ok(Some(move |scale: S| {
+                    (
+                        u.add(du.mul(scale)).sharpen().clamped(u_lo, u_hi),
+                        v.add(dv.mul(scale)).sharpen().clamped(v_lo, v_hi),
+                    )
+                }))
+            },
+        )
     }
 }
 

@@ -37,7 +37,10 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
     scalars::Scalar,
-    solvers::linear::solve_linear_system,
+    solvers::{
+        iterate::{Repeat, Step, iterate},
+        linear::solve_linear_system,
+    },
     vector::{Vector, Vector3},
     with_context,
 };
@@ -932,9 +935,9 @@ fn predictor_corrector_step<S: Scalar>(
     let (v_b_lo, v_b_hi) = surf_b.domain_v();
     let lambda = S::from_f64(CORRECTOR_DAMPING);
 
-    // Two copies of the iterate. `*1` is the sharp *seed* the next Newton
-    // step starts from; `*_honest` is that same value with the last update's
-    // width kept, and is what gets returned.
+    // Two copies of the iterate ([`iterate`]): the sharp *seed* the next
+    // Newton step starts from, and the *answer*, that same value with the
+    // last update's width kept, which is what gets returned.
     //
     // Sharpening the seed is legitimate (any point inside it is an equally
     // good place to start) and necessary (left unsharpened, 20 steps compound
@@ -957,115 +960,133 @@ fn predictor_corrector_step<S: Scalar>(
     // it step after step. On a tool whose corners are only known to 1e-12 —
     // computed from a solid's own vertices — that reached a whole patch's
     // width within a dozen steps (`cube_minus_box_with_wide_corners`).
-    let seed = |x: S, (lo, hi): (S, S)| x.sharpen().clamped(lo, hi);
-    let (mut u_a1, mut v_a1) = (seed(u_a, (u_a_lo, u_a_hi)), seed(v_a, (v_a_lo, v_a_hi)));
-    let (mut u_b1, mut v_b1) = (seed(u_b, (u_b_lo, u_b_hi)), seed(v_b, (v_b_lo, v_b_hi)));
-    let (mut u_a_honest, mut v_a_honest) = (u_a, v_a);
-    let (mut u_b_honest, mut v_b_honest) = (u_b, v_b);
-    for _ in 0..CORRECTOR_ITERATIONS {
-        let p_a = surf_a
-            .evaluate(u_a1, v_a1)
-            .with_context(&|e: GeopError| e.with_context("evaluate surf_a"))
-            .with_context(&ctx)?;
-        let p_b = surf_b
-            .evaluate(u_b1, v_b1)
-            .with_context(&|e: GeopError| e.with_context("evaluate surf_b"))
-            .with_context(&ctx)?;
-        // All *four* residuals have to be satisfied, not just the three
-        // that put the point on both surfaces. The corrector is handed the
-        // previous step's converged `(u, v)`, which already lies on both
-        // surfaces — testing only those three would report success without
-        // ever moving, leaving the march pinned at its first step forever.
-        // The fourth residual is what says the point has actually advanced
-        // to the plane the predictor stepped to.
-        let on_plane = dir.prod_dot(&p_a.sub(&target));
-        if p_a.could_be_equal(&p_b) && on_plane.could_be_equal(S::ZERO) {
-            // The union of the two surfaces' enclosures, not their average:
-            // both enclose the *same* point on the intersection curve, so
-            // the smallest interval containing both is the honest answer.
-            // Averaging instead invents a sharp midpoint claiming more
-            // precision than either had — and hides how far apart they
-            // were, exactly the signal that the two surfaces have started
-            // to disagree about where the curve is.
-            return Ok((
-                p_a.union(&p_b),
-                u_a_honest,
-                v_a_honest,
-                u_b_honest,
-                v_b_honest,
-            ));
-        }
-
-        let (sau, sav) = surf_a
-            .derivatives(u_a1, v_a1)
-            .with_context(&|e: GeopError| e.with_context("derivatives of surf_a"))
-            .with_context(&ctx)?;
-        let (sbu, sbv) = surf_b
-            .derivatives(u_b1, v_b1)
-            .with_context(&|e: GeopError| e.with_context("derivatives of surf_b"))
-            .with_context(&ctx)?;
-
-        // Residuals: the two surfaces must meet (rows 0..3), and the meeting
-        // point must sit on the plane the predictor stepped to (row 3).
-        let delta = p_a.sub(&p_b);
-        let mut f = [S::ZERO; 4];
-        let mut j = [[S::ZERO; 4]; 4];
-        for k in 0..3 {
-            f[k] = delta[k];
-            j[k] = [sau[k], sav[k], sbu[k].neg(), sbv[k].neg()];
-        }
-        f[3] = on_plane;
-        j[3] = [dir.prod_dot(&sau), dir.prod_dot(&sav), S::ZERO, S::ZERO];
-
-        // Damped normal equations `(J^T J + lambda I) d = -J^T f`. Going
-        // through `J^T J` rather than solving `J d = -f` directly is what
-        // lets the damping act at all, and keeps the step finite where `J`
-        // loses rank instead of erroring out of an otherwise fine trace.
-        //
-        // The matrix is sharpened: it only steers the step, and any matrix
-        // near the true Jacobian leads Newton to the same fixed point — the
-        // residual `f` alone decides where that is, so the step's honest
-        // width is the residual's, carried through a sharp preconditioner (as
-        // in Krawczyk's `Y = mid(J)^-1`). Left as intervals, the elimination
-        // amplifies the surfaces' own width by the system's condition, which
-        // `J^T J` squares: where the surfaces meet at a shallow angle, that
-        // put zero inside the last pivot of a solvable system.
-        let mut ata = [[S::ZERO; 4]; 4];
-        let mut atf = [S::ZERO; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                let mut sum = S::ZERO;
-                for k in 0..4 {
-                    sum = sum.add(j[k][r].mul(j[k][c]));
-                }
-                ata[r][c] = if r == c { sum.add(lambda) } else { sum }.sharpen();
-            }
-            let mut sum = S::ZERO;
-            for k in 0..4 {
-                sum = sum.add(j[k][r].mul(f[k]));
-            }
-            atf[r] = sum.neg();
-        }
-
-        let step = solve_linear_system(&Matrix::from_rows(ata), &Vector::from_array(atf))
-            .with_context(&ctx)?;
-
+    let clamp = |[u_a, v_a, u_b, v_b]: [S; 4]| {
+        [
+            u_a.clamped(u_a_lo, u_a_hi),
+            v_a.clamped(v_a_lo, v_a_hi),
+            u_b.clamped(u_b_lo, u_b_hi),
+            v_b.clamped(v_b_lo, v_b_hi),
+        ]
+    };
+    let sharp = |x: [S; 4]| x.map(|s| s.sharpen());
+    let given = [u_a, v_a, u_b, v_b];
+    // Where the two surfaces were found to meet.
+    let mut met = None;
+    let corrected = iterate(
+        clamp(sharp(given)),
+        given,
+        CORRECTOR_ITERATIONS,
+        Repeat::Never,
         // Each update is kept twice: honestly, and sharpened as the next
-        // seed — see the declarations above for why the two differ.
-        u_a_honest = u_a1.add(step[0]).clamped(u_a_lo, u_a_hi);
-        v_a_honest = v_a1.add(step[1]).clamped(v_a_lo, v_a_hi);
-        u_b_honest = u_b1.add(step[2]).clamped(u_b_lo, u_b_hi);
-        v_b_honest = v_b1.add(step[3]).clamped(v_b_lo, v_b_hi);
-        // Sharpen *before* clamping, as `NurbSurface::project` does: `clamped`
-        // cannot pull back an interval that merely straddles a domain bound,
-        // and collapsing such an interval to its midpoint can land just past
+        // seed — see above for why the two differ. Sharpen *before*
+        // clamping, as `NurbSurface::project` does: `clamped` cannot pull
+        // back an interval that merely straddles a domain bound, and
+        // collapsing such an interval to its midpoint can land just past
         // the bound, where the next `evaluate` rejects it. On a sharp value
         // `clamped`'s comparisons are exact, so the seed is always in domain.
-        u_a1 = u_a_honest.sharpen().clamped(u_a_lo, u_a_hi);
-        v_a1 = v_a_honest.sharpen().clamped(v_a_lo, v_a_hi);
-        u_b1 = u_b_honest.sharpen().clamped(u_b_lo, u_b_hi);
-        v_b1 = v_b_honest.sharpen().clamped(v_b_lo, v_b_hi);
+        |&next| {
+            let honest = clamp(next);
+            (clamp(sharp(honest)), honest)
+        },
+        |&[u_a1, v_a1, u_b1, v_b1]| -> GeopResult<Step<[S; 4]>> {
+            let p_a = surf_a
+                .evaluate(u_a1, v_a1)
+                .with_context(&|e: GeopError| e.with_context("evaluate surf_a"))
+                .with_context(&ctx)?;
+            let p_b = surf_b
+                .evaluate(u_b1, v_b1)
+                .with_context(&|e: GeopError| e.with_context("evaluate surf_b"))
+                .with_context(&ctx)?;
+            // All *four* residuals have to be satisfied, not just the three
+            // that put the point on both surfaces. The corrector is handed
+            // the previous step's converged `(u, v)`, which already lies on
+            // both surfaces — testing only those three would report success
+            // without ever moving, leaving the march pinned at its first
+            // step forever. The fourth residual is what says the point has
+            // actually advanced to the plane the predictor stepped to.
+            let on_plane = dir.prod_dot(&p_a.sub(&target));
+            if p_a.could_be_equal(&p_b) && on_plane.could_be_equal(S::ZERO) {
+                // The union of the two surfaces' enclosures, not their
+                // average: both enclose the *same* point on the
+                // intersection curve, so the smallest interval containing
+                // both is the honest answer. Averaging instead invents a
+                // sharp midpoint claiming more precision than either had —
+                // and hides how far apart they were, exactly the signal
+                // that the two surfaces have started to disagree about
+                // where the curve is.
+                met = Some(p_a.union(&p_b));
+                return Ok(Step::Done);
+            }
+
+            let (sau, sav) = surf_a
+                .derivatives(u_a1, v_a1)
+                .with_context(&|e: GeopError| e.with_context("derivatives of surf_a"))
+                .with_context(&ctx)?;
+            let (sbu, sbv) = surf_b
+                .derivatives(u_b1, v_b1)
+                .with_context(&|e: GeopError| e.with_context("derivatives of surf_b"))
+                .with_context(&ctx)?;
+
+            // Residuals: the two surfaces must meet (rows 0..3), and the
+            // meeting point must sit on the plane the predictor stepped to
+            // (row 3).
+            let delta = p_a.sub(&p_b);
+            let mut f = [S::ZERO; 4];
+            let mut j = [[S::ZERO; 4]; 4];
+            for k in 0..3 {
+                f[k] = delta[k];
+                j[k] = [sau[k], sav[k], sbu[k].neg(), sbv[k].neg()];
+            }
+            f[3] = on_plane;
+            j[3] = [dir.prod_dot(&sau), dir.prod_dot(&sav), S::ZERO, S::ZERO];
+
+            // Damped normal equations `(J^T J + lambda I) d = -J^T f`. Going
+            // through `J^T J` rather than solving `J d = -f` directly is
+            // what lets the damping act at all, and keeps the step finite
+            // where `J` loses rank instead of erroring out of an otherwise
+            // fine trace.
+            //
+            // The matrix is sharpened: it only steers the step, and any
+            // matrix near the true Jacobian leads Newton to the same fixed
+            // point — the residual `f` alone decides where that is, so the
+            // step's honest width is the residual's, carried through a sharp
+            // preconditioner (as in Krawczyk's `Y = mid(J)^-1`). Left as
+            // intervals, the elimination amplifies the surfaces' own width by
+            // the system's condition, which `J^T J` squares: where the
+            // surfaces meet at a shallow angle, that put zero inside the last
+            // pivot of a solvable system.
+            let mut ata = [[S::ZERO; 4]; 4];
+            let mut atf = [S::ZERO; 4];
+            for r in 0..4 {
+                for c in 0..4 {
+                    let mut sum = S::ZERO;
+                    for k in 0..4 {
+                        sum = sum.add(j[k][r].mul(j[k][c]));
+                    }
+                    ata[r][c] = if r == c { sum.add(lambda) } else { sum }.sharpen();
+                }
+                let mut sum = S::ZERO;
+                for k in 0..4 {
+                    sum = sum.add(j[k][r].mul(f[k]));
+                }
+                atf[r] = sum.neg();
+            }
+
+            let step = solve_linear_system(&Matrix::from_rows(ata), &Vector::from_array(atf))
+                .with_context(&ctx)?;
+            Ok(Step::Next([
+                u_a1.add(step[0]),
+                v_a1.add(step[1]),
+                u_b1.add(step[2]),
+                v_b1.add(step[3]),
+            ]))
+        },
+    )?;
+    if let Some(point) = met {
+        let [u_a, v_a, u_b, v_b] = corrected.answer;
+        return Ok((point, u_a, v_a, u_b, v_b));
     }
+    let [u_a1, v_a1, u_b1, v_b1] = corrected.seed;
 
     Err(ctx(GeopError::new(format!(
         "the corrector did not bring the two surfaces onto a common point within {CORRECTOR_ITERATIONS} iterations: face_a lands at (u={u_a1:?}, v={v_a1:?}) and face_b at (u={u_b1:?}, v={v_b1:?}), which cannot be the same point — at least one of them has left its surface"

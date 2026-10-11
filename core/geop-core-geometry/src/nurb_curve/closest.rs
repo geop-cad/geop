@@ -1,7 +1,9 @@
 //! [`NurbCurve::closest_point`]: the point of a 3-D curve nearest a given
 //! point.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::GeopResult, scalars::Scalar, solvers::minimize::descend, vector::Vector3,
+};
 
 use super::NurbCurve;
 
@@ -70,42 +72,32 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// wherever the curve is regular). A step that does not bring the point
     /// nearer is halved, and the search stops once halving does not help.
     /// Every iterate is clamped into `(t0, t1)`.
-    fn refine_closest(&self, target: &Vector3<S>, mut t: S, (t0, t1): (S, S)) -> GeopResult<S> {
-        let clamp = |x: S| x.clamped(t0, t1);
-        let distance =
-            |t: S| -> GeopResult<f64> { Ok(self.evaluate(t)?.sub(target).norm_sq().to_f64()) };
-        let mut current = distance(t)?;
-        for _ in 0..NEWTON_STEPS {
-            let r = self.evaluate(t)?.sub(target);
-            let d1 = self.tangent(t)?;
-            let d2 = self.second_derivative(t)?;
-            let f = r.prod_dot(&d1);
-            let speed = d1.prod_dot(&d1);
-            let full = speed.add(r.prod_dot(&d2));
-            let slope = if full.definitely_greater(S::ZERO) {
-                full
-            } else if speed.definitely_greater(S::ZERO) {
-                speed
-            } else {
-                break;
-            };
-            let step = f.div(slope)?;
-            let mut scale = S::ONE;
-            let mut moved = false;
-            for _ in 0..HALVINGS {
-                let next = clamp(t.sub(step.mul(scale)).sharpen());
-                let d = distance(next)?;
-                if d < current {
-                    (t, current, moved) = (next, d, true);
-                    break;
-                }
-                scale = scale.div(S::TWO)?;
-            }
-            if !moved {
-                break;
-            }
-        }
-        Ok(t)
+    fn refine_closest(&self, target: &Vector3<S>, t: S, (t0, t1): (S, S)) -> GeopResult<S> {
+        descend(
+            t,
+            NEWTON_STEPS,
+            HALVINGS,
+            |&t| -> GeopResult<f64> { Ok(self.evaluate(t)?.sub(target).norm_sq().to_f64()) },
+            |&t| -> GeopResult<_> {
+                let r = self.evaluate(t)?.sub(target);
+                let d1 = self.tangent(t)?;
+                let d2 = self.second_derivative(t)?;
+                let f = r.prod_dot(&d1);
+                let speed = d1.prod_dot(&d1);
+                let full = speed.add(r.prod_dot(&d2));
+                let slope = if full.definitely_greater(S::ZERO) {
+                    full
+                } else if speed.definitely_greater(S::ZERO) {
+                    speed
+                } else {
+                    return Ok(None);
+                };
+                let step = f.div(slope)?;
+                Ok(Some(move |scale: S| {
+                    t.sub(step.mul(scale)).sharpen().clamped(t0, t1)
+                }))
+            },
+        )
     }
 }
 

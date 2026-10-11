@@ -721,3 +721,34 @@ fn fillet_slot_rim_with_radii_at_vertices() {
         assert!(near(p), "no vertex at {p:?}");
     }
 }
+
+/// The press handle's rim rounded: a bar 236 long whose rim lies 225 from
+/// the origin. The blend face's control points were 8e-8 wide, and a ray
+/// grazing it at its silhouette could not be resolved (see
+/// `drawing_tests::press_from_the_iso_view_draws`): the cylinder's normal
+/// was taken at the bar's far end and turned around an axis known to
+/// 1e-12, and the weight was `r / |E - C|`, with the corner `E`'s width in
+/// it twice. What is left is the weight's width, from the faces'
+/// directions, times the distance from the origin.
+#[test]
+fn press_handle_rim_fillet_is_narrow() {
+    let (_, files) = examples::workspaces()
+        .into_iter()
+        .find(|(n, _)| *n == "press")
+        .unwrap();
+    let (_, handle) = files()
+        .into_iter()
+        .find(|(path, _)| *path == "handle.geop")
+        .unwrap();
+    let part = handle.build_model().unwrap();
+    let face = part
+        .face_id("fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q3)")
+        .unwrap();
+    let surface = &part.topology().get_face(face).unwrap().surface;
+    let widest = surface
+        .control_points
+        .iter()
+        .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
+        .fold(0.0, f64::max);
+    assert!(widest < 3e-9, "{widest:e}: {:?}", surface.control_points);
+}

@@ -89,7 +89,11 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
     scalars::Scalar,
-    solvers::linear::solve_linear_system,
+    solvers::{
+        bisect::{Bracket, bisect},
+        iterate::{Repeat, Step, iterate},
+        linear::solve_linear_system,
+    },
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
@@ -615,34 +619,36 @@ fn roll<S: Scalar>(
     let (n0, n1) = (normal(0, seeds[0])?, normal(1, seeds[1])?);
     // Exact for two planes through `p`: `r` from both.
     let spread = S::ONE.add(n0.prod_dot(&n1));
-    let mut center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
+    let center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
     let mut uv = seeds;
-    for _ in 0..NEWTON_ITERATIONS {
-        let mut rows = Vec::with_capacity(3);
-        let mut residual = Vec::with_capacity(3);
-        for k in 0..2 {
-            uv[k] = sharp_in(surfaces[k], foot(surfaces[k], &center, uv[k])?);
-            let at = surfaces[k].evaluate(uv[k].0, uv[k].1)?;
-            let n = normal(k, uv[k])?;
-            residual.push(center.sub(&at).prod_dot(&n).sub(sr));
-            rows.push(n);
-        }
-        rows.push(*tangent);
-        residual.push(center.sub(p).prod_dot(tangent));
-        let jacobian =
-            Matrix::from_rows([rows[0].to_array(), rows[1].to_array(), rows[2].to_array()]);
-        let step = solve_linear_system(
-            &jacobian,
-            &Vector3::from_array([residual[0], residual[1], residual[2]]),
-        )?;
-        let next = center.sub(&step).sharpen();
-        let same =
-            (0..3).all(|k| next[k].is_subset_of(center[k]) && center[k].is_subset_of(next[k]));
-        center = next;
-        if same {
-            break;
-        }
-    }
+    let center = iterate(
+        center,
+        center,
+        NEWTON_ITERATIONS,
+        Repeat::FixedPoint,
+        |next| (next.sharpen(), *next),
+        |center| -> GeopResult<Step<Vector3<S>>> {
+            let mut rows = Vec::with_capacity(3);
+            let mut residual = Vec::with_capacity(3);
+            for k in 0..2 {
+                uv[k] = sharp_in(surfaces[k], foot(surfaces[k], center, uv[k])?);
+                let at = surfaces[k].evaluate(uv[k].0, uv[k].1)?;
+                let n = normal(k, uv[k])?;
+                residual.push(center.sub(&at).prod_dot(&n).sub(sr));
+                rows.push(n);
+            }
+            rows.push(*tangent);
+            residual.push(center.sub(p).prod_dot(tangent));
+            let jacobian =
+                Matrix::from_rows([rows[0].to_array(), rows[1].to_array(), rows[2].to_array()]);
+            let step = solve_linear_system(
+                &jacobian,
+                &Vector3::from_array([residual[0], residual[1], residual[2]]),
+            )?;
+            Ok(Step::Next(center.sub(&step)))
+        },
+    )?
+    .seed;
     Ok((center, uv))
 }
 
@@ -949,28 +955,27 @@ fn chamfer_point<S: Scalar>(
     seed: (S, S),
 ) -> GeopResult<(S, S)> {
     let dd = S::from_f64(d);
-    let mut at = seed;
-    for _ in 0..PROJECT_ITERATIONS {
-        let x = surface.evaluate(at.0, at.1)?;
-        let (su, sv) = surface.derivatives(at.0, at.1)?;
-        let off = x.sub(p);
-        let residual =
-            Vector2::from_array([off.prod_dot(tangent), off.prod_dot(&off).sub(dd.mul(dd))]);
-        let jacobian = Matrix::from_rows([
-            [su.prod_dot(tangent), sv.prod_dot(tangent)],
-            [S::TWO.mul(off.prod_dot(&su)), S::TWO.mul(off.prod_dot(&sv))],
-        ]);
-        let step = solve_linear_system(&jacobian, &residual)?;
-        let next = sharp_in(surface, (at.0.sub(step[0]), at.1.sub(step[1])));
-        let same = next.0.is_subset_of(at.0)
-            && at.0.is_subset_of(next.0)
-            && next.1.is_subset_of(at.1)
-            && at.1.is_subset_of(next.1);
-        at = next;
-        if same {
-            break;
-        }
-    }
+    let at = iterate(
+        seed,
+        seed,
+        PROJECT_ITERATIONS,
+        Repeat::FixedPoint,
+        |&next| (sharp_in(surface, next), next),
+        |&at| -> GeopResult<Step<(S, S)>> {
+            let x = surface.evaluate(at.0, at.1)?;
+            let (su, sv) = surface.derivatives(at.0, at.1)?;
+            let off = x.sub(p);
+            let residual =
+                Vector2::from_array([off.prod_dot(tangent), off.prod_dot(&off).sub(dd.mul(dd))]);
+            let jacobian = Matrix::from_rows([
+                [su.prod_dot(tangent), sv.prod_dot(tangent)],
+                [S::TWO.mul(off.prod_dot(&su)), S::TWO.mul(off.prod_dot(&sv))],
+            ]);
+            let step = solve_linear_system(&jacobian, &residual)?;
+            Ok(Step::Next((at.0.sub(step[0]), at.1.sub(step[1]))))
+        },
+    )?
+    .seed;
     let x = surface.evaluate(at.0, at.1)?;
     let off = x.sub(p);
     let square = off.prod_dot(tangent).abs().upper().to_f64();
@@ -1104,19 +1109,23 @@ fn chamfer_crossing<S: Scalar>(
             .with_context(with_context!(
                 "the chamfer's section {x} of the way along link {link}"
             ))?;
-        let mut t = seed;
-        for _ in 0..PROJECT_ITERATIONS {
-            let off = curve.evaluate(t)?.sub(&p);
-            let rate = S::TWO.mul(off.prod_dot(&curve.tangent(t)?));
-            t = t
-                .sub(off.prod_dot(&off).sub(d2).div(rate)?)
-                .sharpen()
-                .clamped(lo, hi);
-        }
+        let t = iterate(
+            seed,
+            seed,
+            PROJECT_ITERATIONS,
+            Repeat::Cycle,
+            |next| (next.sharpen().clamped(lo, hi), *next),
+            |&t| -> GeopResult<Step<S>> {
+                let off = curve.evaluate(t)?.sub(&p);
+                let rate = S::TWO.mul(off.prod_dot(&curve.tangent(t)?));
+                Ok(Step::Next(t.sub(off.prod_dot(&off).sub(d2).div(rate)?)))
+            },
+        )?
+        .seed;
         let ahead = curve.evaluate(t)?.sub(&p).prod_dot(&tangent);
         Ok((ahead.midpoint().to_f64(), t, p, tangent, feet))
     };
-    let (mut lo_c, mut hi_c) = (from, to);
+    let (lo_c, hi_c) = (from, to);
     let (g_lo, mut t) = {
         let (g, t, ..) = at(lo_c, seed)?;
         (g, t)
@@ -1129,17 +1138,12 @@ fn chamfer_crossing<S: Scalar>(
     }
     // Bisection: where along the chain is a free choice up to where the
     // chamfer's point lies on the edge, and the halves only close in on it.
-    for _ in 0..60 {
-        let mid = 0.5 * (lo_c + hi_c);
+    let bracket = bisect(lo_c, hi_c, 60, false, |mid| -> GeopResult<_> {
         let (g, tm, ..) = at(mid, t)?;
         t = tm;
-        if g.signum() == g_lo.signum() {
-            lo_c = mid;
-        } else {
-            hi_c = mid;
-        }
-    }
-    let c = 0.5 * (lo_c + hi_c);
+        Ok(Some(g.signum() == g_lo.signum()))
+    })?;
+    let c = 0.5 * (bracket.lo + bracket.hi);
     let (_, t, p, tangent, feet) = at(c, t)?;
     let (link, _) = locate(chain, c);
     let own = &chain.links[link];
@@ -1306,14 +1310,21 @@ fn nearest_parameter<S: Scalar>(
     seed: S,
 ) -> GeopResult<S> {
     let (lo, hi) = curve.domain();
-    let mut t = seed;
-    for _ in 0..PROJECT_ITERATIONS {
-        let d = curve.evaluate(t)?.sub(point);
-        let tangent = curve.tangent(t)?;
-        let step = d.prod_dot(&tangent).div(tangent.prod_dot(&tangent))?;
-        t = t.sub(step).sharpen().clamped(lo, hi);
-    }
-    Ok(t)
+    Ok(iterate(
+        seed,
+        seed,
+        PROJECT_ITERATIONS,
+        Repeat::Cycle,
+        |next| (next.sharpen().clamped(lo, hi), *next),
+        |&t| -> GeopResult<Step<S>> {
+            let d = curve.evaluate(t)?.sub(point);
+            let tangent = curve.tangent(t)?;
+            Ok(Step::Next(t.sub(
+                d.prod_dot(&tangent).div(tangent.prod_dot(&tangent))?,
+            )))
+        },
+    )?
+    .seed)
 }
 
 /// The edge between the faces `from` and `onto` that side `k` of the
@@ -1428,19 +1439,10 @@ fn crossing<S: Scalar>(
     }
     // Bisection: where along the edge is a free choice up to where the
     // ball touches both, and the halves only ever close in on that.
-    for _ in 0..60 {
-        let mid = 0.5 * (lo + hi);
-        if mid <= lo.min(hi) || mid >= lo.max(hi) {
-            break;
-        }
-        let (g, ..) = ball(mid)?;
-        if g.signum() == g_lo.signum() {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    let t = 0.5 * (lo + hi);
+    let bracket = bisect(lo, hi, 60, true, |mid| -> GeopResult<_> {
+        Ok(Some(ball(mid)?.0.signum() == g_lo.signum()))
+    })?;
+    let t = 0.5 * (bracket.lo + bracket.hi);
     let (_, center, contact, normals, uv) = ball(t)?;
     // Tangent faces either side of the edge, where the ball touches it.
     let onto_surface = &model.get_face(onto)?.surface;
@@ -1678,19 +1680,13 @@ fn fillet_placing<'a, S: Scalar>(
                 let (p, t) = chain.links[link].at(topology, S::from_f64(f))?;
                 Ok(x.center.sub(&p).prod_dot(&t).midpoint().to_f64())
             };
-            let (mut lo, mut hi) = (ca, cb);
-            let off_lo = off(lo)?;
-            if off_lo.signum() == off(hi)?.signum() {
+            let off_lo = off(ca)?;
+            if off_lo.signum() == off(cb)?.signum() {
                 return Ok(0.5);
             }
-            for _ in 0..60 {
-                let mid = 0.5 * (lo + hi);
-                if off(mid)?.signum() == off_lo.signum() {
-                    lo = mid;
-                } else {
-                    hi = mid;
-                }
-            }
+            let Bracket { lo, hi, .. } = bisect(ca, cb, 60, false, |mid| -> GeopResult<_> {
+                Ok(Some(off(mid)?.signum() == off_lo.signum()))
+            })?;
             Ok((0.5 * (lo + hi) - ca) / (cb - ca))
         };
         let guess = crossing(topology, k, a, b, radius_at(0.5 * (ca + cb)))?;
@@ -2075,15 +2071,10 @@ fn corner_position<S: Scalar>(
         }
         near = far;
     }
-    for _ in 0..60 {
-        let mid = 0.5 * (near + far);
-        if ahead(mid)? > 0.0 {
-            near = mid;
-        } else {
-            far = mid;
-        }
-    }
-    Ok(0.5 * (near + far))
+    let Bracket { lo, hi, .. } = bisect(near, far, 60, false, |mid| -> GeopResult<_> {
+        Ok(Some(ahead(mid)? > 0.0))
+    })?;
+    Ok(0.5 * (lo + hi))
 }
 
 /// Plans the rolling-ball blend of `chain` with `radii` (see the module

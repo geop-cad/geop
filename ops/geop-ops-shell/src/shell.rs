@@ -56,10 +56,12 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::Matrix,
     polygon::{loops_contain, polygon_signed_area},
     scalars::Scalar,
-    solvers::linear::solve_linear_system,
+    solvers::{
+        iterate::{Repeat, Step, iterate},
+        linear::shortest_solution,
+    },
     vector::{Vector, Vector2, Vector3},
     with_context,
 };
@@ -1330,28 +1332,30 @@ pub fn offset_vertex<S: Scalar>(
         Ok((at, normal))
     };
 
-    let mut seed = point;
+    // The step from each sharp seed is added to the answer as it is, with
+    // its width: the answer is `point` moved by every step, the seed only
+    // where the next step starts. A fixed point of the sharpened iteration
+    // ends it: every further step would start from the very same seed and
+    // only add its width again — not a tolerance, the seed is bit for bit
+    // unchanged.
     let mut answer = point;
-    for _ in 0..VERTEX_ITERATIONS {
-        let mut rows: Vec<(Vector3<S>, S)> = Vec::new();
-        for (_, _, members) in &groups {
-            let (at, normal) = nearest_foot(members, seed)?;
-            rows.push((normal, normal.prod_dot(&seed.sub(&at))));
-        }
-        let step = shortest_step(&rows)?;
-        answer = answer.sub(&step);
-        // A fixed point of the sharpened iteration: every further step
-        // would start from the very same seed and only add its width again
-        // — not a tolerance, the seed is bit for bit unchanged.
-        let next = seed.sub(&step).sharpen();
-        let same = |a: &Vector3<S>, b: &Vector3<S>| {
-            (0..3).all(|k| a[k].is_subset_of(b[k]) && b[k].is_subset_of(a[k]))
-        };
-        if same(&next, &seed) {
-            break;
-        }
-        seed = next;
-    }
+    iterate(
+        point,
+        point,
+        VERTEX_ITERATIONS,
+        Repeat::FixedPoint,
+        |next| (next.sharpen(), *next),
+        |seed| -> GeopResult<Step<Vector3<S>>> {
+            let mut rows: Vec<(Vector3<S>, S)> = Vec::new();
+            for (_, _, members) in &groups {
+                let (at, normal) = nearest_foot(members, *seed)?;
+                rows.push((normal, normal.prod_dot(&seed.sub(&at))));
+            }
+            let step = shortest_solution(&rows)?;
+            answer = answer.sub(&step);
+            Ok(Step::Next(seed.sub(&step)))
+        },
+    )?;
     // The answer has to be on every group's surface: a condition lost on
     // the way leaves it off one.
     for (g, (_, _, members)) in groups.iter().enumerate() {
@@ -1364,47 +1368,6 @@ pub fn offset_vertex<S: Scalar>(
         }
     }
     Ok(answer)
-}
-
-/// The shortest `d` with `n_i . d = r_i` for every `(n_i, r_i)` — for more
-/// than three conditions, of which three can be met at most, the `d` that
-/// misses them least in the least-squares sense.
-fn shortest_step<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
-    // `d = sum_i lambda_i n_i`, with the Gram matrix `G_ij = n_i . n_j`
-    // solving `G lambda = r`.
-    fn combine<S: Scalar, const N: usize>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
-        let mut gram = Matrix::<S, N, N>::zero();
-        let mut r = Vector::<S, N>::zero();
-        for i in 0..N {
-            r[i] = rows[i].1;
-            for j in 0..N {
-                gram[(i, j)] = rows[i].0.prod_dot(&rows[j].0);
-            }
-        }
-        let lambda = solve_linear_system(&gram, &r)?;
-        Ok((0..N).fold(Vector3::zero(), |d, i| {
-            d.add(&rows[i].0.prod_scalar(lambda[i]))
-        }))
-    }
-    match rows.len() {
-        0 => Err(GeopError::new("a vertex on no surface")),
-        1 => combine::<S, 1>(rows),
-        2 => combine::<S, 2>(rows),
-        3 => combine::<S, 3>(rows),
-        _ => {
-            let mut normal = Matrix::<S, 3, 3>::zero();
-            let mut b = Vector::<S, 3>::zero();
-            for (n, r) in rows {
-                for i in 0..3 {
-                    b[i] = b[i].add(n[i].mul(*r));
-                    for j in 0..3 {
-                        normal[(i, j)] = normal[(i, j)].add(n[i].mul(n[j]));
-                    }
-                }
-            }
-            solve_linear_system(&normal, &b)
-        }
-    }
 }
 
 #[cfg(test)]

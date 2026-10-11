@@ -143,19 +143,19 @@ where
         };
 
         let ranges = [seg.domain()];
-        if let Some(bounds) = restriction(&[t_hat], &ranges)?
-            && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1)
-        {
-            queue.push_back(restricted);
-            continue;
-        }
-
         let sizes = [extent([seg.control_points.iter().copied()])];
         // The query point's own width counts too, like a second object's.
         let point_width = (0..C)
             .map(|k| point[k].width().to_f64())
             .fold(0.0, f64::max);
         let carried = carried_width(&seg.control_points).max(point_width);
+        if let Some(bounds) = restriction(&[t_hat], &ranges, &sizes, carried)?
+            && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1)
+        {
+            queue.push_back(restricted);
+            continue;
+        }
+
         let halves = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
             Stalled::Converged => None,
             Stalled::Bisect(order) if order.is_empty() => None,

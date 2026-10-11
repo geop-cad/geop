@@ -2,6 +2,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     polygon::polygon_signed_area,
     scalars::Scalar,
+    solvers::bisect::bisect,
     vector::Vector2,
 };
 
@@ -602,20 +603,24 @@ impl<S: Scalar> Leg<'_, S> {
         let (t_vertex, t_mid) = self.ends()?;
         let origin = self.pcurve.evaluate(t_vertex)?;
         let radius_sq = radius.mul(radius);
-        let (mut inside, mut outside) = (t_vertex, t_mid);
-        let mut point = self.pcurve.evaluate(outside)?.sub(&origin);
-        for _ in 0..EXIT_BISECTIONS {
-            let t = inside.add(outside).div(S::TWO)?.sharpen();
-            point = self.pcurve.evaluate(t)?.sub(&origin);
-            let excess = point.norm_sq().sub(radius_sq);
-            if excess.definitely_less(S::ZERO) {
-                inside = t;
-            } else if excess.definitely_greater(S::ZERO) {
-                outside = t;
-            } else {
-                break;
-            }
-        }
+        let mut point = self.pcurve.evaluate(t_mid)?.sub(&origin);
+        bisect(
+            t_vertex,
+            t_mid,
+            EXIT_BISECTIONS,
+            false,
+            |t| -> GeopResult<_> {
+                point = self.pcurve.evaluate(t)?.sub(&origin);
+                let excess = point.norm_sq().sub(radius_sq);
+                Ok(if excess.definitely_less(S::ZERO) {
+                    Some(true)
+                } else if excess.definitely_greater(S::ZERO) {
+                    Some(false)
+                } else {
+                    None
+                })
+            },
+        )?;
         Ok(point)
     }
 }

@@ -9,6 +9,8 @@
 //! - [`solve_banded`]: a banded system that needs no pivoting.
 //! - [`cholesky`] and [`solve_cholesky`]: a symmetric positive
 //!   semi-definite one, rows that say nothing new left out.
+//! - [`shortest_solution`]: the shortest step meeting a few linear
+//!   conditions in space — least squares where they are too many.
 //! - [`eliminate`], [`null_space`], [`rank`], [`inverse`]: Gauss-Jordan
 //!   elimination with complete pivoting over a Jacobian — which rows are
 //!   independent, what they leave free, and inverses.
@@ -25,7 +27,7 @@ use crate::{
     geop_error::{GeopError, GeopResult},
     matrix::Matrix,
     scalars::Scalar,
-    vector::Vector,
+    vector::{Vector, Vector3},
 };
 
 /// Solve the dense `N x N` system `a * x = b` by Gaussian elimination with
@@ -432,6 +434,47 @@ pub fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
         inverse[col] = row[m..].to_vec();
     }
     Some(inverse)
+}
+
+/// The shortest `d` with `n_i . d = r_i` for every `(n_i, r_i)` — for more
+/// than three conditions, of which three can be met at most, the `d` that
+/// misses them least in the least-squares sense.
+pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
+    // `d = sum_i lambda_i n_i`, with the Gram matrix `G_ij = n_i . n_j`
+    // solving `G lambda = r`.
+    fn combine<S: Scalar, const N: usize>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
+        let mut gram = Matrix::<S, N, N>::zero();
+        let mut r = Vector::<S, N>::zero();
+        for i in 0..N {
+            r[i] = rows[i].1;
+            for j in 0..N {
+                gram[(i, j)] = rows[i].0.prod_dot(&rows[j].0);
+            }
+        }
+        let lambda = solve_linear_system(&gram, &r)?;
+        Ok((0..N).fold(Vector3::zero(), |d, i| {
+            d.add(&rows[i].0.prod_scalar(lambda[i]))
+        }))
+    }
+    match rows.len() {
+        0 => Err(GeopError::new("a vertex on no surface")),
+        1 => combine::<S, 1>(rows),
+        2 => combine::<S, 2>(rows),
+        3 => combine::<S, 3>(rows),
+        _ => {
+            let mut normal = Matrix::<S, 3, 3>::zero();
+            let mut b = Vector::<S, 3>::zero();
+            for (n, r) in rows {
+                for i in 0..3 {
+                    b[i] = b[i].add(n[i].mul(*r));
+                    for j in 0..3 {
+                        normal[(i, j)] = normal[(i, j)].add(n[i].mul(n[j]));
+                    }
+                }
+            }
+            solve_linear_system(&normal, &b)
+        }
+    }
 }
 
 #[cfg(test)]

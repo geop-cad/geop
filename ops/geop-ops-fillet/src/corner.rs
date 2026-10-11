@@ -41,7 +41,10 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
     scalars::Scalar,
-    solvers::linear::solve_linear_system,
+    solvers::{
+        iterate::{Repeat, Step, iterate},
+        linear::solve_linear_system,
+    },
     vector::Vector3,
     with_context,
 };
@@ -381,32 +384,33 @@ fn ball<S: Scalar>(
     for k in 0..3 {
         normals[k] = normal_at(model, faces[k], at)?;
     }
-    let mut center = at.add(&solve(normals, [sr; 3])?).sharpen();
+    let center = at.add(&solve(normals, [sr; 3])?).sharpen();
     let mut uv = [(S::ZERO, S::ZERO); 3];
     for k in 0..3 {
         uv[k] = seed_on(surfaces[k], at)?;
     }
-    for _ in 0..NEWTON_ITERATIONS {
-        let mut offsets = [S::ZERO; 3];
-        for k in 0..3 {
-            uv[k] = sharp_in(surfaces[k], foot(surfaces[k], &center, uv[k])?);
-            let p = surfaces[k].evaluate(uv[k].0, uv[k].1)?;
-            normals[k] = surfaces[k].normal(uv[k].0, uv[k].1)?.normalize()?;
-            offsets[k] = normals[k].prod_dot(&p).add(sr);
-        }
-        let rows = normals;
-        let next = solve_linear_system(
-            &Matrix::from_rows(rows.map(|n| n.to_array())),
-            &Vector3::from_array(offsets),
-        )?
-        .sharpen();
-        let same =
-            (0..3).all(|k| next[k].is_subset_of(center[k]) && center[k].is_subset_of(next[k]));
-        center = next;
-        if same {
-            break;
-        }
-    }
+    let center = iterate(
+        center,
+        center,
+        NEWTON_ITERATIONS,
+        Repeat::FixedPoint,
+        |next| (next.sharpen(), *next),
+        |center| -> GeopResult<Step<Vector3<S>>> {
+            let mut offsets = [S::ZERO; 3];
+            for k in 0..3 {
+                uv[k] = sharp_in(surfaces[k], foot(surfaces[k], center, uv[k])?);
+                let p = surfaces[k].evaluate(uv[k].0, uv[k].1)?;
+                normals[k] = surfaces[k].normal(uv[k].0, uv[k].1)?.normalize()?;
+                offsets[k] = normals[k].prod_dot(&p).add(sr);
+            }
+            let rows = normals;
+            Ok(Step::Next(solve_linear_system(
+                &Matrix::from_rows(rows.map(|n| n.to_array())),
+                &Vector3::from_array(offsets),
+            )?))
+        },
+    )?
+    .seed;
     let mut contacts = [Vector3::zero(); 3];
     for k in 0..3 {
         let (u, v) = foot(surfaces[k], &center, uv[k])?;

@@ -464,3 +464,28 @@ fn fillet_up_to_a_wall_two_faces_make() {
         );
     }
 }
+
+/// A bar of the press handle's size, radius 3 and 236 long with its end
+/// 461 from the origin, its rim rounded. The rounded bar's cap is left as
+/// four quarters of radius 2 meeting at the centre, and validating it asks
+/// whether each quarter's radial edge crosses the neighbouring quarter's
+/// surface, which it only touches at that surface's pole. Clipping closed in
+/// on the pole by a constant factor without end (see `fat_line::restriction`
+/// and the curve-surface test `blended_spoke_touching_cap_quadrant_at_its_pole`).
+#[test]
+fn far_bar_rim_fillet() {
+    use geop_ops_extrude_revolve::shapes::cylinder::{Axis, revolved_cylinder_along_axis};
+    for (axis, base) in [(Axis::X, v(225.0, 0.0, 0.0)), (Axis::Z, v(0.0, 0.0, 225.0))] {
+        let mut model = NamedModel::new();
+        revolved_cylinder_along_axis(
+            &mut model,
+            "c",
+            base,
+            S::from_f64(3.0),
+            S::from_f64(236.0),
+            axis,
+        )
+        .unwrap();
+        blended(model, &["cylinder(c,p1,q0)"], BlendShape::round(1.0));
+    }
+}

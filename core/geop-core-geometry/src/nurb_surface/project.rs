@@ -1,4 +1,9 @@
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::GeopResult,
+    scalars::Scalar,
+    solvers::iterate::{End, Repeat, Step, iterate},
+    vector::Vector3,
+};
 
 use super::NurbSurface;
 
@@ -15,7 +20,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// convergence tolerance — interval scalars can't judge "close enough" —
     /// but stops early, with the identical result, once the sharpened
     /// iterate repeats one before it exactly — a fixed point, or a cycle in
-    /// the last bit (see the loop).
+    /// the last bit ([`iterate`]).
     ///
     /// `J` is singular exactly where the surface's own parametrization is —
     /// a coordinate-singular pole (e.g. the apex of a `revolve`d disk cap,
@@ -25,8 +30,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// meridian, off the pole, after which the full step takes over. A seed
     /// on the pole would otherwise never leave it, whatever the target. For
     /// a target at the pole that step is zero, and `(u, v)` stays. Where
-    /// neither derivative is definitely nonzero, the update is skipped,
-    /// leaving `(u, v)` where the previous iteration left it.
+    /// neither derivative is definitely nonzero, no step is taken, and
+    /// `(u, v)` is the seed the previous iteration left.
     pub fn project(
         &self,
         target: Vector3<S>,
@@ -36,104 +41,80 @@ impl<S: Scalar> NurbSurface<S, 4> {
     ) -> GeopResult<(S, S)> {
         let (u_lo, u_hi) = self.domain_u();
         let (v_lo, v_hi) = self.domain_v();
-        let mut u = u0.clamped(u_lo, u_hi);
-        let mut v = v0.clamped(v_lo, v_hi);
-        // Every iteration's seed and its unsharpened step, in order.
-        let mut taken: Vec<((S, S), (S, S))> = Vec::with_capacity(iterations);
+        let seed = (u0.clamped(u_lo, u_hi), v0.clamped(v_lo, v_hi));
+        // Sharpened every iteration but the last: Newton is iterative
+        // *refinement* of a foot point this routine gets to choose, not
+        // propagation of a measured uncertainty, so any single value inside
+        // the current iterate is an equally valid starting point for the
+        // next step (see `Scalar::sharpen`). Left unsharpened, each step's
+        // `du`/`dv` widens `(u, v)` further; `clamped` cannot pull that
+        // back, since an interval merely *straddling* a domain bound is
+        // neither definitely inside nor definitely outside it. The widened
+        // parameter then reaches `evaluate`, where a wide `t` makes the de
+        // Boor weight straddle zero and the whole evaluation fail — even
+        // though the seed was sharp and well inside the domain. Sharpen
+        // *before* clamping, not after: on a sharp value `clamped`'s
+        // three-valued comparisons are exact, so the result is guaranteed
+        // inside `[lo, hi]`.
+        //
+        // The *last* iteration's answer is not sharpened: it is not a seed
+        // for anything. `du`/`dv` inherit the width of `target` (through
+        // `r`), so that final width is the honest statement of how
+        // precisely an uncertain target pins down a foot point. Sharpening
+        // it away would return a single sharp `(u, v)` for a target that
+        // only ever determined a range of them.
+        //
+        // A seed the sharpened iteration has started from before ends it:
+        // most projections from a nearby seed end in a fixed point or a
+        // cycle in the last bit, and would run out all their iterations
+        // ([`Repeat::Cycle`]).
+        let clamp = |(u, v): (S, S)| (u.clamped(u_lo, u_hi), v.clamped(v_lo, v_hi));
+        let iterated = iterate(
+            seed,
+            seed,
+            iterations,
+            Repeat::Cycle,
+            |&(u, v)| (clamp((u.sharpen(), v.sharpen())), clamp((u, v))),
+            |&(u, v)| -> GeopResult<Step<(S, S)>> {
+                let p = self.evaluate(u, v)?;
+                let (su, sv) = self.derivatives(u, v)?;
+                let r = target.sub(&p);
 
-        for iteration in 0..iterations {
-            let p = self.evaluate(u, v)?;
-            let (su, sv) = self.derivatives(u, v)?;
-            let r = target.sub(&p);
+                let a11 = su.prod_dot(&su);
+                let a12 = su.prod_dot(&sv);
+                let a22 = sv.prod_dot(&sv);
+                let b1 = su.prod_dot(&r);
+                let b2 = sv.prod_dot(&r);
 
-            let a11 = su.prod_dot(&su);
-            let a12 = su.prod_dot(&sv);
-            let a22 = sv.prod_dot(&sv);
-            let b1 = su.prod_dot(&r);
-            let b2 = sv.prod_dot(&r);
-
-            let det = a11.mul(a22).sub(a12.mul(a12));
-            let du = b1.mul(a22).sub(b2.mul(a12)).div(det);
-            let dv = a11.mul(b2).sub(a12.mul(b1)).div(det);
-            let (du, dv) = match (du, dv) {
-                (Ok(du), Ok(dv)) => (du, dv),
-                // Singular: along the one derivative that moves the point.
-                _ if a22.definitely_greater(S::ZERO) => {
-                    match self.off_pole(target, &p, (v, v_lo, v_hi), (u, u_lo, u_hi), false)? {
-                        Some((along, d)) => (along.sub(u), d),
-                        None => continue,
+                let det = a11.mul(a22).sub(a12.mul(a12));
+                let du = b1.mul(a22).sub(b2.mul(a12)).div(det);
+                let dv = a11.mul(b2).sub(a12.mul(b1)).div(det);
+                let (du, dv) = match (du, dv) {
+                    (Ok(du), Ok(dv)) => (du, dv),
+                    // Singular: along the one derivative that moves the point.
+                    _ if a22.definitely_greater(S::ZERO) => {
+                        match self.off_pole(target, &p, (v, v_lo, v_hi), (u, u_lo, u_hi), false)? {
+                            Some((along, d)) => (along.sub(u), d),
+                            None => return Ok(Step::Stuck),
+                        }
                     }
-                }
-                _ if a11.definitely_greater(S::ZERO) => {
-                    match self.off_pole(target, &p, (u, u_lo, u_hi), (v, v_lo, v_hi), true)? {
-                        Some((along, d)) => (d, along.sub(v)),
-                        None => continue,
+                    _ if a11.definitely_greater(S::ZERO) => {
+                        match self.off_pole(target, &p, (u, u_lo, u_hi), (v, v_lo, v_hi), true)? {
+                            Some((along, d)) => (d, along.sub(v)),
+                            None => return Ok(Step::Stuck),
+                        }
                     }
-                }
-                _ => continue,
-            };
-
-            // Sharpened every iteration, not just at the end: Newton is
-            // iterative *refinement* of a foot point this routine gets to
-            // choose, not propagation of a measured uncertainty, so any
-            // single value inside the current iterate is an equally valid
-            // starting point for the next step (see `Scalar::sharpen`).
-            // Left unsharpened, each step's `du`/`dv` widens `(u, v)`
-            // further; `clamped` cannot pull that back, since an interval
-            // merely *straddling* a domain bound is neither definitely
-            // inside nor definitely outside it. The widened parameter then
-            // reaches `evaluate`, where a wide `t` makes the de Boor
-            // weight straddle zero and the whole evaluation fail — even
-            // though the seed was sharp and well inside the domain.
-            // Sharpen *before* clamping, not after: on a sharp value
-            // `clamped`'s three-valued comparisons are exact, so the result
-            // is guaranteed inside `[lo, hi]`. The other order can escape
-            // the domain again — collapsing an interval that straddles a
-            // bound to its midpoint can land just past that bound, and the
-            // next `evaluate` then rejects it as out of domain.
-            //
-            // The *last* iteration is the exception: its result is not a
-            // seed for anything, it is the answer this function returns.
-            // `du`/`dv` inherit the width of `target` (through `r`), so
-            // that final width is the honest statement of how precisely an
-            // uncertain target pins down a foot point. Sharpening it away
-            // would return a single sharp `(u, v)` for a target that only
-            // ever determined a range of them — an answer claiming more
-            // precision than the input carried, which then fails to agree
-            // with anything else derived from the same uncertain point.
-            let (next_u, next_v) = (u.add(du), v.add(dv));
-            if iteration + 1 == iterations {
-                return Ok((next_u.clamped(u_lo, u_hi), next_v.clamped(v_lo, v_hi)));
-            }
-            let (sharp_u, sharp_v) = (
-                next_u.sharpen().clamped(u_lo, u_hi),
-                next_v.sharpen().clamped(v_lo, v_hi),
-            );
-            // A seed the sharpened iteration has started from before: each
-            // iterate is a deterministic function of the sharp seed before
-            // it, so from there on the seeds repeat with that period —
-            // a fixed point, or rounding in the last bit cycling between
-            // two or three. The last iteration's seed is then known, and its
-            // unsharpened step is one already taken: taking it now returns
-            // the identical result sooner. Not a convergence tolerance —
-            // nothing is judged "close enough", the seed is bit-for-bit one
-            // seen before. (Most projections from a nearby seed ended in
-            // such a cycle and ran out all their iterations.)
-            let same = |a: S, b: S| a.is_subset_of(b) && b.is_subset_of(a);
-            taken.push(((u, v), (next_u, next_v)));
-            if let Some(k) = taken
-                .iter()
-                .position(|&((su, sv), _)| same(su, sharp_u) && same(sv, sharp_v))
-            {
-                let period = taken.len() - k;
-                let (_, (last_u, last_v)) = taken[k + (iterations - 1 - k) % period];
-                return Ok((last_u.clamped(u_lo, u_hi), last_v.clamped(v_lo, v_hi)));
-            }
-            u = sharp_u;
-            v = sharp_v;
-        }
-
-        Ok((u, v))
+                    _ => return Ok(Step::Stuck),
+                };
+                Ok(Step::Next((u.add(du), v.add(dv))))
+            },
+        )?;
+        // A step that cannot be taken cannot be taken from the same seed
+        // later either: the seed is where the iteration stays.
+        Ok(match iterated.end {
+            End::Stuck => iterated.seed,
+            End::Done | End::Exhausted => iterated.answer,
+        })
     }
 
     /// The step off a pole at `p` towards `target`. The collapsed parameter

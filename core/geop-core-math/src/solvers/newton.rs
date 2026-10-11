@@ -14,6 +14,8 @@
 
 use crate::scalars::Scalar;
 
+use super::iterate::{End, Iterated, Repeat, Step, iterate};
+
 /// Newton iterations. Quadratic convergence makes a handful plenty; this
 /// cannot change which solutions are found, only how tightly an
 /// already-isolated one is pinned down.
@@ -32,6 +34,9 @@ const ITERATIONS: usize = 12;
 /// comparisons are exact — rather than given up on: a foot point can step
 /// outside the domain on the way in.
 ///
+/// A seed repeating one before it ends the iteration early with the same
+/// result ([`super::iterate::Repeat::Cycle`]).
+///
 /// The result is intersected with `start`: both enclose the same root, so
 /// their intersection does too, and is tighter than either. Infallible by
 /// construction: if Newton stops, or ends disjoint from `start` (it has
@@ -46,18 +51,23 @@ pub fn refine<S: Scalar, const N: usize>(
     domain: [(S, S); N],
     step: impl Fn([S; N]) -> Option<[S; N]>,
 ) -> [S; N] {
-    let mut x = start.map(|s| s.sharpen());
-    for iteration in 0..ITERATIONS {
-        let Some(next) = step(x) else {
-            return start;
-        };
-        let next = if iteration + 1 == ITERATIONS {
-            next
-        } else {
-            next.map(|s| s.sharpen())
-        };
-        x = std::array::from_fn(|i| next[i].clamped(domain[i].0, domain[i].1));
-    }
+    let clamp = |x: [S; N]| std::array::from_fn(|i| x[i].clamped(domain[i].0, domain[i].1));
+    let sharp = start.map(|s| s.sharpen());
+    let Ok(Iterated {
+        answer: x,
+        end: End::Exhausted,
+        ..
+    }) = iterate::<_, ()>(
+        sharp,
+        sharp,
+        ITERATIONS,
+        Repeat::Cycle,
+        |next| (clamp(next.map(|s| s.sharpen())), clamp(*next)),
+        |x| Ok(step(*x).map_or(Step::Stuck, Step::Next)),
+    )
+    else {
+        return start;
+    };
     if (0..N).any(|i| !x[i].could_be_equal(start[i])) {
         return start;
     }

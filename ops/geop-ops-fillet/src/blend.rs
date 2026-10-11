@@ -104,7 +104,7 @@ use geop_ops_extrude_revolve::{
 };
 
 use crate::corner;
-use crate::rolling::{self, Chain, Radii, Rolled, normal_at, tangent_chain};
+use crate::rolling::{self, Chain, Radii, Rolled, foot, normal_at, seed_on, tangent_chain};
 use crate::tool::{self, Cap, Corner, CornerEnd, Joint, Tool, ToolSpan, ToolStation, embed};
 
 /// What a blend replaces an edge's corner with (see the module docs).
@@ -482,16 +482,20 @@ fn same_circle<S: Scalar>(a: &Circle<S>, b: &Circle<S>) -> bool {
             .could_be_equal(S::ZERO)
 }
 
-/// The outward normal of `face`, turning around `circle`'s axis, at the
-/// point `p` of the circle — with `radial` the unit direction from the
-/// center to `p` — or none where the face is not one a revolved blend
-/// handles. A plane has to stand across the axis; any other face has to be
-/// a surface of revolution around it whose profile is one straight line (a
-/// cylinder, a cone), so that it traces a line in every cross-section.
+/// The outward normal of `surface` at the point `p` of `circle`, or none
+/// where the surface is not one a revolved blend handles. A plane has to
+/// stand across the axis; any other surface has to be a surface of
+/// revolution around it whose profile is one straight line (a cylinder, a
+/// cone), so that it traces a line in every cross-section.
+///
+/// The normal is the surface's own at `p`'s foot point, not one taken
+/// anywhere else on the profile and turned into `p`'s half-plane: the axis
+/// is only known to its width, and turning by it a point a long profile
+/// away (the far end of a bar) multiplies that width by the bar's length.
 fn round_face_normal<S: Scalar>(
     surface: &NurbSurface3D<S>,
     circle: &Circle<S>,
-    radial: &Vector3<S>,
+    p: &Vector3<S>,
 ) -> GeopResult<Option<Vector3<S>>> {
     let axis = &circle.normal;
     if let Some(plane) = surface.as_plane()? {
@@ -514,27 +518,14 @@ fn round_face_normal<S: Scalar>(
     {
         return Ok(None);
     }
-    // The profile: the one straight direction, of two rows. Its first
-    // control point lies on the surface, where the profile starts.
-    let profile = if surface.degree_u == 1 && surface.num_u == 2 {
-        [0, surface.num_v]
-    } else if surface.degree_v == 1 && surface.num_v == 2 {
-        [0, 1]
-    } else {
+    // The profile has to be the one straight direction, of two rows.
+    let straight = (surface.degree_u == 1 && surface.num_u == 2)
+        || (surface.degree_v == 1 && surface.num_v == 2);
+    if !straight {
         return Ok(None);
-    };
-    let start = point(&surface.control_points[profile[0]])?;
-    // The normal where the profile starts, in its own half-plane through the
-    // axis — the same in every half-plane, turned.
-    let (u0, v0) = (surface.domain_u().0, surface.domain_v().0);
-    let normal = surface.normal(u0, v0)?;
-    let off = start.sub(&circle.center);
-    let off_axis = off.sub(&axis.prod_scalar(off.prod_dot(axis)));
-    let Ok(start_radial) = off_axis.normalize() else {
-        return Ok(None);
-    };
-    let (nr, nz) = (normal.prod_dot(&start_radial), normal.prod_dot(axis));
-    Ok(Some(radial.prod_scalar(nr).add(&axis.prod_scalar(nz))))
+    }
+    let (u, v) = foot(surface, p, seed_on(surface, p)?)?;
+    Ok(Some(surface.normal(u, v)?))
 }
 
 /// The cross-section of the circular edge `edge`, an arc of `circle`,
@@ -556,10 +547,10 @@ fn round_section<S: Scalar>(
         .sub(&axis.prod_scalar(off.prod_dot(&axis)))
         .normalize()?;
     let [left, right] = faces(model, edge)?;
-    let Some(n_l) = round_face_normal(&model.get_face(left)?.surface, circle, &radial)? else {
+    let Some(n_l) = round_face_normal(&model.get_face(left)?.surface, circle, &p)? else {
         return Ok(None);
     };
-    let Some(n_r) = round_face_normal(&model.get_face(right)?.surface, circle, &radial)? else {
+    let Some(n_r) = round_face_normal(&model.get_face(right)?.surface, circle, &p)? else {
         return Ok(None);
     };
     let (n_l, t_l) = face_frame(&n_l, &c)?;
@@ -667,10 +658,14 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
             let sr = section.bend.side::<S>().mul(r);
             let alpha = sr.div(t_a.prod_dot(n_b))?;
             let beta = sr.div(t_b.prod_dot(n_a))?;
-            let center = e.add(&t_a.prod_scalar(alpha).add(&t_b.prod_scalar(beta)));
+            let to_center = t_a.prod_scalar(alpha).add(&t_b.prod_scalar(beta));
+            let center = e.add(&to_center);
             let tangent_a = center.sub(&n_a.prod_scalar(sr));
             let tangent_b = center.sub(&n_b.prod_scalar(sr));
-            let weight = r.div(e.sub(&center).norm())?;
+            // The weight is the cosine of the arc's half angle, which the
+            // faces' directions decide alone: from them, not from `E` and
+            // `C`, whose difference would add `E`'s width twice.
+            let weight = r.div(to_center.norm())?;
             let apex = e.prod_scalar(S::TWO).sub(&center);
             (
                 vec![

@@ -141,11 +141,25 @@ pub(crate) fn clip_tensor<S: Scalar>(
 ///
 /// This comes *before* any convergence test ([`stalled`]): while clipping
 /// still shrinks a box, the box is not the resolution limit of anything, and
-/// stopping there would report a piece clipping was about to reject.
+/// stopping there would report a piece clipping was about to reject. Except
+/// once every spatial extent in `sizes` is within `carried`, the width the
+/// data carries ([`carried_width`]): the data can no longer tell the box's
+/// points apart, and a clip narrowing it further narrows parameters only. At
+/// a pole, where the solutions are a whole row and clipping closes in on it
+/// by a constant factor, it did so for thousands of steps, down to boxes of
+/// `1e-280`.
 pub(crate) fn restriction<S: Scalar>(
     hats: &[S],
     ranges: &[(S, S)],
+    sizes: &[f64],
+    carried: f64,
 ) -> GeopResult<Option<Vec<(S, S)>>> {
+    if !sizes
+        .iter()
+        .any(|&e| S::from_f64(e).definitely_greater(S::from_f64(carried)))
+    {
+        return Ok(None);
+    }
     let min_progress = S::from_ratio(4, 5)?;
     let inside = |t: S, (a, b): (S, S)| t.definitely_greater(a) && t.definitely_less(b);
     let cut: Vec<bool> = (0..hats.len())
@@ -208,10 +222,17 @@ pub(crate) enum Stalled {
 ///
 /// Otherwise the box is bisected, preferring the direction with the largest
 /// *spatial* extent `sizes[dir]`: parameter widths from differently scaled
-/// domains aren't comparable (`curve_surface.md` §3), and a direction with no
-/// extent at all — `u` along a pole row — gains nothing from a split, while
-/// every piece of it survives, so it is skipped, as is one whose domain is
-/// no wider than `min_subdivision_size`.
+/// domains aren't comparable (`curve_surface.md` §3). A direction whose
+/// extent is no more than `carried` — `u` along a pole row, which has none —
+/// gains nothing from a split, for the same reason as above: its pieces are
+/// as far apart as the data can tell, and every one of them survives. So it
+/// is skipped, as is one whose domain is no wider than
+/// `min_subdivision_size`. A box with no direction left is reported as it
+/// is. Skipping only extents of exactly zero split a cap's quadrant, met by
+/// a spoke at its pole far from the origin, into thousands of `u` pieces:
+/// there the spoke and `v` reach `min_subdivision_size` while, at a speed of
+/// 3, still wider in space than it, and `u`, already resolved down to the
+/// width the fixed-point weight carries, was all that was left to split.
 pub(crate) fn stalled<S: Scalar>(
     ranges: &[(S, S)],
     sizes: &[f64],
@@ -228,7 +249,8 @@ pub(crate) fn stalled<S: Scalar>(
     let mut order: Vec<usize> = (0..ranges.len())
         .filter(|&dir| {
             let (a, b) = ranges[dir];
-            sizes[dir] > 0.0 && a.union(b).width().definitely_greater(min_subdivision_size)
+            S::from_f64(sizes[dir]).definitely_greater(S::from_f64(carried))
+                && a.union(b).width().definitely_greater(min_subdivision_size)
         })
         .collect();
     order.sort_by(|&a, &b| sizes[b].total_cmp(&sizes[a]));

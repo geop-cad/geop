@@ -610,17 +610,11 @@ fn press_from_the_front_draws() {
 /// The press from the iso view. The ray from a point of the silhouette of
 /// the handle's fillet `fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q3)`
 /// towards the eye leaves that face tangentially, as every ray from a
-/// silhouette does, and the search for where it crosses the face cannot
-/// isolate the touch at its start: the face's middle control points
-/// (the fillet's cross-section corner, revolved) are 8e-8 wide, 3e-10 of
-/// their size, so the ray stays within the surface's enclosure for about
-/// 1e-3 along it, and the search runs out of nodes there. Exact surfaces,
-/// as wide as their rounding, settle. Not a drawing defect: the same face
-/// was as wide, and this view failed alike, before the refactor (7bd9306^).
-/// Ruled out: a sliver piece at the face's boundary (the piece is 0.46 of
-/// a silhouette across the face), a silhouette traced twice.
+/// silhouette does, and stays within the face's enclosure for as long as
+/// the face is wide. It was 8e-8 wide, and the search ran out of nodes
+/// there; `fillet_tests::press_handle_rim_fillet_is_narrow` pins the cause.
 #[test]
-#[ignore = "the handle's fillet is 8e-8 wide, a ray grazing it at its silhouette cannot be resolved; see the doc comment"]
+#[ignore = "slow: the whole press drawn from the iso view — run with `cargo test -- --ignored`"]
 fn press_from_the_iso_view_draws() {
     use geop_ops_drawing::scene::Scene;
     let (_, built) = example_assembly("press");
@@ -629,11 +623,6 @@ fn press_from_the_iso_view_draws() {
         .project(&ViewKind::Iso.frame().unwrap(), &ViewOptions::default())
         .unwrap();
 }
-
-/// Views of example assemblies known not to build: see
-/// [`press_from_the_iso_view_draws`]. Their sheets, which hold every view,
-/// are not composed either.
-const ASSEMBLY_VIEWS_KNOWN_TO_FAIL: [(&str, ViewKind); 1] = [("press", ViewKind::Iso)];
 
 /// Every example assembly draws: its default sheet with the bill of
 /// materials builds, with a balloon per line of the bill whose part has
@@ -652,41 +641,36 @@ fn every_example_assembly_draws() {
         };
         let parts = parts_list(built.part.current(), &args).unwrap();
         let scene = Scene::of(built.part.current()).unwrap();
-        if !ASSEMBLY_VIEWS_KNOWN_TO_FAIL.iter().any(|(n, _)| *n == name) {
-            let sheet = match compose(built.part.current(), &args, "", &parts) {
-                Ok(sheet) => sheet,
-                Err(e) => {
-                    failures.push(format!("{name}: {e}"));
-                    continue;
-                }
-            };
-            let drawn = parts
-                .iter()
-                .filter(|line| {
-                    scene
-                        .bodies
-                        .iter()
-                        .any(|b| line.placements.contains(&b.path))
-                })
-                .count();
-            let balloons = sheet
-                .strokes
-                .iter()
-                .filter(|s| {
-                    s.layer == Layer::Dimension
-                        && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
-                })
-                .count();
-            if balloons != drawn {
-                failures.push(format!(
-                    "{name}: {balloons} balloons for {drawn} lines of the bill drawn"
-                ));
-            }
-        }
-        for kind in ViewKind::ALL {
-            if ASSEMBLY_VIEWS_KNOWN_TO_FAIL.contains(&(name, kind)) {
+        let sheet = match compose(built.part.current(), &args, "", &parts) {
+            Ok(sheet) => sheet,
+            Err(e) => {
+                failures.push(format!("{name}: {e}"));
                 continue;
             }
+        };
+        let drawn = parts
+            .iter()
+            .filter(|line| {
+                scene
+                    .bodies
+                    .iter()
+                    .any(|b| line.placements.contains(&b.path))
+            })
+            .count();
+        let balloons = sheet
+            .strokes
+            .iter()
+            .filter(|s| {
+                s.layer == Layer::Dimension
+                    && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
+            })
+            .count();
+        if balloons != drawn {
+            failures.push(format!(
+                "{name}: {balloons} balloons for {drawn} lines of the bill drawn"
+            ));
+        }
+        for kind in ViewKind::ALL {
             let v = match scene.project(&kind.frame().unwrap(), &ViewOptions::default()) {
                 Ok(v) => v,
                 Err(e) => {
