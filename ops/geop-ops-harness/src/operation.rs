@@ -18,9 +18,10 @@ use geop_ops::{
         Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen, build_model,
         frame_along,
     },
+    solids::{CutWire, SolidNotes, solid_notes},
     ui::{
-        Action, Choice, EditForm, FormState, ListItem, Number, Shape, Style, Tone, Unit, Value,
-        Visual,
+        Action, Choice, Edit, EditForm, FormState, ListItem, Number, Shape, Style, Tone, Unit,
+        Value, Visual,
     },
 };
 use geop_ops_extrude_revolve::{
@@ -31,7 +32,7 @@ use geop_ops_extrude_revolve::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cable::{Cable, Cables, CutWire, cables},
+    cable::{Cable, Cables, cables},
     route::{Measure, RoutePath, Waypoint},
     wire::{GAUGES, Wire, WireSize, bundle_diameter},
 };
@@ -261,7 +262,8 @@ fn cable<S: Scalar>(
 /// Builds the route of `args` as the step `step` into `model`, resolving
 /// its points against it as well, and the cable it lays: a route in a model
 /// on its own, in any scalar, as a test lays one.
-pub fn lay<S: Scalar>(
+#[cfg(test)]
+pub(crate) fn lay<S: Scalar>(
     model: &mut NamedModel<S>,
     step: &str,
     args: &RouteArgs,
@@ -303,6 +305,22 @@ fn record(
     Ok(cables)
 }
 
+/// Notes the bundle `route(R)` of the step `R`: only drawn, its cable's
+/// wires ordered in its place.
+// A generator's arguments are a type of their own: the step's id, a `String`.
+#[allow(clippy::ptr_arg)]
+fn note(mut notes: SolidNotes, reader: &mut BuildReader, step: &String) -> GeopResult<SolidNotes> {
+    let bundle = Namer::new("route", step)?.root();
+    let cables = reader.retrieve_target(&cables())?;
+    let cable = (cables.get(&bundle))
+        .ok_or_else(|| GeopError::new(format!("the part has no cable named {bundle:?}")))?;
+    let wires = cable.wires.clone();
+    let note = notes.note_mut(bundle);
+    note.drawn_only = true;
+    note.wires = wires;
+    Ok(notes)
+}
+
 /// The points to run through, picked in order; the wires, each selected
 /// to set its size and colour; the bundle's fill, bend factor and service
 /// loop; what was built — and the route drawn, its points numbered and its
@@ -331,7 +349,7 @@ fn form<'a>(
 
     let cable = (context.built)
         .and_then(|built| built.retrieve_target(&cables()).ok())
-        .and_then(|cables| cables.get(&format!("route({})", context.step)).ok());
+        .and_then(|cables| cables.get(&format!("route({})", context.step)));
     f.form.dialog.heading("wires_heading", "Wires");
     let items = args
         .wires
@@ -389,7 +407,7 @@ fn form<'a>(
             size_value(&wire.size),
             size_choices(&wire.size),
             false,
-            move |args, choice| {
+            move |Edit { args, .. }, choice| {
                 let Some(wire) = args.wires.get_mut(i) else {
                     return;
                 };
@@ -415,7 +433,7 @@ fn form<'a>(
                 f.number(
                     "wire_insulation",
                     Number::new("insulation", insulation, Unit::Length).range(0.0, 1.0),
-                    move |args, v| {
+                    move |Edit { args, .. }, v| {
                         if let Some(WireSize::Awg { insulation, .. }) =
                             args.wires.get_mut(i).map(|w| &mut w.size)
                         {
@@ -428,7 +446,7 @@ fn form<'a>(
                 f.number(
                     "wire_diameter",
                     Number::new("diameter", d, Unit::Length).range(0.1, 20.0),
-                    move |args, v| {
+                    move |Edit { args, .. }, v| {
                         if let Some(wire) = args.wires.get_mut(i) {
                             wire.size = WireSize::Diameter(v);
                         }
@@ -440,7 +458,7 @@ fn form<'a>(
             "wire_colour",
             "colour",
             wire.colour.clone(),
-            move |args, c| {
+            move |Edit { args, .. }, c| {
                 if let Some(wire) = args.wires.get_mut(i) {
                     wire.colour = c.to_string();
                 }
@@ -452,17 +470,17 @@ fn form<'a>(
     f.number(
         "fill",
         Number::new("fill factor", args.fill, Unit::Fraction).range(0.3, 1.0),
-        |args, v| args.fill = v,
+        |Edit { args, .. }, v| args.fill = v,
     );
     f.number(
         "bend_factor",
         Number::new("min bend radius / diameter", args.bend_factor, Unit::Count).range(1.0, 20.0),
-        |args, v| args.bend_factor = v,
+        |Edit { args, .. }, v| args.bend_factor = v,
     );
     f.number(
         "service_loop",
         Number::new("service loop per end", args.service_loop, Unit::Length).range(0.0, 200.0),
-        |args, v| args.service_loop = v,
+        |Edit { args, .. }, v| args.service_loop = v,
     );
     if let Some(cable) = cable {
         let tightest = match cable.tightest_bend {
@@ -492,7 +510,8 @@ impl Operation for Route {
         OperationGroup::Assembly,
         OperationTier::Small,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::ROUTE);
     type Args = RouteArgs;
     type EditingState = RouteEditing;
     type Input = Input;
@@ -510,10 +529,11 @@ impl Operation for Route {
         }
     }
 
-    /// Sweeps the bundle, then records its cable.
+    /// Sweeps the bundle, then records its cable, and notes the bundle.
     fn run(step: &str, part: &mut Build, args: &RouteArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)?;
-        part.revise_or_start(&cables(), &(step.to_string(), args.clone()), record)
+        part.revise_or_start(&cables(), &(step.to_string(), args.clone()), record)?;
+        part.revise_or_start(&solid_notes(), &step.to_string(), note)
     }
 
     fn presentation(

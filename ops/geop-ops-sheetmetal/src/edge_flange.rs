@@ -1,6 +1,7 @@
 //! [`EdgeFlange`]: a flange bent up from a straight edge of a sheet-metal
 //! body.
 
+use geop_core_geometry::nurb_curve::NurbCurve2D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -18,7 +19,6 @@ use geop_ops::{
     parameters::{Formula, expressions},
     ui::formula_number,
 };
-use geop_ops_extrude_revolve::common::{line2, start_point};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -160,22 +160,9 @@ impl ModelStep for EdgeFlange {
 
 /// The edge field of a flange or hem, holding `edge`.
 pub(crate) fn edge_field(form: &mut Form<Design>, edge: &str) {
-    let edge = (!edge.is_empty())
-        .then(|| EntityRef::Edge {
-            name: edge.to_string(),
-        })
-        .into_iter()
-        .collect();
+    let edge = EntityRef::of_name(EntityRef::edge, edge);
     form.dialog
         .reference("edge", "edge", edge, &[Role::Line], None, false);
-}
-
-/// The edge picked, as a flange or hem holds it.
-pub(crate) fn picked_edge(picked: &[EntityRef]) -> String {
-    match picked {
-        [EntityRef::Edge { name }] => name.clone(),
-        _ => String::new(),
-    }
 }
 
 impl Operation for EdgeFlange {
@@ -185,7 +172,8 @@ impl Operation for EdgeFlange {
         "Bend a flange up from a straight edge of a sheet-metal body.",
         OperationGroup::SheetMetal,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::EDGE_FLANGE);
     type Args = EdgeFlangeArgs;
     type EditingState = ();
     type Input = Input;
@@ -292,7 +280,9 @@ impl Operation for EdgeFlange {
             return (args, ());
         };
         match (key.as_str(), value) {
-            ("edge", Value::Entities(picked)) => args.edge = picked_edge(&picked),
+            ("edge", Value::Entities(picked)) => {
+                args.edge = EntityRef::last_name(EntityRef::edge, &picked).unwrap_or_default()
+            }
             ("angle", value) => {
                 if let Some(angle) = Formula::from_value(&value) {
                     args.angle = angle;
@@ -398,7 +388,7 @@ impl EdgeFlangeArgs {
         let s = S::from_f64;
         let t = s(rules.thickness);
         let r = s(radius);
-        let angle = s(angle).mul(S::PI).div(s(180.0))?;
+        let angle = s(angle).degrees_to_radians()?;
         let half = angle.div(S::TWO)?;
         let half_tan = half.sin().div(half.cos())?;
         let set_back = match self.position {
@@ -561,7 +551,7 @@ pub(crate) fn add_flange<S: Scalar>(
         let lo = if full.0 { S::ZERO } else { s0.sub(w) };
         let hi = if full.1 { edge_length } else { s1.add(w) };
         for e in std::iter::once(&flat.outer).chain(&flat.holes).flatten() {
-            let p = start_point(&e.curve)?;
+            let p = e.curve.start()?;
             if p.could_be_equal(&a) || p.could_be_equal(&b) {
                 continue;
             }
@@ -750,6 +740,6 @@ fn trim<S: Scalar>(
     let [p, q] = edge
         .line()
         .ok_or_else(|| GeopError::new(format!("edge {} is not straight", edge.key())))??;
-    edge.curve = line2(start.unwrap_or(p), end.unwrap_or(q))?;
+    edge.curve = NurbCurve2D::line(start.unwrap_or(p), end.unwrap_or(q))?;
     Ok(())
 }

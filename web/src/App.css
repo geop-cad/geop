@@ -1744,13 +1744,6 @@ button.danger:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.inspect-entity {
-  font-family: ui-monospace, monospace;
-  color: #ffc94a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .inspect-table {
   border-collapse: collapse;
   width: 100%;
@@ -1767,24 +1760,20 @@ button.danger:hover:not(:disabled) {
   font-family: ui-monospace, monospace;
   color: #e8e8e8;
 }
-.bom-table th,
-.bom-table td {
+.inspect-table th,
+.inspect-table td {
   padding: 0.1rem 0.3rem 0.1rem 0;
   vertical-align: top;
+  white-space: pre-line;
 }
-.bom-table tbody tr:hover {
+.inspect-table tbody tr:hover {
   background: #232323;
 }
-.bom-table .bom-name {
-  font-family: inherit;
-  word-break: break-word;
+.inspect-table tr.error td {
+  color: #ff8c8c;
 }
-.bom-table .bom-number {
-  text-align: right;
-  white-space: nowrap;
-}
-.bom-table tfoot th,
-.bom-table tfoot td {
+.inspect-table tfoot th,
+.inspect-table tfoot td {
   border-top: 1px solid #333;
 }
 .inspect-row {
@@ -1807,12 +1796,14 @@ button.danger:hover:not(:disabled) {
 .inspect-list li:hover {
   background: #232323;
 }
-.inspect-list li.overlap {
+.inspect-list li {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inspect-list li.error {
   color: #ff8c8c;
 }
-.inspect-list li.touch {
-  color: #ffd27a;
-}
-.inspect-list li.unchecked {
+.inspect-list li.hint {
   color: #888;
 }

@@ -479,6 +479,42 @@ impl<S: Scalar> Uses for Constraint<S> {
 }
 
 impl<S: Scalar> Constraint<S> {
+    /// The dimension it holds, if it holds one — an angle in radians: what
+    /// a dialog edits.
+    pub fn value(&self) -> Option<S> {
+        use Constraint::*;
+        match *self {
+            Distance { value, .. }
+            | DistanceX { value, .. }
+            | DistanceY { value, .. }
+            | PointLineDistance { value, .. }
+            | Length { value, .. }
+            | Radius { value, .. }
+            | Diameter { value, .. }
+            | Offset { value, .. }
+            | Angle { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Gives its dimension the value `v` — an angle in radians; nothing for
+    /// one without.
+    pub fn set_value(&mut self, v: S) {
+        use Constraint::*;
+        match self {
+            Distance { value, .. }
+            | DistanceX { value, .. }
+            | DistanceY { value, .. }
+            | PointLineDistance { value, .. }
+            | Length { value, .. }
+            | Radius { value, .. }
+            | Diameter { value, .. }
+            | Offset { value, .. }
+            | Angle { value, .. } => *value = v,
+            _ => {}
+        }
+    }
+
     /// The points this constraint refers to directly (curves aside).
     pub fn points(&self) -> Vec<PointId> {
         use Constraint::*;

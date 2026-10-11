@@ -8,7 +8,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Choice, Dialog, Event, Form, Number, Unit, Value},
+    editing::{Dialog, Event, Form, Number, Unit, Value},
     operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_sketch::Shape;
@@ -19,6 +19,7 @@ use geop_ops::{
         Build, BuildReader, EntityRef, Input, Lookup, ModelStep, ResolveEntity, Role, Scope, Seen,
         build_model,
     },
+    ui::{choices, chosen},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -40,17 +41,6 @@ const fn info(kind: &'static str, label: &'static str, doc: &'static str) -> Ope
         OperationTier::Menu,
     )
     .experimental()
-}
-
-/// The one entity `name` stands for, as a reference field holds it: none
-/// for an empty name.
-fn one(kind: fn(String) -> EntityRef, name: &str) -> Vec<EntityRef> {
-    EntityRef::of_names(kind, std::slice::from_ref(&name.to_string()))
-}
-
-/// The last of the entities of `kind` picked, by name: empty if none.
-fn picked_one(kind: fn(String) -> EntityRef, picked: &[EntityRef]) -> String {
-    EntityRef::names_of(kind, picked).pop().unwrap_or_default()
 }
 
 /// Fails unless a size typed in is a number.
@@ -122,7 +112,8 @@ impl Operation for Draft {
         "draft",
         "Draft",
         "Tilt planar faces about a neutral plane, so the part comes out of its mould.",
-    );
+    )
+    .icon(crate::icons::DRAFT);
     type Args = DraftArgs;
     type EditingState = ();
     type Input = Input;
@@ -193,7 +184,7 @@ impl Operation for Draft {
 /// The rim face and its edges, as the fields of a lip or a groove hold
 /// them.
 fn rim_fields<S: Scalar>(dialog: &mut Dialog<S>, face: &str, edges: &[String]) {
-    let face = one(EntityRef::face, face);
+    let face = EntityRef::of_name(EntityRef::face, face);
     dialog.reference("face", "rim face", face, &[Role::Plane], None, false);
     let edges = EntityRef::of_names(EntityRef::edge, edges);
     (dialog.reference("edges", "edges", edges, &[Role::Edge], None, true)).optional("edges");
@@ -205,7 +196,7 @@ fn rim_fields<S: Scalar>(dialog: &mut Dialog<S>, face: &str, edges: &[String]) {
 fn set_rim(face: &mut String, edges: &mut Vec<String>, key: &str, value: &Value) -> bool {
     match (key, value) {
         ("face", Value::Entities(picked)) => {
-            let name = picked_one(EntityRef::face, picked);
+            let name = EntityRef::last_name(EntityRef::face, picked).unwrap_or_default();
             if name != *face {
                 edges.clear();
             }
@@ -283,7 +274,8 @@ impl Operation for Lip {
         "lip",
         "Lip",
         "Raise a lip along the rim of one half of an enclosure.",
-    );
+    )
+    .icon(crate::icons::LIP);
     type Args = LipArgs;
     type EditingState = ();
     type Input = Input;
@@ -385,7 +377,8 @@ impl Operation for Groove {
         "groove",
         "Groove",
         "Cut the groove that takes a lip into the rim of the other half.",
-    );
+    )
+    .icon(crate::icons::GROOVE);
     type Args = GrooveArgs;
     type EditingState = ();
     type Input = Input;
@@ -481,18 +474,6 @@ impl RibDirection {
     ];
 }
 
-/// The value `options` give `chosen`, and the choices they offer.
-fn choices<T: PartialEq>(options: &[(T, &str, &str)], chosen: &T) -> (String, Vec<Choice>) {
-    let value = (options.iter().find(|o| o.0 == *chosen)).map_or("", |o| o.1);
-    let choices = (options.iter()).map(|&(_, v, l)| Choice::new(v, l));
-    (value.to_string(), choices.collect())
-}
-
-/// What of `options` has the value `value`.
-fn chosen<T: Copy>(options: &[(T, &str, &str)], value: &str) -> Option<T> {
-    options.iter().find(|o| o.1 == value).map(|o| o.0)
-}
-
 /// Grows a rib `thickness` thick from the open profile of a sketch — lines
 /// and arcs — until it meets the solid `solid`, its ends run on into the
 /// walls they point at, and joins it (see [`crate::rib::rib`]), for the
@@ -584,7 +565,8 @@ impl Operation for Rib {
         "rib",
         "Rib",
         "Grow a thin wall from an open sketch profile up to a solid's faces, and join it.",
-    );
+    )
+    .icon(crate::icons::RIB);
     type Args = RibArgs;
     type EditingState = ();
     type Input = Input;
@@ -596,7 +578,7 @@ impl Operation for Rib {
         let seen = Seen::new(context.before);
         RibArgs {
             sketch: seen.sketch_names().pop().unwrap_or_default(),
-            solid: seen.model().solid_names().pop().unwrap_or_default(),
+            solid: seen.model().newest_solid().unwrap_or_default(),
             thickness: 0.05,
             side: RibSide::Symmetric,
             direction: RibDirection::Parallel,
@@ -613,9 +595,9 @@ impl Operation for Rib {
     fn presentation(_: &Context<Input, ParamValue>, args: &RibArgs, _: &()) -> Form<Design> {
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let sketch = one(EntityRef::sketch, &args.sketch);
+        let sketch = EntityRef::of_name(EntityRef::sketch, &args.sketch);
         dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
-        let solid = one(EntityRef::solid, &args.solid);
+        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
         dialog.reference("solid", "solid", solid, &[Role::Solid], None, false);
         let thickness = Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0);
         dialog.number("thickness", thickness);
@@ -642,10 +624,10 @@ impl Operation for Rib {
         };
         match (key.as_str(), value) {
             ("sketch", Value::Entities(picked)) => {
-                args.sketch = picked_one(EntityRef::sketch, &picked);
+                args.sketch = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
             }
             ("solid", Value::Entities(picked)) => {
-                args.solid = picked_one(EntityRef::solid, &picked);
+                args.solid = EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
             }
             ("thickness", Value::Number(t)) => args.thickness = t,
             ("side", Value::Choice(value)) => {

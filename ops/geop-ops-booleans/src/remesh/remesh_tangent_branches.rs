@@ -31,7 +31,10 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    solvers::bisect::bisect,
+    solvers::{
+        bisect::bisect,
+        subdivide::{Order, Split, subdivide},
+    },
     vector::Vector3,
     with_context,
 };
@@ -39,7 +42,10 @@ use geop_core_topology::{Body, EdgeId, FaceId, Model, Sense, VertexId};
 use geop_ops::NamedModel;
 
 use crate::naming::BooleanNaming;
-use crate::remesh::remesh::RemeshParams;
+use crate::remesh::{
+    remesh::{RemeshParams, split_at_crossing},
+    remesh_edges_x_edges::find_vertex_at_point,
+};
 
 /// How finely the edge's parameter is subdivided before each remaining
 /// stretch is handed to bisection: `2^-ISOLATION_LEVELS` of its domain.
@@ -104,8 +110,7 @@ fn curvature_gap<S: Scalar>(
 /// The sign of `gap`, if it has one.
 fn sign<S: Scalar>(gap: &GeopResult<Option<S>>) -> Option<bool> {
     match gap {
-        Ok(Some(c)) if c.definitely_greater(S::ZERO) => Some(true),
-        Ok(Some(c)) if c.definitely_less(S::ZERO) => Some(false),
+        Ok(Some(c)) => c.definite_sign(),
         _ => None,
     }
 }
@@ -154,24 +159,32 @@ fn tangent_branch_points<S: Scalar>(
     };
     let sharp = |(u, v): (S, S)| (u.sharpen(), v.sharpen());
 
-    let mut live = vec![(t0, t1, [sharp(seed_g), sharp(seed_f)])];
-    for level in 0..=ISOLATION_LEVELS {
-        let mut next = Vec::new();
-        for (lo, hi, mut seeds) in live {
+    // Level by level: what a level keeps is cut in two for the next, and
+    // what the last keeps is grouped into runs. The levels bound the
+    // search, so it needs no budget of its own.
+    let mut live = Vec::new();
+    let root = (t0, t1, [sharp(seed_g), sharp(seed_f)], 0);
+    let _ = subdivide(
+        [root],
+        Order::BreadthFirst,
+        usize::MAX,
+        |(lo, hi, mut seeds, level), _| -> GeopResult<_> {
             match curvature_gap(curve, surf_g, surf_f, lo.union(hi), &mut seeds) {
-                Ok(None) => continue,
-                Ok(Some(c)) if !c.could_be_equal(S::ZERO) => continue,
+                Ok(None) => return Ok(Split::Done),
+                Ok(Some(c)) if !c.could_be_equal(S::ZERO) => return Ok(Split::Done),
                 _ => {}
             }
             if level == ISOLATION_LEVELS {
-                next.push((lo, hi, seeds));
-            } else {
-                let m = lo.add(hi).div(S::TWO)?.sharpen();
-                next.extend([(lo, m, seeds), (m, hi, seeds)]);
+                live.push((lo, hi, seeds));
+                return Ok(Split::Done);
             }
-        }
-        live = next;
-    }
+            let m = lo.add(hi).div(S::TWO)?.sharpen();
+            Ok(Split::Halves(
+                (lo, m, seeds, level + 1),
+                (m, hi, seeds, level + 1),
+            ))
+        },
+    )?;
 
     let mut runs: Vec<(S, S, Seeds<S>)> = Vec::new();
     for (lo, hi, seeds) in live {
@@ -193,7 +206,7 @@ fn tangent_branch_points<S: Scalar>(
             continue;
         }
         // Until the bracket cannot shrink, or the sign is undecided.
-        let bracket = bisect(a, b, usize::MAX, true, |m| -> GeopResult<_> {
+        let bracket = bisect(a, b, usize::MAX, true, |_, m| -> GeopResult<_> {
             Ok(sign(&curvature_gap(curve, surf_g, surf_f, m, &mut seeds)).map(|s| s == sign_a))
         })?;
         found.push(bracket.lo.union(bracket.hi));
@@ -318,8 +331,8 @@ fn branch_can_leave<S: Scalar>(
 
 /// The first branch point (see the module doc) on an edge of `edge_solid`
 /// lying on a face of `face_solid`, strictly inside the edge: the edge, the
-/// parameter to split it at, an existing vertex there if there is one, the
-/// point, and the face.
+/// parameter to split it at, an existing vertex of the two solids there if
+/// there is one, the point, and the face.
 #[allow(clippy::type_complexity)]
 fn find_tangent_branch<S: Scalar>(
     model: &Model<S>,
@@ -369,11 +382,7 @@ fn find_tangent_branch<S: Scalar>(
                     }) {
                         continue;
                     }
-                    let vertex = model
-                        .vertices
-                        .iter()
-                        .find(|(_, v)| v.point.could_be_equal(&point))
-                        .map(|(&id, _)| id);
+                    let vertex = find_vertex_at_point(model, [edge_solid, face_solid], &point)?;
                     return Ok(Some((edge_id, t, vertex, point, face_id)));
                 }
             }
@@ -400,26 +409,8 @@ pub fn remesh_tangent_branches<S: Scalar>(
     while let Some((edge_id, t, vertex, point, face_id)) =
         find_tangent_branch(model.topology(), edge_solid, face_solid, params).with_context(&ctx)?
     {
-        let vertex_id = match vertex {
-            Some(vertex) => vertex,
-            None => {
-                let vertex = model.insert_vertex(point, naming.provisional())?;
-                naming.piercing(vertex, edge_id, t, face_id)?;
-                vertex
-            }
-        };
-        let new_edge = model
-            .split_edge_at_vertex(
-                edge_id,
-                t,
-                vertex_id,
-                params.max_nodes,
-                params.curve_curve_min_subdivision_size,
-                naming.provisional(),
-            )
-            .with_context(with_context!("edge={edge_id}, t={t:?}, vertex={vertex_id}"))
+        split_at_crossing(model, naming, edge_id, t, vertex, point, face_id, params)
             .with_context(&ctx)?;
-        naming.edge_split(edge_id, new_edge, vertex_id)?;
     }
     Ok(())
 }

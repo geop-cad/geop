@@ -46,7 +46,8 @@ its own beyond the camera:
 - **Output commands**, which change nothing: `export` (write the part with
   an exporter, by its kind, in a format, told its own options: the update's
   `export`), `inspect` (ask an inspector about the part: the update's
-  `inspection`, `{kind, report}`) and `pick_tool` (take an inspector that
+  `inspection`, `{kind, report, shown}`: the answer as data, and as the
+  inspector lays it out) and `pick_tool` (take an inspector that
   picks in hand: clicks pick what it takes, and every update carries its
   answer about the picks and what it draws). The program state lists the
   `exporters` and `inspectors` offered, so a front end's menus are made

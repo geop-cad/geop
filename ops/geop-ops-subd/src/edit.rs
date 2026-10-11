@@ -10,9 +10,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    plain::cross,
+};
 
-use crate::cage::{Cage, CageFace, CageVertex, Mesh, Mirror, edge_key, face_key, vertex_key};
+use crate::cage::{
+    Cage, CageFace, CageVertex, Mesh, Mirror, edge_key, face_key, undirected, vertex_key,
+};
 
 /// An element of a cage, as a selection names it (see
 /// [`crate::cage::vertex_key`], [`crate::cage::edge_key`],
@@ -40,22 +45,6 @@ impl Element {
             _ => None,
         }
     }
-
-    pub fn key(self) -> String {
-        match self {
-            Element::Vertex(v) => vertex_key(v),
-            Element::Edge(a, b) => edge_key(a, b),
-            Element::Face(f) => face_key(f),
-        }
-    }
-}
-
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
 }
 
 /// A cage built from `points` and faces through them by index, ids given
@@ -270,7 +259,7 @@ impl Cage {
     /// Creases the edges `edges`, or smooths them again.
     pub fn set_crease(&mut self, edges: &[[u32; 2]], sharp: bool) {
         for &[a, b] in edges {
-            let edge = [a.min(b), a.max(b)];
+            let edge = undirected(a, b);
             self.creases.retain(|&c| c != edge);
             if sharp {
                 self.creases.push(edge);
@@ -446,7 +435,7 @@ impl Cage {
         for crease in &mut self.creases {
             if !edges.contains(crease) {
                 let (a, b) = (to(crease[0]), to(crease[1]));
-                *crease = [a.min(b), a.max(b)];
+                *crease = undirected(a, b);
             }
         }
         self.tidy();
@@ -472,9 +461,8 @@ impl Cage {
                 edge_key(a, b)
             )));
         }
-        let undirected = |x: u32, y: u32| [x.min(y), x.max(y)];
         let mut ring: Vec<[u32; 2]> = vec![undirected(a, b)];
-        // Per quad split: its index and the two ring edges it runs across.
+        // The quads to split, by index.
         let mut splits: Vec<usize> = Vec::new();
         for start in [(a, b), (b, a)] {
             let mut edge = start;
@@ -579,7 +567,7 @@ impl Cage {
             for k in 0..n {
                 let (x, y) = (face.vertices[k], face.vertices[(k + 1) % n]);
                 ring.push(x);
-                if let Some(&m) = crossing.get(&[x.min(y), x.max(y)]) {
+                if let Some(&m) = crossing.get(&undirected(x, y)) {
                     ring.push(m);
                 }
             }
@@ -654,7 +642,7 @@ impl Cage {
                 });
             }
         }
-        let creases: Vec<[u32; 2]> = mesh.sharp.iter().map(|&(a, b)| [ids[a], ids[b]]).collect();
+        let creases: Vec<[u32; 2]> = mesh.sharp.iter().map(|&[a, b]| [ids[a], ids[b]]).collect();
         cage.set_crease(&creases, true);
         Ok(cage)
     }

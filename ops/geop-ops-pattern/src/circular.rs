@@ -157,7 +157,8 @@ impl Operation for CircularPattern {
         "Copy bodies turned around an axis.",
         OperationGroup::Bodies,
         OperationTier::Small,
-    );
+    )
+    .icon(geop_ops::ui::icons::CIRCULAR_PATTERN);
     type Args = CircularPatternArgs;
     type EditingState = ();
     type Input = Input;

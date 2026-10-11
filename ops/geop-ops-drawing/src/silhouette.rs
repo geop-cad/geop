@@ -33,6 +33,7 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain,
     scalars::Scalar,
     solvers::{
         bisect::bisect,
@@ -45,7 +46,8 @@ use geop_core_topology::{
     contains::face::{PointClassification, face_contains},
 };
 
-use crate::{MAX_NODES, hidden_lines::cut_points, min_subdivision_size};
+use crate::hidden_lines::cut_points;
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Interior grid lines per direction of the domain, besides its boundary.
 const GRID_LINES: usize = 12;
@@ -93,14 +95,7 @@ fn contour<S: Scalar>(
 /// `g`'s sign at `(u, v)`, from the unit normal — which, unlike `S_u x S_v`,
 /// does not vanish at a pole — or `None` where it has no definite one.
 fn sign<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>, u: S, v: S) -> Option<bool> {
-    let n = surface.normal(u, v).ok()?.prod_dot(d);
-    if n.definitely_greater(S::ZERO) {
-        Some(true)
-    } else if n.definitely_less(S::ZERO) {
-        Some(false)
-    } else {
-        None
-    }
+    surface.normal(u, v).ok()?.prod_dot(d).definite_sign()
 }
 
 /// `(u, v)` moved onto the silhouette by Newton steps along `g`'s gradient
@@ -235,12 +230,6 @@ impl<S: Scalar> GridLine<S> {
     }
 }
 
-/// `k / n` of the way from `lo` to `hi`, sharp: a sample position, a free
-/// choice.
-fn fraction<S: Scalar>(lo: S, hi: S, f: f64) -> S {
-    lo.add(hi.sub(lo).mul(S::from_f64(f))).sharpen()
-}
-
 /// The grid lines of `surface`'s domain, sampled for `g`'s sign.
 fn grid<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> Vec<GridLine<S>> {
     let mut fractions = vec![0.0];
@@ -257,13 +246,13 @@ fn grid<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> Vec<GridLine<S
             let value = match f {
                 0.0 => a_lo,
                 1.0 => a_hi,
-                _ => fraction(a_lo, a_hi, f),
+                _ => S::fraction(a_lo, a_hi, S::from_f64(f)),
             };
             let params: Vec<S> = (0..=GRID_SAMPLES)
                 .map(|k| match k {
                     0 => b_lo,
                     k if k == GRID_SAMPLES => b_hi,
-                    k => fraction(b_lo, b_hi, k as f64 / GRID_SAMPLES as f64),
+                    k => S::fraction(b_lo, b_hi, S::from_f64(k as f64 / GRID_SAMPLES as f64)),
                 })
                 .collect();
             let mut line = GridLine {
@@ -304,7 +293,7 @@ fn seed<S: Scalar>(
     let (a, b) = (line.params[lo], line.params[hi]);
     let (u, v) = line.point(a);
     let sign_a = sign(surface, d, u, v)?;
-    let bracket = bisect(a, b, BISECTIONS, false, |mid| -> GeopResult<_> {
+    let bracket = bisect(a, b, BISECTIONS, false, |_, mid| -> GeopResult<_> {
         let (u, v) = line.point(mid);
         Ok(sign(surface, d, u, v).map(|s| s == sign_a))
     })
@@ -406,19 +395,19 @@ fn mark_crossings<S: Scalar>(
         ends.retain(|s| (0.0..=1.0).contains(s));
         ends.sort_by(f64::total_cmp);
         for pair in ends.windows(2) {
-            let (mut lo, mut hi) = (pair[0], pair[1]);
+            let (lo, hi) = (pair[0], pair[1]);
             if at(&here, lo) * at(&here, hi) >= 0.0 {
                 continue;
             }
-            for _ in 0..BISECTIONS {
-                let mid = 0.5 * (lo + hi);
-                if at(&here, lo) * at(&here, mid) <= 0.0 {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            }
-            line.mark(at(&across, 0.5 * (lo + hi)));
+            // The middle is on `lo`'s side unless the cubic changes sign
+            // (or vanishes) between them.
+            let Ok(bracket) = bisect::<f64, GeopError>(lo, hi, BISECTIONS, false, |lo, mid| {
+                let product = at(&here, lo) * at(&here, mid);
+                Ok(Some(product.is_nan() || product > 0.0))
+            }) else {
+                continue;
+            };
+            line.mark(at(&across, 0.5 * (bracket.lo + bracket.hi)));
         }
     }
 }
@@ -571,8 +560,7 @@ fn extent<S: Scalar>(surface: &NurbSurface3D<S>) -> GeopResult<S> {
             hi[k] = hi[k].max(x);
         }
     }
-    let d2: f64 = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum();
-    Ok(S::from_f64(d2.sqrt()))
+    Ok(S::from_f64(plain::diagonal(lo, hi)))
 }
 
 /// Whether `surface` is swept straight along `d` in one of its parameter
@@ -676,10 +664,7 @@ pub fn edge_crossings<S: Scalar>(
             geop_core_topology::Sense::Forward => f,
             geop_core_topology::Sense::Reversed => S::ONE.sub(f),
         };
-        let seed = coedge
-            .pcurve
-            .evaluate(s0.add(s1.sub(s0).mul(f)).sharpen())
-            .ok()?;
+        let seed = coedge.pcurve.evaluate(S::fraction(s0, s1, f)).ok()?;
         let point = curve.evaluate(t).ok()?;
         surface
             .project(point, seed[0], seed[1], CORRECTOR_ITERATIONS)
@@ -693,7 +678,7 @@ pub fn edge_crossings<S: Scalar>(
         .map(|k| match k {
             0 => t0,
             k if k == EDGE_SAMPLES => t1,
-            k => fraction(t0, t1, k as f64 / EDGE_SAMPLES as f64),
+            k => S::fraction(t0, t1, S::from_f64(k as f64 / EDGE_SAMPLES as f64)),
         })
         .collect();
     let mut crossings = Vec::new();
@@ -703,7 +688,7 @@ pub fn edge_crossings<S: Scalar>(
         if let Some((a, previous)) = last
             && previous != s
         {
-            let bracket = bisect(a, t, BISECTIONS, false, |mid| -> GeopResult<_> {
+            let bracket = bisect(a, t, BISECTIONS, false, |_, mid| -> GeopResult<_> {
                 Ok(sign_at(mid).map(|m| m == previous))
             })?;
             crossings.push(match bracket.undecided {
@@ -820,7 +805,7 @@ fn trim<S: Scalar>(
             let t = match k {
                 0 => a,
                 k if k == count => b,
-                k => fraction(a, b, k as f64 / count as f64),
+                k => S::fraction(a, b, S::from_f64(k as f64 / count as f64)),
             };
             let q = fit.evaluate(t)?;
             let (u, v) =

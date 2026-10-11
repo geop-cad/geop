@@ -145,6 +145,10 @@ export interface OperationInfo {
   tier: OperationTier;
   /** Not yet robust enough to offer by default: reduced mode leaves it out. */
   experimental: boolean;
+  /** The extensions of the files its steps read that are no programs: `step` — data kept beside the programs. */
+  reads: string[];
+  /** What it is shown as: SVG markup on a 20 x 20 grid (see [[Icon]]); none to show its label. */
+  icon: string | null;
 }
 
 /** A kind of file the editor writes of the part — see `geop_ops::output::ExporterInfo`. */
@@ -167,6 +171,8 @@ export interface InspectorInfo {
   doc: string;
   /** For one asked about entities picked: what it picks, and how many at most. */
   picks: { roles: string[]; most: number } | null;
+  /** What it is shown as: SVG markup (see [[Icon]]). */
+  icon: string | null;
 }
 
 /**
@@ -289,7 +295,7 @@ export interface Action {
   enabled: boolean;
   /** Shown pressed: the tool in hand, the way chosen. */
   active: boolean;
-  /** The icon it is shown as (see `icons.tsx`), its label its tooltip; none to show the label. */
+  /** The icon it is shown as — SVG markup (see [[Icon]]) — its label its tooltip; none to show the label. */
   icon: string | null;
 }
 
@@ -543,6 +549,8 @@ export interface JointValue {
 /** Values a step offers to set, a joint's coordinates — see `geop_ops::solving::SettingsState`. */
 export interface JointInfo {
   name: string;
+  /** What it is called: `fore m1`, the mate `m1` of the step `fore`. */
+  label: string;
   kind: string;
   /** What it joins, as the entities its frames are on read: the part it holds, then the part it moves. */
   between: string[];
@@ -700,120 +708,57 @@ export interface Update {
   inspection: Inspection | null;
 }
 
-// ── inspecting — the reports of `geop_ops_inspect`'s inspectors ──────────────
+// ── inspecting — see `geop_ops::output::Answer` ───────────────────────────────
 
-/** A number and how far the truth may be from it. */
-export interface Bounded {
-  value: number;
-  error: number;
+/** A row of an answer's table, or an item of its list. */
+export interface AnswerRow {
+  label: string | null;
+  /** Each text of one or more lines. */
+  cells: string[];
+  /** Said in full while it is pointed at. */
+  detail: string | null;
+  /** What to light while it is pointed at. */
+  light: EntityRef[];
+  tone: Tone;
 }
 
-/** One number a measurement shows: `mm`, `mm²`, `mm³`, `kg` or `°`. */
-export type Measured = { label: string; unit: string } & Bounded;
+/** What pressing an answer's button does: ask the inspector again, or save what an exporter writes. */
+export type Does =
+  | { type: "inspect"; options: unknown }
+  | { type: "export"; exporter: string; options: unknown };
 
-export interface Measurement {
-  entities: EntityRef[];
-  values: Measured[];
-  /** Where the least distance between two entities is attained. */
-  witness: [Vec3, Vec3] | null;
-  /** The plane of one planar entity picked alone, to cut a section with. */
+export interface AnswerAction {
+  label: string;
+  doc: string;
+  /** Whether the answer shown was asked so: lit. */
+  chosen: boolean;
+  does: Does;
+}
+
+/** A part of an answer. */
+export type Block =
+  | { type: "text"; text: string; tone: Tone }
+  | { type: "list"; items: AnswerRow[] }
+  | { type: "table"; head: string[]; rows: AnswerRow[]; foot: AnswerRow[] }
+  | { type: "group"; title: string; detail: string | null; open: boolean; light: EntityRef[]; blocks: Block[] }
+  | { type: "actions"; actions: AnswerAction[] };
+
+/** An inspector's answer as it is shown, whatever the inspector. */
+export interface Answer {
+  blocks: Block[];
+  /** A plane the answer is of — a planar face or datum plane picked — to cut a section with. */
   plane: Frame | null;
-  error: string | null;
-}
-
-/** Mass properties in mm and kg: volume mm³, area mm², mass kg, centre mm, inertia about the centre kg·mm². */
-export interface MassSummary {
-  volume: Bounded;
-  area: Bounded;
-  mass: Bounded;
-  center: [Bounded, Bounded, Bounded];
-  inertia: Bounded[][];
-  principal_moments: [Bounded, Bounded, Bounded];
-  principal_axes: [Vec3, Vec3, Vec3];
-  converged: boolean;
-}
-
-export interface BodyMass {
-  name: string;
-  material: string;
-  density: number;
-  /** Whether no material was given, and water assumed. */
-  assumed: boolean;
-  properties: MassSummary | null;
-  error: string | null;
-}
-
-export interface MassReport {
-  bodies: BodyMass[];
-  total: MassSummary | null;
-}
-
-export interface InterferenceReport {
-  solids: number;
-  found: { a: string; b: string; contact: "overlap" | "touch"; volume: Bounded | null }[];
-  unchecked: { a: string; b: string; error: string }[];
-}
-
-// ── bills of materials — the report of `geop_ops_bom`'s inspector ────────────
-
-/** Every part once with its count in the whole, or the tree of sub-assemblies. */
-export type BomStructure = "flat" | "indented";
-
-/** A line of a bill of materials: a part (or sub-assembly), or a wire cut to length. */
-export type BomLine = {
-  /** `3`, or `2.1` — the first under item 2 — in an indented bill. */
-  item: string;
-  /** 0 in a flat bill; 1 for what the assembly places itself in an indented one. */
-  level: number;
-  quantity: number;
-  name: string;
-  designation: string | null;
-} & (
-  | {
-      kind: "part";
-      file: string;
-      /** The values of the parameters it defines: `size=M4x12`. */
-      parameters: string;
-      material: string;
-      /** Whether no material was given, and water assumed. */
-      assumed: boolean;
-      /** Of its sheet-metal bodies, mm. */
-      thickness: number[];
-      /** kg, of one; `null` if it could not be computed — `error` says why. */
-      unit_mass: Bounded | null;
-      total_mass: Bounded | null;
-      error: string | null;
-    }
-  | {
-      kind: "wire";
-      cable: string;
-      gauge: number | null;
-      /** mm. */
-      diameter: number;
-      colour: string;
-      /** mm, of one piece. */
-      cut_length: Bounded;
-      total_length: Bounded;
-    }
-);
-
-export interface Bom {
-  structure: BomStructure;
-  lines: BomLine[];
-  /** kg; `null` if some line's mass could not be computed. */
-  total_mass: Bounded | null;
 }
 
 /**
  * An inspector's answer — see `geop_ops::output::Inspection`: `report` is
- * what its `kind` says. The app shows those of `measure`
- * ([[Measurement]]), `mass_properties` ([[MassReport]]), `interference`
- * ([[InterferenceReport]]) and `bom` ([[Bom]]) as such; any other as it
- * comes.
+ * the answer as data, `shown` as it is shown; one that shows nothing is
+ * shown as its report.
  */
 export interface Inspection {
   kind: string;
   report: unknown;
+  shown: Answer;
 }
 
 /** Apply `command` in the kernel, and get back what to show now. */

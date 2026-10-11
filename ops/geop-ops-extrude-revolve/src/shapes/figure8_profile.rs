@@ -69,10 +69,8 @@ pub fn hole_polygons<S: Scalar>() -> [Vec<Vector2<S>>; 2] {
 /// `p0..` and sides `c0..` and the holes' `h0p0..`, `h1c0..` (see
 /// [`extrude`]).
 pub fn figure8_profile<S: Scalar>(model: &mut NamedModel<S>, name: &str) -> GeopResult<SolidId> {
-    // Left-handed (`u x v = -w`): `extrude` extrudes a CCW `outer` polygon
-    // backwards along `w`, so a CCW boundary with outward-facing normals
-    // needs `w` pointing the opposite way `u x v` (i.e. a right-handed
-    // basis's own `+z`) would.
+    // `w` is `-z` (`u x v = -w`), so the solid lies below the `xy` plane;
+    // `extrude` points its faces outwards whichever way `w` runs.
     let origin = Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]);
     let u = Vector3::from_array([S::ONE, S::ZERO, S::ZERO]);
     let v = Vector3::from_array([S::ZERO, S::ONE, S::ZERO]);

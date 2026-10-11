@@ -44,6 +44,12 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
         self.data
     }
 
+    /// Its components as plain numbers ([`Scalar::to_f64`], the midpoint):
+    /// for output and drawing, never for construction.
+    pub fn to_f64_array(&self) -> [f64; N] {
+        self.data.map(|x| x.to_f64())
+    }
+
     /// Every component mapped by `f` — into another scalar type, say.
     pub fn map<T: Scalar>(&self, f: impl Fn(S) -> T) -> Vector<T, N> {
         Vector::from_array(self.data.map(f))

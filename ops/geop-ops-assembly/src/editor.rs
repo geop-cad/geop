@@ -32,11 +32,11 @@ use geop_ops::{
     model::pose_parameter,
     operation::Input,
     parameters::{COLOR, ParameterKind, Values, validate_color},
-    placed::{instance, library},
+    placed::{instance, library, library_files},
     solving::{SettingsState, check, settings},
     ui::{
-        Action, CanvasEvent, Choice, Control, Edit, EditForm, Event, Gizmo, ListItem, Number, Pull,
-        Shape, Style, Tone, Unit, Value, Visual,
+        Action, CanvasEvent, Choice, Edit, EditForm, Event, Gizmo, ListItem, Number, Pull, Shape,
+        Style, Tone, Unit, Value, Visual,
     },
 };
 
@@ -274,7 +274,7 @@ fn selected(
                 value,
                 options,
                 true,
-                move |args, joint| {
+                move |Edit { args, .. }, joint| {
                     if let Some(mate) = args.mates.get_mut(&mate_id) {
                         mate.joints.resize(2, String::new());
                         mate.joints[k] = joint.to_string();
@@ -289,7 +289,7 @@ fn selected(
         f.number(
             &format!("mate:{id}:value"),
             Number::new(value_name, kind.value.to_f64(), unit),
-            move |args, v| {
+            move |Edit { args, .. }, v| {
                 if let Some(mate) = args.mates.get_mut(&mate_id) {
                     set_value(&mut mate.kind, v);
                 }
@@ -300,7 +300,7 @@ fn selected(
             &format!("mate:{id}:reverse"),
             "the other way round",
             kind.reverse,
-            move |args, r| {
+            move |Edit { args, .. }, r| {
                 if let Some(MateKind::Coupling(CouplingKind { reverse, .. })) =
                     args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
                 {
@@ -382,15 +382,10 @@ fn selected(
         if let Some(value) = value {
             let key = format!("mate:{id}:{}", motion.name());
             let parameter = value.parameter.clone();
-            f.on(&key, move |edit, value| {
-                if let Value::Number(v) = value {
-                    set_joint(edit.session, &parameter, v);
-                }
+            let number = Number::new(motion.name(), value.value, unit);
+            f.number(&key, number, move |edit, v| {
+                set_joint(edit.session, &parameter, v)
             });
-            f.form.dialog.push(
-                key,
-                Control::Number(Number::new(motion.name(), value.value, unit)),
-            );
         }
         if !matches!(kind, JointKind::Revolute { .. } | JointKind::Slider { .. }) {
             continue;
@@ -407,7 +402,7 @@ fn selected(
             &format!("mate:{id}:limited"),
             format!("limit the {}", motion.name()),
             min.is_some() || max.is_some(),
-            move |args, limited| {
+            move |Edit { args, .. }, limited| {
                 if let Some(MateKind::Joint(
                     JointKind::Revolute { min, max } | JointKind::Slider { min, max },
                 )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
@@ -426,7 +421,7 @@ fn selected(
             f.number(
                 &format!("mate:{id}:{label}"),
                 Number::new(format!("{label} {}", motion.name()), bound.to_f64(), unit),
-                move |args, v| {
+                move |Edit { args, .. }, v| {
                     if let Some(MateKind::Joint(
                         JointKind::Revolute { min, max } | JointKind::Slider { min, max },
                     )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
@@ -493,11 +488,16 @@ fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &Add
             _ => "#a0a8b8".into(),
         };
         let set = set(COLOR.into());
-        f.color(&parameter_key(COLOR), COLOR, color, move |args, c| {
-            if validate_color(c).is_ok() {
-                set(args, ParamValue::Text(c.to_string()));
-            }
-        });
+        f.color(
+            &parameter_key(COLOR),
+            COLOR,
+            color,
+            move |Edit { args, .. }, c| {
+                if validate_color(c).is_ok() {
+                    set(args, ParamValue::Text(c.to_string()));
+                }
+            },
+        );
     }
     for p in &defined.values {
         let key = parameter_key(&p.name);
@@ -513,7 +513,7 @@ fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &Add
                 let lo = min.unwrap_or(0.0_f64.min(2.0 * value));
                 let hi = max.unwrap_or(0.0_f64.max(2.0 * value)).max(lo + 1e-9);
                 let number = Number::new(&p.name, value, Unit::Length).range(lo, hi);
-                f.number(&key, number, move |args, v| {
+                f.number(&key, number, move |Edit { args, .. }, v| {
                     set(args, ParamValue::Number(Design::from_f64(v)))
                 });
             }
@@ -525,9 +525,14 @@ fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &Add
                 let options = (rows.iter())
                     .map(|r| Choice::new(r.name.clone(), r.name.clone()))
                     .collect();
-                f.select(&key, &p.name, value, options, true, move |args, row| {
-                    set(args, ParamValue::Text(row.to_string()))
-                });
+                f.select(
+                    &key,
+                    &p.name,
+                    value,
+                    options,
+                    true,
+                    move |Edit { args, .. }, row| set(args, ParamValue::Text(row.to_string())),
+                );
             }
         }
     }
@@ -548,16 +553,7 @@ pub(crate) fn form(
         .filter(|view| view.retrieve_target(&instance(&step)).is_ok());
 
     let mut before = context.before;
-    let mut files: Vec<String> = match library(&mut before) {
-        Ok(library) => (library.files().into_iter())
-            .filter(|f| geop_ops::program::is_program(f))
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    files.sort();
-    if !args.file.is_empty() && !files.contains(&args.file) {
-        files.push(args.file.clone());
-    }
+    let files = library_files(&mut before, geop_ops::program::is_program, &args.file);
     if files.is_empty() {
         f.form.dialog.text(
             "no_files",
@@ -578,7 +574,7 @@ pub(crate) fn form(
         args.file.clone(),
         options,
         true,
-        |args, file| args.file = file.to_string(),
+        |Edit { args, .. }, file| args.file = file.to_string(),
     );
 
     parameters(&mut f, context, args);
@@ -591,31 +587,25 @@ pub(crate) fn form(
     for (k, axis) in ["x", "y", "z"].into_iter().enumerate() {
         let number = Number::new(axis, position[k].to_f64(), Unit::Length);
         let step = step.clone();
-        f.on(axis, move |edit, value| {
-            if let Value::Number(v) = value {
-                let mut position = position;
-                position[k] = Design::from_f64(v);
-                edit.session.pulls = pulled_to(&step, pose.with_position(position));
-                edit.session.released = true;
-            }
+        f.number(axis, number, move |edit, v| {
+            let mut position = position;
+            position[k] = Design::from_f64(v);
+            edit.session.pulls = pulled_to(&step, pose.with_position(position));
+            edit.session.released = true;
         });
-        f.form.dialog.push(axis, Control::Number(number));
     }
     for (k, axis) in ["x", "y", "z"].into_iter().enumerate() {
         let key = format!("rotation_{axis}");
         let number = Number::new(format!("rotation {axis}"), angles[k], Unit::Angle);
         let step = step.clone();
-        f.on(&key, move |edit, value| {
-            if let Value::Number(v) = value {
-                let mut angles = angles;
-                angles[k] = v;
-                if let Ok(turned) = Pose::from_euler(position, angles.map(Design::from_f64)) {
-                    edit.session.pulls = pulled_to(&step, turned);
-                    edit.session.released = true;
-                }
+        f.number(&key, number, move |edit, v| {
+            let mut angles = angles;
+            angles[k] = v;
+            if let Ok(turned) = Pose::from_euler(position, angles.map(Design::from_f64)) {
+                edit.session.pulls = pulled_to(&step, turned);
+                edit.session.released = true;
             }
         });
-        f.form.dialog.push(key, Control::Number(number));
     }
 
     f.form.dialog.heading("mates_heading", "Mates");

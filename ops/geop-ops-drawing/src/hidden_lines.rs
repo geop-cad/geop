@@ -39,8 +39,9 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain::diagonal,
     scalars::Scalar,
-    vector::{Vector2, Vector3, Vector4},
+    vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
     CoedgeGeometry, CoedgeId, EdgeId, FaceId, Model,
@@ -48,13 +49,11 @@ use geop_core_topology::{
 };
 
 use crate::{
-    MAX_NODES, min_subdivision_size,
     silhouette::{Silhouette, edge_crossings, face_silhouettes},
     view::ViewFrame,
 };
+use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
 
-/// Newton steps projecting a point onto a surface.
-const PROJECT_ITERATIONS: usize = 20;
 /// Seed for the containment tests.
 const FACE_CONTAINS_SEED: u64 = 0xD_0A_11;
 /// Where a search for where two lines cross on the paper hands over when
@@ -159,22 +158,15 @@ struct Source<S: Scalar> {
     bounds: [f64; 4],
 }
 
-/// The box holding `curve`'s control points (and so the curve).
-pub(crate) fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<[f64; 4]> {
-    let mut b = [
-        f64::INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NEG_INFINITY,
-    ];
-    for q in &curve.control_points {
-        let (x, y) = (q[0].div(q[2])?, q[1].div(q[2])?);
-        b[0] = b[0].min(x.lower().to_f64());
-        b[1] = b[1].min(y.lower().to_f64());
-        b[2] = b[2].max(x.upper().to_f64());
-        b[3] = b[3].max(y.upper().to_f64());
-    }
-    Ok(b)
+/// The box holding `curve`'s control points (and so the curve), outward.
+pub(crate) fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> [f64; 4] {
+    let [x, y, _] = curve.aabb();
+    [
+        x.lower().to_f64(),
+        y.lower().to_f64(),
+        x.upper().to_f64(),
+        y.upper().to_f64(),
+    ]
 }
 
 pub(crate) fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
@@ -186,24 +178,11 @@ pub(crate) fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
 fn is_point<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<bool> {
     let first = curve.evaluate(curve.domain().0)?;
     for q in &curve.control_points {
-        let p = Vector2::from_array([q[0].div(q[2])?, q[1].div(q[2])?]);
-        if !p.could_be_equal(&first) {
+        if !q.dehomogenized()?.could_be_equal(&first) {
             return Ok(false);
         }
     }
     Ok(true)
-}
-
-/// The straight line from `a` to `b`, on `[0, 1]`.
-fn line3<S: Scalar>(a: Vector3<S>, b: Vector3<S>) -> GeopResult<NurbCurve3D<S>> {
-    NurbCurve3D::try_new(
-        1,
-        vec![
-            Vector4::from_array([a[0], a[1], a[2], S::ONE]),
-            Vector4::from_array([b[0], b[1], b[2], S::ONE]),
-        ],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )
 }
 
 /// The coedges of every edge of `faces`.
@@ -277,14 +256,9 @@ pub(crate) struct Occluder<S: Scalar> {
 impl<S: Scalar> Occluder<S> {
     pub(crate) fn of(model: &Model<S>, face: FaceId) -> GeopResult<Self> {
         let surface = model.get_face(face)?.surface.clone();
-        let mut bounds = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
-        for q in &surface.control_points {
-            for (k, b) in bounds.iter_mut().enumerate() {
-                let x = q[k].div(q[3])?;
-                b[0] = b[0].min(x.lower().to_f64());
-                b[1] = b[1].max(x.upper().to_f64());
-            }
-        }
+        let bounds = surface
+            .aabb()
+            .map(|x| [x.lower().to_f64(), x.upper().to_f64()]);
         Ok(Occluder {
             face,
             surface,
@@ -316,7 +290,7 @@ pub(crate) fn seen<S: Scalar>(
     length: S,
 ) -> GeopResult<bool> {
     let far = point.add(&toward_eye.prod_scalar(length));
-    let ray = line3(point, far)?;
+    let ray = NurbCurve3D::line(point, far)?;
     let mut behind_an_edge = false;
     for occluder in occluders.iter().filter(|o| o.could_meet(&point, &far)) {
         let (face_id, surface) = (occluder.face, &occluder.surface);
@@ -373,8 +347,7 @@ pub(crate) fn ray_length<'o, S: Scalar>(occluders: impl IntoIterator<Item = &'o 
             hi[k] = hi[k].max(o.bounds[k][1]);
         }
     }
-    let d2: f64 = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum();
-    S::from_f64(2.0 * d2.sqrt() + 1.0)
+    S::from_f64(2.0 * diagonal(lo, hi) + 1.0)
 }
 
 /// The parameter boxes in `boxes` merged where they overlap, as sharp cut
@@ -418,7 +391,7 @@ pub fn project_view<S: Scalar>(
         if is_point(&curve)? {
             return Ok(());
         }
-        let bounds = bounds(&curve)?;
+        let bounds = bounds(&curve);
         sources.push((
             Source {
                 curve3,
@@ -503,7 +476,7 @@ pub fn project_view<S: Scalar>(
             }
             monotone.push(Source {
                 curve3: source.curve3.sub_curve(pair[0], pair[1])?,
-                bounds: bounds(&curve)?,
+                bounds: bounds(&curve),
                 curve,
                 kind: source.kind,
                 edge: source.edge,
@@ -597,7 +570,7 @@ pub fn project_view<S: Scalar>(
             let mut outcome = Err(GeopError::new("no point tried"));
             for f in [0.5, 0.25, 0.75] {
                 let decide = || -> GeopResult<bool> {
-                    let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
+                    let t = S::fraction(a, b, S::from_f64(f));
                     let mut point = source.curve3.evaluate(t)?;
                     if let Some(silhouette) = &source.silhouette {
                         point = silhouette.exact_point(model, &d, &point)?;
@@ -814,7 +787,7 @@ pub(crate) fn drop_drawn<S: Scalar>(
     for line in lines {
         let (a, b) = line.curve.domain();
         let mid = line.curve.evaluate(a.add(b).div(S::TWO)?.sharpen())?;
-        let here = bounds(&line.curve)?;
+        let here = bounds(&line.curve);
         let mut drawn = false;
         for (other, there) in &kept {
             if boxes_meet(&here, there)

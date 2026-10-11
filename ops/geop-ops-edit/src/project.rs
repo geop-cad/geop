@@ -3,6 +3,7 @@
 
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
+    plain,
     primitives::CoordinateSystem,
     scalars::Scalar,
     with_context,
@@ -16,7 +17,11 @@ use geop_ops::{
     Design, EntityRef, NamedModel, Namer, ParamValue,
     operation::{Build, BuildReader, Input, Lookup, ModelStep, Role, Scope, Seen, build_model},
 };
-use geop_ops_booleans::{imprint::imprint_on_face, remesh::remesh::RemeshParams};
+use geop_ops_booleans::{
+    extent::{bounds, face_hull, spread_along},
+    imprint::imprint_on_face,
+    remesh::remesh::RemeshParams,
+};
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
 use serde::{Deserialize, Serialize};
 
@@ -88,7 +93,8 @@ impl Operation for ProjectCurve {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::PROJECT_CURVE);
     type Args = ProjectCurveArgs;
     type EditingState = ();
     type Input = Input;
@@ -114,9 +120,9 @@ impl Operation for ProjectCurve {
     ) -> Form<Design> {
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let sketch = EntityRef::of_names(EntityRef::sketch, std::slice::from_ref(&args.sketch));
+        let sketch = EntityRef::of_name(EntityRef::sketch, &args.sketch);
         dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         dialog.reference("face", "onto face", face, &[Role::Face], None, false);
         form
     }
@@ -135,7 +141,7 @@ impl Operation for ProjectCurve {
         else {
             return (args, ());
         };
-        let one = |kind| EntityRef::names_of(kind, &picked).pop().unwrap_or_default();
+        let one = |kind| EntityRef::last_name(kind, &picked).unwrap_or_default();
         match key.as_str() {
             "sketch" => args.sketch = one(EntityRef::sketch),
             "face" => args.face = one(EntityRef::face),
@@ -154,22 +160,9 @@ fn reach_across<S: Scalar>(
     face: FaceId,
     plane: &CoordinateSystem<S>,
 ) -> GeopResult<(f64, f64)> {
-    let surface = &model.topology().get_face(face)?.surface;
-    let o = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
-    let w = [0, 1, 2].map(|k| plane.w()[k].to_f64());
-    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    let (mut near, mut far) = (f64::INFINITY, f64::NEG_INFINITY);
-    for cp in &surface.control_points {
-        let weight = cp[3].to_f64();
-        let p = [0, 1, 2].map(|k| cp[k].to_f64() / weight);
-        let along = (0..3).map(|k| (p[k] - o[k]) * w[k]).sum::<f64>();
-        near = near.min(along);
-        far = far.max(along);
-        for k in 0..3 {
-            lo[k] = lo[k].min(p[k]);
-            hi[k] = hi[k].max(p[k]);
-        }
-    }
-    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+    let hull = face_hull(model.topology(), &[face])?;
+    let (near, far) = spread_along(&hull, plane);
+    let [lo, hi] = bounds(&hull);
+    let diagonal = plain::diagonal(lo, hi);
     Ok((near - diagonal, far + diagonal))
 }

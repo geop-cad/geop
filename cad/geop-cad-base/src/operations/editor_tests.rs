@@ -764,6 +764,7 @@ fn new_route_is_picked_and_its_wires_chosen() {
     );
 
     let cable = (editor.part().retrieve_target(&cables()))
+        .ok()
         .and_then(|cables| cables.get("route(route1)"))
         .unwrap()
         .clone();
@@ -1574,6 +1575,52 @@ fn subd_cage_is_shaped_in_the_viewport() {
     assert_eq!(scene.part.solids, [format!("subd({})", last.id)]);
 }
 
+/// A drag of the subd cage's top face whose release never arrives, and
+/// then another drag of it, started elsewhere: the second is a new drag,
+/// and moves the face on from where the first left it — it neither carries
+/// on the first, nor starts from the cage as it was before the first.
+#[test]
+fn subd_drag_without_a_release_is_not_undone_by_the_next() {
+    let mut editor = Editor::new();
+    let update = editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    // Looking down at 45 degrees, at `x` across: moving the eye up by `d`
+    // moves the face by `d / 2` up and `d / 2` back.
+    let slanted = |x: f64, dz: f64| pointer([x, -10.0, 11.75 + dz], [0.0, 1.0, -1.0]);
+    for (x, done) in [(0.3, false), (-0.3, true)] {
+        let update = editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: slanted(x, 0.0),
+                shift: false,
+            },
+        });
+        assert!(
+            update.step.unwrap().presentation.grab,
+            "the face offers a grab"
+        );
+        let update = editor.handle(Command::Event {
+            event: StepEditEvent::Drag {
+                from: slanted(x, 0.0),
+                to: slanted(x, 0.2),
+                done,
+                shift: false,
+            },
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let program = editor.program();
+    let args: geop_ops_subd::SubdArgs = args(program.program.steps.last().unwrap());
+    let top = args.cage.face(9).unwrap();
+    for &v in &top.vertices {
+        let at = args.cage.vertex(v).unwrap().at;
+        assert!((at[2] - 1.2).abs() < 1e-9, "{at:?}");
+    }
+}
+
 /// The measure tool, used as the viewer uses it: taken in hand, the box's
 /// top hovered and clicked — its area, its plane — then its bottom clicked
 /// from below: one unit apart, parallel, the least distance drawn between
@@ -2190,6 +2237,7 @@ impl Inspector for Picked {
         kind: "picked",
         label: "Picked",
         doc: "Which faces are picked.",
+        icon: None,
         picks: Some(Picks {
             roles: &[Role::Face],
             most: 2,
@@ -2227,6 +2275,7 @@ impl Inspector for Solids {
         kind: "solids",
         label: "Solids",
         doc: "How many solids the part has.",
+        icon: None,
         picks: None,
     };
     type Options = SolidsOptions;

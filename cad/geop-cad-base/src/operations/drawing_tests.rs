@@ -185,7 +185,8 @@ fn section_through_a_blind_hole_is_hatched() {
 /// as the thread runs. Without hidden lines, those go.
 #[test]
 fn a_tapped_hole_draws_its_thread() {
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
+    use geop_ops_drawing::layer;
     let built = build(&examples::hole_plate());
     let args = DrawingArgs {
         scale: Some(2.0),
@@ -195,13 +196,10 @@ fn a_tapped_hole_draws_its_thread() {
     let arcs: Vec<f64> = sheet
         .strokes
         .iter()
-        .filter_map(|s| match (&s.layer, &s.shape) {
-            (
-                Layer::Thread,
-                Shape::Arc {
-                    radius, start, end, ..
-                },
-            ) => {
+        .filter_map(|s| match &s.shape {
+            Shape::Arc {
+                radius, start, end, ..
+            } if s.layer == layer::THREAD => {
                 let mut sweep = end - start;
                 while sweep <= 0.0 {
                     sweep += std::f64::consts::TAU;
@@ -220,8 +218,8 @@ fn a_tapped_hole_draws_its_thread() {
     let hidden: Vec<(f64, f64)> = sheet
         .strokes
         .iter()
-        .filter_map(|s| match (&s.layer, &s.shape) {
-            (Layer::Hidden, Shape::Line(a, b)) if (a[0] - b[0]).abs() < 1e-9 => {
+        .filter_map(|s| match &s.shape {
+            Shape::Line(a, b) if s.layer == layer::HIDDEN && (a[0] - b[0]).abs() < 1e-9 => {
                 Some((a[0], (a[1] - b[1]).abs() / 2.0))
             }
             _ => None,
@@ -252,7 +250,7 @@ fn a_tapped_hole_draws_its_thread() {
         !sheet
             .strokes
             .iter()
-            .any(|s| s.layer == Layer::Thread && matches!(s.shape, Shape::Line(..))),
+            .any(|s| s.layer == layer::THREAD && matches!(s.shape, Shape::Line(..))),
         "no view sees the thread from the side"
     );
 
@@ -261,12 +259,12 @@ fn a_tapped_hole_draws_its_thread() {
         ..args
     };
     let sheet = compose(built.part.current(), &without, "", &[]).unwrap();
-    assert!(!sheet.strokes.iter().any(|s| s.layer == Layer::Hidden));
+    assert!(!sheet.strokes.iter().any(|s| s.layer == layer::HIDDEN));
     assert_eq!(
         sheet
             .strokes
             .iter()
-            .filter(|s| s.layer == Layer::Thread)
+            .filter(|s| s.layer == layer::THREAD)
             .count(),
         1
     );
@@ -492,7 +490,8 @@ fn heights(line: &geop_ops_drawing::ViewLine<S>) -> (f64, f64) {
 /// nut — items 1 to 3.
 #[test]
 fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
+    use geop_ops_drawing::layer;
     use geop_ops_drawing::scene::Scene;
     let (_, built) = example_assembly("bolted_plate");
     let scene = Scene::of(built.part.current()).unwrap();
@@ -551,7 +550,7 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
         .strokes
         .iter()
         .filter(|s| {
-            s.layer == Layer::Dimension
+            s.layer == layer::DIMENSION
                 && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
         })
         .count();
@@ -561,7 +560,7 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
             sheet
                 .labels
                 .iter()
-                .filter(|l| l.layer == Layer::Dimension && l.text == item)
+                .filter(|l| l.layer == layer::DIMENSION && l.text == item)
                 .count(),
             1,
             "balloon {item}"
@@ -630,7 +629,8 @@ fn press_from_the_iso_view_draws() {
 #[test]
 #[ignore = "slow: every example assembly drawn — run with `cargo test -- --ignored`"]
 fn every_example_assembly_draws() {
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
+    use geop_ops_drawing::layer;
     use geop_ops_drawing::scene::Scene;
     let mut failures = Vec::new();
     for (name, _) in crate::examples::workspaces() {
@@ -661,7 +661,7 @@ fn every_example_assembly_draws() {
             .strokes
             .iter()
             .filter(|s| {
-                s.layer == Layer::Dimension
+                s.layer == layer::DIMENSION
                     && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
             })
             .count();
@@ -717,7 +717,8 @@ fn every_example_assembly_draws() {
 /// plate placed in it dimensioned by its name as the assembly names it.
 #[test]
 fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
+    use geop_ops_drawing::layer;
     let (_, files) = crate::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == "bolted_plate")
@@ -772,7 +773,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
     };
     let sheet = compose(built.part.current(), &args, "", &[]).unwrap();
     let (mut rising, mut falling) = (0, 0);
-    for stroke in sheet.strokes.iter().filter(|s| s.layer == Layer::Hatch) {
+    for stroke in sheet.strokes.iter().filter(|s| s.layer == layer::HATCH) {
         if let Shape::Line(a, b) = stroke.shape {
             match (b[0] - a[0]) * (b[1] - a[1]) > 0.0 {
                 true => rising += 1,
@@ -844,12 +845,13 @@ fn screwed_plate(n: usize) -> Runner {
 /// The balloons of `sheet`: the item numbers on the dimension layer next
 /// to a circle of a balloon's radius.
 fn balloon_items(sheet: &geop_ops::output::sheet::Sheet) -> Vec<String> {
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
+    use geop_ops_drawing::layer;
     let circles: Vec<[f64; 2]> = sheet
         .strokes
         .iter()
         .filter_map(|s| match s.shape {
-            Shape::Circle { center, radius } if s.layer == Layer::Dimension && radius == 4.0 => {
+            Shape::Circle { center, radius } if s.layer == layer::DIMENSION && radius == 4.0 => {
                 Some(center)
             }
             _ => None,
@@ -859,7 +861,7 @@ fn balloon_items(sheet: &geop_ops::output::sheet::Sheet) -> Vec<String> {
         .labels
         .iter()
         .filter(|l| {
-            l.layer == Layer::Dimension
+            l.layer == layer::DIMENSION
                 && circles
                     .iter()
                     .any(|c| (c[0] - l.at[0]).abs() < 1e-9 && (c[1] - l.at[1] - 1.75).abs() < 1e-9)

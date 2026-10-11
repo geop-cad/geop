@@ -184,3 +184,48 @@ fn a_route_runs_through_sketch_points() {
     // Two runs of 4 with a quarter-turn bend between them, rounded.
     assert!(length > 7.5 && length < 10.0, "{:?}", cable.length);
 }
+
+/// A route's swept bundle is how its cable is drawn, not a body: weighing
+/// the part, checking it for interference and its bill of materials all
+/// leave it out — the bill orders its wires instead — so the mass the
+/// inspector reports is the bill's.
+#[test]
+fn a_cable_bundle_is_no_body_to_weigh_or_check() {
+    let mut editor = Editor::new();
+    let files = BTreeMap::from([(
+        "plate.geop".to_string(),
+        Some(examples::box_with_drill_hole().to_json().unwrap()),
+    )]);
+    editor.handle(Command::Files { files });
+    let update = editor.handle(Command::Load {
+        program: assembly(),
+        path: Some("assembly.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let steps = update.program.unwrap().steps;
+    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+    let view = editor.part();
+    let solids: Vec<String> = (geop_ops::solids::placed_solids(view).unwrap().into_iter())
+        .map(|s| s.name)
+        .collect();
+    assert!(!solids.iter().any(|s| s.contains("route")), "{solids:?}");
+
+    let mass = geop_ops_inspect::mass_report(view).unwrap();
+    let names: Vec<&str> = mass.bodies.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names.len(), 2, "the plates alone: {names:?}");
+    let interference = geop_ops_inspect::interference_report(view).unwrap();
+    assert_eq!(interference.solids, 2, "{:?}", interference.found);
+
+    let bill = geop_ops_bom::bom(view, geop_ops_bom::Structure::Flat).unwrap();
+    let total = |b: geop_ops::output::Bounded| b.value;
+    let weighed = mass.total.as_ref().unwrap().mass.value;
+    assert!(
+        (total(bill.total_mass.unwrap()) - weighed).abs() < 1e-12,
+        "{:?} against {weighed}",
+        bill.total_mass
+    );
+    let wires = (bill.lines.iter())
+        .filter(|l| matches!(l.kind, geop_ops_bom::LineKind::Wire { .. }))
+        .count();
+    assert_eq!(wires, 1, "{:?}", bill.lines);
+}

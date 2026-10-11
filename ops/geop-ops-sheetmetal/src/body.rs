@@ -7,20 +7,16 @@
 //! how they join: so the next flange and the flat pattern work from what
 //! the body is made of, never from guessing it from its geometry.
 
-use std::collections::BTreeMap;
-
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_core_program::{
-    part::Retrieve,
-    target::{Revisable, TargetReference},
-};
+use geop_core_program::{part::Retrieve, target::TargetReference};
 use geop_ops::{
     Design, NamedModel, Namer, PlacedSketch,
-    model::sketch,
-    operation::{Build, BuildReader, BuildView, ModelStep, build_model},
+    model::{Records, sketch},
+    operation::{Build, BuildReader, ModelStep, build_model},
+    solids::{SolidNotes, solid_notes},
 };
 
 use crate::{flat_pattern::FlatPatternData, sheet::Sheet};
@@ -35,6 +31,14 @@ pub enum SheetBody {
 }
 
 impl SheetBody {
+    /// Its sheet, if it is a body as it is bent.
+    pub fn bent(&self) -> Option<&Sheet<Design>> {
+        match self {
+            SheetBody::Bent(sheet) => Some(sheet),
+            SheetBody::Flat(_) => None,
+        }
+    }
+
     /// How thick its sheet is.
     pub fn thickness(&self) -> f64 {
         match self {
@@ -46,46 +50,11 @@ impl SheetBody {
 
 /// The part's sheet-metal bodies, by the names of their solids: the value
 /// of its target [`sheets`].
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Sheets(BTreeMap<String, SheetBody>);
+pub type Sheets = Records<SheetBody>;
 
 /// The part's sheet-metal bodies.
 pub fn sheets() -> TargetReference<Sheets> {
     TargetReference::new("sheets")
-}
-
-/// A part has few sheet-metal bodies: a revision copies them.
-impl Revisable for Sheets {
-    fn to_revise(&self) -> Self {
-        self.clone()
-    }
-}
-
-impl Sheets {
-    /// Records `body` for the solid `solid`, in place of what was.
-    pub fn insert(&mut self, solid: impl Into<String>, body: SheetBody) {
-        self.0.insert(solid.into(), body);
-    }
-
-    /// The sheet-metal body of the solid `solid`, if it is one.
-    pub fn get(&self, solid: &str) -> Option<&SheetBody> {
-        self.0.get(solid)
-    }
-
-    /// The sheet of the solid `solid`, if it is a body as it is bent.
-    pub fn bent(&self, solid: &str) -> Option<&Sheet<Design>> {
-        match self.0.get(solid)? {
-            SheetBody::Bent(sheet) => Some(sheet),
-            SheetBody::Flat(_) => None,
-        }
-    }
-}
-
-/// The sheet thickness of the solid named `solid` of the part `view`
-/// shows, if it is a sheet-metal body or a flat pattern of one.
-pub fn thickness(view: BuildView, solid: &str) -> Option<f64> {
-    let sheets = view.retrieve_target(&sheets()).ok()?;
-    Some(sheets.get(solid)?.thickness())
 }
 
 /// The sheet-metal bodies `reader` reads: none before a step built one.
@@ -111,7 +80,7 @@ pub(crate) fn with_edge(
 ) -> GeopResult<WithEdge> {
     (model.solid_names().into_iter())
         .find_map(|solid| {
-            let sheet = sheets.bent(&solid)?;
+            let sheet = sheets.get(&solid)?.bent()?;
             let at = sheet.edge_named(edge)?;
             Some((solid, sheet.clone(), at))
         })
@@ -177,7 +146,7 @@ fn planned<O: SheetStep>(
 fn record(mut sheets: Sheets, reader: &mut BuildReader, step: &String) -> GeopResult<Sheets> {
     let made = reader.retrieve_target(&made(step))?;
     if let Some(consumed) = &made.consumes {
-        sheets.0.remove(consumed);
+        sheets.remove(consumed);
     }
     let body = match &made.making {
         Making::Bent(sheet) => SheetBody::Bent(sheet.clone()),
@@ -187,11 +156,28 @@ fn record(mut sheets: Sheets, reader: &mut BuildReader, step: &String) -> GeopRe
     Ok(sheets)
 }
 
+/// Notes the thickness of what the step `step` made, in place of the body
+/// it consumed (see [`geop_ops::solids::solid_notes`]).
+#[allow(clippy::ptr_arg)]
+fn note(mut notes: SolidNotes, reader: &mut BuildReader, step: &String) -> GeopResult<SolidNotes> {
+    let made = reader.retrieve_target(&made(step))?;
+    if let Some(consumed) = &made.consumes {
+        notes.remove(consumed);
+    }
+    let thickness = match &made.making {
+        Making::Bent(sheet) => sheet.rules.thickness,
+        Making::Flat(unfolded) => unfolded.data.thickness,
+    };
+    notes.note_mut(made.solid.clone()).thickness = Some(thickness);
+    Ok(notes)
+}
+
 /// Runs the step `step` of `O`: works out what it makes, records it, and
 /// builds it into the model.
 pub(crate) fn run<O: SheetStep>(step: &str, part: &mut Build, args: &O::Args) -> GeopResult<()> {
     part.define_target(&made(step), &(step.to_string(), args.clone()), planned::<O>)?;
     part.revise_or_start(&sheets(), &step.to_string(), record)?;
+    part.revise_or_start(&solid_notes(), &step.to_string(), note)?;
     build_model::<O>(part, step, args)
 }
 

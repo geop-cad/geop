@@ -32,6 +32,15 @@ pub struct OperationInfo {
     /// rather than as it was before: a placed part's mates pick entities of
     /// the part it places.
     pub picks_built: bool,
+    /// The extensions of the files its steps read that are no programs —
+    /// data a program keeps beside it, a STEP file: what a front end keeps
+    /// in a workspace with the programs, and sends the editor.
+    pub reads: &'static [&'static str],
+    /// What it is shown as: SVG on a 20 × 20 grid, drawn in the current
+    /// colour — strokes `currentColor`, unfilled unless it says otherwise —
+    /// that a front end puts in an `<svg>` of its own. None to show its
+    /// label.
+    pub icon: Option<&'static str>,
 }
 
 impl OperationInfo {
@@ -52,6 +61,8 @@ impl OperationInfo {
             tier,
             experimental: false,
             picks_built: false,
+            reads: &[],
+            icon: None,
         }
     }
 
@@ -67,6 +78,19 @@ impl OperationInfo {
     pub const fn picks_built(self) -> Self {
         Self {
             picks_built: true,
+            ..self
+        }
+    }
+
+    /// The same, its steps reading files of the extensions `reads`.
+    pub const fn reads(self, reads: &'static [&'static str]) -> Self {
+        Self { reads, ..self }
+    }
+
+    /// The same, shown as `icon` (see [`OperationInfo::icon`]).
+    pub const fn icon(self, icon: &'static str) -> Self {
+        Self {
+            icon: Some(icon),
             ..self
         }
     }

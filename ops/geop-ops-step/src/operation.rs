@@ -11,15 +11,12 @@ use geop_core_program::{
     part::Retrieve,
     target::TargetReference,
 };
-use geop_core_topology::{
-    Model,
-    validation::{ValidationParameters, validate_fast},
-};
+use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
     operation::{Build, BuildReader, Input, ModelStep, build_model},
-    placed::library,
-    ui::{EditForm, FormState, Tone},
+    placed::{library, library_files},
+    ui::{Edit, EditForm, FormState, Tone},
 };
 use serde::{Deserialize, Serialize};
 
@@ -72,37 +69,29 @@ pub fn add_bodies<S: Scalar>(
     namer: &Namer,
     bodies: &[ImportedBody<S>],
 ) -> GeopResult<()> {
-    // Checked on their own first: a body the file describes badly is
-    // refused by name, before it is mixed into the part.
-    let mut alone = Model::new();
-    // What the file calls each entity built, by its id in `alone`: for
-    // naming what a problem found mentions.
-    let mut file_names: Vec<(String, String)> = Vec::new();
+    // Checked on their own first, named as the file names them: a body the
+    // file describes badly is refused by name, before it is mixed into the
+    // part.
+    let mut alone = NamedModel::new();
     for (k, body) in bodies.iter().enumerate() {
-        let built = alone
-            .build_body(body.spec.clone())
-            .map_err(|e| e.with_context(format!("building the body {:?}", body.label)))?;
-        let mut name = |id: String, name: &[String]| {
-            file_names.push((id, format!("s{k},{}", name.join(","))));
+        let named = |names: &[Vec<String>]| -> Vec<String> {
+            (names.iter())
+                .map(|n| format!("s{k},{}", n.join(",")))
+                .collect()
         };
-        for (id, n) in built.vertices.iter().zip(&body.vertex_names) {
-            name(id.to_string(), n);
-        }
-        for (id, n) in built.edges.iter().zip(&body.edge_names) {
-            name(id.to_string(), n);
-        }
-        for (id, n) in built.faces.iter().zip(&body.face_names) {
-            name(id.to_string(), n);
-        }
+        let names = BodyNames {
+            vertices: named(&body.vertex_names),
+            edges: named(&body.edge_names),
+            faces: named(&body.face_names),
+            solid: body.spec.solid.then(|| format!("s{k}")),
+        };
+        (alone.build_body(body.spec.clone(), names))
+            .map_err(|e| e.with_context(format!("building the body {:?}", body.label)))?;
     }
-    if let Err(errors) = validate_fast(&ValidationParameters::default(), &alone) {
+    if let Err(errors) = validate_fast(&ValidationParameters::default(), alone.topology()) {
         let shown: Vec<String> = errors.iter().take(5).map(|e| e.to_string()).collect();
         let shown = shown.join("; ");
-        let mentioned: Vec<String> = file_names
-            .iter()
-            .filter(|(id, _)| shown.contains(id.as_str()))
-            .map(|(id, name)| format!("{id} = {name}"))
-            .collect();
+        let mentioned = alone.names_mentioned(&shown);
         return Err(GeopError::new(format!(
             "the file's bodies are not valid in geop ({} problem{}): {shown} — where {}",
             errors.len(),
@@ -183,23 +172,14 @@ fn form<'a>(
     args: &ImportStepArgs,
 ) -> EditForm<'a, Design, ImportStepArgs> {
     let mut f = EditForm::<Design, ImportStepArgs>::default();
-    let mut files: Vec<String> = (library(&mut context.before.clone()).ok())
-        .map(|library| library.files())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|f| is_step_file(f))
-        .collect();
-    files.sort();
-    if !args.file.is_empty() && !files.contains(&args.file) {
-        files.push(args.file.clone());
-    }
+    let files = library_files(&mut context.before.clone(), is_step_file, &args.file);
     f.file(
         "file",
         "file",
         args.file.clone(),
         files,
         &STEP_EXTENSIONS,
-        |args, file| args.file = file.to_string(),
+        |Edit { args, .. }, file| args.file = file.to_string(),
     );
     let read =
         (context.built).and_then(|built| built.retrieve_target(&imported(context.step)).ok());
@@ -231,7 +211,9 @@ impl Operation for ImportStep {
         "Add the solids and sheets of a STEP file next to the program.",
         OperationGroup::Output,
         OperationTier::Small,
-    );
+    )
+    .reads(&STEP_EXTENSIONS)
+    .icon(crate::icons::IMPORT_STEP);
     type Args = ImportStepArgs;
     type EditingState = FormState<()>;
     type Input = Input;

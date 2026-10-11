@@ -59,7 +59,6 @@ use geop_core_math::{
     with_context,
 };
 use geop_ops::operation::{Aspects, Chain, EntityRef, Lookup, ResolveEntity};
-use geop_ops_extrude_revolve::common::{arc3, line3};
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]
@@ -130,7 +129,7 @@ impl<S: Scalar> Waypoint<S> {
 /// the arc from `m{i}` on.
 #[derive(Clone, Debug)]
 pub struct RoutePath<S: Scalar> {
-    pub chain: Chain<S>,
+    pub chain: Chain<NurbCurve3D<S>>,
     /// Where each curve of the chain lies, as the route says it:
     /// `between point 1 (…) and point 2 (…)`.
     pub places: Vec<String>,
@@ -207,7 +206,11 @@ impl<S: Scalar> RoutePath<S> {
                 places.push(place.clone());
             };
             if first.straight && second.straight {
-                push(line3(*p0, *p1)?, format!("a{i}"), format!("w{i}"));
+                push(
+                    NurbCurve3D::line(*p0, *p1)?,
+                    format!("a{i}"),
+                    format!("w{i}"),
+                );
             } else {
                 push(first.curve, format!("a{i}"), format!("w{i}"));
                 push(second.curve, format!("b{i}"), format!("m{i}"));
@@ -392,7 +395,7 @@ fn piece<S: Scalar>(
             return Ok(None);
         }
         return Ok(Some(Piece {
-            curve: line3(*a, *b)?,
+            curve: NurbCurve3D::line(*a, *b)?,
             straight: true,
         }));
     }
@@ -400,7 +403,7 @@ fn piece<S: Scalar>(
     let cos = dot.div(first.norm().mul(second.norm()))?;
     let weight = S::ONE.add(cos).div(S::TWO)?.sqrt()?;
     Ok(Some(Piece {
-        curve: arc3(*a, *q, *b, weight)?,
+        curve: NurbCurve3D::arc(*a, *q, *b, weight)?,
         straight: false,
     }))
 }

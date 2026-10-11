@@ -15,8 +15,11 @@ pub mod sheet;
 mod stl;
 
 pub use export::{Content, ErasedExporter, Export, Exporter, ExporterInfo};
-pub use inspect::{ErasedInspector, Inspection, Inspector, InspectorInfo, Picks};
-pub use stl::{STL_QUALITY, Stl, StlOptions};
+pub use inspect::{
+    Answer, AnswerAction, Block, Does, ErasedInspector, Inspection, Inspector, InspectorInfo,
+    Picks, Row,
+};
+pub use stl::{STL_QUALITY, Stl, StlOptions, stl_bytes};
 
 use std::{collections::BTreeSet, rc::Rc};
 
@@ -32,6 +35,23 @@ use crate::{
     placed::{About, about},
     solving::{self, Freedom},
 };
+
+/// `text` fit for XML: for an element's content, or an attribute's value
+/// between either kind of quotes.
+pub fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
 
 /// A number as a report shows it — a value, and how far the truth may be
 /// from it: the midpoint of an enclosure, and its half-width.
@@ -51,9 +71,37 @@ impl Bounded {
         }
     }
 
+    /// It times `n`, as shown: a unit's amount for `n` units, or a value
+    /// in a unit `n` times smaller.
+    pub fn times(self, n: f64) -> Self {
+        Self {
+            value: self.value * n,
+            error: self.error * n,
+        }
+    }
+
     /// Whether `exact` lies within the bounds.
     pub fn contains(&self, exact: f64) -> bool {
         (exact - self.value).abs() <= self.error
+    }
+
+    /// As a report shows it: its value to `digits` decimals, and `± error`
+    /// when the error shows at that precision.
+    pub fn show(&self, digits: usize) -> String {
+        let value = format!("{:.digits$}", self.value);
+        match self.error >= 0.5 * 10f64.powi(-(digits as i32)) {
+            true => format!("{value} ± {:.1e}", self.error),
+            false => value,
+        }
+    }
+
+    /// A mass in kilograms as a report shows it: in grams below one
+    /// kilogram.
+    pub fn show_mass(&self) -> String {
+        match self.value < 1.0 {
+            true => format!("{} g", self.times(1000.0).show(3)),
+            false => format!("{} kg", self.show(3)),
+        }
     }
 }
 

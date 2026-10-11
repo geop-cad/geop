@@ -30,7 +30,7 @@ const exe = path.join(ROOT, "target", "release", process.platform === "win32" ? 
 
 const folder = fs.mkdtempSync(path.join(os.tmpdir(), "geop-e2e-"));
 const examples = ["pin", "hole_plate", "bolted_plate", "arm"];
-run(exe, ["examples", "--out-dir", folder, "--quality", "4", ...examples.flatMap((e) => ["--only", e])]);
+run(exe, ["examples", "--out-dir", folder, "--option", "quality=4", ...examples.flatMap((e) => ["--only", e])]);
 const bridge = await startBridge({ media, exe, folder });
 
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });

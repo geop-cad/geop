@@ -37,6 +37,7 @@ pub use geop_core_program::solve::{Unknown, unknown, unknowns};
 
 use crate::{
     Design, ParamValue,
+    model::pose_parameter,
     operation::{Build, BuildView, Input},
     parameters::Values,
     placed::{Instance, Located, locate, placed_parts},
@@ -70,6 +71,9 @@ pub struct Setting {
 pub struct Settings {
     /// What they are of, by name: the joint's mate.
     pub name: String,
+    /// What an editor calls that: `fore m1`, the mate `m1` of the step
+    /// `fore`.
+    pub label: String,
     /// What kind of thing that is: `revolute`.
     pub kind: &'static str,
     /// What it joins, as the entities it is between read.
@@ -98,6 +102,7 @@ pub struct SettingState {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SettingsState {
     pub name: String,
+    pub label: String,
     pub kind: &'static str,
     pub between: Vec<String>,
     pub values: Vec<SettingState>,
@@ -110,6 +115,7 @@ pub fn settings(view: BuildView) -> Vec<SettingsState> {
     (view.targets_of::<Settings>().into_iter())
         .map(|(_, settings)| SettingsState {
             name: settings.name.clone(),
+            label: settings.label.clone(),
             kind: settings.kind,
             between: settings.between.clone(),
             values: (settings.values.iter())
@@ -168,7 +174,7 @@ pub struct Freedom {
 
 /// The size of a placed part: what turns a turn into a length, and what a
 /// solve's size is at least. An empty part has none.
-pub fn size_of(instance: &Instance) -> GeopResult<Option<Design>> {
+fn size_of(instance: &Instance) -> GeopResult<Option<Design>> {
     let drawn = instance.component.drawn()?;
     if drawn.vertices.is_empty() && drawn.faces.is_empty() {
         return Ok(None);
@@ -321,11 +327,13 @@ fn seeded(
     declared_seeds(view, &posed(view, state, free)?, free)
 }
 
+/// Numbers that carry their derivatives by one pose's step: six, as many
+/// as a pose's variables.
+pub type D = Dual<Design, 6>;
+
 /// The step of a pose by its six variables: a turn, then a move, in its
 /// own frame (see [`Variable::retract`]).
-type D = Dual<Design, 6>;
-
-fn twist() -> GeopResult<Pose<D>> {
+pub fn twist() -> GeopResult<Pose<D>> {
     let var = |k: usize| D::var(Design::ZERO, k);
     Pose::exp(
         &Vector3::from_array([var(0), var(1), var(2)]),
@@ -455,8 +463,8 @@ fn changes(state: &Values, solved: Values) -> Values {
 
 /// Where the state of `part` has to be for every constraint to hold, as
 /// little away from where `state` has it as the constraints allow, after
-/// `pulls` pulled it — of the placed parts, only the one whose pose is the
-/// state `only` moving, if given — every value within its limits and those
+/// `pulls` pulled it — of the placed parts, only the one the step `only`
+/// placed moving, if given — every value within its limits and those
 /// `pulls` set held there: the values of the state that changed — the
 /// poses of the parts it moved, each relative to the part it is placed in,
 /// and the unknowns the steps declared — and how the solve went.
@@ -485,7 +493,8 @@ pub fn solve(
         .filter(|s| s.measure == Measure::Angle)
         .map(|s| s.parameter.clone())
         .collect();
-    let free = freed(view, only, &held)?;
+    let only = only.map(pose_parameter);
+    let free = freed(view, only.as_deref(), &held)?;
     // What the run has: a pose seeded where it put its part is no change.
     let had = posed(view, state, &free)?;
     let mut start = declared_seeds(view, &had, &free)?;

@@ -379,6 +379,22 @@ fn datum_line(d: &Datum<S>) -> geop_core_geometry::shape::Axis<S> {
     geop_core_geometry::shape::Axis::try_new(*d.frame.origin(), *d.frame.w()).unwrap()
 }
 
+/// A datum a step adds is listed in the part's structure, after the
+/// origin, to be shown or hidden like it.
+#[test]
+fn datums_added_are_listed_in_the_structure() {
+    let top = face("extrude(box,end)");
+    let distance = 1.0.into();
+    let mut part = drilled_box().with("lifted", vec![top], Construction::Offset { distance });
+    part.seen();
+    let structure = geop_ops::ui::structure(part.runner.part.current(), &["lifted".into()]);
+    let datums: Vec<(&str, Option<bool>)> = (structure.iter())
+        .filter(|item| item.kind == "datum")
+        .map(|item| (item.name.as_str(), item.visible))
+        .collect();
+    assert_eq!(datums, [(ORIGIN, Some(true)), ("lifted", Some(false))]);
+}
+
 #[test]
 fn planes() {
     let mut part = drilled_box();

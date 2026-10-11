@@ -3,10 +3,10 @@
 //! `geop compile part.geop` builds a program — the JSON the web
 //! editor saves (see `geop_cad_base::Program`) — and writes the part it
 //! makes with the exporter the editor offers for the output's extension
-//! (see `geop_cad_base::outputs`): by default an STL mesh, the one the
-//! editor draws (see `geop_ops::output::Stl`), so a compiled file looks
-//! exactly like the part on screen — the parts it places included, each
-//! where it is placed, read from the program files next to it.
+//! (see `geop_cad_base::outputs`), told the options given as `-O key=value`
+//! — by default in the first format the editor offers, its STL mesh — the
+//! parts it places included, each where it is placed, read from the
+//! program files next to it.
 //!
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
@@ -25,14 +25,10 @@ use geop_cad_base::{
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_ops::{
-    output::{Output, STL_QUALITY},
+    output::Output,
     program::Files,
     solving::{check as check_mates, solve},
 };
-
-/// How finely curved faces are meshed unless asked otherwise — what the
-/// web editor draws with.
-const DEFAULT_QUALITY: u16 = STL_QUALITY as u16;
 
 #[derive(Parser)]
 #[command(
@@ -47,9 +43,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build a program (the JSON the web editor saves) and write its part: an STL mesh, or what the output's extension names.
+    /// Build a program (the JSON the web editor saves) and write its part, in the format the output's extension names.
     Compile(CompileArgs),
-    /// Write every built-in example (see `geop_cad_base::examples`) as a program and an STL mesh.
+    /// Write every built-in example (see `geop_cad_base::examples`) as a program and its part, in the default format.
     Examples(ExamplesArgs),
     /// Run the editor (see `geop_cad_base::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
@@ -64,22 +60,16 @@ struct ServeArgs {}
 struct CompileArgs {
     /// The program to build, e.g. `part.geop`.
     program: PathBuf,
-    /// Where to write the part, in the format its extension names (`.stl`,
-    /// and whatever else an exporter writes). Defaults to the program's
-    /// path with `.geop` replaced by `.stl`.
+    /// Where to write the part, in the format its extension names — one an
+    /// exporter writes. Defaults to the program's path with the extension
+    /// of the default format (see [`default_output`]).
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// Only this solid, by name (e.g. `extrude(hole)`); repeat for several.
-    /// Every solid of the part, if not given. For a mesh.
-    #[arg(short, long = "solid", value_name = "NAME")]
-    solids: Vec<String>,
-    /// Write ASCII STL instead of binary.
-    #[arg(long)]
-    ascii: bool,
-    /// How finely curved faces are meshed: higher is smoother, and bigger.
-    /// Flat faces are meshed exactly whatever this is. For a mesh.
-    #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
-    quality: u16,
+    /// An option of the exporter, `key=value`, the value JSON or else
+    /// text: `-O quality=8`, `-O 'solids=["extrude(hole)"]'`. Repeat for
+    /// several; those the exporter does not take, it ignores.
+    #[arg(short = 'O', long = "option", value_name = "KEY=VALUE")]
+    options: Vec<String>,
 }
 
 #[derive(clap::Args)]
@@ -91,12 +81,25 @@ struct ExamplesArgs {
     /// several. Every built-in example, if not given.
     #[arg(long = "only", value_name = "NAME")]
     only: Vec<String>,
-    /// Write ASCII STL instead of binary.
-    #[arg(long)]
-    ascii: bool,
-    /// How finely curved faces are meshed: higher is smoother, and bigger.
-    #[arg(short, long, default_value_t = DEFAULT_QUALITY, value_parser = clap::value_parser!(u16).range(2..))]
-    quality: u16,
+    /// An option of the exporter, as for `compile`.
+    #[arg(short = 'O', long = "option", value_name = "KEY=VALUE")]
+    options: Vec<String>,
+}
+
+/// The exporter options `pairs` give, `key=value` each, as JSON: each value
+/// read as JSON, or else as text.
+fn options(pairs: &[String]) -> GeopResult<serde_json::Value> {
+    let options = (pairs.iter())
+        .map(|pair| {
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| GeopError::new(format!("the option {pair:?} is not `key=value`")))?;
+            let value = serde_json::from_str(value)
+                .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+            Ok((key.to_string(), value))
+        })
+        .collect::<GeopResult<serde_json::Map<_, _>>>()?;
+    Ok(serde_json::Value::Object(options))
 }
 
 /// Today's date, `YYYY-MM-DD` (UTC): what an exported file is dated.
@@ -130,10 +133,14 @@ struct Compiled {
     solved_for: Vec<String>,
 }
 
-/// `program`'s path with its extension replaced by `.stl`: `part.geop`
-/// becomes `part.stl`.
-fn default_output(program: &Path) -> PathBuf {
-    program.with_extension("stl")
+/// `program`'s path with its extension replaced by the first format the
+/// first exporter offered writes: `part.geop` becomes `part.stl`.
+fn default_output(program: &Path) -> GeopResult<PathBuf> {
+    let outputs = outputs()?;
+    let format = (outputs.exporters().first())
+        .and_then(|exporter| exporter.formats.first())
+        .ok_or_else(|| GeopError::new("the editor offers no exporter"))?;
+    Ok(program.with_extension(format))
 }
 
 /// The program files on disk, by their paths.
@@ -183,22 +190,18 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     };
     let (program, mut runner, solved_for) = build(&args.program)?;
 
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| default_output(&args.program));
+    let output = match &args.output {
+        Some(output) => output.clone(),
+        None => default_output(&args.program)?,
+    };
     // The exporter of the output's format, told the options of the command
     // line: those it does not take, it ignores.
     let format = (output.extension())
         .and_then(|e| e.to_str())
-        .unwrap_or("stl");
+        .ok_or_else(|| GeopError::new(format!("{} names no format", output.display())))?;
     let outputs = outputs()?;
     let exporter = outputs.exporter_for(format)?;
-    let options = serde_json::json!({
-        "solids": args.solids,
-        "ascii": args.ascii,
-        "quality": args.quality,
-    });
+    let options = options(&args.options)?;
     let today = today();
     let mut built = Output::new(&mut runner.part, &program.state, None, &today);
     let export = exporter.export(&mut built, Some(format), &options)?;
@@ -212,11 +215,11 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     })
 }
 
-/// Write every built-in example as `<out_dir>/<name>.geop` and
-/// `<out_dir>/<name>.stl` — and every example of several files as those
-/// files in `<out_dir>/<name>/`, its first one compiled — via [`compile`],
-/// so an example's mesh is generated exactly the way any other program's
-/// would be.
+/// Write every built-in example as `<out_dir>/<name>.geop` and its part
+/// `<out_dir>/<name>.stl`, in the default format (see [`default_output`])
+/// — and every example of several files as those files in
+/// `<out_dir>/<name>/`, its first one compiled — via [`compile`], so an
+/// example's part is written exactly the way any other program's would be.
 fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     let dir_err = |dir: &Path| {
         let dir = dir.display().to_string();
@@ -244,19 +247,18 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
             .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))
     };
     let compile_to = |program: PathBuf, output: PathBuf| {
+        let output = default_output(&output)?;
         compile(&CompileArgs {
             program,
             output: Some(output),
-            solids: Vec::new(),
-            ascii: args.ascii,
-            quality: args.quality,
+            options: args.options.clone(),
         })
     };
     let mut compiled = Vec::new();
     for (name, program) in singles.iter().filter(|(n, _)| chosen(n)) {
         let path = args.out_dir.join(format!("{name}.geop"));
         write(&path, &program())?;
-        let output = args.out_dir.join(format!("{name}.stl"));
+        let output = args.out_dir.join(name);
         compiled.push(
             compile_to(path, output)
                 .map_err(|e| e.with_context(format!("export_examples(name={name})")))?,
@@ -270,7 +272,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
             write(&dir.join(file), program)?;
         }
         let (main, _) = files.first().expect("an example has files");
-        let output = args.out_dir.join(format!("{name}.stl"));
+        let output = args.out_dir.join(name);
         compiled.push(
             compile_to(dir.join(main), output)
                 .map_err(|e| e.with_context(format!("export_examples(name={name})")))?,
@@ -398,23 +400,26 @@ mod tests {
         CompileArgs {
             program,
             output: None,
-            solids: Vec::new(),
-            ascii: false,
-            quality: DEFAULT_QUALITY,
+            options: Vec::new(),
         }
     }
 
     #[test]
     fn default_output_replaces_the_program_extension() {
+        let output = |path: &str| default_output(Path::new(path)).unwrap();
+        assert_eq!(output("a/part.geop"), Path::new("a/part.stl"));
+        assert_eq!(output("part.json"), Path::new("part.stl"));
+        assert_eq!(output("part"), Path::new("part.stl"));
+    }
+
+    #[test]
+    fn options_are_json_or_else_text() {
+        let pairs = ["quality=8", r#"solids=["a(b)"]"#, "name=x=y"].map(String::from);
         assert_eq!(
-            default_output(Path::new("a/part.geop")),
-            Path::new("a/part.stl")
+            options(&pairs).unwrap(),
+            serde_json::json!({"quality": 8, "solids": ["a(b)"], "name": "x=y"})
         );
-        assert_eq!(
-            default_output(Path::new("part.json")),
-            Path::new("part.stl")
-        );
-        assert_eq!(default_output(Path::new("part")), Path::new("part.stl"));
+        assert!(options(&["quality".into()]).is_err());
     }
 
     /// A command that cannot be read is answered, not fatal: the front end
@@ -496,8 +501,7 @@ mod tests {
         let compiled = export_examples(&ExamplesArgs {
             out_dir: dir.clone(),
             only: Vec::new(),
-            ascii: false,
-            quality: DEFAULT_QUALITY,
+            options: Vec::new(),
         })
         .unwrap();
         assert_eq!(
@@ -530,7 +534,7 @@ mod tests {
         }
         let compiled = compile(&CompileArgs {
             output: Some(dir.join("arm.zip")),
-            quality: 8,
+            options: vec!["quality=8".into()],
             ..args(dir.join("arm.geop"))
         })
         .unwrap();
@@ -594,7 +598,7 @@ mod tests {
             sizes["plate.geop"] + sizes["pin.geop"]
         );
         let pin = compile(&CompileArgs {
-            solids: vec!["pin/extrude(pin)".into()],
+            options: vec![r#"solids=["pin/extrude(pin)"]"#.into()],
             ..args(dir.join("assembly.geop"))
         })
         .unwrap();
@@ -630,8 +634,7 @@ mod tests {
         let compiled = export_examples(&ExamplesArgs {
             out_dir: dir.clone(),
             only: vec!["cross_drilled_shaft".into(), "luggage_tag".into()],
-            ascii: false,
-            quality: DEFAULT_QUALITY,
+            options: Vec::new(),
         })
         .unwrap();
         assert_eq!(compiled.len(), 2);
@@ -646,8 +649,7 @@ mod tests {
         let err = export_examples(&ExamplesArgs {
             out_dir: dir,
             only: vec!["not_a_real_example".into()],
-            ascii: false,
-            quality: DEFAULT_QUALITY,
+            options: Vec::new(),
         })
         .unwrap_err();
         assert!(err.to_string().contains("luggage_tag"), "{err}");
@@ -716,7 +718,7 @@ mod tests {
         let path = dir.join("box.geop");
         std::fs::write(&path, examples::box_with_drill_hole().to_json().unwrap()).unwrap();
         let err = compile(&CompileArgs {
-            solids: vec!["nothing".into()],
+            options: vec![r#"solids=["nothing"]"#.into()],
             ..args(path)
         })
         .unwrap_err();

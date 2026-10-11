@@ -32,11 +32,12 @@ pub mod layout;
 pub mod sheet;
 pub mod thicken;
 
+mod icons;
 #[cfg(test)]
 mod tests;
 
 pub use base_flange::{BaseFlange, BaseFlangeArgs};
-pub use body::{SheetBody, Sheets, sheets, thickness};
+pub use body::{SheetBody, Sheets, sheets};
 pub use cut::{SheetCut, SheetCutArgs};
 pub use cutting::{FlatPatternDxf, FlatPatternOptions, cutting_sheet};
 pub use edge_flange::{Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, LengthReference};

@@ -38,7 +38,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Body;
-use geop_ops::{NamedModel, operation::EntityRef};
+use geop_ops::{NamedModel, ToolReach, operation::EntityRef};
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
 
 use crate::common::{Names, middle};
@@ -158,17 +158,18 @@ pub(crate) fn repeat_features<S: Scalar>(
                     })?;
                     part.transform_body(Body::Solid(solid), motion)
                         .with_context(ctx)?;
-                    let scope = match &tool.scope {
+                    let scope = match &tool.reach.scope {
                         Some(scope) => format!("{label},{step},{scope}"),
                         None => format!("{label},{step}"),
                     };
                     tools.push(Tool {
                         solid,
-                        up_to_next: tool
-                            .up_to_next
-                            .as_ref()
-                            .map(|(start, end)| (names.copy(label, start), names.copy(label, end))),
-                        scope: Some(scope),
+                        reach: ToolReach {
+                            up_to_next: tool.reach.up_to_next.as_ref().map(|(start, end)| {
+                                (names.copy(label, start), names.copy(label, end))
+                            }),
+                            scope: Some(scope),
+                        },
                     });
                 }
             }

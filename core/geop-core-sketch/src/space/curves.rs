@@ -11,7 +11,7 @@ use geop_core_math::{
     with_context,
 };
 
-use super::{Constraint3d, CurveKind3d, Enclosure3d, End, Sketch3d, geometry::Arc3};
+use super::{Constraint3d, Curve3d, CurveKind3d, Enclosure3d, End, Sketch3d, geometry::Arc3};
 use crate::{CurveId, PointId, ProfileEdge, ProfileJoint};
 
 /// Samples per piece of a curve drawn as a polyline.
@@ -252,6 +252,14 @@ impl<S: Scalar> Sketch3d<S> {
         Ok(out)
     }
 
+    /// The curves that become edges, oldest first: those drawn, but for
+    /// construction curves.
+    pub fn drawn_curves(&self) -> impl Iterator<Item = (&CurveId, &Curve3d)> {
+        self.curves
+            .iter()
+            .filter(|(_, c)| c.is_drawn() && !c.construction)
+    }
+
     /// The drawn curves — not construction, not references — joined into
     /// chains where they share a point (see [`Sketch3d::point_classes`]).
     ///
@@ -262,9 +270,7 @@ impl<S: Scalar> Sketch3d<S> {
     pub fn chains(&self) -> GeopResult<Vec<Chain3d>> {
         let class = self.point_classes();
         let drawn: Vec<(CurveId, PointId, PointId)> = self
-            .curves
-            .iter()
-            .filter(|(_, c)| c.is_drawn() && !c.construction)
+            .drawn_curves()
             .filter_map(|(&id, c)| {
                 let (s, e) = c.endpoints()?;
                 Some((id, class[&s], class[&e]))

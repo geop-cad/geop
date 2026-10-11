@@ -14,7 +14,7 @@ use geop_ops::{
     Design,
     operation::{Role, Seen},
     parameters::Formula,
-    ui::{Action, CanvasEvent, Change, EditForm, Gizmo, Tone, Track, formula_number},
+    ui::{Action, CanvasEvent, Change, Edit, EditForm, Gizmo, Tone, Track, formula_number},
 };
 
 use crate::{
@@ -200,7 +200,7 @@ pub(crate) fn form<'a>(
                 let number = formula_number(name, &formula, &mut { seen }, unit)
                     .range(min, max)
                     .handle(handles.remove(name));
-                f.formula(name, number, move |args, v| {
+                f.formula(name, number, move |Edit { args, .. }, v| {
                     if let Ok(v) = serde_json::to_value(v) {
                         set(args, v)
                     }
@@ -208,7 +208,9 @@ pub(crate) fn form<'a>(
             }
             ParamKind::Bool { .. } => {
                 let v = value.and_then(|v| v.as_bool()).unwrap_or_default();
-                f.checkbox(name, name, v, move |args, b| set(args, b.into()));
+                f.checkbox(name, name, v, move |Edit { args, .. }, b| {
+                    set(args, b.into())
+                });
             }
         }
     }

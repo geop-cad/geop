@@ -17,7 +17,9 @@
 //! patch's four sides, as a boundary surface or an extruded face is — and
 //! stands alone in its sheet. Anything else is refused, by name.
 
-use geop_core_geometry::{contains::surface::boundary_curve, nurb_surface::NurbSurface3D};
+use geop_core_geometry::{
+    contains::surface::boundary_curve, nurb_curve::NurbCurve2D, nurb_surface::NurbSurface3D,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -37,7 +39,6 @@ use geop_ops::{
     BodyNames, Design, NamedModel, ParamValue,
     operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
 };
-use geop_ops_extrude_revolve::common::line2;
 use serde::{Deserialize, Serialize};
 
 use crate::sheet_of;
@@ -82,7 +83,8 @@ impl Operation for ExtendSurface {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::EXTEND_SURFACE);
     type Args = ExtendSurfaceArgs;
     type EditingState = ();
     type Input = Input;
@@ -108,7 +110,7 @@ impl Operation for ExtendSurface {
     ) -> Form<Design> {
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let edge = EntityRef::of_names(EntityRef::edge, std::slice::from_ref(&args.edge));
+        let edge = EntityRef::of_name(EntityRef::edge, &args.edge);
         dialog.reference("edge", "edge", edge, &[Role::Edge], None, false);
         let distance = Number::new("distance", args.distance, Unit::Length).range(0.0, 1.0);
         dialog.number("distance", distance);
@@ -125,8 +127,7 @@ impl Operation for ExtendSurface {
         if let Event::Field { key, value } = event {
             match (key.as_str(), value) {
                 ("edge", Value::Entities(picked)) => {
-                    args.edge =
-                        (EntityRef::names_of(EntityRef::edge, &picked).pop()).unwrap_or_default()
+                    args.edge = EntityRef::last_name(EntityRef::edge, &picked).unwrap_or_default()
                 }
                 ("distance", Value::Number(d)) => args.distance = d,
                 _ => {}
@@ -300,15 +301,8 @@ pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> G
             outer: (0..4)
                 .map(|k| {
                     Ok(CoedgeSpec {
-                        on: CoedgeOn::Edge(
-                            k,
-                            if k < 2 {
-                                Sense::Forward
-                            } else {
-                                Sense::Reversed
-                            },
-                        ),
-                        pcurve: line2(corner_uv[k], corner_uv[(k + 1) % 4])?,
+                        on: CoedgeOn::Edge(k, Sense::from_forward(k < 2)),
+                        pcurve: NurbCurve2D::line(corner_uv[k], corner_uv[(k + 1) % 4])?,
                     })
                 })
                 .collect::<GeopResult<_>>()?,

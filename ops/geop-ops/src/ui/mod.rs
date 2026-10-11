@@ -5,11 +5,14 @@
 
 mod edit_form;
 mod fields;
+pub mod icons;
 mod shown;
 mod view;
 
+pub(crate) use view::RESOLUTION;
+
 pub use edit_form::{Edit, EditForm, FormState};
-pub use fields::{constraint_status, formula_number, region};
+pub use fields::{choices, chosen, constraint_status, formula_number, region, sketch_field};
 pub use geop_core_program::editing::{
     Action, Axis, Button, CanvasEvent, Change, Choice, Control, Dialog, Event, Extent, Field, Form,
     Gizmo, GizmoDrag, GizmoPart, GizmoView, InHand, ListItem, Number, Orientation, Picked, Pointer,

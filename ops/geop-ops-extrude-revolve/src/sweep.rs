@@ -32,7 +32,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D},
+    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, embed_point},
     nurb_surface::{NurbSurface, NurbSurface3D},
 };
 use geop_core_math::{
@@ -48,7 +48,7 @@ use geop_core_topology::{
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
 
-use crate::common::{Profile, bilinear, embed_point, end_point, line2, start_point};
+use crate::common::Profile;
 
 /// Where the profile's plane is at one station of a path: a profile point
 /// `(x, y)` lies at `origin + x e1 + y e2`.
@@ -164,7 +164,7 @@ impl<S: Scalar> Row<'_, S> {
                 // only widen the row.
                 let term = |&(s, coefficient): &(usize, S)| -> Vector4<S> {
                     let p = place(&at[s], &stations[s]);
-                    if coefficient.is_subset_of(S::ONE) && S::ONE.is_subset_of(coefficient) {
+                    if coefficient.is_exactly(S::ONE) {
                         p
                     } else {
                         Vector4::from_array(std::array::from_fn(|k| p[k].mul(coefficient)))
@@ -385,7 +385,7 @@ impl<S: Scalar> SweepLoop<S> {
             }
             if i + 1 < n || profile.is_closed() {
                 let next = &curves[(i + 1) % n];
-                let (end, start) = (end_point(curve)?, start_point(next)?);
+                let (end, start) = (curve.end()?, next.start()?);
                 if !end.could_be_equal(&start) {
                     return Err(GeopError::new(format!(
                         "sweep: curve {} ends at {end:?}, but the next one starts at {start:?}",
@@ -428,13 +428,26 @@ impl<'a, S: Scalar> Cap<'a, S> {
                 }
             }
         }
-        // The cap spans exactly this box. It encloses the profile: a NURBS
-        // curve stays within the convex hull of its control points, and the
-        // bounds above are the outer bounds of their enclosures.
+        // The cap spans this box. It encloses the profile: a NURBS curve
+        // stays within the convex hull of its control points, and the bounds
+        // above are the outer bounds of their enclosures. Its size is a free
+        // choice that has to reach `hi`: `hi - lo` in plain numbers, unless
+        // that rounds so far down that `lo + size` falls definitely short of
+        // `hi`, and then the upper bound of `hi - lo`.
+        let size = std::array::from_fn(|k| {
+            let (from, to) = (S::from_f64(lo[k]), S::from_f64(hi[k]));
+            let plain = S::from_f64(hi[k] - lo[k]);
+            if from.add(plain).definitely_less(to) {
+                to.sub(from).upper()
+            } else {
+                plain
+            }
+        });
+        let lo = lo.map(S::from_f64);
         Ok(Self {
             frame,
-            lo: Vector2::from_array([S::from_f64(lo[0]), S::from_f64(lo[1])]),
-            size: Vector2::from_array([S::from_f64(hi[0] - lo[0]), S::from_f64(hi[1] - lo[1])]),
+            lo: Vector2::from_array(lo),
+            size: Vector2::from_array(size),
             swapped,
         })
     }
@@ -473,9 +486,9 @@ impl<'a, S: Scalar> Cap<'a, S> {
                 .point(&Vector2::from_array([pick(0, i), pick(1, j)]))
         };
         if self.swapped {
-            bilinear(corner(0, 0), corner(0, 1), corner(1, 1), corner(1, 0))
+            NurbSurface3D::bilinear(corner(0, 0), corner(0, 1), corner(1, 1), corner(1, 0))
         } else {
-            bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))
+            NurbSurface3D::bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))
         }
     }
 }
@@ -487,10 +500,10 @@ impl<'a, S: Scalar> Cap<'a, S> {
 pub fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
     let p = |u: f64, v: f64| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
     Ok([
-        line2(p(0.0, 1.0), p(0.0, 0.0))?,
-        line2(p(0.0, 0.0), p(1.0, 0.0))?,
-        line2(p(1.0, 0.0), p(1.0, 1.0))?,
-        line2(p(1.0, 1.0), p(0.0, 1.0))?,
+        NurbCurve2D::line(p(0.0, 1.0), p(0.0, 0.0))?,
+        NurbCurve2D::line(p(0.0, 0.0), p(1.0, 0.0))?,
+        NurbCurve2D::line(p(1.0, 0.0), p(1.0, 1.0))?,
+        NurbCurve2D::line(p(1.0, 1.0), p(0.0, 1.0))?,
     ])
 }
 
@@ -574,13 +587,7 @@ pub fn skin<S: Scalar>(
     let stations = path.stations.len();
     let spans = path.spans.len();
 
-    let mut spec = BodySpec {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        faces: Vec::new(),
-        shells: Vec::new(),
-        solid: solid.is_some(),
-    };
+    let mut spec = BodySpec::new(solid.is_some());
     let mut names = BodyNames {
         solid: solid.map(str::to_string),
         ..BodyNames::default()
@@ -878,4 +885,37 @@ fn connected_faces<S: Scalar>(spec: &BodySpec<S>) -> Vec<Vec<usize>> {
         }
     }
     sets.groups()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{polygon, testing::v2};
+    use geop_core_math::for_all_scalars;
+
+    /// A profile reaching far one way along an axis and only a little the
+    /// other: its box's size in plain numbers, `0.001 - -3`, rounds below
+    /// what the box spans. The cap must still reach every point of it.
+    fn check_cap_encloses_the_profile<S: Scalar>() {
+        let corners = [(-3.0, -3.0), (0.001, -3.0), (0.001, 0.001), (-3.0, 0.001)];
+        let profile = Profile::closed(polygon(&corners.map(|(x, y)| v2::<S>(x, y))).unwrap());
+        let frame = Frame {
+            origin: Vector3::zero(),
+            e1: Vector3::axis(0),
+            e2: Vector3::axis(1),
+        };
+        let cap = Cap::new(&frame, &[SweepLoop::plain(profile)], false).unwrap();
+        let reach = S::from_f64(0.001);
+        for k in 0..2 {
+            let far = cap.lo[k].add(cap.size[k]);
+            assert!(
+                !far.definitely_less(reach),
+                "along axis {k} the cap reaches {far:?}, short of the profile's {reach:?}"
+            );
+        }
+    }
+    #[test]
+    fn cap_encloses_the_profile() {
+        for_all_scalars!(check_cap_encloses_the_profile);
+    }
 }

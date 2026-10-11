@@ -5,9 +5,9 @@
 //!   along two.
 //! - [`CircularPattern`]: copies turned around an axis.
 //! - [`Mirror`]: a mirror image in a plane.
-//!
-//! These three repeat bodies or features.
 //! - [`MoveBody`]: bodies, or a copy of them, turned and shifted.
+//!
+//! The first three repeat bodies or features.
 //!
 //! Each acts on solids, and on sheets — faces standing on their own — and
 //! keeps what it makes as new bodies, or combines it with a solid as an
@@ -31,6 +31,7 @@
 mod circular;
 mod common;
 mod features;
+mod icons;
 mod linear;
 mod mirror;
 mod move_body;

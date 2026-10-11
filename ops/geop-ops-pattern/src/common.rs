@@ -13,16 +13,16 @@ use geop_core_math::{
 use geop_core_topology::Body;
 use geop_ops::ui::{Choice, Dialog, Form, Number, Track, Unit, Value};
 use geop_ops::{
-    Design, NamedModel, Namer,
+    Design, NamedModel, Namer, ToolReach,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
         resolve_bodies,
     },
     parameters::Formula,
     ui::formula_number,
 };
+use geop_ops::{Threads, draw_threads, threads};
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
-use geop_ops_hole::{Threads, threads};
 use serde::{Deserialize, Serialize};
 
 /// How far apart the instances of a pattern are: each `Step` from the
@@ -374,17 +374,6 @@ pub(crate) fn build_pattern<A: Pattern>(
         .with_context(ctx)
 }
 
-/// The newest solid of `before`, as a body field starts out holding it:
-/// none, if there is none.
-pub(crate) fn newest_solid<S: Scalar>(before: &NamedModel<S>) -> Vec<EntityRef> {
-    before
-        .solid_names()
-        .pop()
-        .map(EntityRef::solid)
-        .into_iter()
-        .collect()
-}
-
 /// One body a step leaves behind as one of its instances — a seed, or a
 /// copy of one — and the scope that tells its combination's names apart
 /// from the other instances' (see [`Tool::scope`]).
@@ -485,8 +474,10 @@ pub(crate) fn combine_instances<S: Scalar>(
             Body::Solid(solid) if solid == target => {}
             Body::Solid(solid) => tools.push(Tool {
                 solid,
-                up_to_next: None,
-                scope: Some(instance.scope.clone()),
+                reach: ToolReach {
+                    up_to_next: None,
+                    scope: Some(instance.scope.clone()),
+                },
             }),
             Body::Sheet(_) => {
                 return Err(GeopError::new(format!(
@@ -505,24 +496,6 @@ pub(crate) fn combine_instances<S: Scalar>(
         .apply(part, namer, operation_id, &tools)
         .and_then(Reach::stopped)
         .with_context(ctx)
-}
-
-/// The unit direction `entity` gives: a line's — a straight edge, an axis,
-/// a sketch line — or a plane's normal.
-pub(crate) fn direction<S: Scalar>(
-    lookup: &mut (impl Lookup<S> + ?Sized),
-    entity: &EntityRef,
-) -> GeopResult<Vector3<S>> {
-    let aspects = Aspects::of(entity, lookup)?;
-    if let Some(line) = aspects.line {
-        return Ok(line.direction);
-    }
-    if let Some(plane) = aspects.plane {
-        return Ok(*plane.w());
-    }
-    Err(GeopError::new(format!(
-        "{entity} gives no direction: pick a straight edge, an axis, or a plane to go along its normal"
-    )))
 }
 
 /// Where the handles of a step acting on `refs` sit: the middle of the
@@ -603,7 +576,8 @@ fn copy_threads(
 
 /// Runs the pattern `O` of features or bodies as the step `step`: copies
 /// of its seeds in the model, at its placements — of the part as it is
-/// before the step — and, of features, copies of their cosmetic threads.
+/// before the step — and, of features, copies of their cosmetic threads,
+/// drawn as the step's annotations.
 pub(crate) fn run_pattern<O: ModelStep>(
     part: &mut Build,
     step: &str,
@@ -624,7 +598,10 @@ where
     });
     build_model::<O>(part, step, args)?;
     match copies {
-        Some(copies) => part.revise_or_start(&threads(), &copies?, copy_threads),
+        Some(copies) => {
+            part.revise_or_start(&threads(), &copies?, copy_threads)?;
+            draw_threads(part, step)
+        }
         None => Ok(()),
     }
 }

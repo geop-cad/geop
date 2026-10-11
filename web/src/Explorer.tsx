@@ -5,10 +5,12 @@
 // them and says what the user asked for.
 
 import { useRef, useState, type ReactNode } from "react";
-import { asPath, tree, validPath, type Entry, type Workspace } from "./files";
+import { acceptedFiles, asPath, tree, validPath, type Entry, type Workspace } from "./files";
 
 interface Props {
   workspace: Workspace;
+  /** The extensions of the data files programs read beside them (see `OperationInfo.reads`). */
+  reads: string[];
   /** Whether another file can be opened, made or changed: not while a step is edited. */
   enabled: boolean;
   onOpen: (path: string) => void;
@@ -135,7 +137,7 @@ function folderOf(path: string): string {
   return slash < 0 ? "" : path.slice(0, slash + 1);
 }
 
-export function Explorer({ workspace, enabled, onOpen, onCreate, onRename, onDelete, onUpload, onDownload }: Props) {
+export function Explorer({ workspace, reads, enabled, onOpen, onCreate, onRename, onDelete, onUpload, onDownload }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [sectionOpen, setSectionOpen] = useState(true);
   /** What is being named: a new file, in a folder, or a file being renamed. */
@@ -283,7 +285,7 @@ export function Explorer({ workspace, enabled, onOpen, onCreate, onRename, onDel
             ref={uploadRef}
             type="file"
             multiple
-            accept=".geop,.json,application/json,.step,.stp"
+            accept={acceptedFiles(reads)}
             hidden
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];

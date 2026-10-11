@@ -66,21 +66,39 @@ impl<S: Scalar> NamedModel<S> {
         })
     }
 
+    /// The name of the solid `face` is part of. An error for a face of a
+    /// sheet, naming the face and saying `why` it has to be a solid's.
+    pub fn solid_name_of_face(&self, face: FaceId, why: &str) -> GeopResult<String> {
+        let Some(solid) = self.topology().solid_of_face(face)? else {
+            return Err(GeopError::new(format!(
+                "face {:?} stands on its own: {why}",
+                self.name(face)?
+            )));
+        };
+        Ok(self.name(solid)?.to_string())
+    }
+
     /// Every solid's name, oldest first.
     pub fn solid_names(&self) -> Vec<String> {
-        let mut solids: Vec<SolidId> = self.topology().solids.keys().copied().collect();
-        solids.sort_by_key(|s| s.0);
-        solids
-            .into_iter()
-            .filter_map(|s| self.name_of(s).map(str::to_string))
+        // The arenas are ordered by id, the order of creation.
+        self.topology()
+            .solids
+            .keys()
+            .filter_map(|&s| self.name_of(s).map(str::to_string))
             .collect()
+    }
+
+    /// The newest solid's name, if there is any: what a field picking a
+    /// solid starts out holding.
+    pub fn newest_solid(&self) -> Option<String> {
+        self.solid_names().pop()
     }
 
     /// The name of every face standing on its own — of a sheet, part of no
     /// solid — oldest first.
     pub fn sheet_face_names(&self) -> Vec<String> {
         let model = self.topology();
-        let mut faces: Vec<FaceId> = model
+        model
             .faces
             .iter()
             .filter(|(_, f)| {
@@ -89,12 +107,7 @@ impl<S: Scalar> NamedModel<S> {
                     .get(&f.shell)
                     .is_some_and(|s| s.solid.is_none())
             })
-            .map(|(&id, _)| id)
-            .collect();
-        faces.sort_by_key(|f| f.0);
-        faces
-            .into_iter()
-            .filter_map(|f| self.name_of(f).map(str::to_string))
+            .filter_map(|(&f, _)| self.name_of(f).map(str::to_string))
             .collect()
     }
 }

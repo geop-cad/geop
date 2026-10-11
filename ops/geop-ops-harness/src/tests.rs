@@ -6,13 +6,14 @@
 //! its middle, its `z` along the edge — a free point a vertex of a wire on
 //! its own.
 
+use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{for_all_scalars, geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 use geop_core_topology::{
     build::{BodySpec, EdgeSpec},
     validation::{ValidationParameters, validate, validate_manifold},
 };
 use geop_ops::{BodyNames, EntityRef, NamedModel};
-use geop_ops_extrude_revolve::{common::line3, shapes::cylinder::revolved_cylinder};
+use geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder;
 
 use crate::{
     Cable, RouteArgs, Wire, WireSize,
@@ -36,7 +37,7 @@ fn connectors<S: Scalar>(part: &mut Part<S>, frames: &[(&str, Vector3<S>, Vector
         let spec = BodySpec {
             vertices: vec![start, end],
             edges: vec![EdgeSpec {
-                curve: line3(start, end).unwrap(),
+                curve: NurbCurve3D::line(start, end).unwrap(),
                 start: 0,
                 end: 1,
             }],

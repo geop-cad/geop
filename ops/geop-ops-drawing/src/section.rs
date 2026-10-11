@@ -4,6 +4,7 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain,
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
@@ -48,19 +49,15 @@ pub fn section_part<S: Scalar>(
         ))
     };
     let mut cut = model.clone();
-    let mut solids: Vec<SolidId> = cut.topology().solids.keys().copied().collect();
-    solids.sort_by_key(|s| s.0);
+    // Ordered by id, as the model's arenas are.
+    let solids: Vec<SolidId> = cut.topology().solids.keys().copied().collect();
     if solids.is_empty() {
         return Err(GeopError::new("the part has no solid to cut")).with_context(&ctx);
     }
     // A box reaching past the whole part from wherever on the plane.
     let b = bounds(cut.topology()).with_context(&ctx)?;
     let center: Vec<f64> = b.iter().map(|[lo, hi]| (lo + hi) / 2.0).collect();
-    let diagonal: f64 = b
-        .iter()
-        .map(|[lo, hi]| (hi - lo).powi(2))
-        .sum::<f64>()
-        .sqrt();
+    let diagonal = plain::diagonal(b.map(|[lo, _]| lo), b.map(|[_, hi]| hi));
     let offset: f64 = (0..3)
         .map(|k| (origin[k].to_f64() - center[k]).powi(2))
         .sum::<f64>()

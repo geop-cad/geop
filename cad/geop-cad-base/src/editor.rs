@@ -33,8 +33,7 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, EntityRef,
-    model::pose_parameter,
-    operation::{BuildView, INSTANCE_SEPARATOR, Input, Role, Seen},
+    operation::{BuildView, Input, Role, Seen, instance_path},
     output::{Content, Export, ExporterInfo, Inspection, InspectorInfo, Output, Outputs},
     parameters::{Parameters, Resolved, Values},
     placed::{Library, placed_parts},
@@ -1295,7 +1294,7 @@ impl Editor {
         // has run: until then, none is dropped.
         let complete = whole && self.build.ran == steps.steps.len() && self.build.errors.is_empty();
         let holds = solving::check(self.part()).is_ok_and(|report| report.converged);
-        let own = (self.open.as_ref()).map(|open| pose_parameter(&open.id));
+        let own = (self.open.as_ref()).map(|open| open.id.clone());
         let part = &mut self.build.runner.part;
         let solved = if !pulls.is_empty() {
             solving::solve(part, &state, &pulls, None).ok()
@@ -1457,10 +1456,8 @@ impl Editor {
         if !placing && let Ok(placed) = placed_parts(self.shown_part(steps)) {
             for part in placed {
                 if let Ok(drawn) = part.located.instance.component.drawn() {
-                    hidden.extend(
-                        (drawn.datums.iter())
-                            .map(|d| format!("{}{INSTANCE_SEPARATOR}{}", part.name, d.name)),
-                    );
+                    hidden
+                        .extend((drawn.datums.iter()).map(|d| instance_path(&part.name, &d.name)));
                 }
             }
         }

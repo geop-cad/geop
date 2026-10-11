@@ -31,7 +31,9 @@ import {
   programText,
   saveWorkspace,
   type Workspace,
-  isStepFile,
+  dataExtensions,
+  isData,
+  isProgram,
 } from "./files";
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
@@ -102,7 +104,7 @@ function App() {
   /** The pick tool's answer about its picks, while it is in hand. */
   const [picked, setPicked] = useState<Inspection | null>(null);
   /** The last answers of the inspectors asked of the whole part, by kind — until the part changes. */
-  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [answers, setAnswers] = useState<Record<string, Inspection>>({});
   const [inspecting, setInspecting] = useState(false);
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
@@ -193,7 +195,7 @@ function App() {
       // An answer asked for is kept; the pick tool's comes with every update.
       const inspection = update.inspection;
       if (command.command === "inspect") {
-        if (inspection) setAnswers((answers) => ({ ...answers, [inspection.kind]: inspection.report }));
+        if (inspection) setAnswers((answers) => ({ ...answers, [inspection.kind]: inspection }));
       } else setPicked(inspection);
       setError(update.error);
       if (!update.error && EDITS.includes(command.command)) {
@@ -394,13 +396,16 @@ function App() {
   // ── the program ────────────────────────────────────────────────────────
 
   const steps = program?.steps ?? [];
+  /** The extensions of the data files programs read beside them (see `OperationInfo.reads`). */
+  const reads = useMemo(() => dataExtensions(program?.operations ?? []), [program?.operations]);
 
   // ── the files (in the browser) ─────────────────────────────────────────
 
   /** Edit the file `path`, whose program is `text` — framed in the view, unless `keepView`. A STEP file is data, not opened. */
   async function openFile(path: string, text = workspaceRef.current.files[path], keepView = false) {
-    if (isStepFile(path)) {
-      setError(`${path} is a STEP file: import it into a program with "Import STEP"`);
+    if (!isProgram(path)) {
+      const reader = program?.operations.find((o) => isData(path, o.reads));
+      setError(`${path} is no program${reader ? `: read it into one with "${reader.label}"` : ""}`);
       return null;
     }
     const update = await dispatch({ command: "load", program: parseProgram(text), path });
@@ -453,7 +458,7 @@ function App() {
     const added: Record<string, string> = {};
     const taken = { ...workspaceRef.current.files };
     for (const file of uploaded) {
-      if (isStepFile(file.name)) {
+      if (isData(file.name, reads)) {
         // Data for an import: kept as it is, next to the programs.
         const text = await file.text();
         const path = freePath(taken, file.name);
@@ -475,8 +480,8 @@ function App() {
     const paths = Object.keys(added);
     if (paths.length === 0) return;
     await changeFiles(added);
-    const program = paths.find((p) => !isStepFile(p));
-    if (program) await openFile(program, added[program]);
+    const opened = paths.find(isProgram);
+    if (opened) await openFile(opened, added[opened]);
     trackFile("loaded");
   }
 
@@ -521,7 +526,7 @@ function App() {
   function downloadFile(path: string) {
     const text = workspaceRef.current.files[path];
     if (text == null) return;
-    download(baseName(path), text, isStepFile(path) ? "application/step" : undefined);
+    download(baseName(path), text, isProgram(path) ? undefined : "application/octet-stream");
     trackFile("saved");
   }
 
@@ -627,11 +632,11 @@ function App() {
     })),
     {
       kind: "drag",
+      icon: "drag",
       label: "Drag",
       doc: "Drag placed parts as far as their mates let them",
       group: "Assembly",
       tier: "Big",
-      experimental: false,
       active: dragTool,
       disabled: !wasmReady || step != null,
       onSelect: () => void dispatch({ command: "drag_tool", on: !dragTool }),
@@ -700,7 +705,6 @@ function App() {
         <InspectPanel
           enabled={wasmReady && step == null}
           inspectors={program?.inspectors ?? []}
-          exporters={program?.exporters ?? []}
           pickTool={program?.pick_tool ?? null}
           onPickTool={(inspector) => dispatch({ command: "pick_tool", inspector })}
           picked={picked}
@@ -720,6 +724,7 @@ function App() {
   const explorer = !host && (
     <Explorer
       workspace={workspace}
+      reads={reads}
       enabled={wasmReady && step == null}
       onOpen={(path) => void openFile(path)}
       onCreate={(path) => void createFile(path)}
@@ -752,6 +757,7 @@ function App() {
         onNewPart={() => void createFile(freePath(workspaceRef.current.files, "part.geop"))}
         onSave={() => downloadFile(workspace.active)}
         exporters={program?.exporters ?? []}
+        reads={reads}
         onExport={(exporter) => void exportWith(exporter)}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}

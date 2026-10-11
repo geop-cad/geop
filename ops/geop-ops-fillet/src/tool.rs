@@ -8,24 +8,21 @@
 use std::collections::HashMap;
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D},
+    nurb_curve::{self, NurbCurve, NurbCurve2D, NurbCurve3D, bezier_knots, embed_point},
     nurb_surface::{NurbSurface, NurbSurface3D},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     union_find::UnionFind,
-    vector::{Vector, Vector2, Vector3, Vector4},
+    vector::{Vector, Vector3, Vector4},
 };
 use geop_core_topology::{
     FaceId, Sense, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-use geop_ops_extrude_revolve::{
-    common::{bilinear, embed_point, line2, line3},
-    sweep::wall_pcurves,
-};
+use geop_ops_extrude_revolve::sweep::wall_pcurves;
 
 /// One span of a tool: its control rows along it — each the four section
 /// control points (see [`ToolStation::points`]) — of `degree` on `knots`, and
@@ -90,14 +87,12 @@ impl<S: Scalar> Tool<S> {
 /// The homogeneous point `h`'s coordinates in the plane `(origin, e1, e2)`,
 /// homogeneous: `(w x, w y, w)`.
 pub(crate) fn flatten<S: Scalar>(h: &Vector4<S>, [o, e1, e2]: &[Vector3<S>; 3]) -> Vector3<S> {
-    let w = h[3];
-    let d = Vector3::from_array([h[0], h[1], h[2]]).sub(&o.prod_scalar(w));
-    Vector3::from_array([d.prod_dot(e1), d.prod_dot(e2), w])
+    nurb_curve::flatten_point(h, o, e1, e2)
 }
 
 /// The point `v`'s coordinates in the plane `plane`, homogeneous.
 pub(crate) fn flatten_point<S: Scalar>(v: &Vector3<S>, plane: &[Vector3<S>; 3]) -> Vector3<S> {
-    flatten(&Vector4::from_array([v[0], v[1], v[2], S::ONE]), plane)
+    flatten(&v.homogeneous(S::ONE), plane)
 }
 
 /// The homogeneous plane coordinates `p` in space, on `plane`.
@@ -116,17 +111,13 @@ pub(crate) fn wall_surface<S: Scalar>(
         .iter()
         .flat_map(|row| CURVE_POINTS[c].iter().map(move |&k| row[k]))
         .collect();
-    let (degree_v, knots_v) = if c == 0 {
-        (2, vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE])
-    } else {
-        (1, vec![S::ZERO, S::ZERO, S::ONE, S::ONE])
-    };
+    let degree_v = if c == 0 { 2 } else { 1 };
     NurbSurface::try_new(
         span.degree,
         degree_v,
         control_points,
         span.knots.clone(),
-        knots_v,
+        bezier_knots(degree_v),
     )
 }
 
@@ -146,12 +137,8 @@ fn section_curve<S: Scalar, const D: usize>(
     c: usize,
 ) -> GeopResult<NurbCurve<S, D>> {
     let control_points = CURVE_POINTS[c].iter().map(|&k| points[k]).collect();
-    let knots = if c == 0 {
-        vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE]
-    } else {
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE]
-    };
-    NurbCurve::try_new(if c == 0 { 2 } else { 1 }, control_points, knots)
+    let degree = if c == 0 { 2 } else { 1 };
+    NurbCurve::try_new(degree, control_points, bezier_knots(degree))
 }
 
 /// The flat cap on `cap`'s plane holding its section: the box around the
@@ -180,7 +167,7 @@ fn cap_face<S: Scalar>(cap: &Cap<S>) -> GeopResult<(NurbSurface3D<S>, [NurbCurve
         let y = if j == 1 { lo[1].add(size[1]) } else { lo[1] };
         o.add(&e1.prod_scalar(x)).add(&e2.prod_scalar(y))
     };
-    let surface = bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))?;
+    let surface = NurbSurface3D::bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))?;
     let mut uv = [Vector3::zero(); 4];
     for (k, p) in cap.flat.iter().enumerate() {
         uv[k] = Vector3::from_array([
@@ -250,44 +237,35 @@ impl CornerEnd {
     }
 }
 
-/// A face's loop around the unit square of its parameters, from `(0, 0)`
-/// through `(1, 0)`, `(1, 1)` and `(0, 1)`, at the vertices `corners`: each
-/// side along the edge — or at the vertex — `sides` gives, the way the loop
-/// runs. The coedges, each in the sense its edge runs from one corner to
-/// the next.
-fn face_loop<S: Scalar>(
+/// A face on `surface` around the unit square of its parameters (see
+/// [`FaceSpec::on_unit_square`]), at the vertices `corners`: each side
+/// along the edge — or at the vertex — `sides` gives, each edge in the
+/// sense it runs from one corner to the next.
+fn corner_face<S: Scalar>(
     spec: &BodySpec<S>,
+    surface: NurbSurface3D<S>,
     corners: [usize; 4],
     sides: [CoedgeOn; 4],
-) -> GeopResult<Vec<CoedgeSpec<S>>> {
-    let uv = |[u, v]: [f64; 2]| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
-    let square = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-    sides
-        .into_iter()
-        .enumerate()
-        .map(|(i, on)| {
-            let pcurve = line2(uv(square[i]), uv(square[(i + 1) % 4]))?;
-            let on = match on {
-                CoedgeOn::Edge(e, _) => {
-                    let edge = &spec.edges[e];
-                    let (from, to) = (corners[i], corners[(i + 1) % 4]);
-                    let sense = if edge.start == from && edge.end == to {
-                        Sense::Forward
-                    } else if edge.start == to && edge.end == from {
-                        Sense::Reversed
-                    } else {
-                        return Err(GeopError::new(format!(
-                            "a corner's face runs from vertex {from} to {to} along an edge between {} and {}",
-                            edge.start, edge.end
-                        )));
-                    };
-                    CoedgeOn::Edge(e, sense)
-                }
-                vertex => vertex,
+) -> GeopResult<FaceSpec<S>> {
+    let mut oriented = sides;
+    for (i, on) in oriented.iter_mut().enumerate() {
+        if let CoedgeOn::Edge(e, _) = *on {
+            let edge = &spec.edges[e];
+            let (from, to) = (corners[i], corners[(i + 1) % 4]);
+            let sense = if edge.start == from && edge.end == to {
+                Sense::Forward
+            } else if edge.start == to && edge.end == from {
+                Sense::Reversed
+            } else {
+                return Err(GeopError::new(format!(
+                    "a corner's face runs from vertex {from} to {to} along an edge between {} and {}",
+                    edge.start, edge.end
+                )));
             };
-            Ok(CoedgeSpec { on, pcurve })
-        })
-        .collect()
+            *on = CoedgeOn::Edge(e, sense);
+        }
+    }
+    FaceSpec::on_unit_square(surface, oriented)
 }
 
 /// Builds `tools`, each with the namer of the edge it blends (see
@@ -320,13 +298,7 @@ pub(crate) fn build_tools<S: Scalar>(
     joints: &[Joint],
     solid: String,
 ) -> GeopResult<SolidId> {
-    let mut spec = BodySpec {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        faces: Vec::new(),
-        shells: Vec::new(),
-        solid: true,
-    };
+    let mut spec = BodySpec::new(true);
     let mut names = BodyNames {
         solid: Some(solid),
         ..BodyNames::default()
@@ -675,7 +647,7 @@ fn corner_faces<S: Scalar>(
     for (i, end) in corner.ends.iter().enumerate() {
         let (q, at) = built.apex(end);
         spec.edges.push(EdgeSpec {
-            curve: line3(at, corner.apex)?,
+            curve: NurbCurve3D::line(at, corner.apex)?,
             start: q,
             end: apex,
         });
@@ -718,8 +690,9 @@ fn corner_faces<S: Scalar>(
         )));
     }
     let [p, q, r] = order;
-    let outer = face_loop(
+    let face = corner_face(
         spec,
+        surface,
         [contacts[p], contacts[q], contacts[r], contacts[r]],
         [
             CoedgeOn::Edge(arc(p, q)?, Sense::Forward),
@@ -728,11 +701,7 @@ fn corner_faces<S: Scalar>(
             CoedgeOn::Edge(arc(r, p)?, Sense::Forward),
         ],
     )?;
-    spec.faces.push(FaceSpec {
-        surface,
-        outer,
-        holes: Vec::new(),
-    });
+    spec.faces.push(face);
     names.faces.push(corner.namer.name(&["corner"]));
 
     // Round each contact, from it along both tools' lines to the apex,
@@ -754,7 +723,7 @@ fn corner_faces<S: Scalar>(
             built.curve(end, if end.contacts[1] == k { 1 } else { 2 })
         };
         let quad = |i: usize, j: usize| {
-            bilinear(
+            NurbSurface3D::bilinear(
                 corner.contacts[k],
                 built.apex(&corner.ends[i]).1,
                 corner.apex,
@@ -777,8 +746,9 @@ fn corner_faces<S: Scalar>(
         }
         let (qi, _) = built.apex(&corner.ends[i]);
         let (qj, _) = built.apex(&corner.ends[j]);
-        let outer = face_loop(
+        let face = corner_face(
             spec,
+            surface,
             [contacts[k], qi, apex, qj],
             [
                 CoedgeOn::Edge(line(i), Sense::Forward),
@@ -787,11 +757,7 @@ fn corner_faces<S: Scalar>(
                 CoedgeOn::Edge(line(j), Sense::Forward),
             ],
         )?;
-        spec.faces.push(FaceSpec {
-            surface,
-            outer,
-            holes: Vec::new(),
-        });
+        spec.faces.push(face);
         names.faces.push(corner.namer.name(&[&format!("side{k}")]));
     }
     Ok(())

@@ -9,6 +9,12 @@
 //! moving them, and combining them the same way — one boolean each, with
 //! a tool going up to the next face stopping at the next face *where the
 //! copy is* (see `geop_ops_booleans::Combine`).
+//!
+//! How a tool is combined — [`BooleanOp`] and [`ToolReach`] — is defined
+//! here rather than with the booleans: it is the vocabulary a feature is
+//! recorded in, which every step that combines tools (extrude, hole, rib,
+//! ...) writes, and which a pattern or mirror reads to do the feature
+//! again. The booleans take their arguments in the same terms.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -19,7 +25,10 @@ use geop_core_math::{
 use geop_core_topology::build::BodySpec;
 use serde::{Deserialize, Serialize};
 
-use super::{BodyNames, NamedModel, names::digest};
+use super::{
+    BodyNames, NamedModel,
+    names::{digest, origin_of},
+};
 
 /// Which boolean to perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,11 +57,20 @@ pub struct FeatureTool<S: Scalar> {
     pub spec: BodySpec<S>,
     pub names: BodyNames,
     pub op: BooleanOp,
+    pub reach: ToolReach,
+}
+
+/// How far a tool reaches when it is combined, and how what its
+/// combination creates is named: what, besides the [`BooleanOp`], a step
+/// combines a tool by, and a [`Feature`] records.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolReach {
     /// For a tool going only up to the next face of the solid: the names
-    /// of its start and end faces.
+    /// of its start and end faces. None for all of the tool.
     pub up_to_next: Option<(String, String)>,
-    /// What told its combination's names apart from the step's other
-    /// tools'.
+    /// What tells its combination's names apart from the step's other
+    /// tools' (see [`super::Namer::scoped`]). None for the one tool of its
+    /// step.
     pub scope: Option<String>,
 }
 
@@ -109,9 +127,8 @@ pub struct FeatureFaces<'a> {
 
 impl FeatureFaces<'_> {
     /// The step whose feature made the face named `face`: the face of one
-    /// of its tools, or a piece of one that a boolean split off — named
-    /// after it, first of the names in its own (see
-    /// `geop_ops_booleans::naming`) — however often it was split since.
+    /// of its tools, or a piece of one that a boolean split off (see
+    /// [`super::Namer::piece`]) however often it was split since.
     /// None for a face no feature made: one of a solid built on its own,
     /// or what a later step made of it.
     pub fn of(&self, face: &str) -> Option<&str> {
@@ -120,54 +137,7 @@ impl FeatureFaces<'_> {
             if let Some(step) = self.steps.get(name) {
                 return Some(step);
             }
-            name = origin(name)?;
+            name = origin_of(name)?;
         }
-    }
-}
-
-/// What the entity named `name` was split off: the first of the names in
-/// its arguments — an argument that is a name itself, `kind(...)`, or a
-/// long one's digest. None, if it has none.
-fn origin(name: &str) -> Option<&str> {
-    let open = name.find('(')?;
-    let inner = name[open + 1..].strip_suffix(')')?;
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    // The first argument is the step's id, never a name.
-    let mut first = true;
-    for (k, c) in inner
-        .char_indices()
-        .chain(std::iter::once((inner.len(), ',')))
-    {
-        match c {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                let argument = &inner[start..k];
-                if !first && (argument.contains('(') || argument.starts_with('#')) {
-                    return Some(argument);
-                }
-                first = false;
-                start = k + 1;
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn origin_is_the_first_name_among_the_arguments() {
-        assert_eq!(
-            origin("combine(holes,3,linear_pattern(holes,3,extrude(pin,c1)),extrude(plate,end))"),
-            Some("linear_pattern(holes,3,extrude(pin,c1))")
-        );
-        assert_eq!(origin("combine(e,#0123,x)"), Some("#0123"));
-        assert_eq!(origin("extrude(plate,end)"), None);
-        assert_eq!(origin("extrude(plate)"), None);
     }
 }

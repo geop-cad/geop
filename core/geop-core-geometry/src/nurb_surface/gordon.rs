@@ -24,10 +24,6 @@ use crate::nurb_curve::{NurbCurve, NurbCurve3D};
 /// where there are too few curves for it.
 const SKIN_DEGREE: usize = 3;
 
-fn exactly_one<S: Scalar>(w: S) -> bool {
-    w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w)
-}
-
 /// Where a family of curves is to cross the curves of the other family, on
 /// the domain `[0, 1]` they are brought onto: per crossed curve, where each
 /// of the family crosses it, as a fraction of its stretch between its first
@@ -214,14 +210,14 @@ impl<S: Scalar> NurbSurface3D<S> {
                     )));
                 }
                 let p: Vector3<S> = a.union(&b);
-                row.push(Vector4::from_array([p[0], p[1], p[2], S::ONE]));
+                row.push(p.homogeneous(S::ONE));
             }
             points.push(row);
         }
         let rational = u
             .iter()
             .chain(&v)
-            .any(|c| c.control_points.iter().any(|p| !exactly_one(p[3])));
+            .any(|c| c.control_points.iter().any(|p| !p[3].is_exactly(S::ONE)));
 
         let along_u = skin(&NurbCurve::compatible(&u)?, &v_params)?;
         let along_v = skin(&NurbCurve::compatible(&v)?, &u_params)?.transposed();

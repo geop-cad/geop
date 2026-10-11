@@ -609,7 +609,7 @@ impl<S: Scalar> Leg<'_, S> {
             t_mid,
             EXIT_BISECTIONS,
             false,
-            |t| -> GeopResult<_> {
+            |_, t| -> GeopResult<_> {
                 point = self.pcurve.evaluate(t)?.sub(&origin);
                 let excess = point.norm_sq().sub(radius_sq);
                 Ok(if excess.definitely_less(S::ZERO) {

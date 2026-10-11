@@ -2,7 +2,8 @@
 // extension. Each `.geop` file is a program, by path — `/`-separated, so a
 // file in a folder is `parts/bolt.geop` — and a program places the parts of
 // others by their paths relative to its own (see `geop_ops::program::library`).
-// A STEP file (`.step`, `.stp`) is data a program imports, kept as its text.
+// A file of another extension an operation reads (see `OperationInfo.reads`:
+// a STEP file a program imports) is data, kept as its text.
 //
 // The files live here, in the page, and are kept in the browser's storage
 // so they survive a reload; the kernel is sent them (`files` command) and
@@ -43,8 +44,8 @@ export function loadWorkspace(): Workspace {
     if (stored) {
       const workspace = JSON.parse(stored) as Workspace;
       if (Object.keys(workspace.files).length > 0) {
-        if (!(workspace.active in workspace.files) || isStepFile(workspace.active))
-          workspace.active = Object.keys(workspace.files).filter((p) => !isStepFile(p)).sort()[0] ?? "part.geop";
+        if (!(workspace.active in workspace.files) || !isProgram(workspace.active))
+          workspace.active = Object.keys(workspace.files).filter(isProgram).sort()[0] ?? "part.geop";
         if (!(workspace.active in workspace.files)) workspace.files[workspace.active] = programText(EMPTY);
         return workspace;
       }
@@ -64,16 +65,31 @@ export function saveWorkspace(workspace: Workspace) {
   }
 }
 
-/** Whether `path` names a STEP file, which a program imports rather than being one. */
-export function isStepFile(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith(".step") || lower.endsWith(".stp");
+/** Whether `path` names a program: a `.geop` file. Every other file is data a program reads. */
+export function isProgram(path: string): boolean {
+  return path.endsWith(".geop");
 }
 
-/** Whether `path` can name a file: not empty, no empty or dot-only segments, ending in `.geop` (or naming a STEP file). */
+/** The extensions of the files the operations `operations` read, beside programs (see `OperationInfo.reads`). */
+export function dataExtensions(operations: { reads: string[] }[]): string[] {
+  return [...new Set(operations.flatMap((o) => o.reads))];
+}
+
+/** Whether `path` names a file of one of the extensions `reads` — data a program reads, kept beside the programs. */
+export function isData(path: string, reads: string[]): boolean {
+  const lower = path.toLowerCase();
+  return reads.some((e) => lower.endsWith(`.${e}`));
+}
+
+/** What a file chooser for the workspace takes: programs, and the data files `reads`. */
+export function acceptedFiles(reads: string[]): string {
+  return [".geop", ".json", "application/json", ...reads.map((e) => `.${e}`)].join(",");
+}
+
+/** Whether `path` can name a program: not empty, no empty or dot-only segments, ending in `.geop`. */
 export function validPath(path: string): boolean {
   const segments = path.split("/");
-  return (path.endsWith(".geop") || isStepFile(path)) && segments.every((s) => s !== "" && s !== "." && s !== "..");
+  return isProgram(path) && segments.every((s) => s !== "" && s !== "." && s !== "..");
 }
 
 /** `name`, as a file path: trimmed, `.geop` added if missing. */

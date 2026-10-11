@@ -112,6 +112,12 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         self.aabb = compute_aabb(&self.control_points);
     }
 
+    /// The box around the control points, and so around the patch (see
+    /// [`crate::nurb_curve::NurbCurve::aabb`]).
+    pub fn aabb(&self) -> &[S; 3] {
+        &self.aabb
+    }
+
     /// Whether the two patches could share a point: `false` proves they do
     /// not, as the boxes around their control points — which hold each
     /// whole patch, by the convex hull property — are apart.

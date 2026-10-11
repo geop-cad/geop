@@ -91,6 +91,7 @@ pub fn structure(view: BuildView, hidden: &[String]) -> Vec<StructureItem> {
     };
     let model = seen.model();
     let mut items = vec![item("datum", ORIGIN)];
+    items.extend((seen.datums().into_iter()).map(|(n, _)| item("datum", n)));
     items.extend((seen.sketch_names().iter()).map(|n| item("sketch", n)));
     items.extend((model.solid_names().iter()).map(|n| item("solid", n)));
     items.extend((model.sheet_face_names().iter()).map(|n| item("face", n)));

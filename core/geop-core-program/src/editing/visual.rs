@@ -134,6 +134,13 @@ pub struct Visual<S: Scalar> {
     /// where to (see [`super::CanvasEvent::Move`]).
     #[serde(skip)]
     pub draggable: bool,
+    /// Each event of a drag of it reaches the step as it was when it was
+    /// grabbed, as a gizmo's do: the operation applies the whole move, from
+    /// where it was grabbed to where the pointer is, to that, and keeps no
+    /// record of where the drag started. Without, it reaches the step as
+    /// the drag's last event left it.
+    #[serde(skip)]
+    pub from_grab: bool,
 }
 
 impl<S: Scalar> Visual<S> {
@@ -144,6 +151,7 @@ impl<S: Scalar> Visual<S> {
             style,
             selectable: false,
             draggable: false,
+            from_grab: false,
         }
     }
 
@@ -154,6 +162,14 @@ impl<S: Scalar> Visual<S> {
 
     pub fn draggable(mut self) -> Self {
         self.draggable = true;
+        self
+    }
+
+    /// Draggable, each event of a drag applied to the step as it was when
+    /// it was grabbed (see [`Visual::from_grab`]).
+    pub fn draggable_from_grab(mut self) -> Self {
+        self.draggable = true;
+        self.from_grab = true;
         self
     }
 }

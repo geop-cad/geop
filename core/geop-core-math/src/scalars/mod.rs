@@ -148,6 +148,19 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
         !self.could_be_less(Self::ZERO) && !self.could_be_greater(Self::ZERO)
     }
 
+    /// The sign it definitely has: `Some(true)` if it is definitely
+    /// positive, `Some(false)` if definitely negative, `None` where it could
+    /// be zero.
+    fn definite_sign(self) -> Option<bool> {
+        if self.definitely_greater(Self::ZERO) {
+            Some(true)
+        } else if self.definitely_less(Self::ZERO) {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
     // Finiteness
     fn is_infinite(self) -> bool;
     fn is_finite(self) -> bool;
@@ -195,6 +208,13 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
     /// division amplify it further.
     fn sharpen(self) -> Self {
         self.midpoint()
+    }
+
+    /// The point a fraction `f` of the way from `lo` to `hi`, sharp: a
+    /// sample position, a free choice (see [`Scalar::sharpen`]) — not an
+    /// enclosure of the point there, which [`Scalar::interpolate`] is.
+    fn fraction(lo: Self, hi: Self, f: Self) -> Self {
+        lo.add(hi.sub(lo).mul(f)).sharpen()
     }
 
     /// Point a fraction `alpha` of the way from `a` to `b`: `a` at
@@ -257,6 +277,14 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
     /// enclosure just to throw it away; implementations should compare
     /// bounds directly.
     fn is_subset_of(self, other: Self) -> bool;
+
+    /// Whether it is exactly `other`, as a set: both the same single value,
+    /// or both the same range. A weight that is exactly one is skipped
+    /// rather than multiplied by, since the product would only be widened
+    /// by rounding.
+    fn is_exactly(self, other: Self) -> bool {
+        self.is_subset_of(other) && other.is_subset_of(self)
+    }
 
     /// The larger of the two: an enclosure of `max(a, b)` for every `a` and
     /// `b` the two could be — sharp where both are.

@@ -47,11 +47,13 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain::{P3, add, cross, distance, dot, norm, normalize, scale, signed_area2, sub},
     scalars::Scalar,
     solvers::{
         bisect::{Bracket, bisect},
         iterate::{Repeat, Step, iterate},
         minimize::GoldenSection,
+        refine::{Refine, Refined, refine},
     },
     vector::{Vector2, Vector3},
 };
@@ -61,10 +63,7 @@ use geop_core_topology::{
 };
 
 use super::{
-    geometry::{
-        Frame, P3, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, add, cross, distance,
-        dot, norm, normalize, parameter_of, scale, sub, to_p3,
-    },
+    geometry::{Frame, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, parameter_of},
     midpoints::{CurveMidpoints, SurfaceMidpoints},
     reader::{Reader, unsupported},
     structure::Item,
@@ -194,6 +193,23 @@ impl<S: Scalar> Vertex<S> {
     }
 }
 
+/// Points along the loop `lp` of `edges`, `LOOP_SAMPLES` per coedge as it
+/// runs, each coedge's end left out as the next one's start. Where to
+/// sample is a free choice, and the points are compared in `f64`.
+fn loop_points<S: Scalar>(edges: &[Edge<S>], lp: &[Use]) -> Vec<P3> {
+    let mut points = Vec::new();
+    for &(e, forward) in lp {
+        let curve = CurveMidpoints::of(&edges[e].curve);
+        let (lo, hi) = curve.domain();
+        for i in 0..LOOP_SAMPLES {
+            let f = i as f64 / LOOP_SAMPLES as f64;
+            let f = if forward { f } else { 1.0 - f };
+            points.push(curve.point(lo + (hi - lo) * f));
+        }
+    }
+    points
+}
+
 struct Edge<S: Scalar> {
     curve: NurbCurve3D<S>,
     start: usize,
@@ -212,6 +228,16 @@ impl<S: Scalar> Edge<S> {
     /// Its name, and the file's id of it where it has one: for messages.
     fn label(&self) -> String {
         label(&self.name, self.id)
+    }
+
+    /// The vertex a coedge running along it `forward` — or against it —
+    /// starts at, and the one it ends at.
+    fn ends(&self, forward: bool) -> (usize, usize) {
+        if forward {
+            (self.start, self.end)
+        } else {
+            (self.end, self.start)
+        }
     }
 }
 
@@ -361,8 +387,8 @@ impl<S: Scalar> Builder<'_, S> {
         let shape = curve.shape();
         let along = args.logical(4).map_err(ctx)? != reversed;
         let (a, b) = (
-            to_p3(&self.vertices[start].point),
-            to_p3(&self.vertices[end].point),
+            self.vertices[start].point.to_f64_array(),
+            self.vertices[end].point.to_f64_array(),
         );
         let closed = start == end;
         let curve = if along {
@@ -458,7 +484,7 @@ impl<S: Scalar> Builder<'_, S> {
             Some(revolved) => {
                 let mut best: Option<f64> = None;
                 for &u in loops.iter().flatten() {
-                    let p = to_p3(&self.vertices[self.ends(u).0].point);
+                    let p = self.vertices[self.ends(u).0].point.to_f64_array();
                     if let Some(m) = revolved.past_axis(p)
                         && best.is_none_or(|b| m.abs() > b.abs())
                     {
@@ -508,7 +534,7 @@ impl<S: Scalar> Builder<'_, S> {
         let mut through = false;
         for &(e, _) in loops.iter().flatten() {
             let edge = &self.edges[e];
-            let ends = [edge.start, edge.end].map(|v| to_p3(&self.vertices[v].origin));
+            let ends = [edge.start, edge.end].map(|v| self.vertices[v].origin.to_f64_array());
             for pole in poles {
                 if ends
                     .iter()
@@ -517,7 +543,7 @@ impl<S: Scalar> Builder<'_, S> {
                     continue;
                 }
                 let t = parameter_of(&edge.curve, pole)?;
-                if distance(to_p3(&edge.curve.evaluate(t)?), pole) <= sphere.on_axis {
+                if distance(edge.curve.evaluate(t)?.to_f64_array(), pole) <= sphere.on_axis {
                     through = true;
                 }
             }
@@ -560,12 +586,7 @@ impl<S: Scalar> Builder<'_, S> {
 
     /// The vertex a coedge starts at, and the one it ends at.
     fn ends(&self, (e, forward): Use) -> (usize, usize) {
-        let edge = &self.edges[e];
-        if forward {
-            (edge.start, edge.end)
-        } else {
-            (edge.end, edge.start)
-        }
+        self.edges[e].ends(forward)
     }
 
     /// Points along a coedge, as it runs, with the edge parameter of each:
@@ -588,12 +609,7 @@ impl<S: Scalar> Builder<'_, S> {
     /// Points along a loop, each coedge's last one left out as the next
     /// one's first.
     fn loop_points(&self, lp: &[Use]) -> GeopResult<Vec<P3>> {
-        let mut points = Vec::new();
-        for &u in lp {
-            let samples = self.samples(u, LOOP_SAMPLES)?;
-            points.extend(samples[..LOOP_SAMPLES].iter().map(|(_, p)| *p));
-        }
-        Ok(points)
+        Ok(loop_points(&self.edges, lp))
     }
 
     /// Splits `edge` at the parameters `ts`, strictly inside its domain
@@ -970,7 +986,7 @@ impl<S: Scalar> Builder<'_, S> {
             }
             for &u in lp {
                 let (start, _) = self.ends(u);
-                if let (Some(a), _) = revolved.chart(to_p3(&self.vertices[start].point)) {
+                if let (Some(a), _) = revolved.chart(self.vertices[start].point.to_f64_array()) {
                     blocked.push((a, a));
                 }
             }
@@ -988,7 +1004,7 @@ impl<S: Scalar> Builder<'_, S> {
             match side {
                 Some(ring) => {
                     let v = ring_vertices[&ring][c];
-                    let p = to_p3(&builder.vertices[v].point);
+                    let p = builder.vertices[v].point.to_f64_array();
                     (p, v_of(p), Some(v))
                 }
                 None => {
@@ -1004,7 +1020,7 @@ impl<S: Scalar> Builder<'_, S> {
                 let existing = builder
                     .vertices
                     .iter()
-                    .position(|x| distance(to_p3(&x.point), p) <= builder.scope.uncertainty);
+                    .position(|x| distance(x.point.to_f64_array(), p) <= builder.scope.uncertainty);
                 existing.unwrap_or_else(|| {
                     builder.vertices.push(Vertex {
                         point: s3(p),
@@ -1241,7 +1257,7 @@ impl<S: Scalar> Builder<'_, S> {
                 blocked.push((lo, hi));
             }
             for &u in lp {
-                let a = tube(to_p3(&self.vertices[self.ends(u).0].point));
+                let a = tube(self.vertices[self.ends(u).0].point.to_f64_array());
                 blocked.push((a, a));
             }
         }
@@ -1254,8 +1270,8 @@ impl<S: Scalar> Builder<'_, S> {
         let mut parallels = Vec::new();
         for (c, &cut) in cuts.iter().enumerate() {
             let (a, b) = (ring_vertices[&left][c], ring_vertices[&right][c]);
-            let from = u_of(to_p3(&self.vertices[a].point))?;
-            let to = u_of(to_p3(&self.vertices[b].point))?;
+            let from = u_of(self.vertices[a].point.to_f64_array())?;
+            let to = u_of(self.vertices[b].point.to_f64_array())?;
             if from >= to {
                 return Err(GeopError::new(format!(
                     "its rings round the tube cross at the angle {cut} round it: the left one at the angle {from} about the axis, the right one at {to}"
@@ -1569,9 +1585,10 @@ impl<S: Scalar> Builder<'_, S> {
                     Ok(cut + (a - cut + PI).rem_euclid(TAU) - PI)
                 };
                 let below = angle_at(t0)? < cut;
-                let Bracket { lo, hi, .. } = bisect(t0, t1, 100, true, |mid| -> GeopResult<_> {
-                    Ok(Some((angle_at(mid)? < cut) == below))
-                })?;
+                let Bracket { lo, hi, .. } =
+                    bisect(t0, t1, 100, true, |_, mid| -> GeopResult<_> {
+                        Ok(Some((angle_at(mid)? < cut) == below))
+                    })?;
                 let t = 0.5 * (lo + hi);
                 let v = revolved
                     .chart(super::geometry::point_at(&self.edges[u.0].curve, t)?)
@@ -1621,8 +1638,8 @@ impl<S: Scalar> Builder<'_, S> {
             }
             for pair in list.chunks(2) {
                 let ((vb, b), (vt, t)) = (pair[0], pair[1]);
-                let pb = to_p3(&self.vertices[b].point);
-                let pt = to_p3(&self.vertices[t].point);
+                let pb = self.vertices[b].point.to_f64_array();
+                let pt = self.vertices[t].point.to_f64_array();
                 let curve = self.meridian(revolved, cuts[c], (pb, vb, false), (pt, vt, false))?;
                 let mut name = self.faces[f].name.clone();
                 name.push(format!("m{count}"));
@@ -1812,7 +1829,7 @@ impl<S: Scalar> Builder<'_, S> {
                         };
                         let below = theta(t_prev)? <= 0.0;
                         let Bracket { lo, hi, .. } =
-                            bisect(t_prev, t, 100, true, |mid| -> GeopResult<_> {
+                            bisect(t_prev, t, 100, true, |_, mid| -> GeopResult<_> {
                                 Ok(Some((theta(mid)? <= 0.0) == below))
                             })?;
                         return Ok((u.0, 0.5 * (lo + hi)));
@@ -1843,7 +1860,7 @@ impl<S: Scalar> Builder<'_, S> {
                 let curve = curve.to_nurbs::<S>()?;
                 let back = turn.inverse();
                 let at = |p: P3| -> GeopResult<S> {
-                    let p = to_p3(&back.apply(&s3(p)));
+                    let p = back.apply(&s3(p)).to_f64_array();
                     super::geometry::parameter_of(&curve, p)
                 };
                 let (tb, tt) = (at(pb)?, at(pt)?);
@@ -1864,8 +1881,6 @@ impl<S: Scalar> Builder<'_, S> {
         Ok(profile.transform(&turn.motion()))
     }
 
-    /// The description of the body, and the names of what it is made of.
-    #[allow(clippy::type_complexity)]
     /// The body built, `label` what the file calls it.
     fn spec(self, solid: bool, label: String) -> GeopResult<ImportedBody<S>> {
         let Builder {
@@ -1912,7 +1927,7 @@ impl<S: Scalar> Builder<'_, S> {
         let mut built = Vec::with_capacity(faces.len());
         for face in &faces {
             let ctx = face_ctx(face);
-            let patch = patch_of(face, &edges, &vertices, &scope).map_err(&ctx)?;
+            let patch = patch_of(face, &edges, &scope).map_err(&ctx)?;
             let surface = if face.outward_is_natural() {
                 patch.surface.clone()
             } else {
@@ -1992,7 +2007,8 @@ impl<S: Scalar> Builder<'_, S> {
         // Which edges to measure: all at first, then those just widened —
         // an edge left as it was measures as it did.
         let mut measure = vec![true; edges.len()];
-        for round in 0..WIDENINGS {
+        // At most `WIDENINGS` rounds; what is left after them stays.
+        refine(0, WIDENINGS, |round| -> GeopResult<_> {
             let mut gaps = vec![[0.0f64; 3]; edges.len()];
             for (((surface, outer, holes), face_name), extent) in
                 face_specs.iter().zip(&face_names).zip(&extents)
@@ -2029,8 +2045,8 @@ impl<S: Scalar> Builder<'_, S> {
                                 edges[e].label(),
                                 face_name.join(","),
                                 history[e],
-                                to_p3(&read[e].evaluate(read[e].domain().0)?),
-                                to_p3(&read[e].evaluate(read[e].domain().1)?),
+                                read[e].evaluate(read[e].domain().0)?.to_f64_array(),
+                                read[e].evaluate(read[e].domain().1)?.to_f64_array(),
                                 pcurve.evaluate(pcurve.domain().0)?,
                                 pcurve.evaluate(pcurve.domain().1)?,
                             )));
@@ -2042,7 +2058,7 @@ impl<S: Scalar> Builder<'_, S> {
                 }
             }
             if gaps.iter().all(|g| *g == [0.0; 3]) {
-                break;
+                return Ok(Refine::Done(()));
             }
             for ((edge, gap), total) in edges.iter_mut().zip(&gaps).zip(&mut total) {
                 edge.curve = widened(&edge.curve, *gap)?;
@@ -2054,7 +2070,8 @@ impl<S: Scalar> Builder<'_, S> {
             for (m, gap) in measure.iter_mut().zip(&gaps) {
                 *m = *gap != [0.0; 3];
             }
-        }
+            Ok(Refine::Finer(round + 1))
+        })?;
 
         let mut edge_specs = Vec::new();
         let mut edge_names = Vec::new();
@@ -2082,14 +2099,9 @@ impl<S: Scalar> Builder<'_, S> {
             lp.into_iter()
                 .map(|(on, pcurve)| CoedgeSpec {
                     on: match on {
-                        CoedgeOnLocal::Edge(e, forward) => CoedgeOn::Edge(
-                            edge_map[e],
-                            if forward {
-                                Sense::Forward
-                            } else {
-                                Sense::Reversed
-                            },
-                        ),
+                        CoedgeOnLocal::Edge(e, forward) => {
+                            CoedgeOn::Edge(edge_map[e], Sense::from_forward(forward))
+                        }
                         CoedgeOnLocal::Vertex(v) => CoedgeOn::Vertex(vertex_map[v]),
                     },
                     pcurve,
@@ -2164,13 +2176,9 @@ struct Pole<S: Scalar> {
 /// points are one.
 fn poles_of<S: Scalar>(surface: &NurbSurface3D<S>, uncertainty: f64) -> GeopResult<Vec<Pole<S>>> {
     let point = |i: usize, j: usize| -> GeopResult<P3> {
-        let cp = surface.control_points[i * surface.num_v + j];
-        let w = cp[3];
-        Ok([
-            cp[0].div(w)?.to_f64(),
-            cp[1].div(w)?.to_f64(),
-            cp[2].div(w)?.to_f64(),
-        ])
+        Ok(surface.control_points[i * surface.num_v + j]
+            .dehomogenized()?
+            .to_f64_array())
     };
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
@@ -2355,12 +2363,7 @@ fn widen_v(revolved: &Revolved, v0: f64, v1: f64, pole0: bool, pole1: bool) -> (
 }
 
 /// The patch a face lies on: the surface, built to cover the face.
-fn patch_of<S: Scalar>(
-    face: &Face,
-    edges: &[Edge<S>],
-    vertices: &[Vertex<S>],
-    scope: &Scope,
-) -> GeopResult<Patch<S>> {
+fn patch_of<S: Scalar>(face: &Face, edges: &[Edge<S>], scope: &Scope) -> GeopResult<Patch<S>> {
     let mut points = Vec::new();
     let mut loop_points = Vec::new();
     for lp in &face.loops {
@@ -2378,7 +2381,6 @@ fn patch_of<S: Scalar>(
         points.extend(this.iter().copied());
         loop_points.push(this);
     }
-    let _ = vertices;
     match &face.surface.kind {
         SurfaceKind::Plane(frame) => {
             let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
@@ -2397,20 +2399,11 @@ fn patch_of<S: Scalar>(
                 lo[1] - margin,
                 hi[1] + margin,
             );
-            let h = |p: Vector3<S>| {
-                geop_core_math::vector::Vector4::from_array([p[0], p[1], p[2], S::ONE])
-            };
-            let surface = NurbSurface3D::try_new(
-                1,
-                1,
-                vec![
-                    h(corner(a0, b0)),
-                    h(corner(a0, b1)),
-                    h(corner(a1, b0)),
-                    h(corner(a1, b1)),
-                ],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            let surface = NurbSurface3D::bilinear(
+                corner(a0, b0),
+                corner(a1, b0),
+                corner(a1, b1),
+                corner(a0, b1),
             )?;
             Ok(Patch {
                 surface,
@@ -2606,7 +2599,7 @@ impl Grid {
     /// The foot point of `p` on `surface`, the patch's own: Newton on the
     /// enclosures, from the foot point on its midpoints.
     fn project<S: Scalar>(&self, surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<(S, S)> {
-        let (u, v) = self.foot(to_p3(p), None);
+        let (u, v) = self.foot(p.to_f64_array(), None);
         surface.project(*p, S::from_f64(u), S::from_f64(v), 30)
     }
 }
@@ -2625,18 +2618,11 @@ fn fit_loop<S: Scalar>(
     scope: &Scope,
 ) -> GeopResult<Vec<(CoedgeOnLocal, NurbCurve2D<S>)>> {
     let n = lp.len();
-    let ends = |(e, forward): Use| {
-        let edge = &edges[e];
-        if forward {
-            (edge.start, edge.end)
-        } else {
-            (edge.end, edge.start)
-        }
-    };
+    let ends = |(e, forward): Use| edges[e].ends(forward);
     let poles = poles_of(surface, scope.uncertainty)?;
     // The pole a vertex sits at, if any.
     let pole_of = |v: usize, vertices: &[Vertex<S>]| -> Option<Pole<S>> {
-        let p = to_p3(&vertices[v].origin);
+        let p = vertices[v].origin.to_f64_array();
         poles
             .iter()
             .find(|pole| distance(pole.point, p) <= scope.uncertainty)
@@ -2712,13 +2698,7 @@ fn fit_loop<S: Scalar>(
         } else if straight {
             // A parallel or a meridian: straight in the patch, from one
             // end's foot point to the other's.
-            let h = |p: Vector2<S>| Vector3::from_array([p[0], p[1], S::ONE]);
-            NurbCurve::try_new(
-                1,
-                vec![h(pin_start), h(pin_end)],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            )
-            .with_context(&ctx)?
+            NurbCurve2D::line(pin_start, pin_end).with_context(&ctx)?
         } else {
             surface
                 .fit_pcurve(
@@ -2754,12 +2734,12 @@ fn fit_loop<S: Scalar>(
                 "the end of the edge",
                 "its foot point on this face, at the end of the edge",
             ]) {
-                let off = distance(to_p3(&p), to_p3(&vertices[v].origin));
+                let off = distance(p.to_f64_array(), vertices[v].origin.to_f64_array());
                 if off > ACCURACY {
                     return Err(GeopError::new(format!(
                         "the vertex {} is at {:?}, but {source} {} is {off:e} mm from it — more than the {ACCURACY:e} mm the kernel can carry as one point (the face built over the angles and profile parameters {:?})",
                         vertices[v].label(),
-                        to_p3(&vertices[v].origin),
+                        vertices[v].origin.to_f64_array(),
                         edge.label(),
                         patch.extent,
                     )));
@@ -2781,14 +2761,7 @@ fn fit_loop<S: Scalar>(
             let from = out[k].1.evaluate(t1)?;
             let to = out[next].1.evaluate(t0)?;
             if !from.could_be_equal(&to) {
-                let h = |p: Vector2<S>| {
-                    geop_core_math::vector::Vector3::from_array([p[0], p[1], S::ONE])
-                };
-                let pcurve = NurbCurve::try_new(
-                    1,
-                    vec![h(from), h(to)],
-                    vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-                )?;
+                let pcurve = NurbCurve2D::line(from, to)?;
                 joined.push((CoedgeOnLocal::Vertex(end), pcurve));
             }
         }
@@ -2808,7 +2781,7 @@ fn foot<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid, p: P3) -> GeopResult
         None => surface
             .normal(S::from_f64(u), S::from_f64(v))
             .ok()
-            .map(|n| to_p3(&n)),
+            .map(|n| n.to_f64_array()),
     };
     Ok((at, normal))
 }
@@ -2967,8 +2940,8 @@ fn heal<S: Scalar>(
     };
     let chord = |e: &Edge<S>, vertices: &[Vertex<S>]| {
         distance(
-            to_p3(&vertices[e.start].origin),
-            to_p3(&vertices[e.end].origin),
+            vertices[e.start].origin.to_f64_array(),
+            vertices[e.end].origin.to_f64_array(),
         )
     };
     // How large each face is, to tell which to leave out first: the area
@@ -2978,16 +2951,7 @@ fn heal<S: Scalar>(
     for face in faces {
         let mut area = [0.0f64; 3];
         for lp in &face.loops {
-            let mut points = Vec::new();
-            for &(e, forward) in lp {
-                let curve = CurveMidpoints::of(&edges[e].curve);
-                let (lo, hi) = curve.domain();
-                for i in 0..LOOP_SAMPLES {
-                    let f = i as f64 / LOOP_SAMPLES as f64;
-                    let f = if forward { f } else { 1.0 - f };
-                    points.push(curve.point(lo + (hi - lo) * f));
-                }
-            }
+            let points = loop_points(edges, lp);
             for (k, &p) in points.iter().enumerate() {
                 area = add(area, scale(cross(p, points[(k + 1) % points.len()]), 0.5));
             }
@@ -3086,7 +3050,7 @@ fn heal<S: Scalar>(
             if faces_of_vertex[v].is_empty() {
                 continue;
             }
-            let at = to_p3(&vertices[v].origin);
+            let at = vertices[v].origin.to_f64_array();
             let what = format!("healing the vertex {} at {at:?}", vertices[v].label());
             let vctx = |e: GeopError| e.with_context(what.clone());
             let fs = kept(&faces_of_vertex[v], &rebuild);
@@ -3154,8 +3118,8 @@ fn heal<S: Scalar>(
             // How far its ends move with its vertices.
             let ends = [at(0.0).map_err(&ectx)?, at(1.0).map_err(&ectx)?];
             let shifts = [
-                sub(to_p3(&vertices[start].origin), ends[0]),
-                sub(to_p3(&vertices[end].origin), ends[1]),
+                sub(vertices[start].origin.to_f64_array(), ends[0]),
+                sub(vertices[end].origin.to_f64_array(), ends[1]),
             ];
             // Where the old curve's point `p`, `f` of the way along it, goes:
             // where the kept surfaces meet, or — none kept — along with its
@@ -3198,36 +3162,47 @@ fn heal<S: Scalar>(
             // Sampled more densely while the cubic through the samples strays
             // between them from where the surfaces meet by more than the
             // file's uncertainty.
-            let mut samples = REBUILT_SAMPLES;
-            let rebuilt = loop {
-                let mut points = vec![vertices[start].origin];
-                for k in 1..samples {
-                    let f = k as f64 / samples as f64;
-                    points.push(s3(onto(at(f).map_err(&ectx)?, f).map_err(&ectx)?));
-                }
-                points.push(vertices[end].origin);
-                let rebuilt = NurbCurve3D::interpolate(&points, 3).map_err(|err| {
-                    err.with_context(format!(
-                        "rebuilding the edge {} where its faces {} meet",
-                        edges[e].label(),
-                        names(&fs)
-                    ))
-                })?;
-                if samples >= MOST_REBUILT_SAMPLES || middle.is_none() {
-                    break rebuilt;
-                }
-                let (r0, r1) = rebuilt.domain();
-                let (r0, r1) = (r0.to_f64(), r1.to_f64());
-                let mut strays = 0.0f64;
-                for k in 0..samples {
-                    let t = r0 + (r1 - r0) * (k as f64 + 0.5) / samples as f64;
-                    let p = super::geometry::point_at(&rebuilt, t).map_err(&ectx)?;
-                    strays = strays.max(furthest(p, &fs).map_err(&ectx)?);
-                }
-                if strays <= scope.uncertainty {
-                    break rebuilt;
-                }
-                samples *= 2;
+            // The cap ends it: `samples` doubles each step, so it passes
+            // any cap within as many steps as it has bits.
+            let rebuilt = refine(
+                REBUILT_SAMPLES,
+                usize::BITS as usize,
+                |samples| -> GeopResult<_> {
+                    let mut points = vec![vertices[start].origin];
+                    for k in 1..samples {
+                        let f = k as f64 / samples as f64;
+                        points.push(s3(onto(at(f).map_err(&ectx)?, f).map_err(&ectx)?));
+                    }
+                    points.push(vertices[end].origin);
+                    let rebuilt = NurbCurve3D::interpolate(&points, 3).map_err(|err| {
+                        err.with_context(format!(
+                            "rebuilding the edge {} where its faces {} meet",
+                            edges[e].label(),
+                            names(&fs)
+                        ))
+                    })?;
+                    if samples >= MOST_REBUILT_SAMPLES || middle.is_none() {
+                        return Ok(Refine::Done(rebuilt));
+                    }
+                    let (r0, r1) = rebuilt.domain();
+                    let (r0, r1) = (r0.to_f64(), r1.to_f64());
+                    let mut strays = 0.0f64;
+                    for k in 0..samples {
+                        let t = r0 + (r1 - r0) * (k as f64 + 0.5) / samples as f64;
+                        let p = super::geometry::point_at(&rebuilt, t).map_err(&ectx)?;
+                        strays = strays.max(furthest(p, &fs).map_err(&ectx)?);
+                    }
+                    if strays <= scope.uncertainty {
+                        return Ok(Refine::Done(rebuilt));
+                    }
+                    Ok(Refine::Finer(samples * 2))
+                },
+            )?;
+            let Refined::Done(rebuilt) = rebuilt else {
+                return Err(GeopError::new(format!(
+                    "rebuilding the edge {}: its samples doubled past every cap",
+                    edges[e].label()
+                )));
             };
             edges[e].curve = rebuilt;
             edges[e].shape = None;
@@ -3289,7 +3264,7 @@ fn rebuilt_surface<S: Scalar>(face: &Face, edges: &[Edge<S>]) -> GeopResult<Nurb
     let direction = |c: &NurbCurve3D<S>, at_end: bool| -> GeopResult<P3> {
         let (lo, hi) = c.domain();
         let t = if at_end { hi } else { lo };
-        normalize(to_p3(&c.tangent(t)?))
+        normalize(c.tangent(t)?.to_f64_array())
             .ok_or_else(|| GeopError::new("an edge of it has no direction at an end"))
     };
     // How sharply the loop turns at the end of each coedge.
@@ -3410,7 +3385,7 @@ fn edge_gap<S: Scalar>(
         let t = match i {
             0 => t0,
             GAP_SAMPLES => t1,
-            _ => t0.add(t1.sub(t0).mul(f)).sharpen(),
+            _ => S::fraction(t0, t1, f),
         };
         let uv = pcurve.evaluate(t)?;
         // A pcurve too uncertain to place on the surface at all is for the
@@ -3418,7 +3393,7 @@ fn edge_gap<S: Scalar>(
         let Ok(point) = surface.evaluate(uv[0], uv[1]) else {
             continue;
         };
-        let target = to_p3(&point);
+        let target = point.to_f64_array();
         let &(seed, _) = table
             .iter()
             .min_by(|a, b| distance(a.1, target).total_cmp(&distance(b.1, target)))
@@ -3488,8 +3463,8 @@ fn edge_gap<S: Scalar>(
                 worst = Some(Worst {
                     apart,
                     at: i as f64 / GAP_SAMPLES as f64,
-                    point: to_p3(&point),
-                    near: to_p3(&near),
+                    point: point.to_f64_array(),
+                    near: near.to_f64_array(),
                 });
             }
         }
@@ -3525,7 +3500,7 @@ fn off_surface<S: Scalar>(
         let seed = pcurve.evaluate(S::from_f64(t0.to_f64() + (t1.to_f64() - t0.to_f64()) * f))?;
         let (u, v) = surface.project(p, seed[0].sharpen(), seed[1].sharpen(), 30)?;
         let foot = surface.evaluate(u, v)?;
-        most = most.max(distance(to_p3(&foot), to_p3(&p)));
+        most = most.max(distance(foot.to_f64_array(), p.to_f64_array()));
     }
     Ok(most)
 }
@@ -3565,11 +3540,5 @@ fn signed_area<S: Scalar>(lp: &[(CoedgeOnLocal, NurbCurve2D<S>)]) -> GeopResult<
             points.push([p[0].to_f64(), p[1].to_f64()]);
         }
     }
-    let n = points.len();
-    let mut area = 0.0;
-    for i in 0..n {
-        let (a, b) = (points[i], points[(i + 1) % n]);
-        area += a[0] * b[1] - b[0] * a[1];
-    }
-    Ok(area / 2.0)
+    Ok(signed_area2(&points) / 2.0)
 }

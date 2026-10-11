@@ -281,6 +281,35 @@ fn tapped_hole_patterned_with_its_thread() {
     assert_eq!(part.threads.iter().count(), 3);
 }
 
+/// The copies of a patterned thread are drawn as the pattern's own
+/// annotations, as the hole draws its thread: every thread of the part is
+/// shown, once.
+#[test]
+fn a_patterned_thread_is_drawn() {
+    let mut program = super::hole_tests::plate(&[[10.0, 20.0]]);
+    let mut tapped = simple_m6("extrude(plate,end)", Extent::blind(8.0));
+    tapped.kind = HoleKind::Tapped;
+    program.push("h", tapped);
+    program.push("p", linear(&["h"], 3.0, 15.0));
+    let runner = program.built().unwrap();
+    let drawn = geop_ops::ui::annotations_of(runner.part.current());
+    let mut names: Vec<&str> = drawn.iter().map(|a| a.name.as_str()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "hole(h,centres,p0,thread)",
+            "linear_pattern(p,1,hole(h,centres,p0,thread))",
+            "linear_pattern(p,2,hole(h,centres,p0,thread))",
+        ]
+    );
+    assert!(
+        drawn
+            .iter()
+            .all(|a| a.label == "M6x1" && a.polyline.len() > 2)
+    );
+}
+
 /// A hole drilled up from the bottom of a stepped block, up to the next
 /// face — the step 10 high where it is drilled — done again where the
 /// block is 20 high: the copy goes up to the next face where it is, all

@@ -76,10 +76,26 @@ pub fn face_key(id: u32) -> String {
     format!("f{id}")
 }
 
+/// The vertex after corner `k` of face `f`, the way the face runs.
+pub fn next(faces: &[Vec<usize>], (f, k): (usize, usize)) -> usize {
+    faces[f][(k + 1) % faces[f].len()]
+}
+
+/// The vertex before corner `k` of face `f`, the way the face runs.
+pub fn prev(faces: &[Vec<usize>], (f, k): (usize, usize)) -> usize {
+    let n = faces[f].len();
+    faces[f][(k + n - 1) % n]
+}
+
+/// The edge between `a` and `b`, either way round: the smaller first.
+pub fn undirected<T: Ord + Copy>(a: T, b: T) -> [T; 2] {
+    [a.min(b), a.max(b)]
+}
+
 /// The name of the edge between vertices `a` and `b`: `e3-5`, the smaller
 /// id first.
 pub fn edge_key(a: u32, b: u32) -> String {
-    let (a, b) = (a.min(b), a.max(b));
+    let [a, b] = undirected(a, b);
     format!("e{a}-{b}")
 }
 
@@ -122,14 +138,14 @@ impl Cage {
                 let n = f.vertices.len();
                 (0..n).map(move |k| {
                     let (a, b) = (f.vertices[k], f.vertices[(k + 1) % n]);
-                    [a.min(b), a.max(b)]
+                    undirected(a, b)
                 })
             })
             .collect()
     }
 
     pub fn is_crease(&self, a: u32, b: u32) -> bool {
-        self.creases.contains(&[a.min(b), a.max(b)])
+        self.creases.contains(&undirected(a, b))
     }
 }
 
@@ -145,7 +161,7 @@ pub struct Mesh {
     pub face_names: Vec<String>,
     pub faces: Vec<Vec<usize>>,
     /// The edges kept sharp, the smaller index first.
-    pub sharp: BTreeSet<(usize, usize)>,
+    pub sharp: BTreeSet<[usize; 2]>,
 }
 
 impl Mesh {
@@ -207,7 +223,7 @@ impl Mesh {
         for &[a, b] in &cage.creases {
             match (index.get(&a), index.get(&b)) {
                 (Some(&i), Some(&j)) => {
-                    mesh.sharp.insert((i.min(j), i.max(j)));
+                    mesh.sharp.insert(undirected(i, j));
                 }
                 _ => {
                     return Err(GeopError::new(format!(
@@ -258,10 +274,10 @@ impl Mesh {
             self.face_names.push(format!("{}m", self.face_names[f]));
             self.faces.push(mirrored);
         }
-        let sharp: Vec<(usize, usize)> = self.sharp.iter().copied().collect();
-        for (a, b) in sharp {
+        let sharp: Vec<[usize; 2]> = self.sharp.iter().copied().collect();
+        for [a, b] in sharp {
             let (i, j) = (image[a], image[b]);
-            self.sharp.insert((i.min(j), i.max(j)));
+            self.sharp.insert(undirected(i, j));
         }
         Ok(())
     }
@@ -269,7 +285,7 @@ impl Mesh {
     /// The name of the edge between vertices `a` and `b`, as a cage
     /// element: `e3-5`, or, on the mirrored half, `e3m-5m`.
     pub fn edge_name(&self, a: usize, b: usize) -> String {
-        let (a, b) = (a.min(b), a.max(b));
+        let [a, b] = undirected(a, b);
         format!(
             "e{}-{}",
             &self.vertex_names[a][1..],
@@ -341,22 +357,17 @@ impl Topology {
                     vertex_names[v]
                 )));
             }
-            let next = |&(f, k): &(usize, usize)| faces[f][(k + 1) % faces[f].len()];
-            let prev = |&(f, k): &(usize, usize)| {
-                let n = faces[f].len();
-                faces[f][(k + n - 1) % n]
-            };
             // A fan that meets the boundary starts at the face with no
             // neighbour across its edge to the next corner.
             let start = around
                 .iter()
-                .find(|c| !directed.contains_key(&(next(c), v)))
+                .find(|&&c| !directed.contains_key(&(next(faces, c), v)))
                 .copied();
             let closed = start.is_none();
             let mut fan = vec![start.unwrap_or(around[0])];
             loop {
                 let last = fan[fan.len() - 1];
-                match directed.get(&(v, prev(&last))) {
+                match directed.get(&(v, prev(faces, last))) {
                     Some(&c) if c == fan[0] => break,
                     Some(&c) if fan.len() < around.len() => fan.push(c),
                     _ => break,
@@ -386,10 +397,10 @@ impl Topology {
     }
 
     /// Every edge, the smaller index first, with its faces.
-    pub fn edges(&self) -> BTreeMap<(usize, usize), Vec<usize>> {
-        let mut edges: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
+    pub fn edges(&self) -> BTreeMap<[usize; 2], Vec<usize>> {
+        let mut edges: BTreeMap<[usize; 2], Vec<usize>> = BTreeMap::new();
         for (&(a, b), &(f, _)) in &self.directed {
-            edges.entry((a.min(b), a.max(b))).or_default().push(f);
+            edges.entry(undirected(a, b)).or_default().push(f);
         }
         for faces in edges.values_mut() {
             faces.sort();
@@ -429,7 +440,7 @@ impl Mesh {
                 self.vertex_names[apart], self.vertex_names[0]
             )));
         }
-        for &(a, b) in &self.sharp {
+        for &[a, b] in &self.sharp {
             if !topology.directed.contains_key(&(a, b)) && !topology.directed.contains_key(&(b, a))
             {
                 return Err(GeopError::new(format!(

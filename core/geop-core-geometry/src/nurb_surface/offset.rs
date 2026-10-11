@@ -15,7 +15,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector3, Vector4},
+    vector::Vector3,
 };
 
 use super::NurbSurface3D;
@@ -41,17 +41,6 @@ fn points_along<S: Scalar>(along: S) -> GeopResult<bool> {
 /// `distance` if `along`, else its opposite.
 fn signed<S: Scalar>(distance: S, along: bool) -> S {
     if along { distance } else { distance.neg() }
-}
-
-/// The point `p` with weight `w`, homogeneous — taken as it is where the
-/// weight is exactly one: multiplying by it would only widen it by
-/// rounding.
-fn homogeneous<S: Scalar>(p: [S; 3], w: S) -> Vector4<S> {
-    if w.is_sharp() && w.could_be_equal(S::ONE) {
-        Vector4::from_array([p[0], p[1], p[2], w])
-    } else {
-        Vector4::from_array([p[0].mul(w), p[1].mul(w), p[2].mul(w), w])
-    }
 }
 
 impl<S: Scalar> NurbSurface3D<S> {
@@ -162,7 +151,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         let profile = NurbCurve::try_new(
             degree,
             (0..rows)
-                .map(|j| homogeneous([h[j], r[j], S::ZERO], weight(j)))
+                .map(|j| Vector3::from_array([h[j], r[j], S::ZERO]).homogeneous(weight(j)))
                 .collect(),
             knots,
         )?;
@@ -216,7 +205,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         for (j, &(hj, rj)) in offset.iter().enumerate() {
             for i in 0..len {
                 let w = self.control_points[index(i, j)][3];
-                control_points[index(i, j)] = homogeneous(turned(hj, rj, i).to_array(), w);
+                control_points[index(i, j)] = turned(hj, rj, i).homogeneous(w);
             }
         }
         Self::try_new(

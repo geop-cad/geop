@@ -27,7 +27,7 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector3, Vector4},
+    vector::Vector3,
 };
 use geop_core_topology::{
     Curve2, Curve3, Sense,
@@ -36,14 +36,10 @@ use geop_core_topology::{
 use geop_ops::{BodyNames, Namer};
 
 use crate::{
-    cage::Mesh,
+    cage::{Mesh, undirected},
     limit::{ControlNet, control_net},
     subdivide::subdivide,
 };
-
-fn homogeneous<S: Scalar>(p: &Vector3<S>) -> Vector4<S> {
-    Vector4::from_array([p[0], p[1], p[2], S::ONE])
-}
 
 /// The clamped cubic knots of `spans` Bézier spans over `[0, spans]`.
 fn cubic_knots<S: Scalar>(spans: usize) -> Vec<S> {
@@ -59,7 +55,7 @@ fn cubic_knots<S: Scalar>(spans: usize) -> Vec<S> {
 fn cubic<S: Scalar>(points: &[Vector3<S>]) -> GeopResult<Curve3<S>> {
     NurbCurve::try_new(
         3,
-        points.iter().map(homogeneous).collect(),
+        points.iter().map(|p| p.homogeneous(S::ONE)).collect(),
         cubic_knots((points.len() - 1) / 3),
     )
 }
@@ -133,11 +129,7 @@ fn side<S: Scalar>(
     [start, middle, end]: [[i64; 2]; 3],
 ) -> GeopResult<Vec<CoedgeSpec<S>>> {
     let forward = from < to;
-    let sense = if forward {
-        Sense::Forward
-    } else {
-        Sense::Reversed
-    };
+    let sense = Sense::from_forward(forward);
     Ok(match parts {
         EdgeParts::Whole(e) => vec![CoedgeSpec {
             on: CoedgeOn::Edge(e, sense),
@@ -197,13 +189,7 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
     let mut b = Builder {
         net: &net,
         namer,
-        spec: BodySpec {
-            vertices: Vec::new(),
-            edges: Vec::new(),
-            faces: Vec::new(),
-            shells: Vec::new(),
-            solid: closed,
-        },
+        spec: BodySpec::new(closed),
         names: BodyNames {
             solid: closed.then(|| namer.root()),
             ..BodyNames::default()
@@ -220,10 +206,10 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
             b.add_vertex(sub.face_point[f], &[&mesh.face_names[f], "centre"]);
         }
     }
-    let mut parts: HashMap<(usize, usize), EdgeParts> = HashMap::new();
-    for (&(a, c), faces) in &edges {
+    let mut parts: HashMap<[usize; 2], EdgeParts> = HashMap::new();
+    for (&[a, c], faces) in &edges {
         let name = mesh.edge_name(a, c);
-        let m = sub.edge_point[&(a, c)];
+        let m = sub.edge_point[&[a, c]];
         let part = if faces.iter().all(|&f| is_quad(f)) {
             EdgeParts::Whole(b.add_edge(&[a, m, c], &[&name])?)
         } else {
@@ -233,16 +219,16 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
                 b.add_edge(&[m, c], &[&name, &mesh.vertex_names[c]])?,
             )
         };
-        parts.insert((a, c), part);
+        parts.insert([a, c], part);
     }
-    let part = |a: usize, c: usize| parts[&(a.min(c), a.max(c))];
+    let part = |a: usize, c: usize| parts[&undirected(a, c)];
 
     for (f, face) in mesh.faces.iter().enumerate() {
         let n = face.len();
         if n == 4 {
             let mut grid = [Vector3::zero(); 49];
             for k in 0..4 {
-                let patch = net.patch(&sub, sub.face_start[f] + k, 0);
+                let patch = net.patch(&sub, sub.face_start[f] + k);
                 for (i, row) in patch.iter().enumerate() {
                     for (j, point) in row.iter().enumerate() {
                         let (u, v) = match k {
@@ -258,7 +244,7 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
             let surface = NurbSurface::try_new(
                 3,
                 3,
-                grid.iter().map(homogeneous).collect(),
+                grid.iter().map(|p| p.homogeneous(S::ONE)).collect(),
                 cubic_knots(2),
                 cubic_knots(2),
             )?;
@@ -281,17 +267,21 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
             let spokes = (0..n)
                 .map(|k| {
                     let (a, c) = (face[k], face[(k + 1) % n]);
-                    let m = sub.edge_point[&(a.min(c), a.max(c))];
+                    let m = sub.edge_point[&undirected(a, c)];
                     b.add_edge(&[centre, m], &[&mesh.face_names[f], &mesh.edge_name(a, c)])
                 })
                 .collect::<GeopResult<Vec<_>>>()?;
             for k in 0..n {
                 let (v, after, before) = (face[k], face[(k + 1) % n], face[(k + n - 1) % n]);
-                let patch = net.patch(&sub, sub.face_start[f] + k, 0);
+                let patch = net.patch(&sub, sub.face_start[f] + k);
                 let surface: NurbSurface3D<S> = NurbSurface::try_new(
                     3,
                     3,
-                    patch.iter().flatten().map(homogeneous).collect(),
+                    patch
+                        .iter()
+                        .flatten()
+                        .map(|p| p.homogeneous(S::ONE))
+                        .collect(),
                     cubic_knots(1),
                     cubic_knots(1),
                 )?;

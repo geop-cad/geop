@@ -2,7 +2,7 @@ use geop_core_math::{
     geop_error::GeopResult,
     primitives::Motion,
     scalars::Scalar,
-    vector::{Vector3, Vector4},
+    vector::{Vector2, Vector3, Vector4},
 };
 
 use super::NurbCurve;
@@ -42,6 +42,46 @@ impl<S: Scalar> NurbCurve<S, 4> {
 }
 
 impl<S: Scalar> NurbCurve<S, 3> {
+    /// This 2-D curve shifted by `offset` (see [`NurbCurve::translate`] for
+    /// 3-D). Shifted by an exact zero, it is the curve itself, not widened
+    /// by adding zeros.
+    pub fn translate(&self, offset: Vector2<S>) -> Self {
+        let zero = |x: S| x.is_sharp() && x.could_be_equal(S::ZERO);
+        if zero(offset[0]) && zero(offset[1]) {
+            return self.clone();
+        }
+        let control_points = self
+            .control_points
+            .iter()
+            .map(|cp| {
+                let w = cp[2];
+                Vector3::from_array([cp[0].add(offset[0].mul(w)), cp[1].add(offset[1].mul(w)), w])
+            })
+            .collect();
+        Self {
+            degree: self.degree,
+            control_points,
+            knot_vector: self.knot_vector.clone(),
+            aabb: [
+                self.aabb[0].add(offset[0]),
+                self.aabb[1].add(offset[1]),
+                self.aabb[2],
+            ],
+        }
+    }
+
+    /// This 2-D curve as a 3-D one in the plane `z = 0`.
+    pub fn lifted(&self) -> GeopResult<NurbCurve<S, 4>> {
+        NurbCurve::try_new(
+            self.degree,
+            self.control_points
+                .iter()
+                .map(|q| Vector4::from_array([q[0], q[1], S::ZERO, q[2]]))
+                .collect(),
+            self.knot_vector.clone(),
+        )
+    }
+
     /// This 2-D curve as the planar 3-D curve `origin + x e1 + y e2` for
     /// `(x, y)` along it: a sketch's curve where its plane puts it. An
     /// affine map of the homogeneous control points `(w x, w y, w)` to
@@ -56,16 +96,41 @@ impl<S: Scalar> NurbCurve<S, 3> {
         let control_points = self
             .control_points
             .iter()
-            .map(|cp| {
-                let p = origin
-                    .prod_scalar(cp[2])
-                    .add(&e1.prod_scalar(cp[0]))
-                    .add(&e2.prod_scalar(cp[1]));
-                Vector4::from_array([p[0], p[1], p[2], cp[2]])
-            })
+            .map(|cp| embed_point(cp, origin, e1, e2))
             .collect();
         NurbCurve::try_new(self.degree, control_points, self.knot_vector.clone())
     }
+}
+
+/// Homogeneous `(w (origin + x e1 + y e2), w)` for the homogeneous 2-D point
+/// `cp = (w x, w y, w)`: linear in `cp`, so no division — the control point
+/// [`NurbCurve::embed`] makes of `cp`.
+pub fn embed_point<S: Scalar>(
+    cp: &Vector3<S>,
+    origin: &Vector3<S>,
+    e1: &Vector3<S>,
+    e2: &Vector3<S>,
+) -> Vector4<S> {
+    let p = origin
+        .prod_scalar(cp[2])
+        .add(&e1.prod_scalar(cp[0]))
+        .add(&e2.prod_scalar(cp[1]));
+    Vector4::from_array([p[0], p[1], p[2], cp[2]])
+}
+
+/// The homogeneous 3-D point `cp = (w p, w)` in the plane through `origin`
+/// along the orthonormal `e1` and `e2`, homogeneous: `(w x, w y, w)` for
+/// `x = (p - origin) . e1`, `y = (p - origin) . e2` — the inverse of
+/// [`embed_point`] for a point of the plane, and like it without division.
+pub fn flatten_point<S: Scalar>(
+    cp: &Vector4<S>,
+    origin: &Vector3<S>,
+    e1: &Vector3<S>,
+    e2: &Vector3<S>,
+) -> Vector3<S> {
+    let w = cp[3];
+    let d = Vector3::from_array([cp[0], cp[1], cp[2]]).sub(&origin.prod_scalar(w));
+    Vector3::from_array([d.prod_dot(e1), d.prod_dot(e2), w])
 }
 
 /// The homogeneous control point `cp = (w p, w)` moved by `motion`: an

@@ -85,14 +85,6 @@ pub fn write_step(view: BuildView<'_>, name: &str) -> GeopResult<String> {
     .write())
 }
 
-/// The product a component is called, unless it has a designation (`ISO
-/// 4762 M4x12`, see [`Component::designation`]): its program's file name,
-/// without folders and extension.
-fn component_name(file: &str) -> &str {
-    let base = file.rsplit(['/', '\\']).next().unwrap_or(file);
-    base.rsplit_once('.').map_or(base, |(stem, _)| stem)
-}
-
 /// A product written: what an assembly placing it refers to.
 #[derive(Clone, Copy)]
 struct Written {
@@ -307,20 +299,11 @@ impl Writer {
     }
 
     /// The placement the pose `pose` moves the frame of what it places to.
-    fn pose<S: Scalar>(&mut self, pose: &Pose<S>) -> u64 {
-        let at = |p: [f64; 3]| {
-            let q = pose.apply(&Vector3::from_array(p.map(S::from_f64)));
-            [q[0].to_f64(), q[1].to_f64(), q[2].to_f64()]
-        };
-        let origin = at([0.0; 3]);
-        let direction = |p: [f64; 3]| {
-            let q = at(p);
-            let d = [q[0] - origin[0], q[1] - origin[1], q[2] - origin[2]];
-            let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-            d.map(|c| c / n)
-        };
-        let (axis, reference) = (direction([0.0, 0.0, 1.0]), direction([1.0, 0.0, 0.0]));
-        self.placement(origin, axis, reference)
+    fn pose<S: Scalar>(&mut self, pose: &Pose<S>) -> GeopResult<u64> {
+        let plain = |q: Vector3<S>| q.to_f64_array();
+        // Where its `x` and `z` turn to.
+        let [x, _, z] = pose.rotation().rotation_columns()?;
+        Ok(self.placement(plain(pose.position()), plain(z), plain(x)))
     }
 
     /// The part `view` shows as the product `name`, and each part placed
@@ -345,11 +328,15 @@ impl Writer {
             let child = match written.get(&key) {
                 Some(&child) => child,
                 None => {
-                    let name = component.designation();
-                    let name = name
-                        .as_deref()
-                        .unwrap_or_else(|| component_name(&component.file));
-                    let child = self.assembly(component.view(), name, context, written)?;
+                    // Its designation (`ISO 4762 M4x12`), else what it is
+                    // listed as: its title, else its file's stem.
+                    let about = placed::About {
+                        file: component.file.clone(),
+                        parameters: component.parameters.clone(),
+                    };
+                    let name =
+                        (component.designation()).unwrap_or_else(|| about.name().to_string());
+                    let child = self.assembly(component.view(), &name, context, written)?;
                     written.insert(key, child);
                     child
                 }
@@ -387,7 +374,9 @@ impl Writer {
             .then(|| representation(self, "ADVANCED_BREP_SHAPE_REPRESENTATION", &solids));
         let surfaces = (!sheets.is_empty())
             .then(|| representation(self, "MANIFOLD_SURFACE_SHAPE_REPRESENTATION", &sheets));
-        let axes: Vec<u64> = placed.iter().map(|(_, _, pose)| self.pose(pose)).collect();
+        let axes: Vec<u64> = (placed.iter())
+            .map(|(_, _, pose)| self.pose(pose))
+            .collect::<GeopResult<_>>()?;
         // A part placing none is its bodies; one placing others is the
         // placements, its bodies related to them.
         let shape = match brep {
@@ -481,9 +470,8 @@ impl Writer {
             vertices: HashMap::new(),
             edges: HashMap::new(),
         };
-        let mut solid_ids: Vec<_> = model.solids.keys().copied().collect();
-        solid_ids.sort_by_key(|id| id.0);
-        for solid_id in solid_ids {
+        // The arenas are ordered by id, so these come oldest first.
+        for &solid_id in model.solids.keys() {
             let solid = model.get_solid(solid_id)?;
             let name = (body.name)(solid_id.into());
             let [outer, voids @ ..] = solid.shells.as_slice() else {
@@ -521,13 +509,11 @@ impl Writer {
             };
             solids.push(id);
         }
-        let mut sheet_ids: Vec<ShellId> = model
+        let sheet_ids = model
             .shells
             .iter()
             .filter(|(_, shell)| shell.solid.is_none())
-            .map(|(&id, _)| id)
-            .collect();
-        sheet_ids.sort_by_key(|id| id.0);
+            .map(|(&id, _)| id);
         for sheet in sheet_ids {
             let shell = body.shell(sheet, "OPEN_SHELL", false)?;
             sheets.push(
@@ -551,16 +537,14 @@ struct BodyWriter<'w, 'm, S: Scalar, N> {
 
 impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
     fn coordinates(p: &Vector3<S>) -> [f64; 3] {
-        [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
+        p.to_f64_array()
     }
 
     /// The homogeneous control point `cp` as STEP writes it: the point,
     /// and its weight.
     fn control_point(&mut self, cp: &geop_core_math::vector::Vector4<S>) -> GeopResult<(u64, f64)> {
-        let w = cp[3];
-        let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
-        let p = Self::coordinates(&p);
-        Ok((self.writer.point(p), w.to_f64()))
+        let p = Self::coordinates(&cp.dehomogenized()?);
+        Ok((self.writer.point(p), cp[3].to_f64()))
     }
 
     fn vertex(&mut self, id: VertexId) -> GeopResult<u64> {

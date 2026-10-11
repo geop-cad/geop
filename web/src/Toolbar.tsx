@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { ExporterInfo, Program } from "./geop";
 import { BugReport } from "./BugReport";
+import { acceptedFiles } from "./files";
 import { Icon } from "./icons";
 import { Menu, type MenuEntry } from "./Menu";
 import { Privacy } from "./Privacy";
@@ -15,6 +16,8 @@ interface Props {
   onSave: () => void;
   /** What the kernel can write of the part: a "Download" each. */
   exporters: ExporterInfo[];
+  /** The extensions of the data files programs read beside them: loadable too. */
+  reads: string[];
   /** Write the part shown with the exporter `kind`, and save it. */
   onExport: (kind: string) => void;
   onLoadFile: (file: File) => void;
@@ -65,6 +68,7 @@ export function Toolbar({
   onNewPart,
   onSave,
   exporters,
+  reads,
   onExport,
   onLoadFile,
   exampleNames,
@@ -95,7 +99,7 @@ export function Toolbar({
     ...(hosted
       ? []
       : ([
-          { kind: "item", label: "New part", icon: "add_part", hint: "empty file", onSelect: onNewPart },
+          { kind: "item", label: "New part", icon: "new_part", hint: "empty file", onSelect: onNewPart },
           { kind: "item", label: "Open file…", icon: "open", onSelect: () => fileInput.current?.click() },
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
         ] as MenuEntry[])),
@@ -155,7 +159,7 @@ export function Toolbar({
         ref={fileInput}
         type="file"
         hidden
-        accept=".geop,.json,application/json,.step,.stp"
+        accept={acceptedFiles(reads)}
         onChange={(e) => {
           const chosen = e.target.files?.[0];
           e.target.value = "";

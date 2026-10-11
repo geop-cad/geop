@@ -203,7 +203,7 @@ fn write_value(out: &mut String, value: &Value) {
 }
 
 /// `r` as a Part 21 real, which needs a decimal point and an upper-case
-/// exponent: `1.`, `-0.25`, `1.5E-07`. Written as the shortest text that
+/// exponent: `1.0`, `-0.25`, `1.5E-7`. Written as the shortest text that
 /// reads back to exactly `r`.
 pub fn real(r: f64) -> String {
     let text = format!("{r:?}");

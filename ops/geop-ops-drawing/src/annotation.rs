@@ -21,7 +21,7 @@ use geop_core_sketch::{
 use geop_core_topology::EdgeId;
 use geop_ops::{
     Design, RefId,
-    operation::{BuildView, INSTANCE_SEPARATOR},
+    operation::{BuildView, instance_path},
     output::sheet::{Anchor, Label, Layer, P, Shape, Sheet},
 };
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,7 @@ use crate::{
         ARROW_LENGTH, ARROW_WIDTH, CENTER_OVERSHOOT, Layout, Placed, Placement, TEXT, length_label,
         placed_edge, placed_vertex,
     },
+    layer,
     scene::Scene,
     view::{DrawnView, ViewFrame},
 };
@@ -176,7 +177,7 @@ impl Drawn {
             lines: measure
                 .lines(label)
                 .into_iter()
-                .map(|line| (Layer::Dimension, line))
+                .map(|line| (layer::DIMENSION, line))
                 .collect(),
             arrows: measure
                 .arrows(label)
@@ -199,11 +200,11 @@ impl Drawn {
             sheet.stroke(*layer, shape);
         }
         for arrow in &self.arrows {
-            sheet.stroke(Layer::Dimension, Shape::Filled(arrow.to_vec()));
+            sheet.stroke(layer::DIMENSION, Shape::Filled(arrow.to_vec()));
         }
         if let Some(text) = &self.text {
             sheet.labels.push(Label {
-                layer: Layer::Dimension,
+                layer: layer::DIMENSION,
                 at: text.at,
                 height: TEXT,
                 angle: text.angle,
@@ -413,7 +414,7 @@ impl Annotation {
                 if leader.is_some()
                     && let Some(d) = unit(sub(anchor, at))
                 {
-                    drawn.lines.push((Layer::Dimension, vec![at, anchor]));
+                    drawn.lines.push((layer::DIMENSION, vec![at, anchor]));
                     drawn.arrows.push(arrowhead(anchor, d));
                 }
                 Ok(drawn)
@@ -425,11 +426,11 @@ impl Annotation {
                 Ok(Drawn {
                     lines: vec![
                         (
-                            Layer::Center,
+                            layer::CENTER,
                             vec![[c[0] - reach, c[1]], [c[0] + reach, c[1]]],
                         ),
                         (
-                            Layer::Center,
+                            layer::CENTER,
                             vec![[c[0], c[1] - reach], [c[0], c[1] + reach]],
                         ),
                     ],
@@ -637,7 +638,7 @@ pub(crate) fn candidates<S: Scalar>(
                     POINTS_PER_PIECE => t1,
                     k => {
                         let f = S::from_f64(k as f64 / POINTS_PER_PIECE as f64);
-                        t0.add(t1.sub(t0).mul(f)).sharpen()
+                        S::fraction(t0, t1, f)
                     }
                 };
                 let q = line.curve.evaluate(t)?;
@@ -667,7 +668,7 @@ pub(crate) fn candidates<S: Scalar>(
             let named = |id: RefId| {
                 b.named.name_of(id).map(|n| match b.path.as_str() {
                     "" => n.to_string(),
-                    path => format!("{path}{INSTANCE_SEPARATOR}{n}"),
+                    path => instance_path(path, n),
                 })
             };
             let Some(name) = named(edge.into()) else {

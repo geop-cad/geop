@@ -111,10 +111,7 @@ impl PartDescription {
         let mut vertices = BTreeMap::new();
         for (&id, vertex) in &model.vertices {
             let p = vertex.point;
-            vertices.insert(
-                name(id.into())?,
-                [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()],
-            );
+            vertices.insert(name(id.into())?, p.to_f64_array());
         }
         Ok(Self {
             solids,

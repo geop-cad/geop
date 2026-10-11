@@ -32,7 +32,10 @@ fn bracket_example_builds_and_unfolds() {
     let view = runner.part.current();
     assert_valid(view.retrieve_target(&model()).unwrap());
     let recorded = view.retrieve_target(&sheets()).unwrap();
-    let sheet = recorded.bent("sheet_cut(mount)").unwrap();
+    let sheet = recorded
+        .get("sheet_cut(mount)")
+        .and_then(|b| b.bent())
+        .unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
     assert_eq!(sheet.cuts.len(), 1);
     assert_eq!(sheet.cuts[0].loops.len(), 2);
@@ -58,8 +61,9 @@ fn bracket_example_builds_and_unfolds() {
         (view.retrieve_target(&sketch("flat_pattern(flat,bend_lines)"))).is_ok(),
         "no bend lines"
     );
+    let notes = geop_ops::solids::notes_of(view).unwrap();
     assert_eq!(
-        geop_ops_sheetmetal::thickness(view, "flat_pattern(flat)"),
+        notes.get("flat_pattern(flat)").unwrap().thickness,
         Some(0.08)
     );
 }

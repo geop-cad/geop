@@ -20,6 +20,8 @@
 //! Plain `f64` — see [`super::grid`]'s doc comment for why that's the
 //! right call for a rendering-only algorithm.
 
+use geop_core_math::plain::{cross2, signed_area2, sub};
+
 pub type Point = [f64; 2];
 
 /// One Sutherland–Hodgman pass: keep the part of `poly` where `side(p) >=
@@ -83,19 +85,8 @@ pub fn clip_to_rect(subject: &[Point], u0: f64, u1: f64, v0: f64, v1: f64) -> Ve
     poly
 }
 
-fn cross(a: Point, b: Point) -> f64 {
-    a[0] * b[1] - a[1] * b[0]
-}
-fn sub(a: Point, b: Point) -> Point {
-    [a[0] - b[0], a[1] - b[1]]
-}
 fn points_equal(a: Point, b: Point) -> bool {
     a == b
-}
-fn signed_area2(poly: &[Point]) -> f64 {
-    (0..poly.len())
-        .map(|i| cross(poly[i], poly[(i + 1) % poly.len()]))
-        .sum()
 }
 
 /// `true` if `poly` turns the same way at every vertex (a degenerate
@@ -107,7 +98,7 @@ pub fn is_convex(poly: &[Point]) -> bool {
     let n = poly.len();
     let (mut pos, mut neg) = (false, false);
     for i in 0..n {
-        let turn = cross(
+        let turn = cross2(
             sub(poly[(i + 1) % n], poly[i]),
             sub(poly[(i + 2) % n], poly[(i + 1) % n]),
         );
@@ -171,7 +162,7 @@ pub fn subtract_convex(subject: &[Point], hole: &[Point]) -> Vec<Vec<Point>> {
         // Positive = inside `hole` relative to this edge, for either
         // winding.
         let side = |p: Point| {
-            let c = cross(edge, sub(p, a));
+            let c = cross2(edge, sub(p, a));
             if hole_ccw { c } else { -c }
         };
         let outside = clip_half_plane(&remaining, |p| -side(p));
@@ -188,10 +179,7 @@ pub fn subtract_convex(subject: &[Point], hole: &[Point]) -> Vec<Vec<Point>> {
 }
 
 /// Ear-clip a (possibly non-convex) simple polygon into triangles, as
-/// index triples into `poly`. A local plain-`f64` twin of
-/// `polygon_triangulate`'s interval-scalar version — that one operates on
-/// `Vector2<S>` and lives one layer below where this module's `f64` points
-/// are meaningful.
+/// index triples into `poly`.
 pub fn ear_clip(poly: &[Point]) -> Vec<[usize; 3]> {
     let n = poly.len();
     if n < 3 {
@@ -199,9 +187,9 @@ pub fn ear_clip(poly: &[Point]) -> Vec<[usize; 3]> {
     }
     let orient_positive = signed_area2(poly) >= 0.0;
     let point_in_triangle = |p: Point, a: Point, b: Point, c: Point| -> bool {
-        let d1 = cross(sub(b, a), sub(p, a));
-        let d2 = cross(sub(c, b), sub(p, b));
-        let d3 = cross(sub(a, c), sub(p, c));
+        let d1 = cross2(sub(b, a), sub(p, a));
+        let d2 = cross2(sub(c, b), sub(p, b));
+        let d3 = cross2(sub(a, c), sub(p, c));
         let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
         let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
         !(has_neg && has_pos)
@@ -219,7 +207,7 @@ pub fn ear_clip(poly: &[Point]) -> Vec<[usize; 3]> {
             let ip = indices[(k + m - 1) % m];
             let ic = indices[k];
             let inext = indices[(k + 1) % m];
-            let turn = cross(sub(poly[ic], poly[ip]), sub(poly[inext], poly[ic]));
+            let turn = cross2(sub(poly[ic], poly[ip]), sub(poly[inext], poly[ic]));
             let is_convex = if orient_positive {
                 turn > 0.0
             } else {
@@ -267,7 +255,7 @@ mod tests {
 
     fn area(poly: &[Point]) -> f64 {
         (0..poly.len())
-            .map(|i| cross(poly[i], poly[(i + 1) % poly.len()]))
+            .map(|i| cross2(poly[i], poly[(i + 1) % poly.len()]))
             .sum::<f64>()
             .abs()
             / 2.0
@@ -393,7 +381,7 @@ mod tests {
         let tris = ear_clip(&poly);
         let total: f64 = tris
             .iter()
-            .map(|t| cross(sub(poly[t[1]], poly[t[0]]), sub(poly[t[2]], poly[t[0]])).abs() / 2.0)
+            .map(|t| cross2(sub(poly[t[1]], poly[t[0]]), sub(poly[t[2]], poly[t[0]])).abs() / 2.0)
             .sum();
         assert!((total - 1.0).abs() < 1e-9);
     }

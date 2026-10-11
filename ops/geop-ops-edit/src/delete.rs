@@ -52,7 +52,8 @@ impl Operation for DeleteBody {
         "Delete solids, and faces standing on their own.",
         OperationGroup::Bodies,
         OperationTier::Menu,
-    );
+    )
+    .icon(crate::icons::DELETE_BODY);
     type Args = DeleteBodyArgs;
     type EditingState = ();
     type Input = Input;

@@ -120,7 +120,8 @@ impl Operation for Thicken {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::THICKEN);
     type Args = ThickenArgs;
     type EditingState = ();
     type Input = Input;
@@ -144,7 +145,7 @@ impl Operation for Thicken {
     fn presentation(_: &Context<Input, ParamValue>, args: &ThickenArgs, _: &()) -> Form<Design> {
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         dialog.reference("face", "sheet", face, &[Role::Sheet], None, false);
         let thickness = Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0);
         dialog.number("thickness", thickness);
@@ -165,8 +166,7 @@ impl Operation for Thicken {
         if let Event::Field { key, value } = event {
             match (key.as_str(), value) {
                 ("face", Value::Entities(picked)) => {
-                    args.face =
-                        (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default()
+                    args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default()
                 }
                 ("thickness", Value::Number(t)) => args.thickness = t,
                 ("side", Value::Choice(key)) => {

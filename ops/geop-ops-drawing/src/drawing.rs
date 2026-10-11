@@ -12,25 +12,27 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain::{self, add, normalize, sub},
     scalars::Scalar,
-    vector::Vector3,
+    vector::{Vector2, Vector3},
 };
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_ops::{
     Design, EntityRef,
     model::model,
-    operation::{BuildView, ResolveEntity},
-    output::sheet::{Anchor, Layer, P, Shape, Sheet, lift, strokes_of},
+    operation::{self, Aspects, BuildView, ResolveEntity},
+    output::sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of},
     placed::owner,
 };
 use serde::{Deserialize, Serialize};
 
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
+
 use crate::{
-    MAX_NODES,
     annotation::{Annotation, Candidate, Drawn, candidates},
     hidden_lines::{LineKind, ProjectedView, ViewOptions},
-    min_subdivision_size,
+    layer,
     scene::{Body, Scene},
     section::{cut_faces, section_part},
     view::{DrawnView, ViewFrame, ViewKind},
@@ -242,9 +244,7 @@ pub fn scale_label(scale: f64) -> String {
 /// A length as written on a drawing: to a hundredth, without trailing
 /// zeros.
 pub fn length_label(x: f64) -> String {
-    let s = format!("{x:.2}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".into() } else { s.into() }
+    decimal(x, 2)
 }
 
 /// A view placed on the sheet.
@@ -500,6 +500,7 @@ pub fn arrange(
     let mut sheet = Sheet {
         width,
         height,
+        layers: layer::ALL.to_vec(),
         ..Sheet::default()
     };
     if placed.is_empty() {
@@ -652,9 +653,7 @@ fn balloon_view<S: Scalar>(
             let Some(k) = line_of[l.body] else { continue };
             let (t0, t1) = l.curve.domain();
             for f in [0.25, 0.5, 0.75] {
-                let q = l
-                    .curve
-                    .evaluate(t0.add(t1.sub(t0).mul(S::from_f64(f))).sharpen())?;
+                let q = l.curve.evaluate(S::fraction(t0, t1, S::from_f64(f)))?;
                 let q = [q[0].to_f64(), q[1].to_f64()];
                 let out = (q[0] - middle[0]).hypot(q[1] - middle[1]);
                 if found[k].is_none_or(|(visible, o, _)| (l.visible, out) > (visible, o)) {
@@ -715,7 +714,7 @@ fn rectangle_exit(r: [f64; 4], from: P, d: P) -> f64 {
         if t <= 0.0 || t >= best.0 {
             continue;
         }
-        let q = add(from, times(d, t));
+        let q = add(from, plain::scale(d, t));
         let along = match k {
             0 => q[0] - r[0],
             1 => q[1] - r[1],
@@ -780,27 +779,28 @@ fn draw_balloons<S: Scalar>(
     for (s, (item, target)) in balloons {
         let center = along_rectangle(ring, s);
         let at = place(*target);
-        let toward = unit(sub(at, center));
+        // Any way out where the balloon is on its target.
+        let toward = normalize(sub(at, center)).unwrap_or([1.0, 0.0]);
         sheet.stroke(
-            Layer::Dimension,
+            layer::DIMENSION,
             Shape::Circle {
                 center,
                 radius: BALLOON_RADIUS,
             },
         );
         sheet.stroke(
-            Layer::Dimension,
-            Shape::Line(add(center, times(toward, BALLOON_RADIUS)), at),
+            layer::DIMENSION,
+            Shape::Line(add(center, plain::scale(toward, BALLOON_RADIUS)), at),
         );
         sheet.stroke(
-            Layer::Dimension,
+            layer::DIMENSION,
             Shape::Circle {
                 center: at,
                 radius: LEADER_DOT,
             },
         );
         sheet.label(
-            Layer::Dimension,
+            layer::DIMENSION,
             [center[0], center[1] - TEXT / 2.0],
             TEXT,
             Anchor::Middle,
@@ -820,14 +820,14 @@ fn draw_parts_list(sheet: &mut Sheet, parts: &[PartsListLine]) {
     let y1 = y0 + LIST_ROW * rows as f64;
     for k in 1..=rows {
         let y = y0 + LIST_ROW * k as f64;
-        sheet.stroke(Layer::Border, Shape::Line([x0, y], [x0 + TITLE_WIDTH, y]));
+        sheet.stroke(layer::BORDER, Shape::Line([x0, y], [x0 + TITLE_WIDTH, y]));
     }
     let mut x = x0;
     for (_, w) in LIST_COLUMNS {
-        sheet.stroke(Layer::Border, Shape::Line([x, y0], [x, y1]));
+        sheet.stroke(layer::BORDER, Shape::Line([x, y0], [x, y1]));
         x += w;
     }
-    sheet.stroke(Layer::Border, Shape::Line([x, y0], [x, y1]));
+    sheet.stroke(layer::BORDER, Shape::Line([x, y0], [x, y1]));
     let row = |sheet: &mut Sheet, k: usize, cells: [&str; 5]| {
         let mut x = x0;
         for ((_, w), text) in LIST_COLUMNS.iter().zip(cells) {
@@ -846,7 +846,7 @@ fn draw_parts_list(sheet: &mut Sheet, parts: &[PartsListLine]) {
                 x + 1.0,
                 y0 + LIST_ROW * k as f64 + (LIST_ROW - LIST_TEXT) / 2.0,
             ];
-            sheet.label(Layer::Border, at, LIST_TEXT, Anchor::Start, text);
+            sheet.label(layer::BORDER, at, LIST_TEXT, Anchor::Start, text);
             x += w;
         }
     };
@@ -876,7 +876,7 @@ enum ThreadSeen {
 /// orthographic view seeing their axis from the side or end on: from the
 /// side two thin lines along the thread, at its minor diameter on a shaft
 /// and at its major diameter in a hole; end on, three quarters of a thin
-/// circle at that diameter. Each on [`Layer::Hidden`] where the threaded
+/// circle at that diameter. Each on [`layer::HIDDEN`] where the threaded
 /// face is hidden there, and labelled with its designation in the first
 /// view that draws it. A view seeing the axis obliquely, and the section
 /// view, draw no threads.
@@ -934,7 +934,7 @@ struct Seen<'a, 'p, S: Scalar> {
 fn draw_thread<S: Scalar>(
     sheet: &mut Sheet,
     seen: &Seen<'_, '_, S>,
-    thread: &geop_ops_hole::CosmeticThread<S>,
+    thread: &geop_ops::CosmeticThread<S>,
     start: Vector3<S>,
     along: Vector3<S>,
     label: bool,
@@ -1012,9 +1012,9 @@ fn draw_thread<S: Scalar>(
             continue;
         }
         let layer = if visible {
-            Layer::Thread
+            layer::THREAD
         } else {
-            Layer::Hidden
+            layer::HIDDEN
         };
         match seen {
             ThreadSeen::Side => {
@@ -1042,7 +1042,7 @@ fn draw_thread<S: Scalar>(
         }
         if !labelled {
             sheet.label(
-                Layer::Dimension,
+                layer::DIMENSION,
                 [label_at[0] + 1.5, label_at[1] + 1.5],
                 TEXT,
                 Anchor::Start,
@@ -1067,17 +1067,9 @@ fn grow(cells: &mut Vec<(usize, f64, f64)>, key: usize, size: f64, margin: f64) 
 
 /// Where a point of the view `p`, in model units on its paper, lands on
 /// the sheet.
-pub(crate) fn placer<S: Scalar>(p: &Placed<S>, scale: f64) -> impl Fn(P) -> P + '_ {
-    let mid = [
-        (p.extents[0] + p.extents[2]) / 2.0,
-        (p.extents[1] + p.extents[3]) / 2.0,
-    ];
-    move |q: P| {
-        [
-            p.center[0] + scale * (q[0] - mid[0]),
-            p.center[1] + scale * (q[1] - mid[1]),
-        ]
-    }
+pub(crate) fn placer<S: Scalar>(p: &Placed<S>, scale: f64) -> impl Fn(P) -> P {
+    let placement = Placement::of(p);
+    move |q: P| placement.place(scale, q)
 }
 
 /// The view `p`'s lines, hatching, centre marks, overall dimensions and
@@ -1090,9 +1082,9 @@ fn draw_view<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> GeopRes
         .iter()
         .map(|line| {
             let layer = if line.visible {
-                Layer::Visible
+                layer::VISIBLE
             } else {
-                Layer::Hidden
+                layer::HIDDEN
             };
             (layer, &line.curve)
         })
@@ -1100,7 +1092,7 @@ fn draw_view<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> GeopRes
     sheet.strokes.extend(strokes_of(&curves, &place, scale)?);
     for (boundary, mirrored) in &p.hatched {
         for (a, b) in hatch(boundary, scale, *mirrored)? {
-            sheet.stroke(Layer::Hatch, Shape::Line(place(a), place(b)));
+            sheet.stroke(layer::HATCH, Shape::Line(place(a), place(b)));
         }
     }
     if p.kind.orthographic() {
@@ -1137,7 +1129,7 @@ fn draw_view<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> GeopRes
         let [_, y0, _, _] = p.extents;
         let below = place([(p.extents[0] + p.extents[2]) / 2.0, y0]);
         sheet.label(
-            Layer::Dimension,
+            layer::DIMENSION,
             [below[0], below[1] - DIMENSION_OFFSET - 2.5 * TEXT],
             TEXT * 1.4,
             Anchor::Middle,
@@ -1154,7 +1146,7 @@ fn center_marks<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> Geop
     // (centre, radius, sweep in radians)
     let mut circles: Vec<(Vector3<S>, S, f64)> = Vec::new();
     for line in p.view.lines.iter().filter(|l| l.kind == LineKind::Edge) {
-        let lifted = lift(&line.curve)?;
+        let lifted = line.curve.lifted()?;
         let Some(arc) = lifted.as_arc()? else {
             continue;
         };
@@ -1184,36 +1176,15 @@ fn center_marks<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> Geop
         let c = place([center[0].to_f64(), center[1].to_f64()]);
         let reach = r * scale + CENTER_OVERSHOOT;
         sheet.stroke(
-            Layer::Center,
+            layer::CENTER,
             Shape::Line([c[0] - reach, c[1]], [c[0] + reach, c[1]]),
         );
         sheet.stroke(
-            Layer::Center,
+            layer::CENTER,
             Shape::Line([c[0], c[1] - reach], [c[0], c[1] + reach]),
         );
     }
     Ok(())
-}
-
-fn sub(a: P, b: P) -> P {
-    [a[0] - b[0], a[1] - b[1]]
-}
-
-fn add(a: P, b: P) -> P {
-    [a[0] + b[0], a[1] + b[1]]
-}
-
-fn times(a: P, s: f64) -> P {
-    [a[0] * s, a[1] * s]
-}
-
-fn unit(a: P) -> P {
-    let n = (a[0] * a[0] + a[1] * a[1]).sqrt();
-    if n > 0.0 {
-        times(a, 1.0 / n)
-    } else {
-        [1.0, 0.0]
-    }
 }
 
 /// Where the vertex `name` of the part `view` shows — or of a part placed
@@ -1234,16 +1205,10 @@ pub(crate) fn placed_vertex(view: BuildView, name: &str) -> GeopResult<Vector3<D
 /// The curve of the edge `name` of the part `view` shows — or of a part
 /// placed in it, named as that part names it — where it is.
 pub(crate) fn placed_edge(view: BuildView, name: &str) -> GeopResult<NurbCurve3D<Design>> {
-    let (owner, pose, local) = owner(view, &EntityRef::Edge { name: name.into() })?;
-    let owner = owner.retrieve_target(&model())?;
-    let curve = &owner
-        .topology()
-        .get_edge(owner.edge_id(&local.label())?)?
-        .curve;
-    Ok(match pose {
-        Some(pose) => curve.transform(&pose.motion()),
-        None => curve.clone(),
-    })
+    let edge = EntityRef::Edge { name: name.into() };
+    Aspects::of(&edge, &mut operation::Seen::new(view))?
+        .curve
+        .ok_or_else(|| GeopError::new(format!("{edge} has no curve")))
 }
 
 /// The border and the title block.
@@ -1252,21 +1217,21 @@ fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
     let corners =
         |x0: f64, y0: f64, x1: f64, y1: f64| vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]];
     sheet.stroke(
-        Layer::Border,
+        layer::BORDER,
         Shape::Polyline(corners(MARGIN, MARGIN, w - MARGIN, h - MARGIN)),
     );
     let (x0, y0) = (w - MARGIN - TITLE_WIDTH, MARGIN);
     let (x1, y1) = (w - MARGIN, MARGIN + TITLE_HEIGHT);
-    sheet.stroke(Layer::Border, Shape::Polyline(corners(x0, y0, x1, y1)));
+    sheet.stroke(layer::BORDER, Shape::Polyline(corners(x0, y0, x1, y1)));
     let row = TITLE_HEIGHT / 4.0;
     let half = x0 + TITLE_WIDTH / 2.0;
     for k in 1..4 {
         let y = y0 + row * k as f64;
-        sheet.stroke(Layer::Border, Shape::Line([x0, y], [x1, y]));
+        sheet.stroke(layer::BORDER, Shape::Line([x0, y], [x1, y]));
     }
     // The bottom two rows hold two fields each.
     sheet.stroke(
-        Layer::Border,
+        layer::BORDER,
         Shape::Line([half, y0], [half, y0 + 2.0 * row]),
     );
     let name = if args.name.is_empty() {
@@ -1276,14 +1241,14 @@ fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
     };
     let field = |sheet: &mut Sheet, x: f64, y: f64, caption: &str, value: &str| {
         sheet.label(
-            Layer::Border,
+            layer::BORDER,
             [x + 2.0, y + row - 3.0],
             2.0,
             Anchor::Start,
             caption,
         );
         sheet.label(
-            Layer::Border,
+            layer::BORDER,
             [x + 2.0, y + 1.5],
             TEXT,
             Anchor::Start,
@@ -1291,7 +1256,7 @@ fn draw_frame(sheet: &mut Sheet, args: &DrawingArgs, scale: f64, date: &str) {
         );
     };
     sheet.label(
-        Layer::Border,
+        layer::BORDER,
         [x0 + 3.0, y0 + 3.0 * row + 1.5],
         TITLE_TEXT * 0.8,
         Anchor::Start,
@@ -1332,30 +1297,19 @@ fn section_view(
     options: &ViewOptions,
 ) -> GeopResult<(ProjectedView<Design>, Vec<Hatched<Design>>)> {
     type S = Design;
-    let frame_of = plane.resolve_plane(&mut geop_ops::operation::Seen::new(view))?;
+    let frame_of = plane.resolve_plane(&mut operation::Seen::new(view))?;
     let normal = frame_of.w().normalize()?;
     let origin = *frame_of.origin();
     if scene.bodies.iter().all(|b| b.model().solids.is_empty()) {
         return Err(GeopError::new("the part has no solid to cut"));
     }
-    // Up on the paper: the world axis least along the line of sight.
-    let up = {
-        let axis = (0..3)
-            .min_by(|&a, &b| {
-                normal[a]
-                    .to_f64()
-                    .abs()
-                    .total_cmp(&normal[b].to_f64().abs())
-            })
-            .unwrap_or(2);
-        let axis = if normal[2].to_f64().abs() < 0.9 {
-            2
-        } else {
-            axis
-        };
-        let mut up = Vector3::zero();
-        up[axis] = S::ONE;
-        up
+    // Up on the paper: `z`, unless the line of sight runs nearly along it
+    // — then the world axis least along the line of sight, chosen as every
+    // direction across an axis is, not by noise (see `across`).
+    let up = if normal[2].to_f64().abs() < 0.9 {
+        Vector3::axis(2)
+    } else {
+        operation::across(&normal)?[0]
     };
     let frame = ViewFrame::looking(normal.neg(), up)?;
     // Each body as it is drawn: whole, or its part cut where the plane is
@@ -1422,17 +1376,13 @@ fn section_view(
         let motion = scene.bodies[*k].pose.map(|p| p.motion());
         for face in cut_faces(model, &drawn_faces(model), o, n)? {
             let mut boundary = Vec::new();
-            for coedge in model.iterate_face_coedges(face) {
-                if let geop_core_topology::CoedgeGeometry::Edge(edge) =
-                    model.get_coedge(coedge)?.geometry
-                {
-                    let curve = &model.get_edge(edge)?.curve;
-                    let curve = match &motion {
-                        Some(m) => curve.transform(m),
-                        None => curve.clone(),
-                    };
-                    boundary.push(frame.project_curve(&curve)?);
-                }
+            for edge in model.face_edges(face) {
+                let curve = &model.get_edge(edge)?.curve;
+                let curve = match &motion {
+                    Some(m) => curve.transform(m),
+                    None => curve.clone(),
+                };
+                boundary.push(frame.project_curve(&curve)?);
             }
             hatched.push((boundary, index % 2 == 1));
         }
@@ -1516,12 +1466,8 @@ fn hatch_line<S: Scalar>(
     a: P,
     b: P,
 ) -> GeopResult<Option<Vec<(P, P)>>> {
-    let point = |p: P| Vector3::from_array([S::from_f64(p[0]), S::from_f64(p[1]), S::ONE]);
-    let line = NurbCurve2D::try_new(
-        1,
-        vec![point(a), point(b)],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )?;
+    let point = |p: P| Vector2::from_array(p.map(S::from_f64));
+    let line = NurbCurve2D::line(point(a), point(b))?;
     let mut ts: Vec<f64> = Vec::new();
     for curve in boundary {
         let (overlaps, crossings) =

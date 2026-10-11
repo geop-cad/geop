@@ -17,11 +17,15 @@ use geop_ops::{
         Build, BuildReader, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope, Seen,
         build_model,
     },
+    ui::sketch_field,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Output, extrude::sketch_profile, sketch_field};
-use crate::loft::{Section, loft, mark};
+use super::Output;
+use crate::{
+    common::Profile,
+    loft::{Section, loft, mark},
+};
 
 /// Lofts through the profiles of two or more sketches, in order, into a
 /// solid named `loft(L)` for the operation `L` — each sketch's one area, a
@@ -84,7 +88,8 @@ impl Operation for Loft {
         "Build a solid through the areas of several sketches, or faces through their curves.",
         OperationGroup::Solid,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::LOFT);
     type Args = LoftArgs;
     type EditingState = ();
     type Input = Input;
@@ -249,7 +254,7 @@ fn section<S: Scalar>(
         }
         Shape::Chain(chain) => (chain, false),
     };
-    let mut profile = sketch_profile(
+    let mut profile = Profile::of_pieces(
         name,
         lp.to_nurbs(sketch, &geometry).with_context(ctx)?,
         closed,

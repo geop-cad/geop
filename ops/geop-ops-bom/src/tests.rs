@@ -17,10 +17,9 @@ use geop_ops::{
     operation::{Build, BuildReader, Input},
     parameters::{Material, Parameter, ParameterKind, Parameters, Row, Values},
     placed::{ABOUT, About, Component, Instance, Placement, instance},
+    solids::{CutWire, SolidNotes, solid_notes},
 };
 use geop_ops_extrude_revolve::shapes::cube::cube_solid;
-use geop_ops_harness::{Cable, Cables, CutWire, cables};
-use geop_ops_sheetmetal::{FlatPatternData, SheetBody, Sheets, sheets};
 
 use crate::{Bom, LineKind, Structure, bom};
 
@@ -297,14 +296,9 @@ fn an_indented_bill_follows_the_sub_assemblies() {
 fn a_plain_part_is_one_line_with_its_sheet_thickness() {
     let mut made = Made::new("parts/cover.geop", Parameters::default());
     cube(&mut made.model, "sheet", 1.0);
-    let mut recorded = Sheets::default();
-    let flat = FlatPatternData {
-        thickness: 1.5,
-        bends: Vec::new(),
-        pattern: Default::default(),
-    };
-    recorded.insert("cube(sheet)", SheetBody::Flat(flat));
-    let part = made.build(|part| part.define_target(&sheets(), &recorded, given).unwrap());
+    let mut noted = SolidNotes::default();
+    noted.note_mut("cube(sheet)").thickness = Some(1.5);
+    let part = made.build(|part| part.define_target(&solid_notes(), &noted, given).unwrap());
     for structure in [Structure::Flat, Structure::Indented] {
         let bom = bom(part.current(), structure).unwrap();
         assert_eq!(bom.lines.len(), 1, "{bom:#?}");
@@ -336,18 +330,13 @@ fn wires_are_lines_of_their_own() {
         gauge,
         cut_length: S::from_f64(250.0),
     };
-    let mut routed = Cables::default();
-    let cable = Cable {
-        length: S::from_f64(230.0),
-        diameter: 3.0,
-        min_bend_radius: 6.0,
-        tightest_bend: None,
-        wires: vec![wire("power", Some(22)), wire("signal, shielded", None)],
-    };
-    routed.add("cube(cable)", cable).unwrap();
+    let mut noted = SolidNotes::default();
+    let bundle = noted.note_mut("cube(cable)");
+    bundle.drawn_only = true;
+    bundle.wires = vec![wire("power", Some(22)), wire("signal, shielded", None)];
     let harness = {
         let (file, parameters) = (harness.file, harness.parameters.clone());
-        let part = harness.build(|part| part.define_target(&cables(), &routed, given).unwrap());
+        let part = harness.build(|part| part.define_target(&solid_notes(), &noted, given).unwrap());
         Rc::new(Component::new(
             file.into(),
             BTreeSet::from([file.into()]),

@@ -31,7 +31,9 @@
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
+    nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
     shape::{Arc, Axis, Circle, Plane},
 };
 use geop_core_math::{
@@ -42,14 +44,11 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, Curve3, FaceId, SolidId,
+    Curve3, FaceId, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-use geop_ops_extrude_revolve::common::line3;
-use geop_ops_shell::shell::{
-    MAX_NODES, PROJECT_ITERATIONS, extended, min_subdivision_size, offset_vertex, pcurve,
-};
+use geop_ops_shell::shell::{extended, offset_vertex, pcurve};
 
 use crate::common::{halfway, normal_at};
 
@@ -101,7 +100,7 @@ pub fn draft<S: Scalar>(
     let Some(&first) = faces.first() else {
         return Err(GeopError::new("pick the faces to draft")).with_context(ctx);
     };
-    let Body::Solid(solid) = model.body_of_face(first).with_context(ctx)? else {
+    let Some(solid) = model.solid_of_face(first).with_context(ctx)? else {
         return Err(GeopError::new(format!(
             "face {} stands on its own; only faces of a solid can be drafted",
             part.name(first)?
@@ -161,16 +160,10 @@ impl<S: Scalar> Tilt<'_, S> {
         let w = p[3];
         let c = hinge.point.prod_scalar(w);
         let v = Vector3::from_array([p[0], p[1], p[2]]).sub(&c);
-        let turned = self.rotate(&hinge.direction, &v).add(&c);
+        let turned = v
+            .rotated_about(&hinge.direction, self.cos, self.sin)
+            .add(&c);
         Vector4::from_array([turned[0], turned[1], turned[2], w])
-    }
-
-    /// `v` turned about the unit vector `k` (Rodrigues).
-    fn rotate(&self, k: &Vector3<S>, v: &Vector3<S>) -> Vector3<S> {
-        let along = k.prod_scalar(k.prod_dot(v).mul(S::ONE.sub(self.cos)));
-        v.prod_scalar(self.cos)
-            .add(&k.prod_cross(v).prod_scalar(self.sin))
-            .add(&along)
     }
 }
 
@@ -199,30 +192,26 @@ impl<'a, S: Scalar> Drafted<'a, S> {
         tilt: &Tilt<S>,
     ) -> GeopResult<Self> {
         let n_faces = spec.faces.len();
-        // Per vertex, each face around it once, with where the vertex is on
-        // the face's surface; per edge, the faces along it.
-        let mut around: Vec<Vec<(usize, Vector2<S>)>> = vec![Vec::new(); spec.vertices.len()];
-        let mut along: Vec<Vec<usize>> = vec![Vec::new(); spec.edges.len()];
         for (f, face) in spec.faces.iter().enumerate() {
             for lp in face.loops() {
                 for c in lp {
-                    let (_, end) = spec.ends(c.on)?;
-                    if !around[end].iter().any(|&(g, _)| g == f) {
-                        around[end].push((f, c.pcurve.ends()?.1));
-                    }
-                    match c.on {
-                        CoedgeOn::Edge(e, _) => along[e].push(f),
-                        CoedgeOn::Vertex(v) if drafted[f] => {
-                            return Err(GeopError::new(format!(
-                                "face {} comes to a point at vertex {}: only planar faces can be drafted",
-                                names.faces[f], names.vertices[v]
-                            )));
-                        }
-                        CoedgeOn::Vertex(_) => {}
+                    if let CoedgeOn::Vertex(v) = c.on
+                        && drafted[f]
+                    {
+                        return Err(GeopError::new(format!(
+                            "face {} comes to a point at vertex {}: only planar faces can be drafted",
+                            names.faces[f], names.vertices[v]
+                        )));
                     }
                 }
             }
         }
+        // Per vertex, each face around it once, with where the vertex is on
+        // the face's surface; per edge, the faces along it.
+        let around = spec.vertex_faces()?;
+        let along: Vec<Vec<usize>> = (spec.edge_uses().iter())
+            .map(|uses| uses.iter().map(|&(f, ..)| f).collect())
+            .collect();
         let moved: Vec<bool> = around
             .iter()
             .map(|faces| faces.iter().any(|&(f, _)| drafted[f]))
@@ -298,7 +287,9 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                 turned.recompute_aabb();
                 kinds[f] = Kind::Plane(Plane {
                     point: hinge.point,
-                    normal: tilt.rotate(&hinge.direction, &plane.normal),
+                    normal: plane
+                        .normal
+                        .rotated_about(&hinge.direction, tilt.cos, tilt.sin),
                 });
                 extended(turned)?
             } else if touched[f] {
@@ -368,7 +359,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             ))
         };
         let curve = match (&self.kinds[*f], &self.kinds[*g]) {
-            (Kind::Plane(_), Kind::Plane(_)) if !closed => line3(start, end)?,
+            (Kind::Plane(_), Kind::Plane(_)) if !closed => NurbCurve3D::line(start, end)?,
             (Kind::Plane(plane), Kind::Cylinder(axis))
             | (Kind::Cylinder(axis), Kind::Plane(plane)) => {
                 if plane
@@ -381,7 +372,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                     if closed {
                         return Err(unsupported());
                     }
-                    line3(start, end)?
+                    NurbCurve3D::line(start, end)?
                 } else {
                     section(axis, plane, &edge.curve, start, end, closed)?
                 }
@@ -389,7 +380,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             (Kind::Cylinder(a), Kind::Cylinder(b))
                 if !closed && a.could_be_parallel(b) && edge.curve.as_line()?.is_some() =>
             {
-                line3(start, end)?
+                NurbCurve3D::line(start, end)?
             }
             _ => return Err(unsupported()),
         };
@@ -480,21 +471,19 @@ impl<'a, S: Scalar> Drafted<'a, S> {
     /// per junction, so the coedges meeting there agree on it exactly.
     fn face_loop(&self, f: usize, coedges: &[CoedgeSpec<S>]) -> GeopResult<Vec<CoedgeSpec<S>>> {
         let surface = &self.surfaces[f];
-        let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
         // Where each coedge ends.
         let mut junctions = Vec::with_capacity(coedges.len());
         for c in coedges {
             let (_, end) = self.spec.ends(c.on)?;
             let old = c.pcurve.ends()?.1;
             junctions.push(if self.moved[end] || self.drafted[f] {
-                let (u, v) = surface.project(
+                let (u, v) = surface.project_in_domain(
                     self.points[end],
                     old[0].sharpen(),
                     old[1].sharpen(),
                     PROJECT_ITERATIONS,
                 )?;
-                // On the patch, as the vertex is.
-                Vector2::from_array([u.intersect(u0.union(u1)), v.intersect(v0.union(v1))])
+                Vector2::from_array([u, v])
             } else {
                 old
             });
@@ -601,23 +590,13 @@ fn plane_patch<S: Scalar>(
     e1: Vector3<S>,
     e2: Vector3<S>,
 ) -> GeopResult<NurbSurface3D<S>> {
-    let corner = |a: S, b: S| {
-        let p = center.add(&e1.prod_scalar(a)).add(&e2.prod_scalar(b));
-        Vector4::from_array([p[0], p[1], p[2], S::ONE])
-    };
+    let corner = |a: S, b: S| center.add(&e1.prod_scalar(a)).add(&e2.prod_scalar(b));
     let (lo, hi) = (S::ONE.neg(), S::ONE);
-    let knots = vec![S::ZERO, S::ZERO, S::ONE, S::ONE];
-    NurbSurface3D::try_new(
-        1,
-        1,
-        vec![
-            corner(lo, lo),
-            corner(lo, hi),
-            corner(hi, lo),
-            corner(hi, hi),
-        ],
-        knots.clone(),
-        knots,
+    NurbSurface3D::bilinear(
+        corner(lo, lo),
+        corner(hi, lo),
+        corner(hi, hi),
+        corner(lo, hi),
     )
 }
 

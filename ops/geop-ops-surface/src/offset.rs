@@ -69,7 +69,8 @@ impl Operation for OffsetSurface {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::OFFSET_SURFACE);
     type Args = OffsetSurfaceArgs;
     type EditingState = ();
     type Input = Input;

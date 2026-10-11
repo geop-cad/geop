@@ -14,7 +14,7 @@ use geop_core_program::{
 use geop_core_topology::{Body, SolidId};
 use geop_ops::operation::Input;
 use geop_ops::{
-    Design, FeatureTool, NamedModel, Namer, ParamValue,
+    Design, FeatureTool, NamedModel, Namer, ParamValue, ToolReach,
     operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen, build_model},
 };
 use serde::{Deserialize, Serialize};
@@ -72,7 +72,8 @@ impl Operation for Boolean {
         "Unite, intersect or subtract two solids.",
         OperationGroup::Bodies,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::BOOLEAN);
     type Args = BooleanArgs;
     type EditingState = ();
     type Input = Input;
@@ -104,8 +105,7 @@ impl Operation for Boolean {
         let ops = OPS
             .iter()
             .map(|&(_, value, label, _)| Choice::new(value, label));
-        let solid =
-            |name: &String| EntityRef::of_names(EntityRef::solid, std::slice::from_ref(name));
+        let solid = |name: &String| EntityRef::of_name(EntityRef::solid, name);
         (form.dialog)
             .reference("a", "a", solid(&args.a), &[Role::Solid], None, false)
             .reference("b", "b", solid(&args.b), &[Role::Solid], None, false)
@@ -178,7 +178,7 @@ impl Combine {
     /// The default for a step after `before`: joining the newest solid, if
     /// there is one — building onto what is there is the common case.
     pub fn new_for<S: Scalar>(before: &NamedModel<S>) -> Self {
-        match before.solid_names().pop() {
+        match before.newest_solid() {
             Some(target) => Combine::With {
                 op: BooleanOp::Union,
                 target,
@@ -237,7 +237,7 @@ impl Combine {
         match (key, value) {
             ("combine", Value::Choice(mode)) => {
                 let target = (self.target().map(str::to_string))
-                    .or_else(|| before.solid_names().pop())
+                    .or_else(|| before.newest_solid())
                     .unwrap_or_default();
                 if mode == NEW_BODY {
                     *self = Combine::NewBody;
@@ -305,18 +305,14 @@ impl Combine {
                     spec,
                     names,
                     op,
-                    up_to_next: tool.up_to_next.clone(),
-                    scope: tool.scope.clone(),
+                    reach: tool.reach.clone(),
                 },
             );
         }
         for (k, tool) in tools.iter().enumerate() {
-            let mut combine = Namer::new("combine", step)?;
-            if let Some(scope) = &tool.scope {
-                combine = combine.scoped(scope);
-            }
+            let combine = tool.namer(step)?;
             let params = RemeshParams::default();
-            let result = match &tool.up_to_next {
+            let result = match &tool.reach.up_to_next {
                 None => boolean(model, &combine, target, tool.solid, op, params),
                 Some((start, end)) => match boolean_up_to_next(
                     model,
@@ -395,11 +391,8 @@ fn new_body<S: Scalar>(
     let params = RemeshParams::default();
     let mut body: Option<SolidId> = None;
     for tool in tools {
-        let mut combine = Namer::new("combine", step)?;
-        if let Some(scope) = &tool.scope {
-            combine = combine.scoped(scope);
-        }
-        let piece = match &tool.up_to_next {
+        let combine = tool.namer(step)?;
+        let piece = match &tool.reach.up_to_next {
             None => tool.solid,
             Some(_) if stops.is_empty() => {
                 return Err(GeopError::new(
@@ -435,15 +428,12 @@ fn new_body<S: Scalar>(
 }
 
 /// One solid an extrude or revolve built, for [`Combine::apply`] to
-/// combine: the whole of it, or, with `up_to_next` — the names of its start
-/// and end faces — only up to the next face of the target (see
-/// [`boolean_up_to_next`]). `scope` tells its combination's names apart
-/// from another tool's of the same step (see [`Namer::scoped`]).
+/// combine: the whole of it, or, with an `up_to_next` reach, only up to the
+/// next face of the target (see [`boolean_up_to_next`]).
 #[derive(Clone, Debug)]
 pub struct Tool {
     pub solid: SolidId,
-    pub up_to_next: Option<(String, String)>,
-    pub scope: Option<String>,
+    pub reach: ToolReach,
 }
 
 impl Tool {
@@ -451,9 +441,18 @@ impl Tool {
     pub fn whole(solid: SolidId) -> Self {
         Tool {
             solid,
-            up_to_next: None,
-            scope: None,
+            reach: ToolReach::default(),
         }
+    }
+
+    /// The names of what combining it as the step `step` creates:
+    /// `combine(step)`, scoped by its reach's scope, if it has one.
+    fn namer(&self, step: &str) -> GeopResult<Namer> {
+        let combine = Namer::new("combine", step)?;
+        Ok(match &self.reach.scope {
+            Some(scope) => combine.scoped(scope),
+            None => combine,
+        })
     }
 }
 
@@ -503,7 +502,8 @@ impl Operation for Split {
         "Cut a solid into pieces with a face standing on its own.",
         OperationGroup::Bodies,
         OperationTier::Menu,
-    );
+    )
+    .icon(crate::icons::SPLIT);
     type Args = SplitArgs;
     type EditingState = ();
     type Input = Input;
@@ -513,7 +513,7 @@ impl Operation for Split {
     fn new_args(context: &Context<Input, ParamValue>) -> SplitArgs {
         let seen = Seen::new(context.before);
         SplitArgs {
-            solid: seen.model().solid_names().pop().unwrap_or_default(),
+            solid: seen.model().newest_solid().unwrap_or_default(),
             face: seen.model().sheet_face_names().pop().unwrap_or_default(),
         }
     }
@@ -525,8 +525,8 @@ impl Operation for Split {
     /// The solid and the face, picked.
     fn presentation(_: &Context<Input, ParamValue>, args: &SplitArgs, _: &()) -> Form<Design> {
         let mut form = Form::default();
-        let solid = EntityRef::of_names(EntityRef::solid, std::slice::from_ref(&args.solid));
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         (form.dialog)
             .reference("solid", "solid", solid, &[Role::Solid], None, false)
             .reference("face", "face", face, &[Role::Sheet], None, false);
@@ -544,11 +544,10 @@ impl Operation for Split {
             match (key.as_str(), value) {
                 ("solid", Value::Entities(picked)) => {
                     args.solid =
-                        (EntityRef::names_of(EntityRef::solid, &picked).pop()).unwrap_or_default();
+                        EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
                 }
                 ("face", Value::Entities(picked)) => {
-                    args.face =
-                        (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+                    args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
                 }
                 _ => {}
             }

@@ -2,10 +2,12 @@
 //! faces of models — each where a pose puts it — and the two points that
 //! attain it.
 
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
     scalars::Scalar,
+    solvers::minimize::alternate,
     vector::Vector3,
 };
 
@@ -26,10 +28,6 @@ const CURVE_SAMPLES: usize = 8;
 /// what is returned is attained whenever the moves stop.
 const MAX_ALTERNATIONS: usize = 64;
 
-/// The search budget and tolerance of the containment test that decides
-/// whether a foot point lies inside a face's trim (see [`face_contains`]).
-const CONTAINS_MAX_NODES: usize = 20_000;
-const CONTAINS_MIN_SUBDIVISION_SIZE: f64 = 1e-7;
 const SEED: u64 = 0xD157_A1CE_0000_0001;
 
 /// A face of a model, where `pose` puts it — or where it is, without one —
@@ -58,12 +56,10 @@ impl<'m, S: Scalar> PlacedFace<'m, S> {
                 inside.push(place(&pose, surface.evaluate(u, v)?));
             }
         }
-        let mut edges = Vec::new();
-        for coedge in model.iterate_face_coedges(face) {
-            if let Ok(edge) = model.get_coedge(coedge)?.edge() {
-                edges.push(model.get_edge(edge)?.curve.clone());
-            }
-        }
+        let edges = model
+            .face_edges(face)
+            .map(|edge| Ok(model.get_edge(edge)?.curve.clone()))
+            .collect::<GeopResult<_>>()?;
         Ok(Self {
             model,
             face,
@@ -77,15 +73,7 @@ impl<'m, S: Scalar> PlacedFace<'m, S> {
 
 /// Whether `(u, v)` lies on `face`: inside its trim, or on its boundary.
 fn contains<S: Scalar>(model: &Model<S>, face: FaceId, u: S, v: S) -> GeopResult<bool> {
-    let class = face_contains(
-        model,
-        face,
-        u,
-        v,
-        CONTAINS_MAX_NODES,
-        S::from_f64(CONTAINS_MIN_SUBDIVISION_SIZE),
-        SEED,
-    )?;
+    let class = face_contains(model, face, u, v, MAX_NODES, min_subdivision_size(), SEED)?;
     Ok(class != PointClassification::Outside)
 }
 
@@ -211,17 +199,15 @@ pub fn closest_points<S: Scalar>(a: &Feature<S>, b: &Feature<S>) -> GeopResult<C
             }
         }
     }
-    let (mut d, mut pa, mut pb) =
+    let (_, pa, pb) =
         best.ok_or_else(|| GeopError::new("closest_points: a feature has no points"))?;
-    for _ in 0..MAX_ALTERNATIONS {
-        let qb = b.closest_to(&pa)?;
-        let qa = a.closest_to(&qb)?;
-        let e = distance(&qa, &qb);
-        if e >= d {
-            break;
-        }
-        (d, pa, pb) = (e, qa, qb);
-    }
+    let (pa, pb) = alternate(
+        (pa, pb),
+        MAX_ALTERNATIONS,
+        |pa, pb| Ok::<_, GeopError>(distance(pa, pb)),
+        |pa| b.closest_to(pa),
+        |pb| a.closest_to(pb),
+    )?;
     Ok(Closest {
         distance: pa.sub(&pb).norm(),
         a: pa,

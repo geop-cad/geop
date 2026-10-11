@@ -27,7 +27,7 @@ pub use crate::residuals::{Geometry, Kind};
 use geop_core_program::target::TargetReference;
 use geop_ops::{
     Design,
-    operation::{EntityRef, INSTANCE_SEPARATOR, Role, describe_roles},
+    operation::{EntityRef, Role, describe_roles, instance_path},
 };
 use serde::{Deserialize, Serialize};
 
@@ -225,7 +225,7 @@ impl<T: Clone> On<T> {
     fn behind(&self, instance: &str) -> Self {
         On {
             body: Some(match &self.body {
-                Some(body) => format!("{instance}{INSTANCE_SEPARATOR}{body}"),
+                Some(body) => instance_path(instance, body),
                 None => instance.to_string(),
             }),
             what: self.what.clone(),
@@ -254,9 +254,7 @@ impl Resolved {
             },
             Resolved::Coupling { kind, joints } => Resolved::Coupling {
                 kind: *kind,
-                joints: joints
-                    .clone()
-                    .map(|joint| format!("{instance}{INSTANCE_SEPARATOR}{joint}")),
+                joints: joints.clone().map(|joint| instance_path(instance, &joint)),
             },
             Resolved::Fixed { .. } => return None,
         })

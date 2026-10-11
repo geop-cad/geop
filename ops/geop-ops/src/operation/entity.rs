@@ -13,7 +13,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-pub use geop_core_program::editing::{EntityRef, INSTANCE_SEPARATOR};
+pub use geop_core_program::editing::{EntityRef, INSTANCE_SEPARATOR, instance_path};
 use geop_core_sketch::Shape;
 use geop_core_topology::Body;
 
@@ -31,7 +31,9 @@ pub struct NamedCurve<S: Scalar> {
 /// A right-handed orthonormal frame at `origin` with `w` along `normal`,
 /// and `u` the world axis most parallel to the plane normal to it,
 /// projected into that plane (see [`across`]) — so frames with parallel
-/// normals line up.
+/// normals line up, and a frame put on an axis has `u` where a joint
+/// measures its turns from: two bodies mated on the same axis of each are
+/// at a turn of zero.
 pub fn frame_along<S: Scalar>(
     origin: Vector3<S>,
     normal: &Vector3<S>,
@@ -79,7 +81,7 @@ pub trait ResolveEntity {
     fn resolve_chain<S: Scalar>(
         &self,
         lookup: &mut (impl Lookup<S> + ?Sized),
-    ) -> GeopResult<Chain<S>>;
+    ) -> GeopResult<Chain<NurbCurve3D<S>>>;
     fn resolve_curve<S: Scalar>(
         &self,
         lookup: &mut (impl Lookup<S> + ?Sized),
@@ -169,7 +171,7 @@ impl ResolveEntity for EntityRef {
     fn resolve_chain<S: Scalar>(
         &self,
         lookup: &mut (impl Lookup<S> + ?Sized),
-    ) -> GeopResult<Chain<S>> {
+    ) -> GeopResult<Chain<NurbCurve3D<S>>> {
         let ctx = with_context!("resolving the curves of {self}");
         if self.split_instance().is_some() {
             return Err(GeopError::new(format!(
@@ -231,14 +233,7 @@ impl ResolveEntity for EntityRef {
                 };
                 let pieces = lp.to_nurbs(sketch, &geometry).with_context(ctx)?;
                 let plane = &placed.plane;
-                let (curve_names, joint_names) = piece_names(
-                    name,
-                    &pieces
-                        .iter()
-                        .map(|p| (p.name(), p.start.to_string(), p.end.to_string()))
-                        .collect::<Vec<_>>(),
-                    closed,
-                );
+                let (curve_names, joint_names) = piece_names(name, &pieces, closed);
                 Ok(Chain {
                     name: name.clone(),
                     curves: pieces
@@ -262,20 +257,7 @@ impl ResolveEntity for EntityRef {
                 };
                 let geometry = sketch.enclose::<S>().with_context(ctx)?;
                 let pieces = chain.to_nurbs(sketch, &geometry).with_context(ctx)?;
-                let (curve_names, joint_names) = piece_names(
-                    name,
-                    &pieces
-                        .iter()
-                        .map(|p| (p.name(), p.start.to_string(), p.end.to_string()))
-                        .collect::<Vec<_>>(),
-                    chain.closed,
-                );
-                Ok(Chain {
-                    name: name.clone(),
-                    curves: pieces.into_iter().map(|p| p.curve).collect(),
-                    curve_names,
-                    joint_names,
-                })
+                Ok(Chain::of_pieces(name, pieces, chain.closed))
             }
             other => Err(GeopError::new(format!(
                 "{other} has no curves: pick an edge, a sketch's curve, a sketch, or a 3-D sketch"

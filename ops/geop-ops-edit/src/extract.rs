@@ -54,7 +54,8 @@ impl Operation for ExtractFace {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::EXTRACT_FACE);
     type Args = ExtractFaceArgs;
     type EditingState = ();
     type Input = Input;
@@ -76,7 +77,7 @@ impl Operation for ExtractFace {
         _: &(),
     ) -> Form<Design> {
         let mut form = Form::default();
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         (form.dialog).reference("face", "face", face, &[Role::Face], None, false);
         form
     }
@@ -94,7 +95,7 @@ impl Operation for ExtractFace {
         } = event
             && key == "face"
         {
-            args.face = (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+            args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
         }
         (args, ())
     }

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use geop_core_geometry::nurb_curve::bezier_knots;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
@@ -96,8 +97,7 @@ impl Drawing {
     /// last point.
     pub fn bezier(&mut self, control: Vec<PointId>) -> CurveId {
         let n = control.len();
-        let mut knots = vec![Design::ZERO; n];
-        knots.extend(vec![Design::ONE; n]);
+        let knots = bezier_knots(n - 1);
         self.sketch.add_curve(CurveKind::Spline {
             control_points: control,
             shape: Some(SplineShape {

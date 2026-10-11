@@ -13,19 +13,19 @@ use geop_core_program::{
     editing::{Event, Form, Track, Unit, Value},
     operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
-use geop_core_sketch::{Enclosure, ProfilePiece, Region, Shape, Sketch, profile::curve_polyline};
+use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
-use geop_ops::operation::{Input, piece_names};
+use geop_ops::operation::Input;
 use geop_ops::{
     Design, EntityRef, NamedModel, Namer, ParamValue,
     operation::{Build, BuildReader, Lookup, ModelStep, Scope, Seen, build_model},
     parameters::Formula,
-    ui::formula_number,
+    ui::{formula_number, sketch_field},
 };
 use geop_ops_booleans::{Extent, extent::reach_past};
 use serde::{Deserialize, Serialize};
 
-use super::{Extents, Output, Sweeping, build_extents, sketch_field};
+use super::{Extents, Output, Sweeping, build_extents};
 use crate::{common::Profile, extrude::extrude, sweep::SweepLoop};
 
 /// Extrudes the one area of a sketch along the sketch plane's normal, into
@@ -102,7 +102,8 @@ impl Operation for Extrude {
         "Sweep a sketch's area along its plane's normal into a solid, or its curves into faces.",
         OperationGroup::Solid,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::EXTRUDE);
     type Args = ExtrudeArgs;
     type EditingState = ();
     type Input = Input;
@@ -164,8 +165,7 @@ impl Operation for Extrude {
         };
         match (key.as_str(), &value) {
             ("sketch", Value::Entities(picked)) => {
-                args.sketch =
-                    (EntityRef::names_of(EntityRef::sketch, picked).pop()).unwrap_or_default();
+                args.sketch = EntityRef::last_name(EntityRef::sketch, picked).unwrap_or_default();
             }
             ("distance", _) => {
                 let to = Formula::from_value(&value).and_then(|length| length.plain());
@@ -272,7 +272,7 @@ fn region_loops<S: Scalar>(
     std::iter::once(&region.outer)
         .chain(&region.holes)
         .map(|lp| {
-            Ok(SweepLoop::plain(sketch_profile(
+            Ok(SweepLoop::plain(Profile::of_pieces(
                 name,
                 lp.to_nurbs(sketch, geometry)?,
                 true,
@@ -291,30 +291,11 @@ pub fn shape_loops<S: Scalar>(
 ) -> GeopResult<Vec<SweepLoop<S>>> {
     match shape {
         Shape::Region(region) => region_loops(name, sketch, geometry, &region),
-        Shape::Chain(chain) => Ok(vec![SweepLoop::plain(sketch_profile(
+        Shape::Chain(chain) => Ok(vec![SweepLoop::plain(Profile::of_pieces(
             name,
             chain.to_nurbs(sketch, geometry)?,
             false,
         ))]),
-    }
-}
-
-/// The pieces of a sketch loop or chain as a [`Profile`] named after the
-/// sketch `sketch` and its elements (see [`piece_names`]).
-pub(crate) fn sketch_profile<S: Scalar>(
-    sketch: &str,
-    pieces: Vec<ProfilePiece<S>>,
-    closed: bool,
-) -> Profile<S> {
-    let named: Vec<_> = pieces
-        .iter()
-        .map(|p| (p.name(), p.start.to_string(), p.end.to_string()))
-        .collect();
-    let (curve_names, joint_names) = piece_names(sketch, &named, closed);
-    Profile {
-        curves: pieces.into_iter().map(|p| p.curve).collect(),
-        curve_names,
-        joint_names,
     }
 }
 

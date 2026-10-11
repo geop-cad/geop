@@ -14,7 +14,7 @@ use geop_ops::operation::Input;
 use geop_ops::parameters::expressions;
 use geop_ops::{
     Design, NamedModel, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
+    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
     origin_axis,
     parameters::Formula,
     ui::formula_number,
@@ -22,8 +22,8 @@ use geop_ops::{
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    Naming, Pattern, Seeds, Spacing, build_pattern, count_field, count_of, direction, run_pattern,
-    track, whole_count,
+    Naming, Pattern, Seeds, Spacing, build_pattern, count_field, count_of, run_pattern, track,
+    whole_count,
 };
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
@@ -155,7 +155,7 @@ impl Direction {
     fn unit<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Vector3<S>> {
         let along = (self.along.as_ref())
             .ok_or_else(|| GeopError::new("pick a direction to pattern along"))?;
-        let d = direction(lookup, along)?;
+        let d = Aspects::direction_of(along, lookup)?;
         Ok(if self.reversed { d.neg() } else { d })
     }
 
@@ -303,7 +303,8 @@ impl Operation for LinearPattern {
         "Copy bodies in a row along a direction, or in a grid along two.",
         OperationGroup::Bodies,
         OperationTier::Big,
-    );
+    )
+    .icon(geop_ops::ui::icons::LINEAR_PATTERN);
     type Args = LinearPatternArgs;
     type EditingState = ();
     type Input = Input;

@@ -16,46 +16,13 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    plain::{P3, add, cross, distance, dot, norm, normalize, scale, sub},
     primitives::{Pose, Quaternion},
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
 
 use super::reader::{Args, Reader, unsupported};
-
-pub type P3 = [f64; 3];
-
-pub fn add(a: P3, b: P3) -> P3 {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-pub fn sub(a: P3, b: P3) -> P3 {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-pub fn scale(a: P3, s: f64) -> P3 {
-    [a[0] * s, a[1] * s, a[2] * s]
-}
-pub fn dot(a: P3, b: P3) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-pub fn cross(a: P3, b: P3) -> P3 {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-pub fn norm(a: P3) -> f64 {
-    dot(a, a).sqrt()
-}
-pub fn distance(a: P3, b: P3) -> f64 {
-    norm(sub(a, b))
-}
-
-/// `a` scaled to unit length, or `None` if it has none.
-pub fn normalize(a: P3) -> Option<P3> {
-    let n = norm(a);
-    (n > 0.0 && n.is_finite()).then(|| scale(a, 1.0 / n))
-}
 
 /// A right-handed orthonormal frame: `AXIS2_PLACEMENT_3D`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -487,7 +454,9 @@ impl Revolved {
     pub fn profile_curve<S: Scalar>(&self, v0: f64, v1: f64) -> GeopResult<NurbCurve3D<S>> {
         let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
         match &self.profile {
-            Profile::Line { .. } => line(&s3(self.profile_point(v0)), &s3(self.profile_point(v1))),
+            Profile::Line { .. } => {
+                NurbCurve3D::line(s3(self.profile_point(v0)), s3(self.profile_point(v1)))
+            }
             Profile::Sphere { radius } | Profile::Circle { radius, .. } => {
                 let center = match &self.profile {
                     Profile::Circle { rho, h, .. } => self.frame.point([*rho, 0.0, *h]),
@@ -575,12 +544,6 @@ impl Revolved {
         let o = Vector3::from_array(self.frame.origin.map(S::from_f64));
         Pose::new(o.sub(&turned.apply(&o)), rotation)
     }
-}
-
-/// The straight line from `a` to `b`, on `[0, 1]`.
-pub fn line<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> GeopResult<NurbCurve3D<S>> {
-    let h = |p: &Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
-    NurbCurve::try_new(1, vec![h(a), h(b)], vec![S::ZERO, S::ZERO, S::ONE, S::ONE])
 }
 
 impl NurbsCurve {
@@ -692,7 +655,7 @@ impl CurveDef {
                         "a straight edge cannot start and end at the same vertex",
                     ));
                 }
-                line(&s3(from), &s3(to))
+                NurbCurve3D::line(s3(from), s3(to))
             }
             CurveDef::Circle { frame, radius } => Arc {
                 circle: Circle {
@@ -816,8 +779,8 @@ fn trim<S: Scalar>(
     uncertainty: f64,
 ) -> GeopResult<NurbCurve3D<S>> {
     let (lo, hi) = curve.domain();
-    let start = to_p3(&curve.evaluate(lo)?);
-    let end = to_p3(&curve.evaluate(hi)?);
+    let start = curve.evaluate(lo)?.to_f64_array();
+    let end = curve.evaluate(hi)?.to_f64_array();
     let t0 = if distance(start, from) <= uncertainty {
         None
     } else {
@@ -839,10 +802,6 @@ fn trim<S: Scalar>(
         )));
     }
     curve.sub_curve(a, b)
-}
-
-pub fn to_p3<S: Scalar>(p: &Vector3<S>) -> P3 {
-    [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
 }
 
 /// Where on `curve` the point `p` is: the parameter of its nearest point,
@@ -1557,5 +1516,5 @@ pub fn point_at<S: Scalar>(curve: &NurbCurve3D<S>, t: f64) -> GeopResult<P3> {
     } else {
         S::from_f64(t)
     };
-    Ok(to_p3(&curve.evaluate(t)?))
+    Ok(curve.evaluate(t)?.to_f64_array())
 }

@@ -21,7 +21,7 @@ use geop_core_math::{
 };
 
 use super::{
-    geometry::{Frame, Placement, Scope},
+    geometry::{Placement, Scope},
     reader::{Args, Reader, unsupported},
 };
 use crate::part21::{Instance, Value};
@@ -190,12 +190,6 @@ impl Reader<'_> {
         ))
     }
 
-    /// The placement `#id` as a frame of the representation read in
-    /// `scope`.
-    fn placement_frame(&self, scope: &Scope, id: u64) -> GeopResult<Frame> {
-        self.frame(scope, id)
-    }
-
     /// Every body of the file, each with where it is placed.
     pub fn bodies(&self) -> GeopResult<Vec<Item>> {
         let exchange = self.exchange;
@@ -256,7 +250,6 @@ impl Reader<'_> {
                     // (the recommended practice); the products related
                     // decide below where a writer did otherwise.
                     placed.push((rep_2, rep_1, t_args.reference(3)?, t_args.reference(2)?));
-                    let _ = id;
                 }
             }
         }
@@ -474,10 +467,9 @@ impl Reader<'_> {
                             own.to_string()
                         },
                     });
-                } else if let Some((name, why)) =
+                } else if let Some((_, why)) =
                     REFUSED_BODY_TYPES.iter().find(|(t, _)| instance.is(t))
                 {
-                    let _ = name;
                     return Err(unsupported(item, instance, why));
                 } else if instance.is("MAPPED_ITEM") {
                     let args = self.args(item, "MAPPED_ITEM")?;
@@ -486,8 +478,8 @@ impl Reader<'_> {
                     let Some((_, child_scope, _)) = reps.get(&mapped) else {
                         continue;
                     };
-                    let origin = self.placement_frame(child_scope, map.reference(0)?)?;
-                    let target = self.placement_frame(scope, args.reference(2)?)?;
+                    let origin = self.frame(child_scope, map.reference(0)?)?;
+                    let target = self.frame(scope, args.reference(2)?)?;
                     let motion = Placement::of(&origin)
                         .inverse()
                         .then(&Placement::of(&target))
@@ -514,8 +506,8 @@ impl Reader<'_> {
         for &(parent, child, parent_item, child_item) in edges.get(&group).into_iter().flatten() {
             let parent_scope = reps[&parent].1;
             let child_scope = reps[&child].1;
-            let target = self.placement_frame(&parent_scope, parent_item)?;
-            let origin = self.placement_frame(&child_scope, child_item)?;
+            let target = self.frame(&parent_scope, parent_item)?;
+            let origin = self.frame(&child_scope, child_item)?;
             let motion = Placement::of(&origin)
                 .inverse()
                 .then(&Placement::of(&target))

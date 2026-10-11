@@ -50,8 +50,9 @@ use std::collections::HashMap;
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
-    nurb_curve::NurbCurve3D,
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
     nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
     shape::{Arc, Circle},
 };
 use geop_core_math::{
@@ -70,19 +71,6 @@ use geop_core_topology::{
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-use geop_ops_extrude_revolve::common::{line2, line3};
-
-/// Bounds how hard a containment search or a pcurve fit tries: effort, not
-/// what an answer means.
-pub const MAX_NODES: usize = 20_000;
-
-/// Where a containment search hands over to Newton (see `AGENTS.md`).
-pub fn min_subdivision_size<S: Scalar>() -> S {
-    S::from_f64(1e-7)
-}
-
-/// Newton steps projecting a point onto a surface.
-pub const PROJECT_ITERATIONS: usize = 20;
 
 /// Newton steps moving a vertex onto the offsets of its faces, at most: a
 /// vertex between planes lands in one, and curved faces converge
@@ -247,18 +235,7 @@ fn inward_corner<S: Scalar>(
     spec: &BodySpec<S>,
     removed: &[bool],
 ) -> GeopResult<Option<(usize, usize, usize)>> {
-    // Per edge, the faces it bounds, each with its coedge's sense and pcurve.
-    let mut sides: Vec<Vec<(usize, Sense, &Curve2<S>)>> = vec![Vec::new(); spec.edges.len()];
-    for (f, face) in spec.faces.iter().enumerate() {
-        for lp in face.loops() {
-            for c in lp {
-                if let CoedgeOn::Edge(e, sense) = c.on {
-                    sides[e].push((f, sense, &c.pcurve));
-                }
-            }
-        }
-    }
-    for (e, at) in sides.iter().enumerate() {
+    for (e, at) in spec.edge_uses().iter().enumerate() {
         let [(f, f_sense, f_pcurve), (g, _, g_pcurve)] = match *at.as_slice() {
             [a, b] if removed[a.0] && !removed[b.0] => [a, b],
             [a, b] if removed[b.0] && !removed[a.0] => [b, a],
@@ -371,9 +348,6 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         let mut walled = vec![false; spec.vertices.len()];
         let mut open_edge = vec![true; spec.edges.len()];
         let mut uses = vec![0usize; spec.edges.len()];
-        // Per vertex, each face around it once, with where the vertex is on
-        // the face's surface.
-        let mut around: Vec<Vec<(usize, Vector2<S>)>> = vec![Vec::new(); spec.vertices.len()];
         for (f, face) in spec.faces.iter().enumerate() {
             for lp in face.loops() {
                 for c in lp {
@@ -383,12 +357,12 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                         open_edge[e] &= removed[f];
                         uses[e] += 1;
                     }
-                    if !around[end].iter().any(|&(g, _)| g == f) {
-                        around[end].push((f, c.pcurve.ends()?.1));
-                    }
                 }
             }
         }
+        // Per vertex, each face around it once, with where the vertex is on
+        // the face's surface.
+        let around = spec.vertex_faces()?;
 
         let inner_surfaces =
             spec.faces
@@ -491,10 +465,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
 
     /// The faces the edge `e` runs between.
     fn faces_of_edge(&self, e: usize) -> Vec<usize> {
-        self.coedges()
-            .filter(|(_, c)| matches!(c.on, CoedgeOn::Edge(x, _) if x == e))
-            .map(|(at, _)| at.f)
-            .collect()
+        self.spec.edge_uses()[e].iter().map(|&(f, ..)| f).collect()
     }
 
     fn inner_point(&self, v: usize) -> Vector3<S> {
@@ -567,15 +538,12 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             }
             let seed = c.pcurve.ends()?.1;
             let surface = &self.inner_surfaces[at.f];
-            let (u, v) = surface.project(
+            let (u, v) = surface.project_in_domain(
                 self.inner_point(end),
                 seed[0].sharpen(),
                 seed[1].sharpen(),
                 PROJECT_ITERATIONS,
             )?;
-            // On the patch, as the vertex is.
-            let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-            let (u, v) = (u.intersect(u0.union(u1)), v.intersect(v0.union(v1)));
             out.insert(at, Vector2::from_array([u, v]));
         }
         Ok(out)
@@ -613,13 +581,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
     /// made of.
     fn result(&self, namer: &Namer) -> GeopResult<(BodySpec<S>, BodyNames)> {
         let spec = self.spec;
-        let mut out = BodySpec {
-            vertices: Vec::new(),
-            edges: Vec::new(),
-            faces: Vec::new(),
-            shells: Vec::new(),
-            solid: true,
-        };
+        let mut out = BodySpec::new(true);
         let mut names = BodyNames {
             solid: Some(namer.root()),
             ..Default::default()
@@ -760,7 +722,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                 if side[v].is_none() {
                     side[v] = Some(out.edges.len());
                     out.edges.push(EdgeSpec {
-                        curve: line3(spec.vertices[v], self.inner_point(v))?,
+                        curve: NurbCurve3D::line(spec.vertices[v], self.inner_point(v))?,
                         start: at.vertex[v].unwrap(),
                         end: at.inner_vertex[v].unwrap(),
                     });
@@ -771,13 +733,6 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             }
             let outer = sense.orient(&spec.edges[e].curve);
             let inner = sense.orient(self.inner_curves[e].as_ref().expect("not open"));
-            let square = |k: usize| -> GeopResult<Curve2<S>> {
-                let corner = |k: usize| {
-                    let (u, v) = [(0, 0), (1, 0), (1, 1), (0, 1)][k % 4];
-                    Vector2::from_array([S::from_i64(u), S::from_i64(v)])
-                };
-                line2(corner(k), corner(k + 1))
-            };
             // From the inner copy, at `v = 0`, out to the edge, at `v = 1`:
             // running round it counter-clockwise, the wall runs the edge
             // the other way than its face does, and faces away from it.
@@ -788,22 +743,10 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                 CoedgeOn::Edge(side[x].unwrap(), Sense::Forward),
             ];
             walls.push(out.faces.len());
-            out.faces.push(FaceSpec {
-                surface: NurbSurface3D::ruled(&inner, &outer).map_err(|err| {
-                    err.with_context(format!("the wall along edge {}", self.names.edges[e]))
-                })?,
-                outer: lp
-                    .into_iter()
-                    .enumerate()
-                    .map(|(k, on)| {
-                        Ok(CoedgeSpec {
-                            on,
-                            pcurve: square(k)?,
-                        })
-                    })
-                    .collect::<GeopResult<_>>()?,
-                holes: Vec::new(),
-            });
+            let surface = NurbSurface3D::ruled(&inner, &outer).map_err(|err| {
+                err.with_context(format!("the wall along edge {}", self.names.edges[e]))
+            })?;
+            out.faces.push(FaceSpec::on_unit_square(surface, lp)?);
             names
                 .faces
                 .push(namer.name(&[&self.names.edges[e], "side"]));
@@ -827,13 +770,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
     /// each copy of `X` named `N(X)` for `namer`'s `N`.
     fn inner_side(&self, namer: &Namer) -> GeopResult<(BodySpec<S>, BodyNames)> {
         let spec = self.spec;
-        let mut out = BodySpec {
-            vertices: Vec::new(),
-            edges: Vec::new(),
-            faces: Vec::new(),
-            shells: Vec::new(),
-            solid: false,
-        };
+        let mut out = BodySpec::new(false);
         let mut names = BodyNames::default();
         let mut vertex = vec![None; spec.vertices.len()];
         for (v, name) in self.names.vertices.iter().enumerate() {
@@ -1076,7 +1013,7 @@ fn shaped_like<S: Scalar>(
     closed: bool,
 ) -> GeopResult<Curve3<S>> {
     if curve.as_line()?.is_some() {
-        return line3(start, end);
+        return NurbCurve3D::line(start, end);
     }
     let Some(arc) = curve.as_arc()? else {
         return Err(GeopError::new(
@@ -1107,7 +1044,7 @@ fn shaped_like<S: Scalar>(
         .iter()
         .map(|cp| {
             let w = cp[3];
-            let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
+            let p = cp.dehomogenized()?;
             let moved = center.add(&p.sub(&arc.circle.center).prod_scalar(scale));
             Ok(Vector::from_array([
                 moved[0].mul(w),
@@ -1151,7 +1088,7 @@ pub fn pcurve<S: Scalar>(
     end: Vector2<S>,
 ) -> GeopResult<Curve2<S>> {
     let Some(curve) = curve else {
-        return line2(start, end);
+        return NurbCurve2D::line(start, end);
     };
     let straight = original.degree == 1 && original.control_points.len() == 2 && {
         let (a, b) = original.ends()?;
@@ -1159,7 +1096,7 @@ pub fn pcurve<S: Scalar>(
         surface.as_plane()?.is_some() || keeps(0) || keeps(1)
     };
     if straight {
-        return line2(start, end);
+        return NurbCurve2D::line(start, end);
     }
     surface.fit_pcurve(
         curve,
@@ -1203,11 +1140,16 @@ pub fn extended<S: Scalar>(mut surface: NurbSurface3D<S>) -> GeopResult<NurbSurf
         }
         // A row that is a single point — a pole, like a disc's center —
         // would end up inside the extended patch, where it has no normal.
-        let pole = |row: usize| {
-            let first = dehomogenized(&cps[index(row, 0)]);
-            (1..other).all(|j| dehomogenized(&cps[index(row, j)]).could_be_equal(&first))
+        let pole = |row: usize| -> GeopResult<bool> {
+            let first = cps[index(row, 0)].dehomogenized()?;
+            for j in 1..other {
+                if !cps[index(row, j)].dehomogenized()?.could_be_equal(&first) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
         };
-        if pole(0) || pole(1) {
+        if pole(0)? || pole(1)? {
             continue;
         }
         let mut control_points = cps.clone();
@@ -1245,12 +1187,6 @@ pub fn extended<S: Scalar>(mut surface: NurbSurface3D<S>) -> GeopResult<NurbSurf
         };
     }
     Ok(surface)
-}
-
-/// The point the homogeneous control point `p` stands for.
-fn dehomogenized<S: Scalar>(p: &Vector<S, 4>) -> Vector3<S> {
-    let w = p[3];
-    Vector3::from_array([0, 1, 2].map(|k| p[k].div(w).unwrap_or(S::ENTIRE)))
 }
 
 /// The inner copy of the vertex at `point`: where the surfaces around it

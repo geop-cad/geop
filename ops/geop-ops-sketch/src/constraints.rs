@@ -125,7 +125,8 @@ pub enum ConstraintTool {
 /// What the palette shows of a constraint tool.
 pub struct ToolInfo {
     pub tool: ConstraintTool,
-    /// Its name in events and the icon it is shown as.
+    /// Its name in events, and what its icon is found by (see
+    /// [`crate::icons::named`]).
     pub name: &'static str,
     pub label: &'static str,
     /// What it takes and does.
@@ -449,7 +450,9 @@ impl ConstraintTool {
                         });
                     }
                 }
-                fixed.dedup();
+                // Each point once, where it is first picked.
+                let mut once = std::collections::BTreeSet::new();
+                fixed.retain(|point| once.insert(*point));
                 out.extend(fixed.into_iter().map(|point| {
                     let q = p(point);
                     Fix {
@@ -597,41 +600,21 @@ fn point_line_distance(sketch: &Sketch, point: PointId, line: CurveId) -> Option
 /// The value of a dimensional constraint, as it is given: an angle in
 /// degrees.
 pub fn value(c: &Constraint) -> Option<f64> {
-    use geop_core_sketch::Constraint::*;
-    match *c {
-        Distance { value, .. }
-        | DistanceX { value, .. }
-        | DistanceY { value, .. }
-        | PointLineDistance { value, .. }
-        | Length { value, .. }
-        | Radius { value, .. }
-        | Diameter { value, .. }
-        | Offset { value, .. } => Some(value.to_f64()),
-        Angle { value, .. } => Some(value.to_f64().to_degrees()),
-        _ => None,
-    }
+    let value = c.value()?.to_f64();
+    Some(match c {
+        Constraint::Angle { .. } => value.to_degrees(),
+        _ => value,
+    })
 }
 
 /// `c` with its value set to `v`, as it is given — an angle in degrees —
 /// if it has one.
 pub fn set_value(c: &mut Constraint, v: f64) {
-    use geop_core_sketch::Constraint::*;
     let v = match c {
-        Angle { .. } => v.to_radians(),
+        Constraint::Angle { .. } => v.to_radians(),
         _ => v,
     };
-    if let Distance { value, .. }
-    | DistanceX { value, .. }
-    | DistanceY { value, .. }
-    | PointLineDistance { value, .. }
-    | Length { value, .. }
-    | Radius { value, .. }
-    | Diameter { value, .. }
-    | Offset { value, .. }
-    | Angle { value, .. } = c
-    {
-        *value = Design::from_f64(v);
-    }
+    c.set_value(Design::from_f64(v));
 }
 
 /// A dimension's value, as it is shown.
@@ -879,5 +862,28 @@ mod tests {
         let built = ConstraintTool::DistanceX.build(&s, &pp).unwrap();
         assert_eq!(built.len(), 1);
         assert!((value(&built[0]).unwrap() - 1.0).abs() < 1e-12);
+    }
+
+    /// Fixing two lines that share a point, which is not where the list of
+    /// their points has it twice in a row — the first's start, the second's
+    /// end — fixes each point once.
+    #[test]
+    fn fixing_lines_fixes_a_shared_point_once() {
+        let mut s = Sketch::new();
+        let a = s.add_point(n(0.0), n(0.0));
+        let b = s.add_point(n(1.0), n(0.0));
+        let c = s.add_point(n(1.0), n(1.0));
+        let first = s.add_line(a, b);
+        let second = s.add_line(c, a);
+        let picks = [Pick::Curve(first), Pick::Curve(second)];
+        let built = ConstraintTool::Fix.build(&s, &picks).unwrap();
+        let mut fixed: Vec<PointId> = (built.iter())
+            .filter_map(|c| match c {
+                Constraint::Fix { point, .. } => Some(*point),
+                _ => None,
+            })
+            .collect();
+        fixed.sort();
+        assert_eq!(fixed, [a, b, c]);
     }
 }

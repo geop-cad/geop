@@ -490,9 +490,9 @@ await check("a 3-D sketch's point is clicked and measured, as a vertex", async (
   await inspector(page, "Measure").click();
   await settle(page);
   await clickView(-220, -90);
-  const picked = await page.locator(".inspect-entity").allInnerTexts();
+  const picked = await page.locator(".inspect-list li").allInnerTexts();
   expect(
-    picked.length === 1 && /^Vertex sketch3d\([^,]+,p\d+\)$/.test(picked[0].trim()),
+    picked.length === 1 && /^vertex "sketch3d\([^,]+,p\d+\)"$/.test(picked[0].trim()),
     `picked: ${picked.join(", ") || "nothing"}`,
   );
   const rows = await page.locator(".inspect-table th").allInnerTexts();
@@ -867,7 +867,7 @@ await check("the bill of materials is saved as CSV", async () => {
   await builtCleanly();
   await inspector(page, "Bill of materials").click();
   await settle(page);
-  const lines = await page.locator(".bom-table tbody tr").count();
+  const lines = await page.locator(".inspect-result .inspect-table tbody tr").count();
   expect(lines > 1, `the bill of materials lists ${lines} lines`);
   const file = await downloaded(() => page.locator(".inspect-result button", { hasText: "Save CSV" }).click());
   expect(file.name.endsWith(".csv"), `downloaded ${file.name}`);

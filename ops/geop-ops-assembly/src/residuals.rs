@@ -8,7 +8,6 @@
 //! residual carries its derivatives (see `crate::mechanism`).
 
 use geop_core_math::{
-    dual::Dual,
     geop_error::{GeopError, GeopResult},
     primitives::{Motion, Pose},
     scalars::{Field, Ring, Scalar, as_f64},
@@ -20,9 +19,7 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Numbers that carry their derivatives by one state's step: six, as many
-/// as a pose's.
-pub type D = Dual<Design, 6>;
+pub use geop_ops::solving::D;
 
 /// Where a pose puts the points of a part and turns its directions — or,
 /// with none, where they are: of a part that never moves.

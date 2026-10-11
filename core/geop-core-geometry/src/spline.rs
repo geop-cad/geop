@@ -3,6 +3,7 @@
 //! homogeneous space, before any division by the weight.
 
 use geop_core_math::{
+    combinatorics::binomial,
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector,
@@ -239,11 +240,6 @@ pub(crate) fn homogeneous_derivatives<S: Scalar, const D: usize>(
         out.push(de_boor(p - k, &knots[base + k..], &points, t, p - k));
     }
     out
-}
-
-/// `binom(n, k)`, for the small degrees splines here have.
-fn binomial(n: usize, k: usize) -> i64 {
-    (0..k).fold(1i64, |acc, i| acc * (n - i) as i64 / (i as i64 + 1))
 }
 
 /// Cartesian derivatives `[C, C', …, C⁽ⁿ⁾]` (`C = D − 1` components) from the

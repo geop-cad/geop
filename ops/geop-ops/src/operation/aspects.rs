@@ -226,6 +226,31 @@ impl<S: Scalar> Aspects<S> {
         })
     }
 
+    /// The direction it has: a line's, or a plane's normal — `true` for a
+    /// normal.
+    pub fn direction(&self) -> Option<(Vector3<S>, bool)> {
+        match (&self.line, &self.plane) {
+            (Some(line), _) => Some((line.direction, false)),
+            (None, Some(plane)) => Some((*plane.w(), true)),
+            _ => None,
+        }
+    }
+
+    /// The direction `entity` gives in `lookup` (see [`Aspects::direction`]):
+    /// a line's — a straight edge, a datum axis, a sketch line — or a
+    /// plane's normal.
+    pub fn direction_of(
+        entity: &EntityRef,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Vector3<S>> {
+        let aspects = Self::of(entity, lookup)?;
+        aspects.direction().map(|(d, _)| d).ok_or_else(|| {
+            GeopError::new(format!(
+                "{entity} gives no direction: pick a straight edge, an axis, or a plane to go along its normal"
+            ))
+        })
+    }
+
     /// What it is once its part is moved by `pose`: a part placed in
     /// another is used as it is placed.
     pub fn placed(self, placement: &Pose<S>) -> GeopResult<Self> {

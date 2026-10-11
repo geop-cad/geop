@@ -10,7 +10,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Event, Form, Tone, Value},
+    editing::{Event, Form, Value},
     operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_sketch::Shape;
@@ -18,12 +18,13 @@ use geop_ops::{
     Design, NamedModel, Namer, ParamValue, PlacedSketch,
     model::model_or_empty,
     operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen},
+    ui::sketch_field,
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::{self, Made, Making, SheetStep, Sheets, sheets_of},
+    body::{self, Made, Making, SheetBody, SheetStep, Sheets, sheets_of},
     sheet::{Cut, FlatEdge, Placement, Sheet},
 };
 
@@ -111,7 +112,8 @@ impl Operation for SheetCut {
         "Cut holes and notches through a sheet-metal body along a sketch, across its bends unrolled.",
         OperationGroup::SheetMetal,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::SHEET_CUT);
     type Args = SheetCutArgs;
     type EditingState = ();
     type Input = Input;
@@ -140,23 +142,9 @@ impl Operation for SheetCut {
     ) -> Form<Design> {
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        if Seen::new(context.before).sketches().is_empty() {
-            dialog.text("sketch", "No sketch yet — add one first.", Tone::Hint);
-        } else {
-            let sketch = (!args.sketch.is_empty())
-                .then(|| EntityRef::Sketch {
-                    name: args.sketch.clone(),
-                })
-                .into_iter()
-                .collect();
-            dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
-        }
-        let face = (!args.face.is_empty())
-            .then(|| EntityRef::Face {
-                name: args.face.clone(),
-            })
-            .into_iter()
-            .collect();
+        let sketch = std::slice::from_ref(&args.sketch);
+        sketch_field(dialog, &context.before, "sketch", sketch, false);
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         // The face the sketch lies on, unless one is picked.
         (dialog.reference("face", "onto face", face, &[Role::Plane], None, false)).optional("face");
         form
@@ -174,16 +162,10 @@ impl Operation for SheetCut {
         };
         match (key.as_str(), value) {
             ("sketch", Value::Entities(picked)) => {
-                args.sketch = match picked.as_slice() {
-                    [EntityRef::Sketch { name }] => name.clone(),
-                    _ => String::new(),
-                }
+                args.sketch = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
             }
             ("face", Value::Entities(picked)) => {
-                args.face = match picked.as_slice() {
-                    [EntityRef::Face { name }] => name.clone(),
-                    _ => String::new(),
-                }
+                args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
             }
             _ => {}
         }
@@ -210,7 +192,7 @@ fn target(
     };
     let mut found = Vec::new();
     for solid in model.solid_names() {
-        let Some(sheet) = sheets.bent(&solid) else {
+        let Some(sheet) = sheets.get(&solid).and_then(SheetBody::bent) else {
             continue;
         };
         for (f, flat) in sheet.flats.iter().enumerate() {

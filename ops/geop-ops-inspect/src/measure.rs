@@ -6,7 +6,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
-    scalars::{Field, Ring, Scalar},
+    scalars::{Ring, Scalar},
     vector::Vector3,
 };
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
@@ -14,9 +14,10 @@ use geop_ops::{
     Design, EntityRef,
     model::model_or_empty,
     operation::{Aspects, BuildView, Role, Seen},
-    output::Bounded,
-    placed::{about, owner},
-    ui::{Shape, Style, Visual},
+    output::{Answer, Block, Bounded, Row},
+    placed::owner,
+    solids::{PlacedSolid, Shapes},
+    ui::{Shape, Style, Tone, Visual},
 };
 use serde::Serialize;
 
@@ -57,6 +58,44 @@ pub struct Measurement {
 }
 
 impl Measurement {
+    /// As the inspect panel shows it: what is picked — or what to pick —
+    /// why it could not be measured, and what it measures; and the plane
+    /// of a planar entity picked alone, to cut a section view with.
+    pub fn shown(&self) -> Answer {
+        let mut blocks = Vec::new();
+        if self.entities.is_empty() {
+            blocks.push(Block::Text {
+                text: "Click a vertex, edge, face or datum; a second one to measure between them."
+                    .into(),
+                tone: Tone::Hint,
+            });
+        } else {
+            blocks.push(Block::List {
+                items: (self.entities.iter())
+                    .map(|e| Row {
+                        light: vec![e.clone()],
+                        ..Row::of(vec![e.to_string()])
+                    })
+                    .collect(),
+            });
+        }
+        blocks.extend(self.error.iter().map(|error| Block::Text {
+            text: error.clone(),
+            tone: Tone::Error,
+        }));
+        blocks.push(Block::Table {
+            head: Vec::new(),
+            rows: (self.values.iter())
+                .map(|v| Row::labelled(&v.label, vec![format!("{} {}", v.value.show(3), v.unit)]))
+                .collect(),
+            foot: Vec::new(),
+        });
+        Answer {
+            blocks,
+            plane: self.plane.clone(),
+        }
+    }
+
     /// What it draws in the viewport: the least distance between two
     /// picks, as a line between the points attaining it, labelled with it.
     pub fn visuals(&self) -> Vec<Visual<Design>> {
@@ -149,14 +188,17 @@ fn alone(view: BuildView, entity: &EntityRef, out: &mut Measurement) -> GeopResu
             }
         }
         EntityRef::Solid { name } => {
-            let density = about(part).material().density;
-            let per_mm3 = Design::from_f64(density).div(Design::from_f64(1e9))?;
-            let solid = owner.solid_id(name)?;
-            let mass = owner
-                .topology()
-                .mass_properties(solid)
-                .with_context(&ctx)?
-                .with_density(per_mm3);
+            let solid = PlacedSolid {
+                name: name.clone(),
+                view: part,
+                model: &owner,
+                solid: owner.solid_id(name)?,
+                pose: None,
+            };
+            let mass = solid
+                .mass_properties(&mut Shapes::default())
+                .with_context(&ctx)?;
+            let solid = solid.solid;
             let (area, _) = owner.topology().solid_area(solid).with_context(&ctx)?;
             out.values.push(measured("Volume", mass.volume, "mm³"));
             out.values.push(measured("Area", area, "mm²"));
@@ -208,12 +250,12 @@ fn together(
             }
             out.witness = Some([closest.a, closest.b]);
         }
-        (Err(e), _) | (_, Err(e)) if direction(&aa).is_none() || direction(&ab).is_none() => {
+        (Err(e), _) | (_, Err(e)) if aa.direction().is_none() || ab.direction().is_none() => {
             return Err(ctx(e));
         }
         _ => {}
     }
-    if let (Some(da), Some(db)) = (direction(&aa), direction(&ab)) {
+    if let (Some(da), Some(db)) = (aa.direction(), ab.direction()) {
         out.values.push(measured("Angle", angle(&da, &db)?, "°"));
     }
     if let (Some(ca), Some(cb)) = (&aa.arc, &ab.arc) {
@@ -259,16 +301,6 @@ fn feature<'m>(
         (None, None) => Err(GeopError::new(format!(
             "a distance is measured between vertices, points, curves and faces, and {entity} is none"
         ))),
-    }
-}
-
-/// The direction an entity has: a line's, or a plane's normal — `true` for
-/// a normal.
-fn direction<S: Scalar>(aspects: &Aspects<S>) -> Option<(Vector3<S>, bool)> {
-    match (&aspects.line, &aspects.plane) {
-        (Some(line), _) => Some((line.direction, false)),
-        (None, Some(plane)) => Some((*plane.w(), true)),
-        _ => None,
     }
 }
 

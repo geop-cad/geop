@@ -2,6 +2,7 @@
 //! [`geop_core_topology::build::BodySpec`]. Their search budgets are the
 //! shell's, whose machinery they build on.
 
+use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
 use geop_core_geometry::{contains::surface::surface_could_contain, nurb_surface::NurbSurface3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -9,7 +10,6 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::Curve3;
-use geop_ops_shell::shell::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
 
 /// Halfway along `curve`: the point, and the direction it runs there.
 pub fn halfway<S: Scalar>(curve: &Curve3<S>) -> GeopResult<(Vector3<S>, Vector3<S>)> {

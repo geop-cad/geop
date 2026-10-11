@@ -103,8 +103,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let p = self.degree;
         let n = self.control_points.len();
         let weight = |i: usize| self.control_points[i][D - 1];
-        let exactly_one = |w: S| w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w);
-        if exactly_one(weight(0)) && exactly_one(weight(n - 1)) {
+        if weight(0).is_exactly(S::ONE) && weight(n - 1).is_exactly(S::ONE) {
             return Ok(self.clone());
         }
         if n != p + 1 {
@@ -307,8 +306,10 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
             rest = right;
         }
         pieces.push(rest);
-        let exactly_one = |w: S| w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w);
-        let rational = self.control_points.iter().any(|p| !exactly_one(p[D - 1]));
+        let rational = self
+            .control_points
+            .iter()
+            .any(|p| !p[D - 1].is_exactly(S::ONE));
         let mut curves = Vec::new();
         let mut breaks = vec![to[0]];
         for (i, mut piece) in pieces.into_iter().enumerate() {

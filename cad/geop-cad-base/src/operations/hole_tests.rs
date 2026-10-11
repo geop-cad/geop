@@ -12,13 +12,12 @@ use std::f64::consts::PI;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops::{Design, EntityRef, NamedModel, model::model};
+use geop_ops::{Design, EntityRef, NamedModel, Threads, model::model, threads};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents};
 use geop_ops_hole::{
-    HoleArgs, HoleKind, Standard, ThreadArgs, Threads,
+    HoleArgs, HoleKind, Standard, ThreadArgs,
     iso::{Fit, SIZES, metric},
-    threads,
 };
 use geop_ops_sketch::{Constraint, Sketch};
 
@@ -118,7 +117,7 @@ impl std::ops::Deref for Made {
 
 impl Made {
     /// The cosmetic thread `name`.
-    pub(super) fn thread(&self, name: &str) -> GeopResult<&geop_ops_hole::CosmeticThread<Design>> {
+    pub(super) fn thread(&self, name: &str) -> GeopResult<&geop_ops::CosmeticThread<Design>> {
         self.threads.get(name)
     }
 }

@@ -283,7 +283,7 @@ impl<S: Scalar> From<Pose<S>> for PoseFile {
     fn from(pose: Pose<S>) -> Self {
         let p = pose.position();
         PoseFile {
-            position: [0, 1, 2].map(|k| p[k].to_f64()),
+            position: p.to_f64_array(),
             rotation: pose.rotation().components().map(|c| c.to_f64()),
         }
     }

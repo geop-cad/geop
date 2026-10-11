@@ -12,59 +12,65 @@ mod svg;
 pub use dxf::to_dxf;
 pub use svg::to_svg;
 
-use geop_core_geometry::nurb_curve::{NurbCurve2D, NurbCurve3D};
-use geop_core_math::{
-    geop_error::GeopResult,
-    scalars::Scalar,
-    vector::{Vector3, Vector4},
-};
+use geop_core_geometry::nurb_curve::NurbCurve2D;
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
 /// A point on the paper.
 pub type P = [f64; 2];
 
-/// What a stroke or label is, which decides how it is drawn: the layers
-/// of a DXF file, the classes of an SVG one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Layer {
-    Visible,
-    Hidden,
-    Center,
-    Dimension,
-    Hatch,
-    Border,
-    /// Thin continuous lines: a cosmetic thread seen.
-    Thread,
-    /// What a laser or a punch cuts: a flat pattern's outline and holes.
-    Cut,
-    /// Where a flat pattern is bent, and how.
-    Bend,
+/// What a stroke or label is, which decides how it is drawn: a layer of a
+/// DXF file, a class of an SVG one. The sheet knows no layer of its own:
+/// whoever draws on it defines the layers it draws on (a drawing its
+/// visible and hidden lines, a flat pattern what is cut and where it is
+/// bent).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layer {
+    /// Its name, as a DXF layer and an SVG class.
+    pub name: &'static str,
+    /// Its strokes' width, in millimetres.
+    pub width: f64,
+    pub line_type: LineType,
+    /// Its colour, by AutoCAD colour index.
+    pub color: u8,
 }
 
-impl Layer {
-    pub const ALL: [Layer; 9] = [
-        Layer::Visible,
-        Layer::Hidden,
-        Layer::Center,
-        Layer::Dimension,
-        Layer::Hatch,
-        Layer::Border,
-        Layer::Thread,
-        Layer::Cut,
-        Layer::Bend,
-    ];
+/// How a layer's strokes are dashed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineType {
+    Continuous,
+    /// Short dashes: what is hidden.
+    Hidden,
+    /// Long and short dashes: an axis, a centre, a bend.
+    Center,
+}
 
-    /// Its name, as a DXF layer and an SVG class.
+impl LineType {
+    pub const ALL: [LineType; 3] = [LineType::Continuous, LineType::Hidden, LineType::Center];
+
+    /// Its name, as a DXF line type.
     pub fn name(self) -> &'static str {
         match self {
-            Layer::Visible => "VISIBLE",
-            Layer::Hidden => "HIDDEN",
-            Layer::Center => "CENTER",
-            Layer::Dimension => "DIMENSIONS",
-            Layer::Hatch => "HATCH",
-            Layer::Border => "BORDER",
-            Layer::Thread => "THREAD",
-            Layer::Cut => "CUT",
-            Layer::Bend => "BEND",
+            LineType::Continuous => "CONTINUOUS",
+            LineType::Hidden => "HIDDEN",
+            LineType::Center => "CENTER",
+        }
+    }
+
+    /// How a DXF file describes it.
+    pub fn description(self) -> &'static str {
+        match self {
+            LineType::Continuous => "Solid line",
+            LineType::Hidden => "Hidden __ __ __",
+            LineType::Center => "Center ____ _ ____",
+        }
+    }
+
+    /// Its dash pattern: lengths in millimetres, negative for gaps.
+    pub fn dashes(self) -> &'static [f64] {
+        match self {
+            LineType::Continuous => &[],
+            LineType::Hidden => &[3.0, -1.5],
+            LineType::Center => &[8.0, -1.5, 1.5, -1.5],
         }
     }
 }
@@ -156,11 +162,29 @@ impl Format {
 pub struct Sheet {
     pub width: f64,
     pub height: f64,
+    /// The layers it is drawn on, in the order they are written, whether
+    /// anything is on them or not. A layer drawn on but not listed here is
+    /// written after them (see [`Sheet::layers`]).
+    pub layers: Vec<Layer>,
     pub strokes: Vec<Stroke>,
     pub labels: Vec<Label>,
 }
 
 impl Sheet {
+    /// Its [`Sheet::layers`], followed by every other layer a stroke or a
+    /// label is on, in the order first drawn on: each layer once.
+    pub fn layers(&self) -> Vec<Layer> {
+        let mut layers = self.layers.clone();
+        let drawn =
+            (self.strokes.iter().map(|s| s.layer)).chain(self.labels.iter().map(|l| l.layer));
+        for layer in drawn {
+            if !layers.contains(&layer) {
+                layers.push(layer);
+            }
+        }
+        layers
+    }
+
     /// It written as `format`.
     pub fn write(&self, format: Format) -> String {
         match format {
@@ -211,23 +235,10 @@ enum Piece<S: Scalar> {
     Other(Vec<P>),
 }
 
-/// A 2-D curve as a 3-D one in the plane `z = 0`.
-pub fn lift<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve3D<S>> {
-    NurbCurve3D::try_new(
-        curve.degree,
-        curve
-            .control_points
-            .iter()
-            .map(|q| Vector4::from_array([q[0], q[1], S::ZERO, q[2]]))
-            .collect(),
-        curve.knot_vector.clone(),
-    )
-}
-
 /// `curve` recognised: a line or an arc where it is one exactly (see
 /// [`NurbCurve3D::as_line`], [`NurbCurve3D::as_arc`]), else points of it.
 fn piece<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Piece<S>> {
-    let lifted = lift(curve)?;
+    let lifted = curve.lifted()?;
     let (t0, t1) = lifted.domain();
     if lifted.as_line()?.is_some() {
         return Ok(Piece::Line(lifted.evaluate(t0)?, lifted.evaluate(t1)?));
@@ -254,7 +265,7 @@ fn piece<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Piece<S>> {
                 k if k == POINTS_PER_PIECE => b,
                 k => {
                     let f = S::from_f64(k as f64 / POINTS_PER_PIECE as f64);
-                    a.add(b.sub(a).mul(f)).sharpen()
+                    S::fraction(a, b, f)
                 }
             };
             let p = piece.evaluate(t)?;
@@ -321,6 +332,13 @@ fn join<S: Scalar>(a: &Piece<S>, b: &Piece<S>) -> Option<Piece<S>> {
         }
         _ => None,
     }
+}
+
+/// `x` as written on a sheet: to `places` decimals, without trailing zeros.
+pub fn decimal(x: f64, places: usize) -> String {
+    let s = format!("{x:.places$}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".into() } else { s.into() }
 }
 
 /// The curves `curves` on the paper, through `place` from their own

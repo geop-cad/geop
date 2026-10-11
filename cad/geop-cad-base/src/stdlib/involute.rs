@@ -28,7 +28,10 @@
 
 use std::f64::consts::PI;
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    combinatorics::binomial,
+    geop_error::{GeopError, GeopResult},
+};
 
 /// The pressure angle, in degrees.
 pub const PRESSURE_ANGLE: f64 = 20.0;
@@ -69,10 +72,6 @@ fn inv(a: f64) -> f64 {
 fn turn(a: f64, [x, y]: [f64; 2]) -> [f64; 2] {
     let (s, c) = a.sin_cos();
     [c * x - s * y, s * x + c * y]
-}
-
-fn binomial(n: usize, k: usize) -> f64 {
-    (0..k).fold(1.0, |b, i| b * (n - i) as f64 / (i + 1) as f64)
 }
 
 fn factorial(k: usize) -> f64 {
@@ -140,7 +139,7 @@ pub fn gap(z: usize) -> GeopResult<Gap> {
     for (j, point) in flank.iter_mut().enumerate() {
         let mut b = [0.0; 2];
         for (k, a) in power.iter().enumerate().take(j + 1) {
-            let w = binomial(j, k) / binomial(DEGREE, k);
+            let w = binomial(j, k) as f64 / binomial(DEGREE, k) as f64;
             b[0] += w * a[0];
             b[1] += w * a[1];
         }

@@ -8,6 +8,7 @@ mod add_sketch;
 mod constraints;
 pub mod editor;
 mod geometry;
+mod icons;
 pub mod references;
 
 pub use add_sketch::{AddSketch, AddSketchArgs};

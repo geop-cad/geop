@@ -18,6 +18,7 @@
 //! planar, and every edge of the chain convex: the wall falls away from the
 //! rim along it, so the space beside the edge, over the wall, is air.
 
+use geop_core_geometry::nurb_curve::{NurbCurve2D, flatten_point};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -26,7 +27,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, EdgeId, FaceId,
+    EdgeId, FaceId,
     build::{BodySpec, CoedgeOn, CoedgeSpec},
 };
 use geop_ops::{NamedModel, Namer, operation::frame_along};
@@ -54,7 +55,7 @@ pub fn rim_chain<S: Scalar>(
 ) -> GeopResult<(CoordinateSystem<S>, Chain<S>)> {
     let model = part.topology();
     let name = |id: geop_ops::RefId| part.name_of(id).unwrap_or("?").to_string();
-    let Body::Solid(solid) = model.body_of_face(face)? else {
+    let Some(solid) = model.solid_of_face(face)? else {
         return Err(GeopError::new(format!(
             "face {} stands on its own; a rim is a face of a solid",
             name(face.into())
@@ -140,10 +141,7 @@ pub fn rim_chain<S: Scalar>(
         )));
     }
 
-    let to_plane = |p: &Vector3<S>| {
-        let uvw = frame.to_uvw(p);
-        Vector2::from_array([uvw[0], uvw[1]])
-    };
+    let to_plane = |p: &Vector3<S>| frame.to_uv(p);
     let mut pieces = Vec::with_capacity(run.len());
     let mut joints = Vec::with_capacity(run.len() + 1);
     for &k in &run {
@@ -167,21 +165,12 @@ pub fn rim_chain<S: Scalar>(
         convex_along(&spec, e, f, &curve, &plane.normal)
             .map_err(|err| err.with_context(format!("edge {edge_name} of the rim")))?;
         // Into the plane's `(u, v)`, homogeneous: an affine map.
-        let mut flat = Vec::with_capacity(curve.control_points.len());
-        for cp in &curve.control_points {
-            let w = cp[3];
-            let p = Vector3::from_array([cp[0], cp[1], cp[2]]).sub(&frame.origin().prod_scalar(w));
-            flat.push(Vector3::from_array([
-                p.prod_dot(frame.u()),
-                p.prod_dot(frame.v()),
-                w,
-            ]));
-        }
-        let curve2 = geop_core_geometry::nurb_curve::NurbCurve2D::try_new(
-            curve.degree,
-            flat,
-            curve.knot_vector.clone(),
-        )?;
+        let flat = curve
+            .control_points
+            .iter()
+            .map(|cp| flatten_point(cp, frame.origin(), frame.u(), frame.v()))
+            .collect();
+        let curve2 = NurbCurve2D::try_new(curve.degree, flat, curve.knot_vector.clone())?;
         let (start, _) = spec.ends(lp[k].on)?;
         joints.push(name(sources.vertices[start].into()));
         pieces.push(Piece {
@@ -244,10 +233,7 @@ fn stitch<S: Scalar>(chain: &mut Chain<S>) -> GeopResult<()> {
         let j = (i + 1) % n;
         let end = *chain.pieces[i].curve.control_points.last().unwrap();
         let start = chain.pieces[j].curve.control_points[0];
-        let p = |h: &Vector3<S>| -> GeopResult<Vector2<S>> {
-            Ok(Vector2::from_array([h[0].div(h[2])?, h[1].div(h[2])?]))
-        };
-        let (a, b) = (p(&end)?, p(&start)?);
+        let (a, b) = (end.dehomogenized()?, start.dehomogenized()?);
         if !a.could_be_equal(&b) {
             return Err(GeopError::new(format!(
                 "{} does not end where {} starts",
@@ -276,18 +262,10 @@ fn convex_along<S: Scalar>(
     curve: &geop_core_topology::Curve3<S>,
     up: &Vector3<S>,
 ) -> GeopResult<()> {
-    let other = spec
-        .faces
+    let other = spec.edge_uses()[e]
         .iter()
-        .enumerate()
-        .filter(|&(g, _)| g != f)
-        .find(|(_, face)| {
-            face.loops().iter().any(|lp| {
-                lp.iter()
-                    .any(|c| matches!(c.on, CoedgeOn::Edge(x, _) if x == e))
-            })
-        })
-        .map(|(g, _)| g)
+        .map(|&(g, ..)| g)
+        .find(|&g| g != f)
         .ok_or_else(|| GeopError::new("the edge bounds the rim alone"))?;
     let (point, along) = halfway(curve)?;
     let right = along.prod_cross(up);
@@ -336,7 +314,9 @@ pub fn lip<S: Scalar>(
     );
     check_size("width", size.width).with_context(ctx)?;
     check_size("height", size.height).with_context(ctx)?;
-    let target = target_name(part, face).with_context(ctx)?;
+    let target = part
+        .solid_name_of_face(face, "a rim is a face of a solid")
+        .with_context(ctx)?;
     let (frame, chain) = rim_chain(part, face, edges).with_context(ctx)?;
     let loops: Vec<SweepLoop<S>> = chain
         .band(S::ZERO, size.width)
@@ -354,11 +334,7 @@ pub fn lip<S: Scalar>(
         &loops,
     )
     .with_context(ctx)?;
-    let tool = Tool {
-        solid: built.solid.expect("extruded as a solid"),
-        up_to_next: None,
-        scope: None,
-    };
+    let tool = Tool::whole(built.solid.expect("extruded as a solid"));
     let combine = Combine::With {
         op: BooleanOp::Union,
         target,
@@ -393,7 +369,9 @@ pub fn groove<S: Scalar>(
         )))
         .with_context(ctx);
     }
-    let target = target_name(part, face).with_context(ctx)?;
+    let target = part
+        .solid_name_of_face(face, "a rim is a face of a solid")
+        .with_context(ctx)?;
     let (frame, chain) = rim_chain(part, face, edges).with_context(ctx)?;
     // Past the wall into the air, and above the rim, by the lip's width: a
     // free choice, only so no face of the cut lies on one of the solid.
@@ -414,11 +392,7 @@ pub fn groove<S: Scalar>(
         &loops,
     )
     .with_context(ctx)?;
-    let tool = Tool {
-        solid: built.solid.expect("extruded as a solid"),
-        up_to_next: None,
-        scope: None,
-    };
+    let tool = Tool::whole(built.solid.expect("extruded as a solid"));
     let combine = Combine::With {
         op: BooleanOp::Difference,
         target,
@@ -426,14 +400,4 @@ pub fn groove<S: Scalar>(
     (combine.apply(part, namer, operation_id, &[tool]))
         .and_then(Reach::stopped)
         .with_context(ctx)
-}
-
-/// The name of the solid `face` is a face of.
-fn target_name<S: Scalar>(part: &NamedModel<S>, face: FaceId) -> GeopResult<String> {
-    let Body::Solid(solid) = part.topology().body_of_face(face)? else {
-        return Err(GeopError::new(
-            "the rim stands on its own: it is no face of a solid",
-        ));
-    };
-    Ok(part.name(solid)?.to_string())
 }

@@ -24,7 +24,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::{Vector3, Vector4},
+    vector::{Vector2, Vector3},
 };
 
 use super::{NurbCurve, NurbCurve3D};
@@ -65,6 +65,29 @@ pub fn cos_sin(degrees: f64) -> (f64, f64) {
     }
 }
 
+/// `sqrt(2) / 2`, the weight of the middle control point that makes a
+/// rational quadratic a quarter of a circle exactly.
+pub fn sqrt2_over_2<S: Scalar>() -> S {
+    S::from_f64(std::f64::consts::SQRT_2 / 2.0)
+}
+
+/// The middle control point of an arc through `step` degrees, at most a
+/// half turn either way: `(weight, outwards)`. It lies where the tangents
+/// at the arc's ends meet, `outwards = 1 / (1 + cos step)` along the sum of
+/// the unit directions to the ends, weighted `cos(step / 2)` —
+/// [`sqrt2_over_2`] for a quarter turn. Revolves and helices both build
+/// their spans with it, so a helix's quarter lies on the very circle a
+/// revolved quarter does.
+pub fn arc_span<S: Scalar>(step: f64) -> (S, S) {
+    let (cos_step, _) = cos_sin(step);
+    let weight = if step.abs() == 90.0 {
+        sqrt2_over_2()
+    } else {
+        S::from_f64((step / 2.0).to_radians().cos())
+    };
+    (weight, S::from_f64(1.0 / (1.0 + cos_step)))
+}
+
 /// The control rows of a helix around `frame.w()`, from `frame.u()`, rising
 /// `pitch` along `w` per turn through `turns` turns, turning as
 /// `handedness` says: `2 n + 1` rows for `n` equal spans of at most a
@@ -91,22 +114,11 @@ pub fn helix_rows<S: Scalar>(
         Handedness::Left => -1.0,
     };
     let step = sign * 360.0 * turns / spans as f64;
-    let (u, v) = (frame.u(), frame.v());
     let direction = |degrees: f64| {
         let (c, s) = cos_sin(degrees);
-        u.prod_scalar(S::from_f64(c))
-            .add(&v.prod_scalar(S::from_f64(s)))
+        frame.uv_direction(&Vector2::from_array([S::from_f64(c), S::from_f64(s)]))
     };
-    // As a revolve weighs and places the middle of its arcs (see
-    // `revolution` in geop-ops-extrude-revolve), so a quarter span lies on
-    // the very circle a revolved quarter does.
-    let (cos_step, _) = cos_sin(step);
-    let weight = if step.abs() == 90.0 {
-        S::from_f64(std::f64::consts::SQRT_2 / 2.0)
-    } else {
-        S::from_f64((step / 2.0).to_radians().cos())
-    };
-    let outwards = S::from_f64(1.0 / (1.0 + cos_step));
+    let (weight, outwards) = arc_span(step);
     let total = pitch.mul(S::from_f64(turns));
     // The height at the end of span `k`: none at the start and all of it at
     // the end, taken as they are rather than multiplied by 0 or 1.
@@ -168,13 +180,10 @@ impl<S: Scalar> NurbCurve3D<S> {
         let control_points = rows
             .iter()
             .map(|row| {
-                let p = origin
+                origin
                     .add(&row.radial.prod_scalar(radius))
-                    .add(&w.prod_scalar(row.rise));
-                match row.weight {
-                    None => Vector4::from_array([p[0], p[1], p[2], S::ONE]),
-                    Some(h) => Vector4::from_array([p[0].mul(h), p[1].mul(h), p[2].mul(h), h]),
-                }
+                    .add(&w.prod_scalar(row.rise))
+                    .homogeneous(row.weight.unwrap_or(S::ONE))
             })
             .collect();
         let mut knots = vec![S::ZERO; 3];

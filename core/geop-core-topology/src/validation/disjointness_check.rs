@@ -2,7 +2,7 @@ use geop_core_geometry::intersection::{curve_curve_intersect, curve_surface_inte
 use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
 
 use crate::{
-    CoedgeGeometry, EdgeId, Model, VertexId,
+    EdgeId, Model, VertexId,
     contains::face::{PointClassification, face_contains},
     validation::{ValidationParameters, body_groups},
 };
@@ -166,10 +166,7 @@ fn check_edge_and_face_consistent<S: Scalar>(
     let (edge, face) = (&model.edges[&edge_id], &model.faces[&face_id]);
     {
         {
-            let is_boundary_edge = model.iterate_face_coedges(face_id).any(|coedge_id| {
-                model.coedges.get(&coedge_id).map(|c| c.geometry)
-                    == Some(CoedgeGeometry::Edge(edge_id))
-            });
+            let is_boundary_edge = model.face_edges(face_id).any(|e| e == edge_id);
             if is_boundary_edge {
                 return;
             }

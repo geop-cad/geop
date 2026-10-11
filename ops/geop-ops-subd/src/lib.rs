@@ -21,6 +21,7 @@ pub mod limit;
 pub mod operation;
 pub mod subdivide;
 
+mod icons;
 #[cfg(test)]
 mod tests;
 

@@ -10,12 +10,6 @@ interface Props {
   onSet: (parameter: string, value: number) => void;
 }
 
-/** What a joint's name says of it: `add_part(fore,m1)` is the forearm's mate `m1`. */
-function label(name: string): string {
-  const m = /^add_part\(([^,]+),([^)]+)\)$/.exec(name);
-  return m ? `${m[1]} ${m[2]}` : name;
-}
-
 /**
  * The program's joints, each coordinate set by typing it — or, limited, on a
  * slider between its limits — and how free each placed part still is.
@@ -37,7 +31,7 @@ export function JointsPanel({ joints, freedom, conflicting, enabled, onSet }: Pr
               key={v.parameter}
               title={`${joint.kind} joint ${joint.name}: ${v.motion}${joint.between.length > 0 ? ` — ${joint.between.join(" ↔ ")}` : ""}`}
             >
-              <span className="parameter-name">{label(joint.name)}</span>
+              <span className="parameter-name">{joint.label}</span>
               {v.min != null && v.max != null && (
                 <input
                   type="range"

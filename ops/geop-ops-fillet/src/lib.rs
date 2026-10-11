@@ -11,15 +11,13 @@
 //! inward corner, are built whole as one solid (`tool`). `operation` makes
 //! that the [`Fillet`] and [`Chamfer`] operations of a program.
 
-pub mod blend;
+mod blend;
 mod corner;
 pub mod operation;
-pub mod rolling;
+mod rolling;
 mod tool;
 
-pub use blend::BlendShape;
 pub use operation::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};
-pub use rolling::Radii;
 
 #[cfg(test)]
 mod rolling_tests;

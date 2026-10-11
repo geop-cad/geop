@@ -7,10 +7,11 @@ use geop_core_math::{
 };
 use geop_core_topology::mass::MassProperties;
 use geop_ops::{
-    Design,
+    Design, EntityRef,
     operation::BuildView,
-    output::Bounded,
+    output::{Answer, Block, Bounded, Row},
     solids::{Shapes, placed_solids},
+    ui::Tone,
 };
 use serde::Serialize;
 
@@ -46,11 +47,49 @@ impl MassSummary {
             center: [0, 1, 2].map(|k| Bounded::of(properties.center[k])),
             inertia: properties.inertia.map(|row| row.map(Bounded::of)),
             principal_moments: principal.moments.map(Bounded::of),
-            principal_axes: principal
-                .axes
-                .map(|axis| [0, 1, 2].map(|k| axis[k].to_f64())),
+            principal_axes: principal.axes.map(|axis| axis.to_f64_array()),
             converged: properties.converged && area.1,
         })
+    }
+}
+
+impl MassSummary {
+    /// As a table shows it: a row per property, in millimetres and
+    /// kilograms.
+    fn shown(&self) -> Block {
+        let axes = ["x", "y", "z"];
+        let center: Vec<String> = self.center.iter().map(|c| c.show(3)).collect();
+        let inertia: Vec<String> = (axes.iter().zip(&self.inertia))
+            .map(|(axis, row)| {
+                let row: Vec<String> = row.iter().map(|c| format!("{:.5}", c.value)).collect();
+                format!("{axis}: {}", row.join("  "))
+            })
+            .collect();
+        let principal: Vec<String> = self.principal_moments.iter().map(|m| m.show(4)).collect();
+        let about: Vec<String> = (self.principal_axes.iter())
+            .map(|a| format!("({:.3}, {:.3}, {:.3})", a[0], a[1], a[2]))
+            .collect();
+        Block::Table {
+            head: Vec::new(),
+            rows: vec![
+                Row::labelled("Mass", vec![self.mass.show_mass()]),
+                Row::labelled("Volume", vec![format!("{} mm³", self.volume.show(3))]),
+                Row::labelled("Area", vec![format!("{} mm²", self.area.show(3))]),
+                Row::labelled("Centre", vec![format!("{} mm", center.join(", "))]),
+                Row {
+                    detail: Some("About the centre of mass, along the world's axes".into()),
+                    ..Row::labelled("Inertia", vec![format!("{}\nkg·mm²", inertia.join("\n"))])
+                },
+                Row {
+                    detail: Some(format!("about {}", about.join(", "))),
+                    ..Row::labelled(
+                        "Principal",
+                        vec![format!("{}\nkg·mm²", principal.join("\n"))],
+                    )
+                },
+            ],
+            foot: Vec::new(),
+        }
     }
 }
 
@@ -76,6 +115,55 @@ pub struct MassReport {
     /// All of them together — if there are any, and every one could be
     /// computed: a total missing a body would mislead.
     pub total: Option<MassSummary>,
+}
+
+impl MassReport {
+    /// As the inspect panel shows it: all solids together, then each, lit
+    /// while pointed at, with its material — and whether it was assumed —
+    /// and why it could not be weighed.
+    pub fn shown(&self) -> Answer {
+        let mut blocks = Vec::new();
+        if self.bodies.is_empty() {
+            blocks.push(Block::Text {
+                text: "No solids.".into(),
+                tone: Tone::Hint,
+            });
+        }
+        if let Some(total) = self.total.as_ref().filter(|_| self.bodies.len() > 1) {
+            blocks.push(Block::Group {
+                title: format!("All {} solids", self.bodies.len()),
+                detail: None,
+                open: true,
+                light: Vec::new(),
+                blocks: vec![total.shown()],
+            });
+        }
+        for body in &self.bodies {
+            let mut shown = Vec::new();
+            if body.assumed {
+                shown.push(Block::Text {
+                    text: "No material given: weighed as water. Set one under Parameters.".into(),
+                    tone: Tone::Hint,
+                });
+            }
+            shown.extend(body.error.iter().map(|error| Block::Text {
+                text: error.clone(),
+                tone: Tone::Error,
+            }));
+            shown.extend(body.properties.iter().map(MassSummary::shown));
+            blocks.push(Block::Group {
+                title: body.name.clone(),
+                detail: Some(body.material.clone()),
+                open: self.bodies.len() == 1,
+                light: vec![EntityRef::solid(body.name.clone())],
+                blocks: shown,
+            });
+        }
+        Answer {
+            blocks,
+            plane: None,
+        }
+    }
 }
 
 /// The mass properties of every solid of the part `view` shows — its own,

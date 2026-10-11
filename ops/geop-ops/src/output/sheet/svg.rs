@@ -2,28 +2,16 @@
 
 use std::fmt::Write;
 
-use super::{Anchor, Layer, Shape, Sheet};
+use super::{Anchor, LineType, Shape, Sheet};
+use crate::output::xml_escape;
 
-/// How a layer's strokes look: width in millimetres, and dashes.
-fn style(layer: Layer) -> (f64, Option<&'static str>) {
-    match layer {
-        Layer::Visible => (0.5, None),
-        Layer::Hidden => (0.3, Some("3 1.5")),
-        Layer::Center => (0.25, Some("8 1.5 1.5 1.5")),
-        Layer::Dimension => (0.25, None),
-        Layer::Hatch => (0.18, None),
-        Layer::Border => (0.5, None),
-        Layer::Thread => (0.25, None),
-        Layer::Cut => (0.25, None),
-        Layer::Bend => (0.25, Some("8 1.5 1.5 1.5")),
-    }
-}
-
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+/// How a layer's strokes are dashed, as SVG's `stroke-dasharray`.
+fn dashes(line_type: LineType) -> Option<String> {
+    let dashes = line_type.dashes();
+    (!dashes.is_empty()).then(|| {
+        let lengths: Vec<String> = dashes.iter().map(|d| num(d.abs())).collect();
+        lengths.join(" ")
+    })
 }
 
 /// `n` without trailing zeros, to a thousandth of a millimetre.
@@ -52,16 +40,15 @@ pub fn to_svg(sheet: &Sheet) -> String {
         num(sheet.width),
         num(h)
     );
-    for layer in Layer::ALL {
-        let (width, dashes) = style(layer);
-        let dash = dashes
+    for layer in sheet.layers() {
+        let dash = dashes(layer.line_type)
             .map(|d| format!(r#" stroke-dasharray="{d}""#))
             .unwrap_or_default();
         let _ = writeln!(
             out,
             r#"<g class="{}" fill="none" stroke="black" stroke-width="{}" stroke-linecap="round"{dash}>"#,
-            layer.name(),
-            num(width)
+            layer.name,
+            num(layer.width)
         );
         for stroke in sheet.strokes.iter().filter(|s| s.layer == layer) {
             let _ = match &stroke.shape {
@@ -128,7 +115,7 @@ pub fn to_svg(sheet: &Sheet) -> String {
                 out,
                 r#"<text x="{x}" y="{y}" font-family="sans-serif" font-size="{}" text-anchor="{anchor}" fill="black" stroke="none"{rotate}>{}</text>"#,
                 num(label.height),
-                escape(&label.text)
+                xml_escape(&label.text)
             );
         }
         out.push_str("</g>\n");

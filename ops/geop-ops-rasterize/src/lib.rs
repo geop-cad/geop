@@ -15,30 +15,34 @@
 mod clip;
 pub mod debug;
 mod grid;
-pub mod polygon_triangulate;
 pub mod stl;
+
+pub use grid::triangulate_polygon;
+
+/// A triangle in a plane, by its corners.
+pub type Triangle2<S> = (Vector2<S>, Vector2<S>, Vector2<S>);
 
 use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    plain::distance,
     primitives::TriangleFace,
     scalars::Scalar,
-    vector::Vector3,
+    solvers::refine::{Refine, Refined, refine},
+    vector::{Vector2, Vector3},
 };
 use geop_core_topology::{EdgeId, Face, FaceId, Model, VertexId};
-use grid::{dist_point_to_segment, dist3};
+use grid::dist_point_to_segment;
 
-/// Triangulate `face`'s trimmed region in `(u, v)` space — see
-/// [`grid::triangulate_face`] for the actual (curvature-sized grid, clipped
-/// to the trim) algorithm; this just forwards to it. Kept as its own
-/// name/doc entry point since it's `pub` API other crates' tests call by
-/// name.
+/// `face`'s trimmed region triangulated in `(u, v)` space, by a grid sized
+/// by the face's curvature and clipped to its trim (see
+/// [`grid::triangulate_face`]), each triangle by its corners.
 pub fn face_triangles_uv<S: Scalar>(
     model: &Model<S>,
     face: &Face<S>,
     n: usize,
-) -> GeopResult<Vec<polygon_triangulate::Triangle2<S>>> {
+) -> GeopResult<Vec<Triangle2<S>>> {
     let mut samples = grid::Samples::new(face);
     Ok(grid::triangulate_face(model, face, n, &mut samples)?
         .into_iter()
@@ -68,7 +72,7 @@ pub struct RasterizedModel<S: Scalar> {
 /// A curve is first sampled this finely, and refined from there.
 const MIN_EDGE_SEGMENTS: usize = 1;
 /// How many times an edge's sampling may double.
-const MAX_EDGE_DOUBLINGS: u32 = 10;
+const MAX_EDGE_DOUBLINGS: usize = 10;
 
 /// `curve` as a polyline that stays within `quality`'s curvature tolerance
 /// of it: a straight edge is two points, a tight arc gets as many as it
@@ -88,34 +92,42 @@ fn sample_curve<S: Scalar>(
         (0..=segments).map(|i| at((i, segments))).collect()
     };
 
-    let mut segments = MIN_EDGE_SEGMENTS;
-    let mut points = points_at(segments)?;
-    let f64_pt = |p: &Vector3<S>| [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()];
-    let size = points
+    let first = points_at(MIN_EDGE_SEGMENTS)?;
+    let size = first
         .iter()
-        .flat_map(|p| points.iter().map(move |q| dist3(f64_pt(p), f64_pt(q))))
+        .flat_map(|p| {
+            first
+                .iter()
+                .map(move |q| distance(p.to_f64_array(), q.to_f64_array()))
+        })
         .fold(0.0f64, f64::max)
         .max(1e-9);
     let tolerance = size / (4.0 * (quality * quality) as f64);
 
-    for _ in 0..MAX_EDGE_DOUBLINGS {
-        // The true point halfway along each segment, against the chord.
-        let mut worst = 0.0f64;
-        for i in 0..segments {
-            let mid = at((2 * i + 1, 2 * segments))?;
-            worst = worst.max(dist_point_to_segment(
-                f64_pt(&mid),
-                f64_pt(&points[i]),
-                f64_pt(&points[i + 1]),
-            ));
-        }
-        if worst <= tolerance {
-            break;
-        }
-        segments *= 2;
-        points = points_at(segments)?;
-    }
-    Ok(points)
+    // Doubled while the true point halfway along some segment strays from
+    // its chord by more than the tolerance; at the cap, as fine as it got.
+    let refined = refine(
+        (MIN_EDGE_SEGMENTS, first),
+        MAX_EDGE_DOUBLINGS,
+        |(segments, points)| -> GeopResult<_> {
+            let mut worst = 0.0f64;
+            for i in 0..segments {
+                let mid = at((2 * i + 1, 2 * segments))?;
+                worst = worst.max(dist_point_to_segment(
+                    mid.to_f64_array(),
+                    points[i].to_f64_array(),
+                    points[i + 1].to_f64_array(),
+                ));
+            }
+            if worst <= tolerance {
+                return Ok(Refine::Done(points));
+            }
+            Ok(Refine::Finer((2 * segments, points_at(2 * segments)?)))
+        },
+    )?;
+    Ok(match refined {
+        Refined::Done(points) | Refined::Exhausted((_, points)) => points,
+    })
 }
 
 /// Sample every vertex/edge/face of `model` into a [`RasterizedModel`].

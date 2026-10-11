@@ -12,7 +12,7 @@ use geop_core_math::{
 };
 use geop_core_topology::{CoedgeGeometry, FaceId};
 
-use super::{Aspects, EntityRef, Lookup};
+use super::{Aspects, EntityRef, Lookup, frame_along};
 use crate::model::NamedModel;
 
 /// Two unit directions square to the unit vector `axis` and to each other:
@@ -79,7 +79,7 @@ impl<S: Scalar> Aspects<S> {
             return Ok(frame);
         }
         if let Some(arc) = &aspects.arc {
-            return axis_frame(arc.circle.center.sharpen(), &arc.circle.normal).with_context(ctx);
+            return frame_along(arc.circle.center.sharpen(), &arc.circle.normal).with_context(ctx);
         }
         let anchor = at
             .map(|at| middle_of(at, lookup))
@@ -93,7 +93,7 @@ impl<S: Scalar> Aspects<S> {
         };
         let along = |axis: &Axis<S>, lookup: &mut _| -> GeopResult<CoordinateSystem<S>> {
             let near = near(lookup)?;
-            axis_frame(axis.project(&near).sharpen(), &axis.direction).with_context(ctx)
+            frame_along(axis.project(&near).sharpen(), &axis.direction).with_context(ctx)
         };
         if let Some(plane) = &aspects.plane {
             let near = match (anchor, aspects.face) {
@@ -120,16 +120,6 @@ impl<S: Scalar> Aspects<S> {
         )))
         .with_context(ctx)
     }
-}
-
-/// The frame at `origin` with `z` along `axis`, and `x` across it the way
-/// a joint measures its turns from (see [`across`]): the same for every
-/// body drawn the same way round, so two mated on the same axis of each are
-/// at a turn of zero.
-fn axis_frame<S: Scalar>(origin: Vector3<S>, axis: &Vector3<S>) -> GeopResult<CoordinateSystem<S>> {
-    let w = axis.normalize()?;
-    let [u, v] = across(&w)?;
-    CoordinateSystem::try_new(origin, u, v, w)
 }
 
 /// Where an entity is in the middle of itself, in `part`: a vertex's point,

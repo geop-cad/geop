@@ -31,8 +31,9 @@ use std::collections::HashMap;
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
-use crate::subdivide::{
-    Subdivided, VertexKind, divide, is_sharp, next, prev, vertex_kind, weighted,
+use crate::{
+    cage::{next, prev},
+    subdivide::{Subdivided, VertexKind, divide, is_sharp, vertex_kind, weighted},
 };
 
 /// A bicubic Bézier patch, `b[i][j]` with `i` along its first side.
@@ -50,14 +51,13 @@ pub struct ControlNet<S: Scalar> {
 }
 
 impl<S: Scalar> ControlNet<S> {
-    /// The patch of quad `f`, its first side running from its corner
-    /// `start` to the next one.
-    pub fn patch(&self, mesh: &Subdivided<S>, f: usize, start: usize) -> Patch<S> {
-        let k = |i: usize| (start + i) % 4;
-        let q = |i: usize| mesh.faces[f][k(i)];
+    /// The patch of quad `f`, its first side running from its first corner
+    /// to the next one.
+    pub fn patch(&self, mesh: &Subdivided<S>, f: usize) -> Patch<S> {
+        let q = |i: usize| mesh.faces[f][i];
         let l = |i: usize| self.corner[q(i)];
         let e = |a: usize, b: usize| self.edge[&(q(a), q(b))];
-        let n = |i: usize| self.interior[f][k(i)];
+        let n = |i: usize| self.interior[f][i];
         [
             [l(0), e(0, 3), e(3, 0), l(3)],
             [e(0, 1), n(0), n(3), e(3, 2)],

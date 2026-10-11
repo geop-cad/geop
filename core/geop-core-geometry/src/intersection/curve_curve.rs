@@ -13,8 +13,6 @@
 //! Assumes no coincident arcs (`curve_curve.md`): the result is a list of
 //! paired `(s, t)` boxes, and reaching some count of them means nothing.
 
-use std::collections::VecDeque;
-
 use super::{
     Intersections,
     coincidence::{self, Hit, Overlap},
@@ -33,7 +31,11 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
     scalars::Scalar,
-    solvers::{linear::solve_linear_system, newton},
+    solvers::{
+        linear::solve_linear_system,
+        newton,
+        subdivide::{Order, Searched, Split, subdivide},
+    },
     vector::Vector,
 };
 
@@ -126,93 +128,93 @@ pub fn curve_curve_crossings<S: Scalar, const D: usize, const C: usize>(
 where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {
-    let mut queue: VecDeque<(NurbCurve<S, D>, NurbCurve<S, D>)> = VecDeque::new();
-    queue.push_back((curve_a.clone(), curve_b.clone()));
-    let mut explored = 0usize;
     let mut solutions: DisjointSet<(S, S)> = DisjointSet::new();
+    let root = (curve_a.clone(), curve_b.clone());
+    let searched = subdivide(
+        [root],
+        Order::BreadthFirst,
+        max_nodes,
+        |(a, b), budget| -> GeopResult<_> {
+            if !aabb_could_overlap(&a.aabb, &b.aabb, C) {
+                return Ok(Split::Done);
+            }
+            let Some(hats) = clip::<S, D, C>(&a, &b)? else {
+                return Ok(Split::Done);
+            };
 
-    while let Some((a, b)) = queue.pop_front() {
-        if explored >= max_nodes {
-            return Err(GeopError::new(format!(
-                "curve_curve_crossings: exhausted max_nodes={max_nodes} with {} \
-                 pairs pending; the result would be incomplete",
-                queue.len() + 1
-            )));
-        }
-        explored += 1;
+            // If the clip pinned `s` (`t`) exactly onto a clamped end of its
+            // curve, every solution has that curve's endpoint as its spatial
+            // point, so the rest is point containment in the other curve (the
+            // "boundary evaluation" of `contains/surface.md` §3).
+            let pinned = (a.pinned_end::<C>(hats[0]).map(|p| (p, true)))
+                .or_else(|| b.pinned_end::<C>(hats[1]).map(|p| (p, false)));
+            if let Some((point, on_a)) = pinned {
+                let (other, free) = if on_a { (&b, hats[1]) } else { (&a, hats[0]) };
+                if let Some(t) = curve_could_contain(other, &point, budget, min_subdivision_size)?
+                    && t.could_be_equal(free)
+                {
+                    let free = free.intersect(t);
+                    solutions.insert(if on_a {
+                        (hats[0], free)
+                    } else {
+                        (free, hats[1])
+                    });
+                }
+                return Ok(Split::Done);
+            }
 
-        if !aabb_could_overlap(&a.aabb, &b.aabb, C) {
-            continue;
-        }
-        let Some(hats) = clip::<S, D, C>(&a, &b)? else {
-            continue;
-        };
-
-        // If the clip pinned `s` (`t`) exactly onto a clamped end of its
-        // curve, every solution has that curve's endpoint as its spatial
-        // point, so the rest is point containment in the other curve (the
-        // "boundary evaluation" of `contains/surface.md` §3).
-        let pinned = (a.pinned_end::<C>(hats[0]).map(|p| (p, true)))
-            .or_else(|| b.pinned_end::<C>(hats[1]).map(|p| (p, false)));
-        if let Some((point, on_a)) = pinned {
-            let (other, free) = if on_a { (&b, hats[1]) } else { (&a, hats[0]) };
-            let budget = max_nodes - explored;
-            if let Some(t) = curve_could_contain(other, &point, budget, min_subdivision_size)?
-                && t.could_be_equal(free)
+            let ranges = [a.domain(), b.domain()];
+            let sizes = [
+                extent([a.control_points.clone()]),
+                extent([b.control_points.clone()]),
+            ];
+            let carried = carried_width(&a.control_points).max(carried_width(&b.control_points));
+            if let Some(bounds) = restriction(&hats, &ranges, &sizes, carried)?
+                && let (Ok(ra), Ok(rb)) = (
+                    a.sub_curve(bounds[0].0, bounds[0].1),
+                    b.sub_curve(bounds[1].0, bounds[1].1),
+                )
             {
-                let free = free.intersect(t);
-                solutions.insert(if on_a {
-                    (hats[0], free)
+                return Ok(Split::Restrict((ra, rb)));
+            }
+
+            let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+                Stalled::Converged => {
+                    // The pieces' whole domains, not the tighter clip: pieces the
+                    // search could not separate — a tangency converges on a chain
+                    // of adjacent ones — must merge into one unresolved cluster,
+                    // and adjacent domains share an endpoint where clips need not
+                    // touch. A transversal crossing loses nothing: restriction has
+                    // already cut its pieces down to the clip.
+                    solutions.insert((a.domain_as_scalar(), b.domain_as_scalar()));
+                    return Ok(Split::Done);
+                }
+                Stalled::Bisect(order) => order,
+            };
+            let children = order.iter().find_map(|&dir| {
+                if dir == 0 {
+                    let (l, r) = a.split_mid().ok()?;
+                    Some(((l, b.clone()), (r, b.clone())))
                 } else {
-                    (free, hats[1])
-                });
-            }
-            continue;
-        }
-
-        let ranges = [a.domain(), b.domain()];
-        let sizes = [
-            extent([a.control_points.clone()]),
-            extent([b.control_points.clone()]),
-        ];
-        let carried = carried_width(&a.control_points).max(carried_width(&b.control_points));
-        if let Some(bounds) = restriction(&hats, &ranges, &sizes, carried)?
-            && let (Ok(ra), Ok(rb)) = (
-                a.sub_curve(bounds[0].0, bounds[0].1),
-                b.sub_curve(bounds[1].0, bounds[1].1),
-            )
-        {
-            queue.push_back((ra, rb));
-            continue;
-        }
-
-        let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
-            Stalled::Converged => {
-                // The pieces' whole domains, not the tighter clip: pieces the
-                // search could not separate — a tangency converges on a chain
-                // of adjacent ones — must merge into one unresolved cluster,
-                // and adjacent domains share an endpoint where clips need not
-                // touch. A transversal crossing loses nothing: restriction has
-                // already cut its pieces down to the clip.
-                solutions.insert((a.domain_as_scalar(), b.domain_as_scalar()));
-                continue;
-            }
-            Stalled::Bisect(order) => order,
-        };
-        let children = order.iter().find_map(|&dir| {
-            if dir == 0 {
-                let (l, r) = a.split_mid().ok()?;
-                Some([(l, b.clone()), (r, b.clone())])
-            } else {
-                let (l, r) = b.split_mid().ok()?;
-                Some([(a.clone(), l), (a.clone(), r)])
-            }
-        });
-        match children {
-            Some(children) => queue.extend(children),
-            // Nothing left to cut or split: what's here is the candidate.
-            None => solutions.insert((hats[0], hats[1])),
-        }
+                    let (l, r) = b.split_mid().ok()?;
+                    Some(((a.clone(), l), (a.clone(), r)))
+                }
+            });
+            Ok(match children {
+                Some((first, second)) => Split::Halves(first, second),
+                // Nothing left to cut or split: what's here is the candidate.
+                None => {
+                    solutions.insert((hats[0], hats[1]));
+                    Split::Done
+                }
+            })
+        },
+    )?;
+    if let Searched::Exhausted { pending } = searched {
+        return Err(GeopError::new(format!(
+            "curve_curve_crossings: exhausted max_nodes={max_nodes} with {pending} \
+             pairs pending; the result would be incomplete"
+        )));
     }
 
     Ok(solutions.into_vec())

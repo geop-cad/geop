@@ -10,6 +10,7 @@ pub mod annotation;
 pub mod drawing;
 mod export;
 pub mod hidden_lines;
+pub mod layer;
 pub mod operation;
 mod parts;
 pub mod scene;
@@ -28,19 +29,9 @@ pub use operation::{Drawing, DrawingSession};
 pub use parts::parts_list;
 pub use view::{DrawnView, ViewFrame, ViewKind};
 
-use geop_core_math::scalars::Scalar;
-
-/// Bounds how hard a containment or intersection search tries: effort, not
-/// what an answer means.
-pub(crate) const MAX_NODES: usize = 20_000;
-
-/// Where a subdivision search hands over (see `AGENTS.md`).
-pub(crate) fn min_subdivision_size<S: Scalar>() -> S {
-    S::from_f64(1e-7)
-}
-
 #[cfg(test)]
 mod annotation_tests;
+mod icons;
 #[cfg(test)]
 mod testing;
 #[cfg(test)]

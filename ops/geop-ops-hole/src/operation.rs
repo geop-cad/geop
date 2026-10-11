@@ -20,15 +20,16 @@ use geop_core_program::{
     part::Retrieve,
 };
 use geop_core_sketch::CurveKind;
-use geop_core_topology::{Body, FaceId, SolidId};
+use geop_core_topology::SolidId;
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue, model,
+    CosmeticThread, Design, NamedModel, Namer, ParamValue, Threads, ToolReach, draw_threads, model,
     operation::{
         Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope,
         Seen, build_model, frame_along,
     },
     parameters::Formula,
-    ui::formula_number,
+    threads,
+    ui::{choices, chosen, formula_number},
 };
 use geop_ops_booleans::{
     Combine, Extent, Tool,
@@ -38,7 +39,6 @@ use geop_ops_booleans::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cosmetic::{CosmeticThread, Threads, draw_threads, threads},
     hole::{Head, HoleDepth, HoleShape, hole_tool},
     iso::{Fit, MetricSize, SIZES, metric},
     thread::{ThreadPlacement, Wall, thread_tool},
@@ -67,10 +67,6 @@ impl HoleKind {
         (HoleKind::Countersink, "countersink", "Countersink"),
         (HoleKind::Tapped, "tapped", "Tapped"),
     ];
-
-    fn value(self) -> &'static str {
-        Self::ALL.iter().find(|k| k.0 == self).expect("listed").1
-    }
 }
 
 /// How a hole is sized: by an ISO metric screw — `size` `M6`, and for a
@@ -331,7 +327,7 @@ fn sites<S: Scalar>(
             args.face
         ))
     })?;
-    let target = solid_of(named, face, &args.face, "holes are drilled into a solid")?;
+    let target = named.solid_name_of_face(face, "holes are drilled into a solid")?;
     if args.points.is_empty() {
         return Err(GeopError::new("pick the points to drill at"));
     }
@@ -346,22 +342,6 @@ fn sites<S: Scalar>(
         holes.push((scope, frame_along(at, &plane.normal)?));
     }
     Ok(Sites { target, holes })
-}
-
-/// The name of the solid `face`, named `name`, is a face of — refused, as
-/// `why` says, for a face standing on its own.
-fn solid_of<S: Scalar>(
-    model: &NamedModel<S>,
-    face: FaceId,
-    name: &str,
-    why: &str,
-) -> GeopResult<String> {
-    let Body::Solid(solid) = model.topology().body_of_face(face)? else {
-        return Err(GeopError::new(format!(
-            "face {name:?} stands on its own: {why}"
-        )));
-    };
-    Ok(model.name(solid)?.to_string())
 }
 
 impl ModelStep for Hole {
@@ -406,9 +386,11 @@ impl ModelStep for Hole {
                 .with_context(ctx)?;
             tools.push(Tool {
                 solid,
-                up_to_next: (args.end == Extent::UpToNext)
-                    .then(|| (named.name(&["top", "q0"]), named.name(&["bottom", "q0"]))),
-                scope: Some(scope.clone()),
+                reach: ToolReach {
+                    up_to_next: (args.end == Extent::UpToNext)
+                        .then(|| (named.name(&["top", "q0"]), named.name(&["bottom", "q0"]))),
+                    scope: Some(scope.clone()),
+                },
             });
         }
         let combine = Combine::With {
@@ -464,7 +446,8 @@ impl Operation for Hole {
         "Drill simple, counterbored, countersunk or tapped holes at points on a planar face, sized by ISO tables or by hand.",
         OperationGroup::Features,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::HOLE);
     type Args = HoleArgs;
     type EditingState = ();
     type Input = Input;
@@ -517,7 +500,7 @@ impl Operation for Hole {
         let mut seen = Seen::new(context.before);
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         (dialog.reference("face", "face", face, &[Role::Plane], None, false)).reference(
             "points",
             "points",
@@ -526,10 +509,8 @@ impl Operation for Hole {
             None,
             true,
         );
-        let kinds = HoleKind::ALL
-            .iter()
-            .map(|&(_, value, label)| Choice::new(value, label));
-        dialog.select("kind", "type", args.kind.value(), kinds.collect(), false);
+        let (kind, kinds) = choices(&HoleKind::ALL, &args.kind);
+        dialog.select("kind", "type", kind, kinds, false);
         let standard = match args.standard {
             Standard::Iso { .. } => "iso",
             Standard::Custom { .. } => "custom",
@@ -627,12 +608,11 @@ impl Operation for Hole {
         };
         match (key.as_str(), value) {
             ("face", Value::Entities(picked)) => {
-                args.face =
-                    (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+                args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
             }
             ("points", Value::Entities(picked)) => args.points = picked,
             ("kind", Value::Choice(value)) => {
-                if let Some(&(kind, ..)) = HoleKind::ALL.iter().find(|k| k.1 == value) {
+                if let Some(kind) = chosen(&HoleKind::ALL, &value) {
                     args.kind = kind;
                 }
             }
@@ -809,7 +789,7 @@ impl ModelStep for Thread {
             .ok_or_else(|| GeopError::new("the wall has no faces"))
             .with_context(ctx)?;
         let why = "a modelled thread is cut into a solid";
-        let target = solid_of(model, face, &args.face, why).with_context(ctx)?;
+        let target = model.solid_name_of_face(face, why).with_context(ctx)?;
         let tool = thread_tool(
             model,
             &namer,
@@ -854,7 +834,8 @@ impl Operation for Thread {
         "Put an ISO metric thread on a cylindrical face: recorded as a cosmetic thread, or modelled.",
         OperationGroup::Features,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::THREAD);
     type Args = ThreadArgs;
     type EditingState = ();
     type Input = Input;
@@ -892,7 +873,7 @@ impl Operation for Thread {
         let seen = Seen::new(context.before);
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         (dialog.reference("face", "face", face, &[Role::Round], None, false)).select(
             "size",
             "size",
@@ -954,8 +935,7 @@ impl Operation for Thread {
         };
         match (key.as_str(), value) {
             ("face", Value::Entities(picked)) => {
-                args.face =
-                    (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+                args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
             }
             ("size", Value::Choice(size)) => args.size = size,
             ("full_length", Value::Bool(b)) => args.length = if b { None } else { Some(10.0) },

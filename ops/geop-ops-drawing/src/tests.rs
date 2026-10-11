@@ -135,10 +135,11 @@ fn cylinder_side_view_has_silhouettes() {
 /// a thin circle at it; labelled once.
 #[test]
 fn a_threaded_shaft_draws_its_thread() {
+    use crate::layer;
     use crate::{DrawingArgs, compose};
     use geop_core_geometry::{nurb_curve::Handedness, shape::Axis};
-    use geop_ops::output::sheet::{Layer, Shape, Stroke};
-    use geop_ops_hole::{CosmeticThread, Threads};
+    use geop_ops::output::sheet::{Shape, Stroke};
+    use geop_ops::{CosmeticThread, Threads};
 
     let mut part = Part::<S>::new();
     revolved_cylinder(
@@ -175,7 +176,7 @@ fn a_threaded_shaft_draws_its_thread() {
     };
     let build = built_with(&part, Some(&threads), &[]);
     let sheet = compose(build.current(), &args, "", &[]).unwrap();
-    let thread = |s: &&Stroke| s.layer == Layer::Thread;
+    let thread = |s: &&Stroke| s.layer == layer::THREAD;
     let lines: Vec<(f64, f64)> = sheet
         .strokes
         .iter()
@@ -210,8 +211,9 @@ fn a_threaded_shaft_draws_its_thread() {
 /// paper is refused, saying which paper.
 #[test]
 fn a_bill_of_materials_stands_on_the_title_block() {
+    use crate::layer;
     use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
     let mut part = Part::<S>::new();
     cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(100.0, 100.0, 100.0)).unwrap();
     let line = |k: usize| PartsListLine {
@@ -237,7 +239,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     let lowest = sheet
         .strokes
         .iter()
-        .filter(|s| s.layer == Layer::Visible)
+        .filter(|s| s.layer == layer::VISIBLE)
         .flat_map(|s| match &s.shape {
             Shape::Line(a, b) => vec![a[1], b[1]],
             Shape::Polyline(points) => points.iter().map(|p| p[1]).collect(),
@@ -407,8 +409,9 @@ fn a_part_in_front_hides_one_behind() {
 /// the caller numbered; a line of no part drawn gets none.
 #[test]
 fn an_assembly_balloons_each_line_once() {
+    use crate::layer;
     use crate::{DrawingArgs, PartsListLine, compose};
-    use geop_ops::output::sheet::{Layer, Shape};
+    use geop_ops::output::sheet::Shape;
     let mut part = Placed::new();
     let (big, small) = (block(4.0), block(1.0));
     place(&mut part, &big, "base", v(0.0, 0.0, 0.0), [0.0; 3]);
@@ -450,7 +453,7 @@ fn an_assembly_balloons_each_line_once() {
         .strokes
         .iter()
         .filter_map(|s| match s.shape {
-            Shape::Circle { center, radius } if s.layer == Layer::Dimension && radius == 4.0 => {
+            Shape::Circle { center, radius } if s.layer == layer::DIMENSION && radius == 4.0 => {
                 Some(center)
             }
             _ => None,
@@ -463,7 +466,7 @@ fn an_assembly_balloons_each_line_once() {
         let labelled = sheet
             .labels
             .iter()
-            .filter(|l| l.layer == Layer::Dimension && l.text == item)
+            .filter(|l| l.layer == layer::DIMENSION && l.text == item)
             .count();
         assert_eq!(labelled, 1, "balloon {item}");
     }

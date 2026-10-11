@@ -18,7 +18,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
     scalars::Scalar,
-    vector::Vector3,
+    vector::{Vector2, Vector3},
 };
 
 use crate::{
@@ -72,6 +72,10 @@ pub enum CoedgeOn {
     Vertex(usize),
 }
 
+/// The faces around a vertex of a [`BodySpec`], each once, with where the
+/// vertex is on the face's surface (see [`BodySpec::vertex_faces`]).
+pub type FacesAround<S> = Vec<(usize, Vector2<S>)>;
+
 /// The ids [`Model::build_body`] gave what a [`BodySpec`] describes, index
 /// for index.
 #[derive(Clone, Debug)]
@@ -95,6 +99,34 @@ pub struct SpecSources {
 }
 
 impl<S: Scalar> FaceSpec<S> {
+    /// A face on `surface` over the unit square of its parameters, bounded
+    /// by `sides` counter-clockwise from `(0, 0)`: through `(1, 0)`,
+    /// `(1, 1)` and `(0, 1)`, each side a straight pcurve.
+    pub fn on_unit_square(surface: NurbSurface3D<S>, sides: [CoedgeOn; 4]) -> GeopResult<Self> {
+        let corner = |k: usize| {
+            let (u, v) = [
+                (S::ZERO, S::ZERO),
+                (S::ONE, S::ZERO),
+                (S::ONE, S::ONE),
+                (S::ZERO, S::ONE),
+            ][k % 4];
+            Vector2::from_array([u, v])
+        };
+        let outer = sides
+            .into_iter()
+            .enumerate()
+            .map(|(k, on)| {
+                let pcurve = Curve2::line(corner(k), corner(k + 1))?;
+                Ok(CoedgeSpec { on, pcurve })
+            })
+            .collect::<GeopResult<_>>()?;
+        Ok(Self {
+            surface,
+            outer,
+            holes: Vec::new(),
+        })
+    }
+
     /// Its loops, the outer one first.
     pub fn loops(&self) -> Vec<&Vec<CoedgeSpec<S>>> {
         std::iter::once(&self.outer).chain(&self.holes).collect()
@@ -132,6 +164,18 @@ impl<S: Scalar> FaceSpec<S> {
 }
 
 impl<S: Scalar> BodySpec<S> {
+    /// An empty description, to add a body's entities to: of a solid if
+    /// `solid`, else of sheets or a wire.
+    pub fn new(solid: bool) -> Self {
+        Self {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+            shells: Vec::new(),
+            solid,
+        }
+    }
+
     /// The same body moved by the rigid motion `pose`: its vertices, edge
     /// curves and surfaces moved, its pcurves — on surfaces moved with the
     /// same parametrization — as they are.
@@ -177,6 +221,40 @@ impl<S: Scalar> BodySpec<S> {
         }
     }
 
+    /// Per edge, every use of it by a face's coedge — the face, the
+    /// coedge's sense and its pcurve — in the order of the faces.
+    pub fn edge_uses(&self) -> Vec<Vec<(usize, Sense, &Curve2<S>)>> {
+        let mut uses = vec![Vec::new(); self.edges.len()];
+        for (f, face) in self.faces.iter().enumerate() {
+            for lp in face.loops() {
+                for c in lp {
+                    if let CoedgeOn::Edge(e, sense) = c.on {
+                        uses[e].push((f, sense, &c.pcurve));
+                    }
+                }
+            }
+        }
+        uses
+    }
+
+    /// Per vertex, every face around it once, in the order of the faces,
+    /// with where the vertex is on the face's surface: where the first of
+    /// the face's coedges arriving there ends.
+    pub fn vertex_faces(&self) -> GeopResult<Vec<FacesAround<S>>> {
+        let mut around: Vec<FacesAround<S>> = vec![Vec::new(); self.vertices.len()];
+        for (f, face) in self.faces.iter().enumerate() {
+            for lp in face.loops() {
+                for c in lp {
+                    let (_, end) = self.ends(c.on)?;
+                    if !around[end].iter().any(|&(g, _)| g == f) {
+                        around[end].push((f, c.pcurve.ends()?.1));
+                    }
+                }
+            }
+        }
+        Ok(around)
+    }
+
     /// Whether it describes a wire: vertices, but no faces.
     pub fn is_wire(&self) -> bool {
         self.faces.is_empty() && !self.vertices.is_empty()
@@ -202,7 +280,6 @@ impl<S: Scalar> BodySpec<S> {
             }
             return Ok(());
         }
-        let mut edge_uses: Vec<Vec<Sense>> = vec![Vec::new(); self.edges.len()];
         let mut vertex_used = vec![false; self.vertices.len()];
         for edge in &self.edges {
             vertex_used[edge.start] = true;
@@ -221,22 +298,23 @@ impl<S: Scalar> BodySpec<S> {
                             "loop {l} of face {f}: coedge {k} ends at vertex {end}, but the next one starts at vertex {start}"
                         ));
                     }
-                    match coedge.on {
-                        CoedgeOn::Edge(e, sense) => edge_uses[e].push(sense),
-                        CoedgeOn::Vertex(v) => match vertex_used.get_mut(v) {
+                    if let CoedgeOn::Vertex(v) = coedge.on {
+                        match vertex_used.get_mut(v) {
                             Some(used) => *used = true,
                             None => {
                                 return fail(format!(
                                     "face {f} sits at vertex {v}, which does not exist"
                                 ));
                             }
-                        },
+                        }
                     }
                 }
             }
         }
-        for (e, uses) in edge_uses.iter().enumerate() {
-            match uses[..] {
+        // Every edge index names an edge: `ends` checked each above.
+        for (e, uses) in self.edge_uses().iter().enumerate() {
+            let senses: Vec<Sense> = uses.iter().map(|&(_, sense, _)| sense).collect();
+            match senses[..] {
                 [] => return fail(format!("edge {e} is used by no face")),
                 [_] if self.solid => {
                     return fail(format!(

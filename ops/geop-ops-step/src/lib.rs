@@ -21,3 +21,4 @@ mod tests;
 
 #[cfg(test)]
 mod corpus;
+mod icons;

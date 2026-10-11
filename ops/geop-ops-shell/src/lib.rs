@@ -2,6 +2,7 @@
 //! faces are taken away ([`shell::shell`]), and the [`Shell`] operation of a
 //! program built on it.
 
+mod icons;
 pub mod operation;
 pub mod shell;
 

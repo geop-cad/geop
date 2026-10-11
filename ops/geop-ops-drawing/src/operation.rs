@@ -42,7 +42,7 @@ use geop_ops::{
         hit::{hit_visuals, no_instances},
     },
 };
-use geop_ops_hole::{Threads, threads};
+use geop_ops::{Threads, threads};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -52,6 +52,7 @@ use crate::{
         placed_vertex, project, scale_label,
     },
     export::{DrawingExporter, described, drawing},
+    layer,
     parts::parts_list,
     view::{DrawnView, ViewKind},
 };
@@ -81,31 +82,56 @@ pub enum Tool {
 
 /// The tools, as the dialog offers them: each with its name, its icon and
 /// what it does.
-const TOOLS: [(Tool, &str, &str); 8] = [
+/// Each tool, its name, its label and its icon.
+const TOOLS: [(Tool, &str, &str, &str); 8] = [
     (
         Tool::Dimension,
         "distance",
         "Dimension — two points, a line, two lines or a circle",
+        geop_ops::ui::icons::DISTANCE,
     ),
     (
         Tool::Horizontal,
         "distance_x",
         "Horizontal distance — two points or a line",
+        geop_ops::ui::icons::DISTANCE_X,
     ),
     (
         Tool::Vertical,
         "distance_y",
         "Vertical distance — two points or a line",
+        geop_ops::ui::icons::DISTANCE_Y,
     ),
-    (Tool::Radius, "radius", "Radius of a circle or an arc"),
-    (Tool::Diameter, "diameter", "Diameter of a circle or an arc"),
-    (Tool::Angle, "angle", "Angle between two lines"),
+    (
+        Tool::Radius,
+        "radius",
+        "Radius of a circle or an arc",
+        geop_ops::ui::icons::RADIUS,
+    ),
+    (
+        Tool::Diameter,
+        "diameter",
+        "Diameter of a circle or an arc",
+        geop_ops::ui::icons::DIAMETER,
+    ),
+    (
+        Tool::Angle,
+        "angle",
+        "Angle between two lines",
+        geop_ops::ui::icons::ANGLE,
+    ),
     (
         Tool::Note,
         "note",
         "Note — click what it points at, then where its text goes; or click empty paper",
+        crate::icons::NOTE,
     ),
-    (Tool::CenterMark, "center_mark", "Centre mark on a circle"),
+    (
+        Tool::CenterMark,
+        "center_mark",
+        "Centre mark on a circle",
+        crate::icons::CENTER_MARK,
+    ),
 ];
 
 impl Tool {
@@ -131,9 +157,6 @@ pub struct DrawingSession {
     cursor: Option<P>,
     /// The text the next note gets.
     note: String,
-    /// The annotation whose value is being dragged, and where its value was
-    /// when it was grabbed.
-    drag: Option<(usize, [f64; 2])>,
     /// Why the last annotation picked could not be added.
     refused: Option<String>,
     /// The views as last projected, for the part as it then was, and what
@@ -202,7 +225,6 @@ impl Default for DrawingSession {
             hover: None,
             cursor: None,
             note: "NOTE".into(),
-            drag: None,
             refused: None,
             projected: RefCell::new(None),
             laid_out: RefCell::new(None),
@@ -498,11 +520,13 @@ fn under<'l, S: Scalar>(
 /// The style a layer's strokes are shown in: the part's lines as a
 /// sketch's fixed geometry, hidden lines as construction, the rest as
 /// guides.
-fn style(layer: Layer) -> Style {
-    match layer {
-        Layer::Visible | Layer::Border | Layer::Cut | Layer::Thread => Style::Fixed,
-        Layer::Hidden => Style::Construction,
-        Layer::Center | Layer::Dimension | Layer::Hatch | Layer::Bend => Style::Guide,
+fn style(on: Layer) -> Style {
+    if [layer::VISIBLE, layer::BORDER, layer::THREAD].contains(&on) {
+        Style::Fixed
+    } else if on == layer::HIDDEN {
+        Style::Construction
+    } else {
+        Style::Guide
     }
 }
 
@@ -574,9 +598,10 @@ fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) 
         ];
         // A dimension's value as a sketch shows one; the title block's,
         // the parts list's and the views' captions as plain text.
-        let style = match text.layer {
-            Layer::Dimension => Style::Fixed,
-            _ => Style::Paper,
+        let style = if text.layer == layer::DIMENSION {
+            Style::Fixed
+        } else {
+            Style::Paper
         };
         out.push(Visual::new(
             format!("{key}/text{i}"),
@@ -677,7 +702,9 @@ fn annotate(
     f.form.dialog.heading("annotate_heading", "Annotate");
     let actions = TOOLS
         .iter()
-        .map(|&(tool, name, label)| Action::new(name, label).icon(name).active(s.tool == tool))
+        .map(|&(tool, name, label, icon)| {
+            Action::new(name, label).icon(icon).active(s.tool == tool)
+        })
         .collect();
     f.actions("tools", actions, |edit, name| {
         let s = edit.session;
@@ -727,7 +754,7 @@ fn annotate(
                     annotation_visuals(&drawn, &key, style, Style::Fixed)
                         .into_iter()
                         .map(|v| match v.key == key {
-                            true => v.selectable().draggable(),
+                            true => v.selectable().draggable_from_grab(),
                             false => v,
                         }),
                 );
@@ -745,7 +772,6 @@ fn annotate(
             Value::Remove if i < edit.args.annotations.len() => {
                 edit.args.annotations.remove(i);
                 edit.selection.clear();
-                edit.session.drag = None;
             }
             Value::Text(text) => {
                 if let Some(Annotation::Note { text: t, .. }) = edit.args.annotations.get_mut(i) {
@@ -975,7 +1001,7 @@ fn form<'a>(
             &format!("view:{}", kind.name()),
             label(kind),
             args.views.contains(&kind),
-            move |args: &mut DrawingArgs, on| {
+            move |Edit { args, .. }, on| {
                 args.views.retain(|k| *k != kind);
                 if on {
                     args.views.push(kind);
@@ -997,7 +1023,7 @@ fn form<'a>(
             Choice::new("first_angle", "First angle"),
         ],
         false,
-        |args, value| {
+        |Edit { args, .. }, value| {
             args.projection = match value {
                 "first_angle" => Projection::FirstAngle,
                 _ => Projection::ThirdAngle,
@@ -1008,13 +1034,13 @@ fn form<'a>(
         "hidden_lines",
         "Hidden lines",
         args.hidden_lines,
-        |args, on| args.hidden_lines = on,
+        |Edit { args, .. }, on| args.hidden_lines = on,
     );
     f.checkbox(
         "tangent_edges",
         "Tangent edges",
         args.tangent_edges,
-        |args, on| args.tangent_edges = on,
+        |Edit { args, .. }, on| args.tangent_edges = on,
     );
     f.reference(
         "section",
@@ -1037,7 +1063,7 @@ fn form<'a>(
             .map(|s| Choice::new(s.name(), s.name().to_uppercase()))
             .collect(),
         false,
-        |args, value| {
+        |Edit { args, .. }, value| {
             if let Some(s) = SheetSize::ALL.into_iter().find(|s| s.name() == value) {
                 args.sheet = s;
             }
@@ -1055,13 +1081,16 @@ fn form<'a>(
         args.scale.map(scale_label).unwrap_or_else(|| "fit".into()),
         scales,
         false,
-        |args, value| {
+        |Edit { args, .. }, value| {
             args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
         },
     );
-    f.checkbox("bom", "Bill of materials", args.bom, |args, on| {
-        args.bom = on
-    });
+    f.checkbox(
+        "bom",
+        "Bill of materials",
+        args.bom,
+        |Edit { args, .. }, on| args.bom = on,
+    );
     let mut title = Vec::new();
     for (key, caption, value) in [
         ("title:name", "Part name", &args.name),
@@ -1126,36 +1155,21 @@ fn canvas(
             s.hover = under(layout, pointer, s.tool, &s.picks).cloned();
         }
         CanvasEvent::Confirm => s.picks.clear(),
-        CanvasEvent::Move {
-            key,
-            from,
-            to,
-            done,
-            ..
-        } => {
+        // Each event of a drag reaches the annotation as it was when grabbed
+        // (see `Visual::from_grab`).
+        CanvasEvent::Move { key, from, to, .. } => {
             let Some(i) = annotation_of(key).filter(|_| !key.contains('/')) else {
                 return;
             };
             let Some(annotation) = args.annotations.get_mut(i) else {
                 return;
             };
-            let grabbed = match s.drag {
-                Some((j, grabbed)) if j == i => grabbed,
-                _ => {
-                    let grabbed = annotation.label_mut().map_or([0.0, 0.0], |l| *l);
-                    s.drag = Some((i, grabbed));
-                    grabbed
-                }
-            };
             let moved = [
                 to[0].to_f64() - from[0].to_f64(),
                 to[1].to_f64() - from[1].to_f64(),
             ];
             if let Some(label) = annotation.label_mut() {
-                *label = add(grabbed, moved);
-            }
-            if *done {
-                s.drag = None;
+                *label = add(*label, moved);
             }
         }
         CanvasEvent::Cancel => {
@@ -1188,7 +1202,8 @@ impl Operation for Drawing {
         "A 2-D drawing of the part: views with hidden lines, a section, dimensions, notes and a title block — downloaded as SVG or DXF.",
         OperationGroup::Output,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::DRAWING);
     type Args = DrawingArgs;
     type EditingState = DrawingEditing;
     type Input = Input;

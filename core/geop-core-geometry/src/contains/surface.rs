@@ -10,8 +10,6 @@
 //! ([`clip_tensor`]). Intersecting over the axes shrinks the patch towards
 //! the solution in both directions at once.
 
-use std::collections::VecDeque;
-
 use crate::{
     aabb::aabb_could_contain,
     fat_line::{
@@ -24,6 +22,7 @@ use crate::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::subdivide::{Order, Searched, Split, subdivide},
     vector::Vector3,
 };
 
@@ -149,10 +148,6 @@ pub fn surface_could_contain<S: Scalar>(
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Option<(S, S)>> {
-    let mut queue: VecDeque<NurbSurface<S, 4>> = VecDeque::new();
-    queue.push_back(surface.clone());
-
-    let mut explored = 0usize;
     let mut solution: Option<(S, S)> = None;
     let mut report = |(u, v): (S, S)| {
         solution = Some(match solution {
@@ -161,79 +156,80 @@ pub fn surface_could_contain<S: Scalar>(
         });
     };
 
-    while let Some(patch) = queue.pop_front() {
-        if explored >= max_nodes {
-            return Err(GeopError::new(format!(
-                "surface_could_contain (clipping): exhausted max_nodes={max_nodes} with {} \
-                 patches pending; the result would be incomplete",
-                queue.len() + 1
-            )));
-        }
-        explored += 1;
+    let searched = subdivide(
+        [surface.clone()],
+        Order::BreadthFirst,
+        max_nodes,
+        |patch, budget| -> GeopResult<_> {
+            if !aabb_could_contain(&patch.aabb, point) {
+                return Ok(Split::Done);
+            }
+            let Some((u_hat, v_hat)) = clip(&patch, point)? else {
+                return Ok(Split::Done);
+            };
 
-        if !aabb_could_contain(&patch.aabb, point) {
-            continue;
-        }
-        let Some((u_hat, v_hat)) = clip(&patch, point)? else {
-            continue;
-        };
-
-        if let Some((boundary, along_v)) = collapsed_boundary(&patch, u_hat, v_hat) {
-            let budget = max_nodes - explored;
-            if let Some(t) = curve_could_contain(&boundary, point, budget, min_subdivision_size)? {
-                let (fixed, free) = if along_v {
-                    (u_hat, v_hat)
-                } else {
-                    (v_hat, u_hat)
-                };
-                if t.could_be_equal(free) {
-                    let free = free.intersect(t);
-                    report(if along_v {
-                        (fixed, free)
+            if let Some((boundary, along_v)) = collapsed_boundary(&patch, u_hat, v_hat) {
+                if let Some(t) =
+                    curve_could_contain(&boundary, point, budget, min_subdivision_size)?
+                {
+                    let (fixed, free) = if along_v {
+                        (u_hat, v_hat)
                     } else {
-                        (free, fixed)
-                    });
+                        (v_hat, u_hat)
+                    };
+                    if t.could_be_equal(free) {
+                        let free = free.intersect(t);
+                        report(if along_v {
+                            (fixed, free)
+                        } else {
+                            (free, fixed)
+                        });
+                    }
                 }
+                return Ok(Split::Done);
             }
-            continue;
-        }
 
-        let ranges = [patch.domain_u(), patch.domain_v()];
-        let sizes = surface_extents(&patch);
-        // The query point's own width counts too, like a second object's.
-        let point_width = (0..3)
-            .map(|k| point[k].width().to_f64())
-            .fold(0.0, f64::max);
-        let carried = carried_width(&patch.control_points).max(point_width);
-        if let Some(b) = restriction(&[u_hat, v_hat], &ranges, &sizes, carried)?
-            && let Ok(restricted) = patch.sub_surface(b[0], b[1])
-        {
-            queue.push_back(restricted);
-            continue;
-        }
+            let ranges = [patch.domain_u(), patch.domain_v()];
+            let sizes = surface_extents(&patch);
+            // The query point's own width counts too, like a second object's.
+            let point_width = (0..3)
+                .map(|k| point[k].width().to_f64())
+                .fold(0.0, f64::max);
+            let carried = carried_width(&patch.control_points).max(point_width);
+            if let Some(b) = restriction(&[u_hat, v_hat], &ranges, &sizes, carried)?
+                && let Ok(restricted) = patch.sub_surface(b[0], b[1])
+            {
+                return Ok(Split::Restrict(restricted));
+            }
 
-        let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
-            Stalled::Converged => {
-                report((u_hat, v_hat));
-                continue;
+            let order = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+                Stalled::Converged => {
+                    report((u_hat, v_hat));
+                    return Ok(Split::Done);
+                }
+                Stalled::Bisect(order) => order,
+            };
+            let halves = order.iter().find_map(|&dir| {
+                if dir == 0 {
+                    patch.split_u_mid()
+                } else {
+                    patch.split_v_mid()
+                }
+                .ok()
+            });
+            if let Some((left, right)) = halves {
+                return Ok(Split::Halves(left, right));
             }
-            Stalled::Bisect(order) => order,
-        };
-        let halves = order.iter().find_map(|&dir| {
-            if dir == 0 {
-                patch.split_u_mid()
-            } else {
-                patch.split_v_mid()
-            }
-            .ok()
-        });
-        if let Some((left, right)) = halves {
-            queue.push_back(left);
-            queue.push_back(right);
-            continue;
-        }
-        // Nothing left to cut or split: what's here is the answer.
-        report((u_hat, v_hat));
+            // Nothing left to cut or split: what's here is the answer.
+            report((u_hat, v_hat));
+            Ok(Split::Done)
+        },
+    )?;
+    if let Searched::Exhausted { pending } = searched {
+        return Err(GeopError::new(format!(
+            "surface_could_contain (clipping): exhausted max_nodes={max_nodes} with {pending} \
+             patches pending; the result would be incomplete"
+        )));
     }
 
     Ok(solution)

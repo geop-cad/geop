@@ -31,7 +31,7 @@ use geop_core_program::{
     step_editor::Scene,
 };
 use geop_core_sketch::{CurveId, PointId, profile::curve_polyline};
-use geop_core_topology::{Body, EdgeId, FaceId, Model, SolidId};
+use geop_core_topology::{EdgeId, Model, SolidId};
 use geop_ops_rasterize::rasterize;
 use serde::Serialize;
 
@@ -50,7 +50,7 @@ type S = Design;
 /// Samples per edge and per parametric direction of a face. A face's grid is
 /// refined further where its own curvature asks for it (see
 /// `geop_ops_rasterize::grid`), so this is the floor, not the ceiling.
-const RESOLUTION: usize = 24;
+pub(crate) const RESOLUTION: usize = 24;
 
 /// How long a frame datum's axes are, in reaches: it is drawn at a constant
 /// size on screen, with its origin ball, its axes and the squares of its
@@ -329,18 +329,12 @@ impl Layer<'_> {
     }
 }
 
-/// The solid `face` bounds: none, for a face of a sheet.
-fn solid_of_face(model: &Model<S>, face: FaceId) -> Option<SolidId> {
-    match model.body_of_face(face).ok()? {
-        Body::Solid(solid) => Some(solid),
-        Body::Sheet(_) => None,
-    }
-}
-
 /// The solid `edge` bounds: that of a face it runs along.
 fn solid_of_edge(model: &Model<S>, edge: EdgeId) -> Option<SolidId> {
     let coedge = *model.coedges_of_edge(edge).first()?;
-    solid_of_face(model, model.get_coedge(coedge).ok()?.face)
+    model
+        .solid_of_face(model.get_coedge(coedge).ok()?.face)
+        .ok()?
 }
 
 impl PartView {
@@ -372,14 +366,11 @@ impl PartView {
         let raster = rasterize(model, RESOLUTION)?;
         let name = |id: RefId| named.name_of(id).unwrap_or_default().to_string();
 
-        let mut vertices: Vec<_> = raster.vertices.iter().collect();
-        vertices.sort_by_key(|(id, _)| id.0);
-        let mut edges: Vec<_> = raster.edges.iter().collect();
-        edges.sort_by_key(|(id, _)| id.0);
-        let mut faces: Vec<_> = raster.faces.iter().collect();
-        faces.sort_by_key(|(id, _)| id.0);
-        let mut solids: Vec<SolidId> = model.solids.keys().copied().collect();
-        solids.sort_by_key(|s| s.0);
+        // Every map here is ordered by id, so these come in id order.
+        let vertices: Vec<_> = raster.vertices.iter().collect();
+        let edges: Vec<_> = raster.edges.iter().collect();
+        let faces: Vec<_> = raster.faces.iter().collect();
+        let solids: Vec<SolidId> = model.solids.keys().copied().collect();
 
         let mut sketches = Vec::new();
         for (sketch, placed) in seen.sketches() {
@@ -492,7 +483,11 @@ impl PartView {
                     roles: roles_of(&EntityRef::Face { name: face.clone() }, seen),
                     feature: features.of(&face).map(str::to_string),
                     name: face,
-                    solid: solid_of_face(model, id).map(|s| name(s.into())),
+                    solid: model
+                        .solid_of_face(id)
+                        .ok()
+                        .flatten()
+                        .map(|s| name(s.into())),
                     triangles: tris.iter().map(|t| [t.a, t.b, t.c]).collect(),
                     normals: (tris.iter())
                         .map(|t| t.vertex_normals.unwrap_or([t.normal; 3]))
@@ -624,7 +619,7 @@ impl PartView {
 
     /// How far along `pointer`'s ray it first enters the placed part
     /// `instance`, if it does.
-    pub fn pick_instance(&self, instance: &str, pointer: &Pointer<S>) -> Option<S> {
+    fn pick_instance(&self, instance: &str, pointer: &Pointer<S>) -> Option<S> {
         let layers = self.layers(pointer);
         let layer = layers.iter().find(|l| l.instance == Some(instance))?;
         layer

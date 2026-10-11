@@ -2,10 +2,10 @@
 //! what the sketch projects; one line on what to do next and one on how
 //! the sketch stands; and its constraints.
 
-use geop_ops::ui::{Choice, Control, Number, Prompt, Unit, constraint_status};
+use geop_ops::ui::{Choice, Number, Prompt, Unit, constraint_status};
 
 use super::*;
-use crate::references::Source;
+use crate::{icons, references::Source};
 
 /// What the tool in hand asks for next.
 fn tool_hint(s: &SketchSession) -> String {
@@ -96,60 +96,32 @@ fn tool_hint(s: &SketchSession) -> String {
 
 /// The options of the tool in hand: a polygon's sides, how many copies a
 /// pattern makes and how far apart, which sides an offset goes to.
-fn tool_options<'a>(d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>, s: &SketchSession) {
-    let number = |d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
-                  key: &str,
-                  number: Number<S>,
-                  set: fn(&mut SketchSession, f64)| {
-        d.on(key, move |edit, value| {
-            if let Value::Number(v) = value {
-                set(edit.session, v);
-            }
-        });
-        d.form.dialog.push(key, Control::Number(number));
-    };
-    let checkbox = |d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
-                    key: &str,
-                    label: &str,
-                    value: bool,
-                    set: fn(&mut SketchSession, bool)| {
-        d.on(key, move |edit, value| {
-            if let Value::Bool(b) = value {
-                set(edit.session, b);
-            }
-        });
-        let control = Control::Checkbox {
-            label: label.into(),
-            value,
-        };
-        d.form.dialog.push(key, control);
-    };
-    let count = |d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>| {
+fn tool_options(d: &mut EditForm<'_, S, AddSketchArgs, SketchSession>, s: &SketchSession) {
+    let count = |d: &mut EditForm<'_, S, AddSketchArgs, SketchSession>| {
         let field = Number::new("copies", s.modify.count as f64, Unit::Count).range(2.0, 24.0);
-        number(d, "count", field, |s, n| {
-            s.modify.count = (n.round() as usize).clamp(2, 1000);
+        d.number("count", field, |edit, n| {
+            edit.session.modify.count = (n.round() as usize).clamp(2, 1000);
         });
     };
     match s.tool {
         Tool::Draw(DrawTool::Polygon) => {
             let sides = Number::new("sides", s.sides as f64, Unit::Count).range(3.0, 12.0);
-            number(d, "sides", sides, |s, n| {
-                s.sides = (n.round() as usize).clamp(3, 64);
-            });
-            checkbox(
-                d,
+            d.number("sides", sides, |edit, n| {
+                edit.session.sides = (n.round() as usize).clamp(3, 64);
+            })
+            .checkbox(
                 "circumscribed",
                 "Sides touch the circle",
                 s.circumscribed,
-                |s, b| s.circumscribed = b,
+                |edit, b| edit.session.circumscribed = b,
             );
         }
         Tool::Modify(ModifyTool::LinearPattern) => {
             count(d);
             let spacing = Number::new("spacing", s.modify.spacing, Unit::Length);
-            number(d, "spacing", spacing, |s, v| {
+            d.number("spacing", spacing, |edit, v| {
                 if v > 0.0 {
-                    s.modify.spacing = v;
+                    edit.session.modify.spacing = v;
                 }
             });
         }
@@ -157,34 +129,33 @@ fn tool_options<'a>(d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>, s: &S
             count(d);
             let pitch = s.modify.pitch.unwrap_or(360.0 / s.modify.count as f64);
             let angle = Number::new("angle between copies", pitch, Unit::Angle);
-            number(d, "pitch", angle, |s, v| s.modify.pitch = Some(v));
+            d.number("pitch", angle, |edit, v| {
+                edit.session.modify.pitch = Some(v)
+            });
         }
         Tool::Modify(ModifyTool::Offset) => {
-            checkbox(d, "both", "Both sides", s.modify.both, |s, b| {
-                s.modify.both = b
-            });
-            d.on("corners", move |edit, value| {
-                if let Value::Choice(choice) = value {
-                    edit.session.modify.corners = match choice.as_str() {
-                        "extend" => Corners::Extend,
-                        _ => Corners::Round,
-                    };
-                }
-            });
             let value = match s.modify.corners {
                 Corners::Round => "round",
                 Corners::Extend => "extend",
             };
-            d.form.dialog.push(
+            let options = vec![
+                Choice::new("round", "Rounded"),
+                Choice::new("extend", "Extended"),
+            ];
+            d.checkbox("both", "Both sides", s.modify.both, |edit, b| {
+                edit.session.modify.both = b
+            })
+            .select(
                 "corners",
-                Control::Select {
-                    label: "corners".into(),
-                    value: value.into(),
-                    options: vec![
-                        Choice::new("round", "Rounded"),
-                        Choice::new("extend", "Extended"),
-                    ],
-                    searchable: false,
+                "corners",
+                value,
+                options,
+                false,
+                |edit, choice| {
+                    edit.session.modify.corners = match choice {
+                        "extend" => Corners::Extend,
+                        _ => Corners::Round,
+                    };
                 },
             );
         }
@@ -239,7 +210,7 @@ pub(super) fn draw_dialog<'a>(
             let group = if i.tool.modifies() { "Modify" } else { "Draw" };
             Action::new(i.name, i.label)
                 .title(format!("{}{}", i.label, shortcut(i.shortcut)))
-                .icon(i.name)
+                .icon(icons::named(i.name))
                 .group(group)
                 .active(s.tool == Tool::Draw(i.tool))
         })
@@ -250,7 +221,7 @@ pub(super) fn draw_dialog<'a>(
                 "Trim{}: click a curve, or drag across curves, to remove them up to where they meet others",
                 shortcut(Some(TRIM_SHORTCUT))
             ))
-            .icon("trim")
+            .icon(icons::TRIM)
             .group("Modify")
             .active(s.tool == Tool::Trim),
     );
@@ -258,7 +229,7 @@ pub(super) fn draw_dialog<'a>(
     for i in &ModifyTool::ALL {
         let active = s.tool == Tool::Modify(i.tool);
         let action = Action::new(i.name, i.label)
-            .icon(i.name)
+            .icon(icons::named(i.name))
             .group("Modify")
             .active(active);
         tools.push(if i.tool.needs_selection() && !curves_selected && !active {
@@ -272,7 +243,7 @@ pub(super) fn draw_dialog<'a>(
             .title(
                 "Construction geometry (X): the curves selected, or — with none — what is drawn next",
             )
-            .icon("construction")
+            .icon(icons::CONSTRUCTION)
             .group("Modify")
             .active(s.construction),
     );
@@ -293,14 +264,11 @@ pub(super) fn draw_dialog<'a>(
     if let [Pick::Curve(by)] = picks[..]
         && let Some(count) = sketch.pattern_count(by)
     {
-        d.on("pattern_count", move |edit, value| {
-            if let Value::Number(n) = value {
-                let count = (n.round().max(2.0)) as usize;
-                editing(before, edit, |e| e.set_pattern_count(by, count));
-            }
-        });
         let field = Number::new("pattern count", count as f64, Unit::Count).range(2.0, 24.0);
-        d.form.dialog.push("pattern_count", Control::Number(field));
+        d.number("pattern_count", field, move |edit, n| {
+            let count = (n.round().max(2.0)) as usize;
+            editing(before, edit, |e| e.set_pattern_count(by, count));
+        });
     }
 
     let constraints: Vec<Action> = ConstraintTool::ALL
@@ -312,7 +280,7 @@ pub(super) fn draw_dialog<'a>(
                 "Constrain"
             };
             let action = Action::new(i.name, i.label)
-                .icon(i.name)
+                .icon(icons::named(i.name))
                 .group(group)
                 .active(s.tool == Tool::Constrain(i.tool));
             if i.tool.fit(sketch, &picks).usable() {

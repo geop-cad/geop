@@ -14,8 +14,14 @@
 //! six planar faces, twelve shared edges, eight shared vertices — no
 //! `extrude` generality (arbitrary footprints, holes) required.
 
-use geop_core_geometry::{nurb_curve::NurbCurve, nurb_surface::NurbSurface3D};
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_geometry::{
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_surface::NurbSurface3D,
+};
+use geop_core_math::{
+    scalars::Scalar,
+    vector::{Vector2, Vector3},
+};
 use std::collections::HashMap;
 
 use crate::{
@@ -89,19 +95,8 @@ fn planar_face<S: Scalar>(
     edges: &mut HashMap<(VertexId, VertexId), EdgeRef>,
 ) -> crate::FaceId {
     let pt = |model: &Model<S>, v: VertexId| model.vertices[&v].point;
-    let surface = NurbSurface3D::try_new(
-        1,
-        1,
-        vec![
-            homogeneous(pt(model, a)),
-            homogeneous(pt(model, d)),
-            homogeneous(pt(model, b)),
-            homogeneous(pt(model, c)),
-        ],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )
-    .unwrap();
+    let surface =
+        NurbSurface3D::bilinear(pt(model, a), pt(model, b), pt(model, c), pt(model, d)).unwrap();
 
     let face_id = model.insert_face(Face {
         surface,
@@ -128,12 +123,7 @@ fn planar_face<S: Scalar>(
                 _ => match edges.get(&(from, to)) {
                     Some(existing) if existing.start == from => (existing.id, Sense::Forward),
                     _ => {
-                        let curve = NurbCurve::try_new(
-                            1,
-                            vec![homogeneous(pt(model, from)), homogeneous(pt(model, to))],
-                            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-                        )
-                        .unwrap();
+                        let curve = NurbCurve3D::line(pt(model, from), pt(model, to)).unwrap();
                         let edge_id = model.insert_edge(Edge {
                             curve,
                             start_vertex: from,
@@ -150,12 +140,8 @@ fn planar_face<S: Scalar>(
                     }
                 },
             };
-            let pcurve = NurbCurve::try_new(
-                1,
-                vec![homogeneous2(uv0), homogeneous2(uv1)],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            )
-            .unwrap();
+            let pcurve =
+                NurbCurve2D::line(Vector2::from_array(uv0), Vector2::from_array(uv1)).unwrap();
             model.insert_coedge(Coedge {
                 geometry: CoedgeGeometry::Edge(edge_id),
                 sense,
@@ -179,25 +165,4 @@ fn planar_face<S: Scalar>(
     model.shells.get_mut(&shell_id).unwrap().faces.push(face_id);
 
     face_id
-}
-
-fn homogeneous<S: Scalar>(p: Vector3<S>) -> geop_core_math::vector::Vector4<S> {
-    geop_core_math::vector::Vector4::from_array([p[0], p[1], p[2], S::ONE])
-}
-
-fn homogeneous2<S: Scalar>(uv: [S; 2]) -> geop_core_math::vector::Vector3<S> {
-    geop_core_math::vector::Vector3::from_array([uv[0], uv[1], S::ONE])
-}
-
-/// A straight degree-`1` pcurve from `a` to `b`, in `(u, v)` parameter space.
-pub fn line2<S: Scalar>(
-    a: geop_core_math::vector::Vector2<S>,
-    b: geop_core_math::vector::Vector2<S>,
-) -> geop_core_geometry::nurb_curve::NurbCurve2D<S> {
-    NurbCurve::try_new(
-        1,
-        vec![homogeneous2([a[0], a[1]]), homogeneous2([b[0], b[1]])],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )
-    .unwrap()
 }

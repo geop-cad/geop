@@ -16,7 +16,7 @@ use geop_ops::{
     Design, Namer, ParamValue,
     operation::{Aspects, Build, BuildReader, EntityRef, Input, Role, Seen},
     placed::{Instance, Placement, instance, instance_name},
-    ui::{Choice, EditForm, Number, Tone, Unit},
+    ui::{Choice, Edit, EditForm, Number, Tone, Unit},
 };
 use serde::{Deserialize, Serialize};
 
@@ -133,7 +133,8 @@ impl Operation for PartPattern {
         OperationGroup::Assembly,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::PART_PATTERN);
     type Args = PartPatternArgs;
     type EditingState = ();
     type Input = Input;
@@ -214,7 +215,7 @@ fn form(
         args.part.clone(),
         options,
         true,
-        |args, part| args.part = part.to_string(),
+        |Edit { args, .. }, part| args.part = part.to_string(),
     );
     f.reference(
         "axis",
@@ -231,35 +232,42 @@ fn form(
         Choice::new("linear", "along the line"),
     ];
     let way = if circular { "circular" } else { "linear" };
-    f.select("layout", "layout", way, choices, false, |args, way| {
-        args.layout = match (way, args.layout) {
-            ("linear", Layout::Circular { .. }) => Layout::Linear { spacing: 1.0 },
-            ("circular", Layout::Linear { .. }) => Layout::Circular {
-                angle: 360.0 / args.count.max(1) as f64,
-            },
-            (_, layout) => layout,
-        };
-    });
+    f.select(
+        "layout",
+        "layout",
+        way,
+        choices,
+        false,
+        |Edit { args, .. }, way| {
+            args.layout = match (way, args.layout) {
+                ("linear", Layout::Circular { .. }) => Layout::Linear { spacing: 1.0 },
+                ("circular", Layout::Linear { .. }) => Layout::Circular {
+                    angle: 360.0 / args.count.max(1) as f64,
+                },
+                (_, layout) => layout,
+            };
+        },
+    );
     match args.layout {
         Layout::Linear { spacing } => {
             f.number(
                 "spacing",
                 Number::new("spacing", spacing, Unit::Length),
-                |args, v| args.layout = Layout::Linear { spacing: v },
+                |Edit { args, .. }, v| args.layout = Layout::Linear { spacing: v },
             );
         }
         Layout::Circular { angle } => {
             f.number(
                 "angle",
                 Number::new("angle between", angle, Unit::Angle),
-                |args, v| args.layout = Layout::Circular { angle: v },
+                |Edit { args, .. }, v| args.layout = Layout::Circular { angle: v },
             );
         }
     }
     f.number(
         "count",
         Number::new("count", args.count as f64, Unit::Count).range(2.0, 100.0),
-        |args, v| args.count = v.round().max(2.0) as usize,
+        |Edit { args, .. }, v| args.count = v.round().max(2.0) as usize,
     );
     f.form.dialog.text(
         "hint",

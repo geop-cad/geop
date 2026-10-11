@@ -1,6 +1,7 @@
 //! [`Sweep`]: carry a sketch's area along the curves of another sketch, or
 //! of a 3-D sketch.
 
+use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -19,12 +20,13 @@ use geop_ops::{
         Build, BuildReader, Chain, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope, Seen,
         build_model,
     },
+    ui::sketch_field,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Output, extrude::shape_loops, sketch_field};
+use super::{Output, extrude::shape_loops};
 use crate::{
-    common::start_point,
+    loft::centre,
     path_sweep::{Control, Orientation, sweep_along},
     sweep::SweepLoop,
 };
@@ -37,9 +39,10 @@ use crate::{
 /// of curves enclosing nothing.
 ///
 /// The path is the path sketch's one chain of curves, or its one loop, which
-/// sweeps a ring — a 3-D sketch's chain runs through space, and the profile
-/// turns with it as little as it can (see [`crate::path_sweep`]). The profile travels along it from where it is drawn,
-/// square to the path as it was there (see [`crate::path_sweep`]): draw it
+/// sweeps a ring, or an edge of the part — a 3-D sketch's chain runs
+/// through space, and the profile turns with it as little as it can. The
+/// profile travels along it from where it is drawn, square to the path as
+/// it was there (see [`crate::path_sweep`]): draw it
 /// at the start of the path, its plane across it. An open path starts at
 /// its end nearer the profile, a closed one at its joint nearest the
 /// profile. The path is tangent-continuous, except where two lines meet at
@@ -120,7 +123,8 @@ impl Operation for Sweep {
         "Sweep a sketch's area along the curves of another sketch into a solid, or its curves into faces.",
         OperationGroup::Solid,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::SWEEP);
     type Args = SweepArgs;
     type EditingState = ();
     type Input = Input;
@@ -214,8 +218,7 @@ impl Operation for Sweep {
         };
         match (key.as_str(), value) {
             ("profile", Value::Entities(picked)) => {
-                args.profile =
-                    (EntityRef::names_of(EntityRef::sketch, &picked).pop()).unwrap_or_default();
+                args.profile = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
             }
             ("path", Value::Entities(picked)) => args.path = picked.into_iter().next(),
             ("rails", Value::Entities(picked)) => args.rails = picked,
@@ -303,20 +306,21 @@ fn profile_centre<S: Scalar>(
         .first()
         .ok_or_else(|| GeopError::new("sweep: the profile has no curves"))?
         .profile;
-    let mut centre = [0.0; 3];
-    for curve in &outer.curves {
-        let p = plane.uv_to_xyz(&start_point(curve)?);
-        for (k, c) in centre.iter_mut().enumerate() {
-            *c += p[k].to_f64() / outer.curves.len() as f64;
-        }
-    }
-    Ok(centre)
+    let starts = outer
+        .curves
+        .iter()
+        .map(|curve| Ok(plane.uv_to_xyz(&curve.start()?).to_f64_array()))
+        .collect::<GeopResult<Vec<_>>>()?;
+    Ok(centre(&starts))
 }
 
 /// `chain` starting where it comes nearest to `centre`: an open one at its
 /// nearer end, a closed one at its nearest joint. Which is a free choice of
 /// where to start; the nearest is what the profile is drawn at.
-fn starting_near<S: Scalar>(chain: Chain<S>, centre: &[f64; 3]) -> GeopResult<Chain<S>> {
+fn starting_near<S: Scalar>(
+    chain: Chain<NurbCurve3D<S>>,
+    centre: &[f64; 3],
+) -> GeopResult<Chain<NurbCurve3D<S>>> {
     let distance =
         |p: &Vector3<S>| -> f64 { (0..3).map(|k| (p[k].to_f64() - centre[k]).powi(2)).sum() };
     let joints = chain.joints()?;

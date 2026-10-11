@@ -1,7 +1,7 @@
 use crate::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector, Vector2, Vector3},
+    vector::{Vector, Vector2, Vector3, Vector4},
 };
 
 impl<S: Scalar, const N: usize> Vector<S, N> {
@@ -152,6 +152,55 @@ impl<S: Scalar> Vector3<S> {
         out[2] = self[0].mul(other[1]).sub(self[1].mul(other[0]));
         out
     }
+
+    /// Whether `self` and `other` could be parallel, in either sense: their
+    /// cross product could be zero.
+    pub fn could_be_parallel(&self, other: &Self) -> bool {
+        self.prod_cross(other).norm_sq().could_be_equal(S::ZERO)
+    }
+
+    /// `self` turned about the unit vector `axis` by the angle with cosine
+    /// `cos` and sine `sin` (Rodrigues' formula).
+    pub fn rotated_about(&self, axis: &Self, cos: S, sin: S) -> Self {
+        let along = axis.prod_scalar(axis.prod_dot(self).mul(S::ONE.sub(cos)));
+        self.prod_scalar(cos)
+            .add(&axis.prod_cross(self).prod_scalar(sin))
+            .add(&along)
+    }
+
+    /// The point `self` with weight `w`, homogeneous: `(w x, w y, w z, w)`.
+    /// Taken as it is where the weight is exactly one: multiplying by it
+    /// would only widen it by rounding.
+    pub fn homogeneous(&self, w: S) -> Vector4<S> {
+        if w.is_exactly(S::ONE) {
+            Vector4::from_array([self[0], self[1], self[2], w])
+        } else {
+            Vector4::from_array([self[0].mul(w), self[1].mul(w), self[2].mul(w), w])
+        }
+    }
+
+    /// The point the homogeneous 2-D point `(w x, w y, w)` stands for,
+    /// `(x, y)`: each coordinate divided by the weight (not multiplied by
+    /// its inverse, which rounds twice).
+    pub fn dehomogenized(&self) -> GeopResult<Vector2<S>> {
+        Ok(Vector2::from_array([
+            self[0].div(self[2])?,
+            self[1].div(self[2])?,
+        ]))
+    }
+}
+
+impl<S: Scalar> Vector4<S> {
+    /// The point the homogeneous 3-D point `(w x, w y, w z, w)` stands for,
+    /// `(x, y, z)`: each coordinate divided by the weight (not multiplied by
+    /// its inverse, which rounds twice).
+    pub fn dehomogenized(&self) -> GeopResult<Vector3<S>> {
+        Ok(Vector3::from_array([
+            self[0].div(self[3])?,
+            self[1].div(self[3])?,
+            self[2].div(self[3])?,
+        ]))
+    }
 }
 
 impl<S: Scalar> Vector2<S> {
@@ -160,6 +209,17 @@ impl<S: Scalar> Vector2<S> {
     /// of `self`.
     pub fn prod_cross(&self, other: &Self) -> S {
         self[0].mul(other[1]).sub(self[1].mul(other[0]))
+    }
+
+    /// The point `self` with weight `w`, homogeneous: `(w x, w y, w)` —
+    /// taken as it is where the weight is exactly one (see
+    /// [`Vector3::homogeneous`]).
+    pub fn homogeneous(&self, w: S) -> Vector3<S> {
+        if w.is_exactly(S::ONE) {
+            Vector3::from_array([self[0], self[1], w])
+        } else {
+            Vector3::from_array([self[0].mul(w), self[1].mul(w), w])
+        }
     }
 
     /// Rotated 90 degrees counter-clockwise.

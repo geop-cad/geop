@@ -7,7 +7,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Dialog, Event, Form, Number, Unit, Value},
+    editing::{Event, Form, Number, Unit, Value},
     operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_ops::operation::Input;
@@ -16,7 +16,7 @@ use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model},
     parameters::Formula,
-    ui::formula_number,
+    ui::{EditForm, formula_number},
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,12 +24,6 @@ use crate::{
     blend::{BlendShape, blend},
     rolling::Radii,
 };
-
-/// The edges field of both operations.
-fn edges_field<S: Scalar>(dialog: &mut Dialog<S>, edges: &[String]) {
-    let picked = EntityRef::of_names(EntityRef::edge, edges);
-    dialog.reference("edges", "edges", picked, &[Role::Edge], None, true);
-}
 
 /// Rounds the edges named `edges` of a solid with a fillet of `radius`, for
 /// the operation `F`: the solid is consumed and the result named
@@ -128,10 +122,11 @@ impl Operation for Fillet {
     const INFO: OperationInfo = OperationInfo::new(
         "fillet",
         "Fillet",
-        "Round a solid's straight and circular edges.",
+        "Round a solid's edges.",
         OperationGroup::Features,
         OperationTier::Big,
-    );
+    )
+    .icon(geop_ops::ui::icons::FILLET);
     type Args = FilletArgs;
     type EditingState = ();
     type Input = Input;
@@ -150,47 +145,12 @@ impl Operation for Fillet {
         build_model::<Self>(part, step, args)
     }
 
-    /// The edges, picked, and the radius — and, varying, the radius at the
-    /// end and at vertices picked, each a number of its own.
     fn presentation(
         context: &Context<Input, ParamValue>,
         args: &FilletArgs,
         _: &(),
     ) -> Form<Design> {
-        let mut seen = Seen::new(context.before);
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        edges_field(dialog, &args.edges);
-        let radius = formula_number("radius", &args.radius, &mut seen, Unit::Length);
-        (dialog.number("radius", radius.range(0.0, 1.0))).checkbox(
-            "variable",
-            "variable radius",
-            args.variable(),
-        );
-        if args.variable() {
-            let end = args.end_radius.as_ref().unwrap_or(&args.radius);
-            let end = formula_number("end radius", end, &mut seen, Unit::Length);
-            dialog.number("end_radius", end.range(0.0, 1.0));
-            let names: Vec<String> = (args.vertex_radii.iter())
-                .map(|v| v.vertex.clone())
-                .collect();
-            let vertices = EntityRef::of_names(EntityRef::vertex, &names);
-            (dialog.reference(
-                "radius_vertices",
-                "radii at vertices",
-                vertices,
-                &[Role::Point],
-                None,
-                true,
-            ))
-            .optional("radius_vertices");
-            for (i, v) in args.vertex_radii.iter().enumerate() {
-                let label = format!("radius at {}", v.vertex);
-                let number = Number::new(label, v.radius, Unit::Length).range(0.0, 1.0);
-                dialog.number(&format!("vertex_radius_{i}"), number);
-            }
-        }
-        form
+        fillet_form(context, args).into_form()
     }
 
     fn process_user_event(
@@ -199,52 +159,94 @@ impl Operation for Fillet {
         _: &(),
         event: Event<Design>,
     ) -> (FilletArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("edges", Value::Entities(picked)) => {
-                args.edges = EntityRef::names_of(EntityRef::edge, &picked);
+        (fillet_form(context, args).apply(args, event), ())
+    }
+}
+
+/// The form of a fillet: the edges, picked, and the radius — and, varying,
+/// the radius at the end and at vertices picked, each a number of its own.
+fn fillet_form<'a>(
+    context: &'a Context<Input, ParamValue>,
+    args: &FilletArgs,
+) -> EditForm<'a, Design, FilletArgs> {
+    let mut seen = Seen::new(context.before);
+    let mut f = EditForm::<Design, FilletArgs>::default();
+    let edges = EntityRef::of_names(EntityRef::edge, &args.edges);
+    f.reference(
+        "edges",
+        "edges",
+        edges,
+        &[Role::Edge],
+        None,
+        true,
+        |edit, picked| {
+            edit.args.edges = EntityRef::names_of(EntityRef::edge, &picked);
+        },
+    );
+    let radius = formula_number("radius", &args.radius, &mut seen, Unit::Length);
+    f.formula("radius", radius.range(0.0, 1.0), |edit, radius| {
+        edit.args.radius = radius
+    })
+    .checkbox(
+        "variable",
+        "variable radius",
+        args.variable(),
+        |edit, on| {
+            let args = edit.args;
+            args.end_radius = on.then(|| args.radius.clone());
+            if !on {
+                args.vertex_radii.clear();
             }
-            ("variable", Value::Bool(on)) => {
-                args.end_radius = on.then(|| args.radius.clone());
-                if !on {
-                    args.vertex_radii.clear();
-                }
-            }
-            ("radius_vertices", Value::Entities(picked)) => {
-                // A new vertex starts at the radius as it is now.
-                let radius = (args.radius.evaluate(&mut Seen::new(context.before))).unwrap_or(0.1);
-                let old = std::mem::take(&mut args.vertex_radii);
-                args.vertex_radii = (EntityRef::names_of(EntityRef::vertex, &picked).into_iter())
-                    .map(|vertex| VertexRadius {
-                        radius: (old.iter().find(|v| v.vertex == vertex))
-                            .map_or(radius, |v| v.radius),
-                        vertex,
-                    })
-                    .collect();
-            }
-            (key, value) => {
-                if let Some(radius) = Formula::from_value(&value) {
-                    match key {
-                        "radius" => args.radius = radius,
-                        "end_radius" => args.end_radius = Some(radius),
-                        _ => {}
-                    }
-                }
-                let vertex = key
-                    .strip_prefix("vertex_radius_")
-                    .and_then(|i| i.parse::<usize>().ok());
-                if let (Some(i), Value::Number(radius)) = (vertex, value)
-                    && let Some(v) = args.vertex_radii.get_mut(i)
-                {
+        },
+    );
+    if !args.variable() {
+        return f;
+    }
+    let end = args.end_radius.as_ref().unwrap_or(&args.radius);
+    let end = formula_number("end radius", end, &mut seen, Unit::Length);
+    f.formula("end_radius", end.range(0.0, 1.0), |edit, radius| {
+        edit.args.end_radius = Some(radius)
+    });
+    let names: Vec<String> = (args.vertex_radii.iter())
+        .map(|v| v.vertex.clone())
+        .collect();
+    let vertices = EntityRef::of_names(EntityRef::vertex, &names);
+    let label = "radii at vertices";
+    f.reference(
+        "radius_vertices",
+        label,
+        vertices,
+        &[Role::Point],
+        None,
+        true,
+        |edit, picked| {
+            // A new vertex starts at the radius as it is now.
+            let args = edit.args;
+            let radius = (args.radius.evaluate(&mut Seen::new(context.before))).unwrap_or(0.1);
+            let old = std::mem::take(&mut args.vertex_radii);
+            args.vertex_radii = (EntityRef::names_of(EntityRef::vertex, &picked).into_iter())
+                .map(|vertex| VertexRadius {
+                    radius: (old.iter().find(|v| v.vertex == vertex)).map_or(radius, |v| v.radius),
+                    vertex,
+                })
+                .collect();
+        },
+    );
+    f.form.dialog.optional("radius_vertices");
+    for (i, v) in args.vertex_radii.iter().enumerate() {
+        let label = format!("radius at {}", v.vertex);
+        let number = Number::new(label, v.radius, Unit::Length).range(0.0, 1.0);
+        f.number(
+            &format!("vertex_radius_{i}"),
+            number,
+            move |edit, radius| {
+                if let Some(v) = edit.args.vertex_radii.get_mut(i) {
                     v.radius = radius;
                 }
-            }
-        }
-        (args, ())
+            },
+        );
     }
+    f
 }
 
 /// Bevels the edges named `edges` of a solid with a chamfer `distance` into
@@ -304,10 +306,11 @@ impl Operation for Chamfer {
     const INFO: OperationInfo = OperationInfo::new(
         "chamfer",
         "Chamfer",
-        "Bevel a solid's straight and circular edges.",
+        "Bevel a solid's edges.",
         OperationGroup::Features,
         OperationTier::Small,
-    );
+    )
+    .icon(geop_ops::ui::icons::CHAMFER);
     type Args = ChamferArgs;
     type EditingState = ();
     type Input = Input;
@@ -340,7 +343,8 @@ impl Operation for Chamfer {
         let mut seen = Seen::new(context.before);
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        edges_field(dialog, &args.edges);
+        let edges = EntityRef::of_names(EntityRef::edge, &args.edges);
+        dialog.reference("edges", "edges", edges, &[Role::Edge], None, true);
         let distance = formula_number("distance", &args.distance, &mut seen, Unit::Length);
         (dialog.number("distance", distance.range(0.0, 1.0))).checkbox(
             "two_distances",

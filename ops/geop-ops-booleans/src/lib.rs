@@ -16,6 +16,7 @@
 
 pub mod boolean;
 pub mod extent;
+mod icons;
 pub mod imprint;
 pub mod naming;
 pub mod operation;

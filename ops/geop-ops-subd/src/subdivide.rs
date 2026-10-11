@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
-use crate::cage::{Mesh, Topology};
+use crate::cage::{Mesh, Topology, next, prev, undirected};
 
 /// How the surface behaves at a vertex.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,27 +37,16 @@ pub enum VertexKind {
     Corner,
 }
 
-/// The faces around `v`'s fan in order: the corner after `v` in face `c`,
-/// the one before it, and the one opposite (for a quad).
-pub fn next(faces: &[Vec<usize>], (f, k): (usize, usize)) -> usize {
-    faces[f][(k + 1) % faces[f].len()]
-}
-
-pub fn prev(faces: &[Vec<usize>], (f, k): (usize, usize)) -> usize {
-    let n = faces[f].len();
-    faces[f][(k + n - 1) % n]
-}
-
 /// Whether the edge between `a` and `b` is sharp: creased, or on the
 /// mesh's boundary.
-pub fn is_sharp(sharp: &BTreeSet<(usize, usize)>, topology: &Topology, a: usize, b: usize) -> bool {
-    sharp.contains(&(a.min(b), a.max(b))) || topology.is_boundary(a, b)
+pub fn is_sharp(sharp: &BTreeSet<[usize; 2]>, topology: &Topology, a: usize, b: usize) -> bool {
+    sharp.contains(&undirected(a, b)) || topology.is_boundary(a, b)
 }
 
 /// What kind of vertex `v` is (see [`VertexKind`]).
 pub fn vertex_kind(
     faces: &[Vec<usize>],
-    sharp: &BTreeSet<(usize, usize)>,
+    sharp: &BTreeSet<[usize; 2]>,
     topology: &Topology,
     v: usize,
 ) -> VertexKind {
@@ -111,11 +100,11 @@ pub struct Subdivided<S: Scalar> {
     pub face_start: Vec<usize>,
     /// The cage's vertex `v` is vertex `v` here too; its face `f`'s face
     /// point is `face_point[f]`, and its edge `(a, b)`'s edge point
-    /// `edge_point[&(a, b)]`, the smaller index first.
+    /// `edge_point[&[a, b]]`, the smaller index first.
     pub face_point: Vec<usize>,
-    pub edge_point: BTreeMap<(usize, usize), usize>,
+    pub edge_point: BTreeMap<[usize; 2], usize>,
     /// The halves of every creased edge.
-    pub sharp: BTreeSet<(usize, usize)>,
+    pub sharp: BTreeSet<[usize; 2]>,
     pub topology: Topology,
 }
 
@@ -157,7 +146,7 @@ pub fn subdivide<S: Scalar>(mesh: &Mesh, topology: &Topology) -> GeopResult<Subd
     let face_point: Vec<usize> = (0..faces.len()).map(|f| positions.len() + f).collect();
     positions.extend(face_points.iter().copied());
     let mut edge_point = BTreeMap::new();
-    for ((a, b), adjacent) in topology.edges() {
+    for ([a, b], adjacent) in topology.edges() {
         let point = if is_sharp(&mesh.sharp, topology, a, b) {
             divide(p[a].add(&p[b]), 2)?
         } else {
@@ -169,10 +158,10 @@ pub fn subdivide<S: Scalar>(mesh: &Mesh, topology: &Topology) -> GeopResult<Subd
             ];
             divide(weighted(&terms), 4)?
         };
-        edge_point.insert((a, b), positions.len());
+        edge_point.insert([a, b], positions.len());
         positions.push(point);
     }
-    let edge = |a: usize, b: usize| edge_point[&(a.min(b), a.max(b))];
+    let edge = |a: usize, b: usize| edge_point[&undirected(a, b)];
     let mut quads = Vec::new();
     let mut face_start = Vec::with_capacity(faces.len());
     for (f, face) in faces.iter().enumerate() {
@@ -184,10 +173,10 @@ pub fn subdivide<S: Scalar>(mesh: &Mesh, topology: &Topology) -> GeopResult<Subd
         }
     }
     let mut sharp = BTreeSet::new();
-    for &(a, b) in &mesh.sharp {
+    for &[a, b] in &mesh.sharp {
         let m = edge(a, b);
-        sharp.insert((a.min(m), a.max(m)));
-        sharp.insert((b.min(m), b.max(m)));
+        sharp.insert(undirected(a, m));
+        sharp.insert(undirected(b, m));
     }
     let names: Vec<String> = (0..positions.len())
         .map(|i| format!("subdivided vertex {i}"))

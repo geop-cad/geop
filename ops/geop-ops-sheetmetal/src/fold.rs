@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, true_point_fractions},
-    nurb_surface::{NurbSurface, NurbSurface3D},
+    nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -22,12 +22,11 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Sense;
-use geop_ops_extrude_revolve::common::{arc3, end_point, line2, line3, start_point};
 
 use crate::{
     layout::{Home, Layout, LayoutEdge, Seg},
     sheet::{BendFrame, Placement, Sheet},
-    thicken::{SheetCoedge, SheetEdge, SheetFace, SheetSurface, SheetVertex, translate2},
+    thicken::{SheetCoedge, SheetEdge, SheetFace, SheetSurface, SheetVertex},
 };
 
 /// How many intervals a wrapped curve is sampled in: bounds how wide its
@@ -126,7 +125,7 @@ impl<S: Scalar> Sheet<S> {
         let own = |edge: &LayoutEdge<S>, f: usize| -> GeopResult<NurbCurve2D<S>> {
             match &edge.own {
                 Some(curve) => Ok(curve.clone()),
-                None => translate2(&edge.curve, &shifts[f].neg()),
+                None => Ok(edge.curve.translate(shifts[f].neg())),
             }
         };
         for &e in &used {
@@ -306,20 +305,10 @@ impl<S: Scalar> Wrap<S> {
         };
         // `u` from the parent across to the child, `v` along the parent's
         // edge: `∂u × ∂v = m × tau = n`.
-        let strip = |a: &NurbCurve3D<S>, b: &NurbCurve3D<S>| {
-            NurbSurface::try_new(
-                2,
-                1,
-                a.control_points
-                    .iter()
-                    .zip(&b.control_points)
-                    .flat_map(|(p, q)| [*p, *q])
-                    .collect(),
-                a.knot_vector.clone(),
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            )
-        };
-        let strips = (strip(&s0.0, &s1.0)?, strip(&s0.1, &s1.1)?);
+        let strips = (
+            NurbSurface3D::ruled_compatible(&s0.0, &s1.0)?,
+            NurbSurface3D::ruled_compatible(&s0.1, &s1.1)?,
+        );
         let origin = layout.vertices[pa].at;
         let run = layout.vertices[pb].at.sub(&origin);
         let along = run.normalize().with_context(ctx)?;
@@ -480,10 +469,13 @@ impl<S: Scalar> Wrap<S> {
             }
         }
         match self.kind(edge)? {
-            Run::Along => Ok((line3(start.0, end.0)?, line3(start.1, end.1)?)),
+            Run::Along => Ok((
+                NurbCurve3D::line(start.0, end.0)?,
+                NurbCurve3D::line(start.1, end.1)?,
+            )),
             Run::Across => {
-                let (_, from) = self.coords(&start_point(&edge.curve)?)?;
-                let (_, to) = self.coords(&end_point(&edge.curve)?)?;
+                let (_, from) = self.coords(&edge.curve.start()?)?;
+                let (_, to) = self.coords(&edge.curve.end()?)?;
                 Ok((
                     turn(&self.frame, start.0, end.0, from, to, self.frame.r_a)?,
                     turn(&self.frame, start.1, end.1, from, to, self.frame.r_b)?,
@@ -550,7 +542,7 @@ impl<S: Scalar> Wrap<S> {
             Sense::Reversed => (edge.end, edge.start),
         };
         if !matches!(self.kind(edge)?, Run::Wrapped) {
-            return line2(uv[&from], uv[&to]);
+            return NurbCurve2D::line(uv[&from], uv[&to]);
         }
         let curve = match sense {
             Sense::Forward => edge.curve.clone(),
@@ -624,11 +616,9 @@ fn turn<S: Scalar>(
     };
     if n == 1 {
         let (tangent, _) = direction(from, starts_flat);
-        return arc3(p, p.add(&tangent.prod_scalar(radius.mul(tan))), q, weight);
+        return NurbCurve3D::arc(p, p.add(&tangent.prod_scalar(radius.mul(tan))), q, weight);
     }
-    let homogeneous =
-        |x: &Vector3<S>, w: S| Vector4::from_array([x[0].mul(w), x[1].mul(w), x[2].mul(w), w]);
-    let mut control_points = vec![homogeneous(&p, S::ONE)];
+    let mut control_points = vec![p.homogeneous(S::ONE)];
     let mut knots = vec![S::ZERO; 3];
     let mut at = p;
     for j in 0..n {
@@ -645,8 +635,8 @@ fn turn<S: Scalar>(
             let (_, out) = direction(from.add(step.mul(S::from_i64(j as i64 + 1))), false);
             at.add(&out.sub(&radial).prod_scalar(radius))
         };
-        control_points.push(homogeneous(&apex, weight));
-        control_points.push(homogeneous(&next, S::ONE));
+        control_points.push(apex.homogeneous(weight));
+        control_points.push(next.homogeneous(S::ONE));
         if j + 1 < n {
             let knot = S::from_f64((j + 1) as f64 / n as f64);
             knots.extend([knot, knot]);
@@ -677,8 +667,7 @@ fn sample<S: Scalar>(
 ) -> GeopResult<(Vec<S>, Vec<Vector2<S>>, Vec<Vec<(S, Vector2<S>)>>)> {
     let (t0, t1) = curve.domain();
     // Where to sample is a free choice, so sharp.
-    let at =
-        |f: S| -> GeopResult<Vector2<S>> { curve.evaluate(t0.add(t1.sub(t0).mul(f)).sharpen()) };
+    let at = |f: S| -> GeopResult<Vector2<S>> { curve.evaluate(S::fraction(t0, t1, f)) };
     let mut params = Vec::new();
     let mut samples = Vec::new();
     let mut between = Vec::new();

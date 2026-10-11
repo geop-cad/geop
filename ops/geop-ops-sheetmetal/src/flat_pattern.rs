@@ -24,7 +24,7 @@ use geop_ops::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::{self, Made, Making, SheetStep, Unfolded, sheets, sheets_of},
+    body::{self, Made, Making, SheetBody, SheetStep, Unfolded, sheets, sheets_of},
     cutting::cutting_sheet,
     sheet::Sheet,
     thicken::thicken,
@@ -96,8 +96,7 @@ impl SheetStep for FlatPattern {
         let sheets = sheets_of(reader);
         let model = model_or_empty(reader);
         model.solid_id(&args.solid).with_context(ctx)?;
-        let sheet = sheets
-            .bent(&args.solid)
+        let sheet = (sheets.get(&args.solid).and_then(SheetBody::bent))
             .ok_or_else(|| {
                 GeopError::new(format!(
                     "{} is not a sheet-metal body: a flat pattern unfolds a body built by a base flange and its flanges, which record its bends",
@@ -155,7 +154,8 @@ impl Operation for FlatPattern {
         "Unfold a sheet-metal body into the flat blank it is cut from, with its bend lines.",
         OperationGroup::SheetMetal,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::FLAT_PATTERN);
     type Args = FlatPatternArgs;
     type EditingState = ();
     type Input = Input;
@@ -167,7 +167,11 @@ impl Operation for FlatPattern {
         let sheets = context.before.retrieve_target(&sheets()).ok();
         FlatPatternArgs {
             solid: (seen.model().solid_names().into_iter().rev())
-                .find(|s| sheets.is_some_and(|sheets| sheets.bent(s).is_some()))
+                .find(|s| {
+                    sheets
+                        .and_then(|sheets| sheets.get(s))
+                        .is_some_and(|b| b.bent().is_some())
+                })
                 .unwrap_or_default(),
             keep: false,
         }
@@ -187,12 +191,7 @@ impl Operation for FlatPattern {
         _: &(),
     ) -> Form<Design> {
         let mut form = Form::default();
-        let solid = (!args.solid.is_empty())
-            .then(|| EntityRef::Solid {
-                name: args.solid.clone(),
-            })
-            .into_iter()
-            .collect();
+        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
         (form
             .dialog
             .reference("solid", "body", solid, &[Role::Solid], None, false))
@@ -212,10 +211,7 @@ impl Operation for FlatPattern {
         };
         match (key.as_str(), value) {
             ("solid", Value::Entities(picked)) => {
-                args.solid = match picked.as_slice() {
-                    [EntityRef::Solid { name }] => name.clone(),
-                    _ => String::new(),
-                }
+                args.solid = EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
             }
             ("keep", Value::Bool(b)) => args.keep = b,
             _ => {}

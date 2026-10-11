@@ -3,17 +3,13 @@
 //! fillets of one radius meet.
 
 use geop_core_math::{
+    combinatorics::binomial,
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
 
 use super::NurbSurface3D;
-
-/// The binomial coefficient `n` choose `k`.
-fn binomial(n: usize, k: usize) -> i64 {
-    (0..k).fold(1i64, |c, i| c * (n - i) as i64 / (i + 1) as i64)
-}
 
 /// The Bernstein coefficients of the product of the polynomials whose
 /// Bernstein coefficients are `a` (scalars) and `b` (homogeneous points):
@@ -67,11 +63,6 @@ fn elevate<S: Scalar>(a: &[Vector4<S>], by: usize) -> GeopResult<Vec<Vector4<S>>
         .collect()
 }
 
-/// `p` with weight one, homogeneous.
-fn h<S: Scalar>(p: &Vector3<S>) -> Vector4<S> {
-    Vector4::from_array([p[0], p[1], p[2], S::ONE])
-}
-
 impl<S: Scalar> NurbSurface3D<S> {
     /// The piece of the sphere of `radius` around `center` bounded by the
     /// great arcs between its points `corners`, each less than a half turn
@@ -117,9 +108,9 @@ impl<S: Scalar> NurbSurface3D<S> {
         let middle = center.add(&b1.add(&b2).prod_scalar(S::ONE.div(one_plus_cos)?));
         let w = one_plus_cos.div(S::TWO)?.sqrt()?;
         let base = [
-            h(p1),
-            Vector4::from_array([middle[0].mul(w), middle[1].mul(w), middle[2].mul(w), w]),
-            h(p2),
+            p1.homogeneous(S::ONE),
+            middle.homogeneous(w),
+            p2.homogeneous(S::ONE),
         ];
         // The middle column before `tau`, and `gamma`, coefficient by
         // coefficient: both are linear in the base's control points.
@@ -150,7 +141,7 @@ impl<S: Scalar> NurbSurface3D<S> {
             &tau_sq,
             &gamma
                 .iter()
-                .map(|&g| h(p3).prod_scalar(g))
+                .map(|&g| p3.homogeneous(S::ONE).prod_scalar(g))
                 .collect::<Vec<_>>(),
         )?;
         let columns = [

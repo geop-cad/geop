@@ -4,7 +4,11 @@
 //! true minimum — what it is chosen for is measured at it afterwards — so
 //! the merits are plain numbers.
 
-use crate::{geop_error::GeopError, scalars::Scalar};
+use crate::{
+    geop_error::GeopError,
+    scalars::Scalar,
+    solvers::probe::{Probe, halve},
+};
 
 /// Damped descent from `start`, at most `steps` steps. `direction(x)`
 /// gives the step from `x` as the point it leads to at a `scale` of the
@@ -25,22 +29,49 @@ pub fn descend<S: Scalar, X: Clone, E: From<GeopError>, D: Fn(S) -> X>(
         let Some(to) = direction(&x)? else {
             break;
         };
-        let mut scale = S::ONE;
-        let mut moved = false;
-        for _ in 0..halvings {
+        let lower = halve::<S, _, E>(S::ONE, halvings, |&scale| {
             let next = to(scale);
             let m = merit(&next)?;
-            if m < current {
-                (x, current, moved) = (next, m, true);
-                break;
-            }
-            scale = scale.div(S::TWO)?;
-        }
-        if !moved {
+            Ok(if m < current {
+                Probe::Found((next, m))
+            } else {
+                Probe::Next
+            })
+        })?;
+        let Some((next, m)) = lower else {
             break;
-        }
+        };
+        (x, current) = (next, m);
     }
     Ok(x)
+}
+
+/// Alternating projections towards the nearest pair of points of two sets:
+/// from `start`, `b` moved onto the point of its set `onto_b` gives nearest
+/// `a`, then `a` onto the point of its own set nearest that, as long as
+/// the pair's `merit` (a distance) definitely drops, at most `steps` times.
+/// Each move keeps the pair on the two sets, so what is returned is a pair
+/// of their points, never worse by `merit` than `start` — a local least,
+/// found from where `start` is, not a proof of the global one.
+pub fn alternate<A, B, E>(
+    start: (A, B),
+    steps: usize,
+    merit: impl Fn(&A, &B) -> Result<f64, E>,
+    mut onto_b: impl FnMut(&A) -> Result<B, E>,
+    mut onto_a: impl FnMut(&B) -> Result<A, E>,
+) -> Result<(A, B), E> {
+    let (mut a, mut b) = start;
+    let mut current = merit(&a, &b)?;
+    for _ in 0..steps {
+        let nb = onto_b(&a)?;
+        let na = onto_a(&nb)?;
+        let m = merit(&na, &nb)?;
+        if m >= current {
+            break;
+        }
+        (current, a, b) = (m, na, nb);
+    }
+    Ok((a, b))
 }
 
 /// A golden-section search for the least of a unimodal merit on `[a, b]`,
@@ -116,5 +147,31 @@ mod tests {
         let mut g = GoldenSection::new(-1.0, 3.0);
         g.narrow::<()>(60, |t| Ok((t - 0.7) * (t - 0.7))).unwrap();
         assert!((g.a - 0.7).abs() < 1e-7 && (g.b - 0.7).abs() < 1e-7);
+    }
+
+    /// Between the unit circle and the line `y = 2`, alternation moves from
+    /// a far pair to the nearest one, `(0, 1)` and `(0, 2)`.
+    #[test]
+    fn alternation_finds_the_nearest_pair() {
+        let on_line = |p: &[f64; 2]| -> Result<[f64; 2], ()> { Ok([p[0], 2.0]) };
+        let on_circle = |p: &[f64; 2]| -> Result<[f64; 2], ()> {
+            let r = p[0].hypot(p[1]);
+            Ok([p[0] / r, p[1] / r])
+        };
+        let gap = |a: &[f64; 2], b: &[f64; 2]| Ok((a[0] - b[0]).hypot(a[1] - b[1]));
+        let (a, b) = alternate(([0.6, 0.8], [5.0, 1.0]), 200, gap, on_line, on_circle).unwrap();
+        assert!((gap(&a, &b).unwrap() - 1.0).abs() < 1e-9, "{a:?} {b:?}");
+        assert!(a[0].abs() < 1e-6 && b[0].abs() < 1e-6);
+    }
+
+    /// A start no move improves on is returned as it is.
+    #[test]
+    fn alternation_never_makes_a_pair_worse() {
+        let stay = |p: &f64| -> Result<f64, ()> { Ok(*p + 1.0) };
+        let gap = |a: &f64, b: &f64| Ok((a - b).abs());
+        assert_eq!(
+            alternate((0.0, 0.0), 10, gap, stay, stay).unwrap(),
+            (0.0, 0.0)
+        );
     }
 }

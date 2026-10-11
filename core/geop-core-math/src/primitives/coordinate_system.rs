@@ -56,6 +56,13 @@ impl<S: Scalar> CoordinateSystem<S> {
         })
     }
 
+    /// The right-handed frame at `origin` with `x` as its `u` and `z` as
+    /// its `w`, and `v = z x x`: for `x` square to `z` and both unit, an
+    /// orthonormal one. Fails where `x` and `z` could be parallel.
+    pub fn try_from_xz(origin: Vector3<S>, x: Vector3<S>, z: Vector3<S>) -> GeopResult<Self> {
+        Self::try_new(origin, x, z.prod_cross(&x), z)
+    }
+
     /// The world's own axes `x`, `y` and `z`, at `origin`.
     pub fn world_at(origin: Vector3<S>) -> Self {
         Self::try_new(origin, Vector3::axis(0), Vector3::axis(1), Vector3::axis(2))
@@ -93,6 +100,12 @@ impl<S: Scalar> CoordinateSystem<S> {
             .add(&self.v.prod_scalar(p_uv[1]))
     }
 
+    /// The direction `d`, given in this frame's `u`/`v` plane, in ambient
+    /// `xyz` space: `d[0] * u + d[1] * v`.
+    pub fn uv_direction(&self, d: &Vector2<S>) -> Vector3<S> {
+        self.u.prod_scalar(d[0]).add(&self.v.prod_scalar(d[1]))
+    }
+
     /// Convert an ambient `xyz` point into this frame's `uvw` coordinates
     /// (relative to `origin`), via the precomputed reciprocal basis (`u* .
     /// (p - origin)`, `v* . (p - origin)`, `w* . (p - origin)`).
@@ -103,6 +116,12 @@ impl<S: Scalar> CoordinateSystem<S> {
             p.prod_dot(&self.v_star),
             p.prod_dot(&self.w_star),
         ])
+    }
+
+    /// The ambient `xyz` point `p_xyz` in this frame's `u`/`v` coordinates:
+    /// projected onto its `u`/`v` plane along `w` (see [`Self::to_uvw`]).
+    pub fn to_uv(&self, p_xyz: &Vector3<S>) -> Vector2<S> {
+        self.to_uvw(p_xyz).head()
     }
 }
 

@@ -22,9 +22,7 @@ use geop_ops::{
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{
-    bodies_field, center, combine_instances, copy_seeds, newest_solid, seed_instances,
-};
+use crate::common::{bodies_field, center, combine_instances, copy_seeds, seed_instances};
 
 /// Moves the bodies `bodies` — solids, and sheets by one of their faces —
 /// turned by `angle` degrees about `axis`, if any (counter-clockwise
@@ -137,7 +135,8 @@ impl Operation for MoveBody {
         "Move bodies, or a copy of them, turned and shifted.",
         OperationGroup::Bodies,
         OperationTier::Menu,
-    );
+    )
+    .icon(crate::icons::MOVE_BODY);
     type Args = MoveBodyArgs;
     type EditingState = ();
     type Input = Input;
@@ -146,7 +145,10 @@ impl Operation for MoveBody {
     /// The newest solid, not moved yet.
     fn new_args(context: &Context<Input, ParamValue>) -> MoveBodyArgs {
         MoveBodyArgs {
-            bodies: newest_solid(Seen::new(context.before).model()),
+            bodies: (Seen::new(context.before).model().newest_solid())
+                .map(EntityRef::solid)
+                .into_iter()
+                .collect(),
             translation: [0.0; 3],
             axis: None,
             angle: 0.0,

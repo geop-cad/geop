@@ -11,6 +11,7 @@
 pub mod common;
 
 pub mod extrude;
+mod icons;
 pub mod loft;
 pub mod operation;
 pub mod path_sweep;

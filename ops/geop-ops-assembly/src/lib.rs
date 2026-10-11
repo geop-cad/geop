@@ -8,6 +8,7 @@
 
 mod add_part;
 pub mod editor;
+mod icons;
 pub mod joints;
 pub mod mates;
 pub mod mechanism;
@@ -19,5 +20,5 @@ pub use mates::{
     Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, On, Resolved, Transmission,
     joint_parameter, mate, mate_name,
 };
-pub use mechanism::{mate_holds, mates_resolved};
+pub use mechanism::mates_resolved;
 pub use part_pattern::{Layout, PartPattern, PartPatternArgs};

@@ -135,7 +135,7 @@ impl Part {
     /// The sheet of the body `solid`, as it is bent.
     fn sheet(&self, solid: &str) -> Option<Sheet<Design>> {
         let sheets = self.build.current().retrieve_target(&sheets()).ok()?;
-        sheets.bent(solid).cloned()
+        sheets.get(solid)?.bent().cloned()
     }
 
     /// What the flat pattern `solid` recorded.
@@ -573,7 +573,7 @@ fn sweep_angles_radii_and_k_factors() {
     };
     let mut built = 0;
     for angle in [15.0, 45.0, 90.0, 120.0, 170.0] {
-        let theta = s(angle).mul(S::PI).div(s(180.0)).unwrap();
+        let theta = s(angle).degrees_to_radians().unwrap();
         for radius in [0.02, 0.1, 0.5] {
             let r = s(radius);
             for k in [0.0, 0.33, 0.5, 1.0] {

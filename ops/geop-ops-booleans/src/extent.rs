@@ -5,9 +5,10 @@
 //! stops a tool going up to the next face where [`crate::Tool`] says.
 
 use geop_core_math::{
-    geop_error::GeopError, geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar,
+    geop_error::GeopError, geop_error::GeopResult, plain, primitives::CoordinateSystem,
+    scalars::Scalar,
 };
-use geop_core_topology::Body;
+use geop_core_topology::{Body, FaceId, Model};
 use geop_ops::ui::Choice;
 use geop_ops::{NamedModel, operation::Lookup, parameters::Formula};
 use serde::{Deserialize, Serialize};
@@ -104,25 +105,59 @@ impl Extent {
     }
 }
 
-/// Points whose convex hull holds the solids named `targets`: the control
-/// points of all their faces' surfaces — a NURBS surface lies within the
-/// hull of its control points — as plain numbers, for sizing a tool that has
-/// to reach past them. None for no solids.
+/// Points whose convex hull holds the solids named `targets` (see
+/// [`face_hull`]). None for no solids.
 pub fn hull<S: Scalar>(
     model: &NamedModel<S>,
     targets: &[String],
 ) -> GeopResult<Option<Vec<[f64; 3]>>> {
     let topology = model.topology();
-    let mut points = Vec::new();
+    let mut faces = Vec::new();
     for target in targets {
-        for face in topology.body_faces(Body::Solid(model.solid_id(target)?))? {
-            for cp in &topology.get_face(face)?.surface.control_points {
-                let w = cp[3].to_f64();
-                points.push([0, 1, 2].map(|k| cp[k].to_f64() / w));
-            }
+        faces.extend(topology.body_faces(Body::Solid(model.solid_id(target)?))?);
+    }
+    let points = face_hull(topology, &faces)?;
+    Ok((!points.is_empty()).then_some(points))
+}
+
+/// Points whose convex hull holds `faces`: the control points of their
+/// surfaces — a NURBS surface lies within the hull of its control points —
+/// as plain numbers, for sizing a tool that has to reach past them.
+pub fn face_hull<S: Scalar>(model: &Model<S>, faces: &[FaceId]) -> GeopResult<Vec<[f64; 3]>> {
+    let mut points = Vec::new();
+    for &face in faces {
+        for cp in &model.get_face(face)?.surface.control_points {
+            let w = cp[3].to_f64();
+            points.push([0, 1, 2].map(|k| cp[k].to_f64() / w));
         }
     }
-    Ok((!points.is_empty()).then_some(points))
+    Ok(points)
+}
+
+/// The box around `points`: its lowest corner and its highest.
+pub fn bounds(points: &[[f64; 3]]) -> [[f64; 3]; 2] {
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for p in points {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    [lo, hi]
+}
+
+/// How far along `plane`'s normal the nearest and the furthest of
+/// `points` lie from it.
+pub fn spread_along<S: Scalar>(points: &[[f64; 3]], plane: &CoordinateSystem<S>) -> (f64, f64) {
+    let o = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
+    let w = [0, 1, 2].map(|k| plane.w()[k].to_f64());
+    let along = |p: &[f64; 3]| (0..3).map(|k| (p[k] - o[k]) * w[k]).sum::<f64>();
+    points
+        .iter()
+        .map(along)
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(near, far), x| {
+            (near.min(x), far.max(x))
+        })
 }
 
 /// How far along `plane`'s normal — forwards for `sign = 1`, backwards for
@@ -134,24 +169,15 @@ pub fn reach_past<S: Scalar>(
     plane: &CoordinateSystem<S>,
     sign: f64,
 ) -> GeopResult<f64> {
-    let o = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
-    let w = [0, 1, 2].map(|k| plane.w()[k].to_f64());
-    let along = |p: &[f64; 3]| sign * (0..3).map(|k| (p[k] - o[k]) * w[k]).sum::<f64>();
-    let ahead = hull.iter().map(along).fold(f64::NEG_INFINITY, f64::max);
+    let (near, far) = spread_along(hull, plane);
+    let ahead = if sign > 0.0 { far } else { -near };
     if ahead <= 0.0 {
         return Err(GeopError::new(format!(
             "up to next: nothing of the target lies {} the sketch, so there is no next face",
             if sign > 0.0 { "in front of" } else { "behind" }
         )));
     }
-    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    for p in hull {
-        for k in 0..3 {
-            lo[k] = lo[k].min(p[k]);
-            hi[k] = hi[k].max(p[k]);
-        }
-    }
-    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
     // Well past the target, so the tool's end is clear of all of it.
-    Ok(ahead + diagonal)
+    let [lo, hi] = bounds(hull);
+    Ok(ahead + plain::diagonal(lo, hi))
 }

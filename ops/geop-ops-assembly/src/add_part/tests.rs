@@ -329,7 +329,10 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
     // Each mate's constraint on the state, as the run left it, holds.
     for id in ["m1", "m2"] {
         let name = format!("add_part(b,{id})");
-        assert!(crate::mate_holds(assembly.view(), &name), "{name}");
+        assert!(
+            crate::mechanism::mate_holds(assembly.view(), &name),
+            "{name}"
+        );
     }
 }
 
@@ -652,7 +655,10 @@ fn a_placed_part_brings_its_mates() {
     assert!(!check_mates(assembly.view()).unwrap().converged);
     let report = assembly.solve(&[]);
     assert!(report.converged, "{report:?}");
-    assert!(crate::mate_holds(assembly.view(), "p/add_part(b,m2)"));
+    assert!(crate::mechanism::mate_holds(
+        assembly.view(),
+        "p/add_part(b,m2)"
+    ));
     // The pair's first cube is free here — its fixed mate stayed behind —
     // so the solve may move either; the second stands on the first's axis.
     let a = locate(&mut assembly.view(), "p/a").unwrap().world;
@@ -696,7 +702,7 @@ fn a_joint_turns_to_the_coordinate_set() {
     for rows in constraint.jacobian.values() {
         assert_eq!(rows.len(), constraint.residuals.len());
     }
-    assert!(crate::mate_holds(assembly.view(), name));
+    assert!(crate::mechanism::mate_holds(assembly.view(), name));
 
     let set = BTreeMap::from([(angle.clone(), n(90.0))]);
     let (moved, report) = solving::set(&mut assembly.runner.part, &assembly.state, &set).unwrap();
@@ -705,7 +711,7 @@ fn a_joint_turns_to_the_coordinate_set() {
     assembly.run();
     let b = locate(&mut assembly.view(), "b").unwrap();
     assert_close(apply(&b.world, [1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], 1e-6);
-    assert!(crate::mate_holds(assembly.view(), name));
+    assert!(crate::mechanism::mate_holds(assembly.view(), name));
 }
 
 /// A joint of `kind` between the frames of `a` and `b`, as the mate `id`.

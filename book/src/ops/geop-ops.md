@@ -297,8 +297,12 @@ offers it without knowing whose it is:
   program built. Its `INFO` (`InspectorInfo`) says whether it is asked of
   the whole part or of picks (`Picks`: the roles it picks, at most how
   many); `inspect(output, picked, options)` returns its `Report` (any
-  `Serialize`) and what to draw of it in the viewport. An inspector that
-  picks becomes the editor's pick tool, asked again with every pick.
+  `Serialize`) and what to draw of it in the viewport, and `show(report)`
+  lays the report out for a front end as an `output::Answer` — text,
+  lists, tables, groups, buttons that ask again or save a file, and a
+  plane to cut a section with — so a front end shows every inspector's
+  answer alike, knowing none. An inspector that picks becomes the editor's
+  pick tool, asked again with every pick.
 
 Exporters and inspectors are registered in an `output::Outputs` (`exporter`,
 `inspector`; a kind twice is refused), the application's choice like the

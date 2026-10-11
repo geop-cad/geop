@@ -9,6 +9,7 @@
 
 pub mod delete;
 pub mod extract;
+mod icons;
 pub mod project;
 
 pub use delete::{DeleteBody, DeleteBodyArgs};

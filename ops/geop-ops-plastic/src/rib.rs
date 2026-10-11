@@ -24,9 +24,10 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain,
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::{Vector2, Vector3, Vector4},
+    vector::{Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::{
@@ -36,18 +37,15 @@ use geop_core_topology::{
         shell::{PointClassification, solid_contains},
     },
 };
-use geop_ops::{NamedModel, Namer};
+use geop_ops::{NamedModel, Namer, ToolReach};
 use geop_ops_booleans::{
     Combine, Tool,
     boolean::{BooleanOp, Reach},
+    extent::{bounds, face_hull},
 };
-use geop_ops_extrude_revolve::{
-    common::{Profile, line2, line3},
-    extrude::extrude,
-    sweep::SweepLoop,
-};
+use geop_ops_extrude_revolve::{common::Profile, extrude::extrude, sweep::SweepLoop};
 
-use geop_ops_shell::shell::{MAX_NODES, min_subdivision_size};
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 use crate::band::{Chain, Piece};
 
@@ -136,8 +134,10 @@ pub fn rib<S: Scalar>(
     };
     let tool = Tool {
         solid: built.solid.expect("extruded as a solid"),
-        up_to_next: Some((start, end)),
-        scope: None,
+        reach: ToolReach {
+            up_to_next: Some((start, end)),
+            scope: None,
+        },
     };
     let combine = Combine::With {
         op: BooleanOp::Union,
@@ -161,18 +161,9 @@ fn reach_past<S: Scalar>(
     target: SolidId,
 ) -> GeopResult<S> {
     let model = part.topology();
-    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    for face in model.body_faces(Body::Solid(target))? {
-        for cp in &model.get_face(face)?.surface.control_points {
-            for k in 0..3 {
-                let x = cp[k].to_f64() / cp[3].to_f64();
-                lo[k] = lo[k].min(x);
-                hi[k] = hi[k].max(x);
-            }
-        }
-    }
+    let [lo, hi] = bounds(&face_hull(model, &model.body_faces(Body::Solid(target))?)?);
     let origin = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
-    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+    let diagonal = plain::diagonal(lo, hi);
     let furthest = (0..8)
         .map(|corner: usize| {
             (0..3)
@@ -208,15 +199,12 @@ fn extended<S: Scalar>(
     }
     let mut joints = profile.joint_names.clone();
     let reach = reach_past(part, plane, target)?;
-    let point = |h: &Vector3<S>| -> GeopResult<Vector2<S>> {
-        Ok(Vector2::from_array([h[0].div(h[2])?, h[1].div(h[2])?]))
-    };
     let first = &profile.curves[0];
     let last = profile.curves.last().expect("a profile has curves");
     let (t0, _) = first.domain();
     let (_, t1) = last.domain();
-    let start = point(&first.control_points[0])?;
-    let end = point(last.control_points.last().expect("control points"))?;
+    let start = first.start()?;
+    let end = last.end()?;
     let back = first.tangent(t0)?.normalize()?.neg();
     let on = last.tangent(t1)?.normalize()?;
     let into_wall = |from: Vector2<S>, along: Vector2<S>, joint: &str| {
@@ -224,17 +212,17 @@ fn extended<S: Scalar>(
             part,
             target,
             lift(&from),
-            &lift_direction(plane, &along),
+            &plane.uv_direction(&along),
             reach,
         )
         .map_err(|e| e.with_context(format!("running the rib's end {joint} on")))
     };
     if let Some(at) = into_wall(start, back, &joints[0])? {
-        let to = point_in_plane(plane, &at);
+        let to = plane.to_uv(&at);
         pieces.insert(
             0,
             Piece {
-                curve: line2(to, start)?,
+                curve: NurbCurve2D::line(to, start)?,
                 center: None,
                 name: "ext0".into(),
             },
@@ -243,9 +231,9 @@ fn extended<S: Scalar>(
     }
     let last_joint = joints.last().expect("joints").clone();
     if let Some(at) = into_wall(end, on, &last_joint)? {
-        let to = point_in_plane(plane, &at);
+        let to = plane.to_uv(&at);
         pieces.push(Piece {
-            curve: line2(end, to)?,
+            curve: NurbCurve2D::line(end, to)?,
             center: None,
             name: "ext1".into(),
         });
@@ -258,34 +246,12 @@ fn extended<S: Scalar>(
     })
 }
 
-/// `d`, a direction in `plane`'s `(u, v)`, in space.
-fn lift_direction<S: Scalar>(plane: &CoordinateSystem<S>, d: &Vector2<S>) -> Vector3<S> {
-    plane
-        .u()
-        .prod_scalar(d[0])
-        .add(&plane.v().prod_scalar(d[1]))
-}
-
-/// `p`, a point of `plane`, in its `(u, v)`.
-fn point_in_plane<S: Scalar>(plane: &CoordinateSystem<S>, p: &Vector3<S>) -> Vector2<S> {
-    let uvw = plane.to_uvw(p);
-    Vector2::from_array([uvw[0], uvw[1]])
-}
-
 /// The centre of the circle `curve` runs along, if it is an arc.
 fn arc_center<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Option<Vector2<S>>> {
     if curve.degree == 1 {
         return Ok(None);
     }
-    let lifted = NurbCurve3D::try_new(
-        curve.degree,
-        curve
-            .control_points
-            .iter()
-            .map(|h| Vector4::from_array([h[0], h[1], S::ZERO, h[2]]))
-            .collect(),
-        curve.knot_vector.clone(),
-    )?;
+    let lifted = curve.lifted()?;
     if lifted.as_line()?.is_some() {
         return Ok(None);
     }
@@ -317,7 +283,7 @@ fn wall_middle<S: Scalar>(
         PointClassification::Outside => None,
         _ => Some(0.0),
     };
-    let ray = line3(from, from.add(&along.prod_scalar(reach)))?;
+    let ray = NurbCurve3D::line(from, from.add(&along.prod_scalar(reach)))?;
     // Where the line crosses the solid's boundary, as fractions of `reach`
     // — a crossing on an edge once, though both its faces report it.
     let mut hits: Vec<S> = Vec::new();
@@ -370,13 +336,10 @@ fn wall_middle<S: Scalar>(
 /// side `far`, the side back to its start. Every piece has to run forwards
 /// along the chord, or the region would fold over itself.
 fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopResult<Profile<S>> {
-    let point = |h: &Vector3<S>| -> GeopResult<Vector2<S>> {
-        Ok(Vector2::from_array([h[0].div(h[2])?, h[1].div(h[2])?]))
-    };
     let first = &chain.pieces[0].curve;
     let last = &chain.pieces.last().expect("pieces").curve;
-    let start = point(&first.control_points[0])?;
-    let end = point(last.control_points.last().expect("control points"))?;
+    let start = first.start()?;
+    let end = last.end()?;
     let chord = end.sub(&start).normalize()?;
     for piece in &chain.pieces {
         let (t0, t1) = piece.curve.domain();
@@ -398,14 +361,15 @@ fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopRes
     let sweep = if flipped { left.neg() } else { left }.prod_scalar(reach);
     let (end_far, start_far) = (end.add(&sweep), start.add(&sweep));
     let mut curves: Vec<NurbCurve2D<S>> = chain.pieces.iter().map(|p| p.curve.clone()).collect();
-    curves.push(line2(end, end_far)?);
-    curves.push(line2(end_far, start_far)?);
-    curves.push(line2(start_far, start)?);
+    curves.push(NurbCurve2D::line(end, end_far)?);
+    curves.push(NurbCurve2D::line(end_far, start_far)?);
+    curves.push(NurbCurve2D::line(start_far, start)?);
     let mut curve_names: Vec<String> = chain.pieces.iter().map(|p| p.name.clone()).collect();
     curve_names.extend(["side1".into(), "far".into(), "side0".into()]);
     let mut joint_names = chain.joints.clone();
     joint_names.extend(["far1".into(), "far0".into()]);
     let region = Profile {
+        name: String::new(),
         curves,
         curve_names,
         joint_names,

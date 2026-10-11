@@ -14,6 +14,15 @@ pub enum Sense {
 }
 
 impl Sense {
+    /// The sense of a coedge running its edge forward if `forward`.
+    pub fn from_forward(forward: bool) -> Sense {
+        if forward {
+            Sense::Forward
+        } else {
+            Sense::Reversed
+        }
+    }
+
     pub fn opposite(self) -> Sense {
         match self {
             Sense::Forward => Sense::Reversed,

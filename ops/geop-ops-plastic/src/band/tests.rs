@@ -2,7 +2,6 @@
 
 use super::*;
 use geop_core_math::scalars::ScalInF64 as S;
-use geop_ops_extrude_revolve::common::arc2;
 
 fn p(x: f64, y: f64) -> Vector2<S> {
     Vector2::from_array([S::from_f64(x), S::from_f64(y)])
@@ -16,7 +15,7 @@ fn polygon(corners: &[[f64; 2]]) -> Chain<S> {
             .map(|i| {
                 let (a, b) = (corners[i], corners[(i + 1) % n]);
                 Piece {
-                    curve: line2(p(a[0], a[1]), p(b[0], b[1])).unwrap(),
+                    curve: NurbCurve2D::line(p(a[0], a[1]), p(b[0], b[1])).unwrap(),
                     center: None,
                     name: format!("c{i}"),
                 }
@@ -32,7 +31,7 @@ fn corners(curves: &[NurbCurve2D<S>]) -> Vec<[f64; 2]> {
     curves
         .iter()
         .map(|c| {
-            let q = point(&c.control_points[0]).unwrap();
+            let q = c.start().unwrap();
             [q[0].to_f64(), q[1].to_f64()]
         })
         .collect()
@@ -101,12 +100,12 @@ fn line_into_arc() {
     let chain = Chain {
         pieces: vec![
             Piece {
-                curve: line2(p(0., 0.), p(1., 0.)).unwrap(),
+                curve: NurbCurve2D::line(p(0., 0.), p(1., 0.)).unwrap(),
                 center: None,
                 name: "line".into(),
             },
             Piece {
-                curve: arc2(p(1., 0.), p(2., 0.), p(2., 1.), S::from_f64(r)).unwrap(),
+                curve: NurbCurve2D::arc(p(1., 0.), p(2., 0.), p(2., 1.), S::from_f64(r)).unwrap(),
                 center: Some(p(1., 1.)),
                 name: "arc".into(),
             },

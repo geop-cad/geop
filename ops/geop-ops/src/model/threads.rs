@@ -2,10 +2,20 @@
 //! — what a drawing, a bill of materials or a fastener check reads, and
 //! what the viewer draws as a helix on the face. Kept as the part's target
 //! [`threads`], and drawn as the [`annotations`] of the step that recorded
-//! them.
+//! them ([`draw_threads`]).
+//!
+//! They are the framework's, not the hole's that taps one: a step that
+//! repeats features — a pattern, a mirror — copies the threads they
+//! carry and draws its copies, knowing no step that records one.
 
 use std::collections::BTreeMap;
 
+use crate::{
+    Design,
+    model::operation_of,
+    operation::{Build, BuildReader, frame_along},
+    ui::{Annotations, ViewAnnotation, annotations},
+};
 use geop_core_geometry::{
     nurb_curve::{Handedness, NurbCurve3D},
     shape::Axis,
@@ -19,12 +29,6 @@ use geop_core_math::{
 use geop_core_program::{
     part::Retrieve,
     target::{Revisable, TargetReference},
-};
-use geop_ops::{
-    Design,
-    model::operation_of,
-    operation::{Build, BuildReader, frame_along},
-    ui::{Annotations, ViewAnnotation, annotations},
 };
 
 /// A thread recorded on a cylindrical face, by its specification and where
@@ -160,7 +164,7 @@ impl Threads<Design> {
 
 /// Draws the threads the step `step` recorded on the part, as its
 /// [`annotations`]: what a step that records threads does after.
-pub(crate) fn draw_threads(part: &mut Build, step: &str) -> GeopResult<()> {
+pub fn draw_threads(part: &mut Build, step: &str) -> GeopResult<()> {
     part.define_target(&annotations(step), &step.to_string(), draw)
 }
 

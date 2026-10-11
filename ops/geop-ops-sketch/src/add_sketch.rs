@@ -190,7 +190,8 @@ impl Operation for AddSketch {
         "Draw a sketch on a plane of a coordinate system, a datum plane or a planar face.",
         OperationGroup::Sketch,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::ADD_SKETCH);
     type Args = AddSketchArgs;
     type EditingState = SketchEditing;
     type Input = Input;

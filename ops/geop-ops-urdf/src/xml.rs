@@ -2,23 +2,9 @@
 
 use std::fmt::Write;
 
-use crate::{Inertial, JointType, Origin, Robot, Visual};
+use geop_ops::output::xml_escape;
 
-/// `text` fit for an XML attribute's value, between double quotes.
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
+use crate::{Inertial, JointType, Origin, Robot, Visual};
 
 /// `value` as short as reads back exactly: plainly, or in exponent
 /// notation, which every URDF reader parses too, where that is shorter —
@@ -74,12 +60,16 @@ fn inertial(out: &mut String, inertial: &Inertial) {
 
 /// A `<visual>` or `<collision>` of the mesh `visual`.
 fn shape(out: &mut String, element: &str, visual: &Visual) {
-    let _ = writeln!(out, r#"    <{element} name="{}">"#, escape(&visual.name));
+    let _ = writeln!(
+        out,
+        r#"    <{element} name="{}">"#,
+        xml_escape(&visual.name)
+    );
     origin(out, "      ", &visual.origin);
     let _ = writeln!(
         out,
         r#"      <geometry><mesh filename="{}" scale="0.001 0.001 0.001"/></geometry>"#,
-        escape(&visual.mesh)
+        xml_escape(&visual.mesh)
     );
     let _ = writeln!(out, "    </{element}>");
 }
@@ -94,9 +84,9 @@ impl Robot {
              meshes in millimetres, scaled. geop models no actuators: joint effort and \
              velocity are 0 — set them for the drives. -->\n",
         );
-        let _ = writeln!(out, r#"<robot name="{}">"#, escape(&self.name));
+        let _ = writeln!(out, r#"<robot name="{}">"#, xml_escape(&self.name));
         for link in &self.links {
-            let _ = writeln!(out, r#"  <link name="{}">"#, escape(&link.name));
+            let _ = writeln!(out, r#"  <link name="{}">"#, xml_escape(&link.name));
             if let Some(i) = &link.inertial {
                 inertial(&mut out, i);
             }
@@ -112,11 +102,11 @@ impl Robot {
             let _ = writeln!(
                 out,
                 r#"  <joint name="{}" type="{}">"#,
-                escape(&joint.name),
+                xml_escape(&joint.name),
                 joint.kind.name()
             );
-            let _ = writeln!(out, r#"    <parent link="{}"/>"#, escape(&joint.parent));
-            let _ = writeln!(out, r#"    <child link="{}"/>"#, escape(&joint.child));
+            let _ = writeln!(out, r#"    <parent link="{}"/>"#, xml_escape(&joint.parent));
+            let _ = writeln!(out, r#"    <child link="{}"/>"#, xml_escape(&joint.child));
             origin(&mut out, "    ", &joint.origin);
             let _ = writeln!(out, r#"    <axis xyz="{}"/>"#, numbers(&joint.axis));
             match joint.kind {
@@ -134,7 +124,7 @@ impl Robot {
                 let _ = writeln!(
                     out,
                     r#"    <mimic joint="{}" multiplier="{}" offset="0"/>"#,
-                    escape(&mimic.joint),
+                    xml_escape(&mimic.joint),
                     number(mimic.multiplier)
                 );
             }

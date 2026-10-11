@@ -18,7 +18,7 @@ use geop_core_math::{
     union_find::UnionFind,
     with_context,
 };
-use geop_core_topology::{Body, CoedgeGeometry, EdgeId, FaceId, ShellId, SolidId};
+use geop_core_topology::{Body, EdgeId, FaceId, ShellId, SolidId};
 use geop_ops::{NamedModel, Namer};
 
 use crate::{
@@ -71,18 +71,12 @@ pub fn trim_up_to_next<S: Scalar>(
     let mut users: HashMap<EdgeId, Vec<usize>> = HashMap::new();
     let mut crossed: HashSet<EdgeId> = HashSet::new();
     for (k, &face) in faces.iter().enumerate() {
-        for coedge in topology.iterate_face_coedges(face) {
-            if let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry {
-                users.entry(edge).or_default().push(k);
-            }
+        for edge in topology.face_edges(face) {
+            users.entry(edge).or_default().push(k);
         }
     }
     for &face in &copy_faces {
-        for coedge in topology.iterate_face_coedges(face) {
-            if let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry {
-                crossed.insert(edge);
-            }
-        }
+        crossed.extend(topology.face_edges(face));
     }
     let mut pieces = UnionFind::new(faces.len());
     for (edge, users) in &users {

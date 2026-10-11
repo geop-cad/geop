@@ -30,7 +30,6 @@ use geop_core_math::{
     primitives::Pose,
     scalars::{Ring, Scalar},
     solvers::system::tolerance,
-    vector::Vector3,
     with_context,
 };
 use geop_core_program::{
@@ -44,7 +43,7 @@ use geop_ops::{
     model::model_or_empty,
     operation::{Aspects, Build, BuildReader, BuildView, EntityRef, Input, Lookup, Scope, Seen},
     placed::{locate, locate_in, moved_by, within},
-    solving::{Setting, Settings, Unknown, largest, scale_of, settings_of, unknown},
+    solving::{Setting, Settings, Unknown, largest, scale_of, settings_of, twist, unknown},
 };
 
 use crate::{
@@ -191,16 +190,6 @@ pub(crate) fn resolve(
         }
     };
     Ok(resolved)
-}
-
-/// The step of a pose by its six variables: a turn, then a move, in its
-/// own frame (see [`State::retract`]).
-fn twist() -> GeopResult<Pose<D>> {
-    let var = |k: usize| D::var(Design::ZERO, k);
-    Pose::exp(
-        &Vector3::from_array([var(0), var(1), var(2)]),
-        &Vector3::from_array([var(3), var(4), var(5)]),
-    )
 }
 
 /// What a state is to a mate that reads it.
@@ -440,15 +429,16 @@ pub(crate) fn limit(
 /// Defines what the mate `name`, resolved already in the part, puts on the
 /// state: its constraint, and its limits'. A fixed mate puts none: it
 /// declares the part it holds fixed. A joint declares its coordinates as
-/// values a solve moves, and a user sets.
-pub(crate) fn define(part: &mut Build, name: &str) -> GeopResult<()> {
+/// values a solve moves, and a user sets, called `label`.
+pub(crate) fn define(part: &mut Build, name: &str, label: &str) -> GeopResult<()> {
     let resolved = part.current().retrieve_target(&mate(name))?.clone();
     if let Resolved::Fixed { .. } = resolved {
         return part.define_target(&unknown(name), &name.to_string(), fixed);
     }
     part.define_constraint(name, &name.to_string(), constrain)?;
     if let Resolved::Joint { kind, .. } = resolved {
-        part.define_target(&settings_of(name), &name.to_string(), settings)?;
+        let named = (name.to_string(), label.to_string());
+        part.define_target(&settings_of(name), &named, settings)?;
         for motion in kind.motions() {
             let parameter = joint_parameter(name, motion);
             part.define_target(
@@ -469,7 +459,7 @@ pub(crate) fn define(part: &mut Build, name: &str) -> GeopResult<()> {
 
 /// The mates of the part `view` shows, resolved, by name, in the order the
 /// steps made them.
-pub(crate) fn mates_of<'a>(view: BuildView<'a>) -> Vec<(&'a str, &'a Resolved)> {
+pub fn mates_of<'a>(view: BuildView<'a>) -> Vec<(&'a str, &'a Resolved)> {
     (view.targets_of::<Resolved>().into_iter())
         .filter_map(|(target, resolved)| Some((mate_name(target)?, resolved)))
         .collect()
@@ -550,16 +540,13 @@ fn coordinate(
     })
 }
 
-/// The coordinates of the joint `name` as values a user sets, with their
-/// limits: the generator of its settings.
-#[expect(
-    clippy::ptr_arg,
-    reason = "a generator is handed its arguments as they are kept"
-)]
-fn settings(reader: &mut BuildReader, name: &String) -> GeopResult<Settings> {
+/// The coordinates of the joint `name`, called `label`, as values a user
+/// sets, with their limits: the generator of its settings.
+fn settings(reader: &mut BuildReader, (name, label): &(String, String)) -> GeopResult<Settings> {
     let (kind, a, b) = joint(reader, name)?;
     Ok(Settings {
         name: name.clone(),
+        label: label.clone(),
         kind: kind.label(),
         between: vec![a.entity.label(), b.entity.label()],
         values: (kind.motions().into_iter())
@@ -577,7 +564,7 @@ fn settings(reader: &mut BuildReader, name: &String) -> GeopResult<Settings> {
 }
 
 /// Whether the constraint of the mate `name`, as `view` has it, holds.
-pub fn mate_holds(view: BuildView, name: &str) -> bool {
+pub(crate) fn mate_holds(view: BuildView, name: &str) -> bool {
     let reference = TargetReference::<Constraint<ParamValue>>::new(name);
     match (
         view.retrieve_target(&reference),

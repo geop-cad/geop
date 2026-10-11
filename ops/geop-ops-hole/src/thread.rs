@@ -22,18 +22,15 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_core_topology::{Body, CoedgeGeometry, FaceId, SolidId};
-use geop_ops::{NamedModel, Namer, operation::frame_along};
+use geop_core_topology::{Body, FaceId, SolidId};
+use geop_ops::{CosmeticThread, NamedModel, Namer, operation::frame_along};
 use geop_ops_extrude_revolve::{
     common::{Profile, polygon},
     revolve::screw,
     sweep::SweepLoop,
 };
 
-use crate::{
-    cosmetic::CosmeticThread,
-    iso::{MetricSize, TRIANGLE_HEIGHT},
-};
+use crate::iso::{MetricSize, TRIANGLE_HEIGHT};
 
 /// A cylindrical wall of a solid: the faces on one cylinder, joined across
 /// their edges — a hole's wall or a shaft's, whatever quarters and pieces
@@ -65,17 +62,12 @@ fn same_cylinder<S: Scalar>(a: &Cylinder<S>, b: &Cylinder<S>) -> bool {
 fn neighbours<S: Scalar>(model: &NamedModel<S>, face: FaceId) -> Vec<FaceId> {
     let topology = model.topology();
     let mut found = Vec::new();
-    for coedge in topology.iterate_face_coedges(face) {
-        let Ok(c) = topology.get_coedge(coedge) else {
-            continue;
-        };
-        if let CoedgeGeometry::Edge(edge) = c.geometry {
-            for other in topology.coedges_of_edge(edge) {
-                if let Ok(o) = topology.get_coedge(other)
-                    && o.face != face
-                {
-                    found.push(o.face);
-                }
+    for edge in topology.face_edges(face) {
+        for other in topology.coedges_of_edge(edge) {
+            if let Ok(o) = topology.get_coedge(other)
+                && o.face != face
+            {
+                found.push(o.face);
             }
         }
     }
@@ -112,11 +104,7 @@ impl<S: Scalar> Wall<S> {
         faces.sort_by_key(|f| f.0);
         let mut extent: Option<(S, S)> = None;
         for &f in &faces {
-            for coedge in topology.iterate_face_coedges(f) {
-                let c = topology.get_coedge(coedge)?;
-                let CoedgeGeometry::Edge(edge) = c.geometry else {
-                    continue;
-                };
+            for edge in topology.face_edges(f) {
                 let edge = topology.get_edge(edge)?;
                 for v in [edge.start_vertex, edge.end_vertex] {
                     let p = topology.get_vertex(v)?.point;
@@ -185,10 +173,7 @@ impl<S: Scalar> Wall<S> {
         let along = |p: &Vector3<S>| p.sub(&axis.point).prod_dot(&axis.direction);
         let mut beyond = false;
         for &f in &self.faces {
-            for coedge in topology.iterate_face_coedges(f) {
-                let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry else {
-                    continue;
-                };
+            for edge in topology.face_edges(f) {
                 let e = topology.get_edge(edge)?;
                 let at_end = [e.start_vertex, e.end_vertex].into_iter().all(|v| {
                     topology
@@ -203,10 +188,7 @@ impl<S: Scalar> Wall<S> {
                     if self.faces.contains(&face) {
                         continue;
                     }
-                    for c in topology.iterate_face_coedges(face) {
-                        let CoedgeGeometry::Edge(e) = topology.get_coedge(c)?.geometry else {
-                            continue;
-                        };
+                    for e in topology.face_edges(face) {
                         let e = topology.get_edge(e)?;
                         for v in [e.start_vertex, e.end_vertex] {
                             let p = topology.get_vertex(v)?.point;
@@ -434,10 +416,7 @@ fn clear_start<S: Scalar>(
     let topology = model.topology();
     let mut corners = Vec::new();
     for &f in &wall.faces {
-        for coedge in topology.iterate_face_coedges(f) {
-            let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry else {
-                continue;
-            };
+        for edge in topology.face_edges(f) {
             let e = topology.get_edge(edge)?;
             for v in [e.start_vertex, e.end_vertex] {
                 let q = frame.to_uvw(&topology.get_vertex(v)?.point);
@@ -516,7 +495,7 @@ pub fn thread_tool<S: Scalar>(
         .prod_scalar(S::from_f64(c))
         .add(&frame.v().prod_scalar(S::from_f64(s)));
     let w = *frame.w();
-    let axes = CoordinateSystem::try_new(start, u, w.prod_cross(&u), w)?;
+    let axes = CoordinateSystem::try_from_xz(start, u, w)?;
     screw(
         model,
         namer,

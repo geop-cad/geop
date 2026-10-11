@@ -16,7 +16,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_ops_extrude_revolve::common::{Profile, line2};
+use geop_ops_extrude_revolve::common::Profile;
 
 /// A straight or circular curve of a chain, from where the previous one
 /// ends, named for what it was made from.
@@ -39,32 +39,18 @@ pub struct Chain<S: Scalar> {
     pub closed: bool,
 }
 
-/// The point the homogeneous `p` stands for.
-fn point<S: Scalar>(p: &Vector3<S>) -> GeopResult<Vector2<S>> {
-    Ok(Vector2::from_array([p[0].div(p[2])?, p[1].div(p[2])?]))
-}
-
 /// The unit vector to the left of `t`.
 fn left<S: Scalar>(t: &Vector2<S>) -> Vector2<S> {
     Vector2::from_array([t[1].neg(), t[0]])
 }
 
-fn cross<S: Scalar>(a: &Vector2<S>, b: &Vector2<S>) -> S {
-    a[0].mul(b[1]).sub(a[1].mul(b[0]))
-}
-
 impl<S: Scalar> Piece<S> {
     fn start(&self) -> GeopResult<Vector2<S>> {
-        point(&self.curve.control_points[0])
+        self.curve.start()
     }
 
     fn end(&self) -> GeopResult<Vector2<S>> {
-        point(
-            self.curve
-                .control_points
-                .last()
-                .expect("a curve has control points"),
-        )
+        self.curve.end()
     }
 
     /// The unit direction it starts and ends going in.
@@ -94,7 +80,9 @@ impl<S: Scalar> Piece<S> {
                 let radius = from.sub(center).norm();
                 // The centre lies on the left of an arc turning left: an
                 // offset to the left comes closer to it.
-                let turning_left = cross(&start, &center.sub(&from)).definitely_greater(S::ZERO);
+                let turning_left = start
+                    .prod_cross(&center.sub(&from))
+                    .definitely_greater(S::ZERO);
                 let new_radius = if turning_left {
                     radius.sub(distance)
                 } else {
@@ -130,7 +118,7 @@ fn with_ends<S: Scalar>(
     end: Vector2<S>,
 ) -> GeopResult<NurbCurve2D<S>> {
     if curve.degree == 1 && curve.control_points.len() == 2 {
-        return line2(start, end);
+        return NurbCurve2D::line(start, end);
     }
     let mut curve = curve.clone();
     let last = curve.control_points.len() - 1;
@@ -157,7 +145,7 @@ impl<S: Scalar> Chain<S> {
         let mut starts = Vec::with_capacity(n + 1);
         for i in 0..n {
             starts.push(if i == 0 && !self.closed {
-                point(&raw[0].control_points[0])?
+                raw[0].start()?
             } else {
                 self.joint(i, distance, &raw)?
             });
@@ -165,7 +153,7 @@ impl<S: Scalar> Chain<S> {
         starts.push(if self.closed {
             starts[0]
         } else {
-            point(raw[n - 1].control_points.last().expect("control points"))?
+            raw[n - 1].end()?
         });
         (0..n)
             .map(|i| {
@@ -196,7 +184,7 @@ impl<S: Scalar> Chain<S> {
         let (_, arriving) = self.pieces[before].directions()?;
         let (leaving, _) = self.pieces[i].directions()?;
         let at = self.pieces[i].start()?;
-        if cross(&arriving, &leaving).could_be_equal(S::ZERO)
+        if arriving.prod_cross(&leaving).could_be_equal(S::ZERO)
             && arriving.prod_dot(&leaving).definitely_greater(S::ZERO)
         {
             return Ok(at.add(&left(&leaving).prod_scalar(distance)));
@@ -208,10 +196,10 @@ impl<S: Scalar> Chain<S> {
             )));
         }
         // Where the two offset lines cross.
-        let a = point(raw[before].control_points.last().expect("control points"))?;
-        let b = point(&raw[i].control_points[0])?;
-        let denominator = cross(&arriving, &leaving);
-        let s = cross(&b.sub(&a), &leaving).div(denominator)?;
+        let a = raw[before].end()?;
+        let b = raw[i].start()?;
+        let denominator = arriving.prod_cross(&leaving);
+        let s = b.sub(&a).prod_cross(&leaving).div(denominator)?;
         Ok(a.add(&arriving.prod_scalar(s)))
     }
 
@@ -233,11 +221,13 @@ impl<S: Scalar> Chain<S> {
         let names: Vec<String> = self.pieces.iter().map(|p| p.name.clone()).collect();
         let far_name = |name: &str| format!("{name},far");
         let near_side = Profile {
+            name: String::new(),
             curves: near_curves,
             curve_names: names.clone(),
             joint_names: self.joints.clone(),
         };
         let far_side = Profile {
+            name: String::new(),
             curves: far_curves,
             curve_names: names.iter().map(|n| far_name(n)).collect(),
             joint_names: self.joints.iter().map(|n| far_name(n)).collect(),
@@ -245,23 +235,15 @@ impl<S: Scalar> Chain<S> {
         if !self.closed {
             // Along the near side, back along the far one: the band is on
             // the left all the way round.
-            let near_end = point(
-                near_side
-                    .curves
-                    .last()
-                    .unwrap()
-                    .control_points
-                    .last()
-                    .unwrap(),
-            )?;
-            let near_start = point(&near_side.curves[0].control_points[0])?;
+            let near_end = near_side.curves.last().unwrap().end()?;
+            let near_start = near_side.curves[0].start()?;
             let far = far_side.reversed();
-            let far_start = point(&far.curves[0].control_points[0])?;
-            let far_end = point(far.curves.last().unwrap().control_points.last().unwrap())?;
+            let far_start = far.curves[0].start()?;
+            let far_end = far.curves.last().unwrap().end()?;
             let mut curves = near_side.curves;
-            curves.push(line2(near_end, far_start)?);
+            curves.push(NurbCurve2D::line(near_end, far_start)?);
             curves.extend(far.curves);
-            curves.push(line2(far_end, near_start)?);
+            curves.push(NurbCurve2D::line(far_end, near_start)?);
             let mut curve_names = near_side.curve_names;
             curve_names.push("last".into());
             curve_names.extend(far.curve_names);
@@ -269,6 +251,7 @@ impl<S: Scalar> Chain<S> {
             let mut joint_names = near_side.joint_names;
             joint_names.extend(far.joint_names);
             return Ok(vec![Profile {
+                name: String::new(),
                 curves,
                 curve_names,
                 joint_names,
@@ -291,12 +274,12 @@ impl<S: Scalar> Chain<S> {
         for piece in &self.pieces {
             let cps = &piece.curve.control_points;
             for cp in &cps[..cps.len() - 1] {
-                points.push(point(cp)?);
+                points.push(cp.dehomogenized()?);
             }
         }
         let mut area = S::ZERO;
         for i in 0..points.len() {
-            area = area.add(cross(&points[i], &points[(i + 1) % points.len()]));
+            area = area.add(points[i].prod_cross(&points[(i + 1) % points.len()]));
         }
         if area.definitely_greater(S::ZERO) {
             Ok(true)

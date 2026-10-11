@@ -22,6 +22,7 @@
 
 pub mod boundary;
 pub mod extend;
+mod icons;
 pub mod knit;
 pub mod network;
 pub mod offset;
@@ -45,15 +46,6 @@ use geop_ops::NamedModel;
 
 /// A sheet to build, and the names of what it is made of.
 pub type SheetSpec<S> = (geop_core_topology::build::BodySpec<S>, geop_ops::BodyNames);
-
-/// Bounds how hard a containment search or a pcurve fit tries: effort, not
-/// what an answer means.
-const MAX_NODES: usize = 20_000;
-
-/// Where a containment search hands over to Newton (see `AGENTS.md`).
-fn min_subdivision_size<S: Scalar>() -> S {
-    S::from_f64(1e-7)
-}
 
 /// The sheet the face named `name` stands in — an error, naming it, if it
 /// is a solid's face.

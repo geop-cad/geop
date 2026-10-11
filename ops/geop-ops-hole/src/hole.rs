@@ -13,6 +13,7 @@
 //! - `wall`: the drilled hole's wall;
 //! - `bottom`: a flat bottom, or `point`: the cone a drill's point leaves.
 
+use geop_core_geometry::nurb_curve::NurbCurve2D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
@@ -21,7 +22,7 @@ use geop_core_math::{
 };
 use geop_core_topology::SolidId;
 use geop_ops::{NamedModel, Namer};
-use geop_ops_extrude_revolve::{common::Profile, common::line2, revolve::revolve_at_oriented};
+use geop_ops_extrude_revolve::{common::Profile, revolve::revolve_at_oriented};
 
 use crate::iso::MetricSize;
 
@@ -140,9 +141,10 @@ impl HoleShape {
         let p = |&(r, z): &(f64, f64)| Vector2::from_array([S::from_f64(r), S::from_f64(z)]);
         let curves = corners
             .windows(2)
-            .map(|w| line2(p(&w[0]), p(&w[1])))
+            .map(|w| NurbCurve2D::line(p(&w[0]), p(&w[1])))
             .collect::<GeopResult<Vec<_>>>()?;
         Ok(Profile {
+            name: String::new(),
             curve_names: names.into_iter().map(String::from).collect(),
             joint_names: (0..corners.len()).map(|k| format!("p{k}")).collect(),
             curves,

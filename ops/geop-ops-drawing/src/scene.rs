@@ -36,13 +36,14 @@
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain,
     primitives::{Motion, Pose, Quaternion},
     scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_topology::{FaceId, Model};
 use geop_ops::{Design, NamedModel, model::model, operation::BuildView, placed::placed_parts};
-use geop_ops_hole::{Threads, threads};
+use geop_ops::{Threads, threads};
 
 use crate::{
     drawing::drawn_faces,
@@ -157,7 +158,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
                 hi[k] = hi[k].max(c[k].upper().to_f64());
             }
         }
-        let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+        let diagonal = plain::diagonal(lo, hi);
         let length = match bodies.len() {
             // One body: as a view of its model alone has it.
             1 => ray_length(&occluders[0]),
@@ -421,10 +422,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
     ) -> GeopResult<Vec<ViewLine<S>>> {
         let n = self.bodies.len();
         let reach = self.reach(frame);
-        let boxes = lines
-            .iter()
-            .map(|l| bounds(&l.curve))
-            .collect::<GeopResult<Vec<_>>>()?;
+        let boxes: Vec<_> = lines.iter().map(|l| bounds(&l.curve)).collect();
         let mut shown: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (i, line) in lines.iter().enumerate() {
             if line.visible {
@@ -471,7 +469,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
                             line.curve3.sub_curve(lo, hi)?,
                         ),
                     };
-                    let here = bounds(&curve)?;
+                    let here = bounds(&curve);
                     if !boxes_meet(&here, &reach[b].paper) || reach[b].near < farthest(&curve3)? {
                         still.push((lo, hi));
                         continue;
@@ -572,7 +570,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
             let mut outcome = Err(GeopError::new("no point tried"));
             for f in [0.5, 0.25, 0.75] {
                 let at = || -> GeopResult<bool> {
-                    let t = lo.add(hi.sub(lo).mul(S::from_f64(f))).sharpen();
+                    let t = S::fraction(lo, hi, S::from_f64(f));
                     let point = line.curve3.evaluate(t)?;
                     Ok(!self.hidden_by([b], reach, frame, point)?)
                 };

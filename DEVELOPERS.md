@@ -19,8 +19,11 @@ the web app (bug reports).
 core/geop-core-math          scalars, interval arithmetic, linear algebra,
                               error type, frames, rays, datums, poses (a
                               unit quaternion and a position), constrained
-                              least squares and dual numbers for the solvers
-core/geop-core-geometry       NURBS curves/surfaces, helices, compatible
+                              least squares and dual numbers for the solvers,
+                              plain-`f64` vectors for free choices (`plain`)
+core/geop-core-geometry       NURBS curves/surfaces and their simplest
+                               constructors (lines, arcs, bilinear and ruled
+                               patches), helices, compatible
                                curves for lofts, Coons and Gordon patches,
                                containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation;
@@ -31,8 +34,8 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                how a dimension is drawn in a plane
 ops/geop-ops                  parts (topology, sketches, datums, placed
                                parts, the features their steps
-                               combined, every entity with a stable
-                               name), what an operation is and how it is
+                               combined, cosmetic threads, every entity
+                               with a stable name), what an operation is and how it is
                                edited (events, dialogs, visuals, hit tests,
                                the gizmo every drag in space goes by),
                                parameters and the formulas reading them —
@@ -46,9 +49,12 @@ ops/geop-ops                  parts (topology, sketches, datums, placed
                                entries) and the exporter and inspector
                                interfaces (`output`), with the STL export
                                and the sheet drawings and flat patterns are
-                               written on (SVG, DXF); the solids a part
-                               shows wherever they are placed, each of its
-                               own material, and their mass properties
+                               written on (SVG, DXF, each layer defined by
+                               who draws on it); the solids a part shows
+                               wherever they are placed, each of its own
+                               material, what its steps noted of them
+                               (only drawn, sheet thickness, wires to
+                               order), and their mass properties
 ops/geop-ops-sketch           the sketch operation: drawing and constraint
                                tools, snapping, reference geometry and
                                projections of the part
@@ -139,7 +145,8 @@ ops/geop-ops-bom              bills of materials: placed parts grouped by
                                file and parameter values, flat or indented,
                                with designations (a part's own, see
                                `Parameters::designation`), materials, masses, sheet
-                               thickness and harness wires cut to length;
+                               thickness and wires cut to length, as the
+                               steps noted them on their solids;
                                an inspector, and a CSV exporter
 ```
 
@@ -150,8 +157,14 @@ what it lists in the structure tree its `ui::listing` target; a file
 written from the part is an `output::Exporter`, a question about it an
 `output::Inspector`, registered in `geop_cad_base::outputs` beside the
 operations in `registry`. `geop compile` picks the exporter by the
-output's extension. The web app builds its export menu and inspect
-buttons from the lists the program state sends.
+output's extension and passes it the options given as `-O key=value`.
+The web app builds its export menu and inspect buttons from the lists the
+program state sends, and shows every inspector's answer as the inspector
+lays it out (`Inspector::show`, an `output::Answer` of text, lists,
+tables, groups and buttons): no front end knows an operation, an
+exporter or an inspector by name. The files an operation reads beside
+programs — a STEP file to import — it names by extension
+(`OperationInfo::reads`), and the front ends keep those in a workspace.
 
 STEP files are tested against a downloaded corpus of public files (NIST
 MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d

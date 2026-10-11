@@ -8,16 +8,16 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Choice, Dialog, Event, Form, Number, Tone, Unit, Value},
+    editing::{Choice, Dialog, Event, Form, Number, Unit, Value},
     operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen},
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Scope, Seen},
     parameters::{Formula, expressions},
-    ui::formula_number,
+    ui::{formula_number, sketch_field},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -118,7 +118,8 @@ impl Operation for BaseFlange {
         "Start a sheet-metal body from a sketch: a plate from its area, or a bent strip from a chain of lines and arcs.",
         OperationGroup::SheetMetal,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::BASE_FLANGE);
     type Args = BaseFlangeArgs;
     type EditingState = ();
     type Input = Input;
@@ -155,17 +156,8 @@ impl Operation for BaseFlange {
         let mut seen = Seen::new(context.before);
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        if seen.sketches().is_empty() {
-            dialog.text("sketch", "No sketch yet — add one first.", Tone::Hint);
-        } else {
-            let value = (!args.sketch.is_empty())
-                .then(|| EntityRef::Sketch {
-                    name: args.sketch.clone(),
-                })
-                .into_iter()
-                .collect();
-            dialog.reference("sketch", "sketch", value, &[Role::Sketch], None, false);
-        }
+        let sketch = std::slice::from_ref(&args.sketch);
+        sketch_field(dialog, &context.before, "sketch", sketch, false);
         let chain = (seen.sketch(&args.sketch))
             .and_then(|placed| placed.sketch.shape())
             .is_ok_and(|shape| matches!(shape, Shape::Chain(_)));
@@ -190,10 +182,7 @@ impl Operation for BaseFlange {
         };
         match (key.as_str(), value) {
             ("sketch", Value::Entities(picked)) => {
-                args.sketch = match picked.as_slice() {
-                    [EntityRef::Sketch { name }] => name.clone(),
-                    _ => String::new(),
-                }
+                args.sketch = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
             }
             ("depth", value) => {
                 if let Some(depth) = Formula::from_value(&value) {
@@ -420,13 +409,8 @@ fn strip<S: Scalar>(
     let plane = &placed.plane;
     let w = *plane.w();
     let t = S::from_f64(args.rules.thickness);
-    let direction = |p: &Piece<S>| -> GeopResult<Vector3<S>> {
-        plane
-            .u()
-            .prod_scalar(p.b[0].sub(p.a[0]))
-            .add(&plane.v().prod_scalar(p.b[1].sub(p.a[1])))
-            .normalize()
-    };
+    let direction =
+        |p: &Piece<S>| -> GeopResult<Vector3<S>> { plane.uv_direction(&p.b.sub(&p.a)).normalize() };
     // The lines, and the turn from each to the next.
     let mut lines: Vec<&Piece<S>> = Vec::new();
     let mut turns: Vec<Turn<S>> = Vec::new();

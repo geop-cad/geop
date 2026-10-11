@@ -2,7 +2,11 @@
 //! draws (see [`geop_ops_rasterize::stl`]), so a file looks exactly like
 //! the part on screen, the parts it places included, each where it is.
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    primitives::TriangleFace,
+    scalars::Scalar,
+};
 use geop_ops_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
 use serde::Deserialize;
 
@@ -29,7 +33,7 @@ pub struct StlOptions {
 
 /// How finely an STL file's curved faces are meshed unless asked otherwise:
 /// as finely as the editor draws them.
-pub const STL_QUALITY: usize = 24;
+pub const STL_QUALITY: usize = crate::ui::RESOLUTION;
 
 impl Default for StlOptions {
     fn default() -> Self {
@@ -64,21 +68,31 @@ impl Exporter for Stl {
                 })
                 .collect::<GeopResult<_>>()?,
         };
-        let triangles: Vec<StlTriangle> = (chosen.iter())
-            .flat_map(|(_, triangles)| triangles.iter().map(outward))
-            .collect();
         let format = match options.ascii {
             true => StlFormat::Ascii,
             false => StlFormat::Binary,
         };
         let name = &output.stem();
-        let mut bytes = Vec::new();
-        write_stl(&triangles, name, format, &mut bytes)
-            .map_err(|e| GeopError::new(format!("writing {name}.stl: {e}")))?;
+        let triangles = chosen.iter().flat_map(|(_, triangles)| triangles);
+        let bytes = stl_bytes(triangles, name, format)?;
         Ok(Export {
             name: format!("{name}.stl"),
             media_type: "model/stl".into(),
             content: Content::Bytes(bytes),
         })
     }
+}
+
+/// `triangles` as an STL file called `name`, each facing out (see
+/// [`outward`]).
+pub fn stl_bytes<'t, S: Scalar + 't>(
+    triangles: impl IntoIterator<Item = &'t TriangleFace<S>>,
+    name: &str,
+    format: StlFormat,
+) -> GeopResult<Vec<u8>> {
+    let triangles: Vec<StlTriangle> = triangles.into_iter().map(outward).collect();
+    let mut bytes = Vec::new();
+    write_stl(&triangles, name, format, &mut bytes)
+        .map_err(|e| GeopError::new(format!("writing {name}.stl: {e}")))?;
+    Ok(bytes)
 }

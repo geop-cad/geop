@@ -32,7 +32,6 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    vector::Vector3,
     with_context,
 };
 use geop_core_program::{
@@ -41,7 +40,8 @@ use geop_core_program::{
 };
 use geop_core_topology::{
     Sense,
-    build::{BodySpec, EdgeSpec},
+    build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
+    distance::{Feature, closest_points},
 };
 use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
@@ -52,7 +52,8 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, SheetSpec, boundary::patch_face, min_subdivision_size};
+use crate::SheetSpec;
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Spans a face standing on its own through a network of curves, `u_curves`
 /// crossing `v_curves`, for the operation `N` — see the module docs. The
@@ -102,7 +103,8 @@ impl Operation for NetworkSurface {
         OperationGroup::Surface,
         OperationTier::Small,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::NETWORK_SURFACE);
     type Args = NetworkSurfaceArgs;
     type EditingState = ();
     type Input = Input;
@@ -207,34 +209,6 @@ impl<S: Scalar> Strand<S> {
     }
 }
 
-/// How far apart `a` and `b` come nearest, as a plain number for an error
-/// message: from the nearest of samples along `a`, the nearest points of
-/// the two curves found by turns.
-fn gap<S: Scalar>(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) -> GeopResult<f64> {
-    let (t0, t1) = a.domain();
-    let mut best: Option<(f64, Vector3<S>)> = None;
-    let mut samples = (0..32)
-        .map(|k| Ok(S::interpolate(t0, t1, S::from_ratio(k, 32)?).sharpen()))
-        .collect::<GeopResult<Vec<_>>>()?;
-    samples.push(t1);
-    for t in samples {
-        let p = a.evaluate(t)?;
-        let (_, q) = b.closest_point(&p)?;
-        let d = p.sub(&q).norm().to_f64();
-        if best.as_ref().is_none_or(|(e, _)| d < *e) {
-            best = Some((d, q));
-        }
-    }
-    let (mut distance, mut q) = best.expect("samples");
-    for _ in 0..8 {
-        let (_, p) = a.closest_point(&q)?;
-        let (_, next) = b.closest_point(&p)?;
-        distance = distance.min(p.sub(&next).norm().to_f64());
-        q = next;
-    }
-    Ok(distance)
-}
-
 /// Where `a` crosses `b`: their parameters there. At an end the two share,
 /// that end; otherwise the one crossing the intersection search finds,
 /// refined — an error naming both if there is none, or more than one.
@@ -270,7 +244,12 @@ fn crossing<S: Scalar>(a: &Strand<S>, b: &Strand<S>) -> GeopResult<(S, S)> {
         Intersections::Found(found) => match found.as_slice() {
             [] => Err(GeopError::new(format!(
                 "{la} and {lb} do not cross: they pass {:.3e} apart",
-                gap(&a.curve, &b.curve)?
+                closest_points(
+                    &Feature::Curve(a.curve.clone()),
+                    &Feature::Curve(b.curve.clone())
+                )?
+                .distance
+                .to_f64()
             ))),
             [(ta, tb)] => Ok(refine_curve_curve_crossing(&a.curve, &b.curve, *ta, *tb)),
             more => Err(GeopError::new(format!(
@@ -450,13 +429,13 @@ pub fn network_surface<S: Scalar>(
             end: 3,
         },
     ];
-    let face = patch_face(
+    let face = FaceSpec::on_unit_square(
         surface,
         [
-            (0, Sense::Forward),
-            (1, Sense::Forward),
-            (2, Sense::Reversed),
-            (3, Sense::Reversed),
+            CoedgeOn::Edge(0, Sense::Forward),
+            CoedgeOn::Edge(1, Sense::Forward),
+            CoedgeOn::Edge(2, Sense::Reversed),
+            CoedgeOn::Edge(3, Sense::Reversed),
         ],
     )?;
     let names = BodyNames {

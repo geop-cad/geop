@@ -1,10 +1,12 @@
 mod closest;
 mod compatible;
+mod construct;
+pub use construct::bezier_knots;
 mod evaluate;
 mod extend;
 mod extrema;
 mod helix;
-pub use helix::{Handedness, HelixRow, cos_sin, helix_rows};
+pub use helix::{Handedness, HelixRow, arc_span, cos_sin, helix_rows, sqrt2_over_2};
 mod interpolate;
 mod length;
 mod refine;
@@ -16,6 +18,7 @@ mod sweep;
 mod tangent;
 mod translate;
 pub(crate) use translate::transform_control_point;
+pub use translate::{embed_point, flatten_point};
 
 use std::fmt::Display;
 
@@ -125,6 +128,14 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// `aabb_could_overlap` prefilter starts pruning real overlaps.
     pub fn recompute_aabb(&mut self) {
         self.aabb = compute_aabb(&self.control_points);
+    }
+
+    /// The box around the control points, and so around the curve (the
+    /// convex hull property): one enclosure per axis, holding every control
+    /// point's coordinate there. Only the first `D - 1` axes are the
+    /// curve's; a 2-D curve's third is [`Scalar::ENTIRE`].
+    pub fn aabb(&self) -> &[S; 3] {
+        &self.aabb
     }
 
     /// Valid parameter range `(start_t, end_t)` of this curve.

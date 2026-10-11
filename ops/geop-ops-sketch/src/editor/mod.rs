@@ -88,7 +88,8 @@ pub enum DrawTool {
 /// What the palette shows of a tool.
 pub struct DrawInfo<T = DrawTool> {
     pub tool: T,
-    /// Its name in events and the icon it is shown as.
+    /// Its name in events, and what its icon is found by (see
+    /// [`crate::icons::named`]).
     pub name: &'static str,
     pub label: &'static str,
     pub shortcut: Option<&'static str>,
@@ -543,7 +544,7 @@ impl Editing<'_> {
 
     /// `p`, a point of the plane, in the sketch's coordinates.
     fn to_sketch(&self, p: &Vector3<S>) -> P2 {
-        of(&self.frame.to_uvw(p).head())
+        of(&self.frame.to_uv(p))
     }
 }
 

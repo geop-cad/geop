@@ -90,8 +90,8 @@ pub mod solving;
 pub mod ui;
 
 pub use model::{
-    BodyNames, BooleanOp, EdgeDescription, FaceDescription, Feature, FeatureTool, NameRegistry,
-    NamedModel, Namer, ParamValue, PartDescription, PlacedSketch, RefId, model, sketch,
-    validate_operation_id,
+    BodyNames, BooleanOp, CosmeticThread, EdgeDescription, FaceDescription, Feature, FeatureTool,
+    NameRegistry, NamedModel, Namer, ParamValue, PartDescription, PlacedSketch, RefId, Threads,
+    ToolReach, draw_threads, model, sketch, threads, validate_operation_id,
 };
 pub use operation::{EntityRef, ORIGIN, origin_axis, origin_plane};

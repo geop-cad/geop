@@ -13,17 +13,14 @@
 //! have one definite sign has none (the convex hull property).
 
 use geop_core_math::{
+    combinatorics::binomial,
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::subdivide::{Order, Searched, Split, subdivide},
     vector::Vector,
 };
 
 use super::NurbCurve;
-
-/// `n` choose `k`, exactly.
-fn binomial(n: usize, k: usize) -> i64 {
-    (0..k).fold(1i64, |acc, i| acc * (n - i) as i64 / (i + 1) as i64)
-}
 
 /// The Bernstein coefficients (degree `2p - 1`) of `A' W - A W'`, up to the
 /// positive factor `p / (b - a)`, for a Bézier piece of degree `p` with
@@ -89,8 +86,9 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
                 D - 1
             )));
         }
-        let mut boxes: Vec<(S, S)> = Vec::new();
-        let mut explored = 0usize;
+        // Each Bezier piece's derivative numerator, searched depth first,
+        // one piece after another, within one budget.
+        let mut roots = Vec::new();
         for piece in self.bezier_pieces()? {
             let p = piece.degree;
             if p == 0 || piece.control_points.len() != p + 1 {
@@ -103,31 +101,35 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
                 .collect();
             let w: Vec<S> = piece.control_points.iter().map(|q| q[D - 1]).collect();
             let (lo, hi) = piece.domain();
-            let mut stack = vec![(derivative_numerator(&a, &w)?, lo, hi)];
-            while let Some((coefficients, lo, hi)) = stack.pop() {
-                explored += 1;
-                if explored > max_nodes {
-                    return Err(GeopError::new(format!(
-                        "stationary_parameters: exhausted max_nodes={max_nodes} along \
-                         {direction:?}; the result would be incomplete"
-                    )));
-                }
+            roots.push((derivative_numerator(&a, &w)?, lo, hi));
+        }
+        let mut boxes: Vec<(S, S)> = Vec::new();
+        let searched = subdivide(
+            roots,
+            Order::DepthFirst,
+            max_nodes,
+            |(coefficients, lo, hi), _| -> GeopResult<_> {
                 let positive = coefficients.iter().all(|c| c.definitely_greater(S::ZERO));
                 let negative = coefficients.iter().all(|c| c.definitely_less(S::ZERO));
                 let constant = coefficients.iter().all(|c| c.could_be_equal(S::ZERO));
                 if positive || negative || constant {
-                    continue;
+                    return Ok(Split::Done);
                 }
                 if !hi.sub(lo).definitely_greater(min_subdivision_size) {
                     boxes.push((lo, hi));
-                    continue;
+                    return Ok(Split::Done);
                 }
                 // Where to cut is the search's own free choice.
                 let mid = lo.add(hi).div(S::TWO)?.sharpen();
                 let (left, right) = halves(&coefficients)?;
-                stack.push((right, mid, hi));
-                stack.push((left, lo, mid));
-            }
+                Ok(Split::Halves((left, lo, mid), (right, mid, hi)))
+            },
+        )?;
+        if let Searched::Exhausted { .. } = searched {
+            return Err(GeopError::new(format!(
+                "stationary_parameters: exhausted max_nodes={max_nodes} along \
+                 {direction:?}; the result would be incomplete"
+            )));
         }
         boxes.sort_by(|x, y| x.0.to_f64().total_cmp(&y.0.to_f64()));
         let mut merged: Vec<(S, S)> = Vec::new();

@@ -40,21 +40,19 @@
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain::{P3, add, cross, dot, normalize, scale, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
     solvers::iterate::{Repeat, Step, iterate},
-    vector::{Vector2, Vector3},
+    vector::{Vector2, Vector3, Vector4},
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{
-    NamedModel, Namer,
-    operation::{Chain, end_of, start_of},
-};
+use geop_ops::{NamedModel, Namer, operation::Chain};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    plain::{Plain, V, add, cross, dot, plain, scale, sub, unit},
+    plain::Plain,
     sweep::{Frame, Path, Span, SweepLoop, sweep_drawn},
 };
 
@@ -91,7 +89,7 @@ pub struct Control<S: Scalar> {
     pub orientation: Orientation,
     pub twist: f64,
     pub end_scale: f64,
-    pub rails: Vec<Chain<S>>,
+    pub rails: Vec<Chain<NurbCurve3D<S>>>,
 }
 
 impl<S: Scalar> Default for Control<S> {
@@ -144,14 +142,9 @@ impl<S: Scalar> Rotation<S> {
         })
     }
 
-    /// `x` turned (Rodrigues).
+    /// `x` turned.
     fn apply(&self, x: &Vector3<S>) -> Vector3<S> {
-        let along = self
-            .axis
-            .prod_scalar(self.axis.prod_dot(x).mul(S::ONE.sub(self.cos)));
-        x.prod_scalar(self.cos)
-            .add(&self.axis.prod_cross(x).prod_scalar(self.sin))
-            .add(&along)
+        x.rotated_about(&self.axis, self.cos, self.sin)
     }
 }
 
@@ -219,12 +212,8 @@ fn kind<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<Kind<S>> {
         return Ok(Kind::Other);
     }
     let cp = &curve.control_points;
-    let (p0, p2) = (start_of(curve)?, end_of(curve)?);
-    let p1 = Vector3::from_array([
-        cp[1][0].div(cp[1][3])?,
-        cp[1][1].div(cp[1][3])?,
-        cp[1][2].div(cp[1][3])?,
-    ]);
+    let (p0, p2) = (curve.start()?, curve.end()?);
+    let p1 = cp[1].dehomogenized()?;
     // Weights normalized so the ends have weight one: the middle one is
     // then `w1 / sqrt(w0 w2)`.
     let w = cp[1][3].div(cp[0][3].mul(cp[2][3]).sqrt()?)?;
@@ -274,7 +263,7 @@ fn is_smooth<S: Scalar>(arriving: &Vector3<S>, leaving: &Vector3<S>) -> GeopResu
 /// station where it is drawn, carried along from there. Its stations are
 /// named after the chain's joints, its spans after its curves.
 pub fn along_chain<S: Scalar>(
-    chain: &Chain<S>,
+    chain: &Chain<NurbCurve3D<S>>,
     plane: &CoordinateSystem<S>,
     control: &Control<S>,
 ) -> GeopResult<Path<S>> {
@@ -331,15 +320,9 @@ pub fn along_chain<S: Scalar>(
 
     // Which way round the path runs, against the profile plane's normal.
     let along = plane.u().prod_cross(plane.v()).prod_dot(&leaving[0]);
-    let along_normal = if along.definitely_greater(S::ZERO) {
-        true
-    } else if along.definitely_less(S::ZERO) {
-        false
-    } else {
-        return Err(GeopError::new(
-            "path sweep: the path could run along the profile's plane where it starts",
-        ));
-    };
+    let along_normal = along.definite_sign().ok_or_else(|| {
+        GeopError::new("path sweep: the path could run along the profile's plane where it starts")
+    })?;
     let drawn = Frame {
         origin: *plane.origin(),
         e1: *plane.u(),
@@ -360,7 +343,7 @@ pub fn along_chain<S: Scalar>(
     let mitre = |frame: &Frame<S>, k: usize, direction: &Vector3<S>| -> GeopResult<Frame<S>> {
         let b = before(k).expect("a corner has a curve before it");
         let bisector = arriving[b].normalize()?.add(&leaving[k].normalize()?);
-        projected(frame, direction, &start_of(&chain.curves[k])?, &bisector)
+        projected(frame, direction, &chain.curves[k].start()?, &bisector)
     };
     let mut rigid = drawn;
     let mut stations: Vec<Frame<S>> = Vec::new();
@@ -380,7 +363,7 @@ pub fn along_chain<S: Scalar>(
         } else if corner[k] {
             let b = k - 1;
             stations.push(mitre(&rigid, k, &arriving[b]).with_context(ctx)?);
-            let joint = start_of(&chain.curves[k])?;
+            let joint = chain.curves[k].start()?;
             let turn = Rotation::between(&arriving[b], &leaving[k]).with_context(ctx)?;
             rigid = moved(&rigid, &turn, &joint, &joint);
         } else {
@@ -420,13 +403,13 @@ pub fn along_chain<S: Scalar>(
 /// since a NURBS of positive weights varies no more than its control
 /// polygon.
 fn translated<S: Scalar>(
-    chain: &Chain<S>,
+    chain: &Chain<NurbCurve3D<S>>,
     drawn: &Frame<S>,
     along_normal: bool,
 ) -> GeopResult<Path<S>> {
     let normal = drawn.e1.prod_cross(&drawn.e2);
     let normal = if along_normal { normal } else { normal.neg() };
-    let start = start_of(&chain.curves[0])?;
+    let start = chain.curves[0].start()?;
     let moved_to = |p: &Vector3<S>| Frame {
         origin: drawn.origin.add(&p.sub(&start)),
         ..drawn.clone()
@@ -440,13 +423,7 @@ fn translated<S: Scalar>(
         let points = curve
             .control_points
             .iter()
-            .map(|cp| {
-                Ok(Vector3::from_array([
-                    cp[0].div(cp[3])?,
-                    cp[1].div(cp[3])?,
-                    cp[2].div(cp[3])?,
-                ]))
-            })
+            .map(Vector4::dehomogenized)
             .collect::<GeopResult<Vec<_>>>()?;
         for (i, p) in points.iter().enumerate() {
             let h = p.sub(&start).prod_dot(&normal);
@@ -467,14 +444,13 @@ fn translated<S: Scalar>(
         spans.push(if curve.degree == 1 && n == 2 {
             Span::Line
         } else {
-            let exactly_one = |w: S| w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w);
             Span::Curve {
                 degree: curve.degree,
                 knots: curve.knot_vector.clone(),
                 middle: (1..n - 1)
                     .map(|i| {
                         let w = curve.control_points[i][3];
-                        (moved_to(&points[i]), (!exactly_one(w)).then_some(w))
+                        (moved_to(&points[i]), (!w.is_exactly(S::ONE)).then_some(w))
                     })
                     .collect(),
             }
@@ -483,7 +459,7 @@ fn translated<S: Scalar>(
     let closed = chain.is_closed();
     if !closed {
         let last = chain.curves.last().expect("a chain has curves");
-        stations.push(moved_to(&end_of(last)?));
+        stations.push(moved_to(&last.end()?));
     }
     Ok(Path {
         stations,
@@ -504,7 +480,7 @@ fn carry<S: Scalar>(
 ) -> GeopResult<(Span<S>, Frame<S>)> {
     Ok(match kind {
         Kind::Line => {
-            let step = end_of(curve)?.sub(&start_of(curve)?);
+            let step = curve.end()?.sub(&curve.start()?);
             let end = Frame {
                 origin: start.origin.add(&step),
                 ..start.clone()
@@ -556,7 +532,7 @@ fn carry<S: Scalar>(
 struct Sample {
     frame: Plain,
     derivative: Plain,
-    point: V,
+    point: P3,
 }
 
 /// The profile at `start` carried along the general `curve` by a rotation
@@ -570,21 +546,24 @@ fn reflected<S: Scalar>(
     fine: usize,
 ) -> GeopResult<Vec<Sample>> {
     let at = |i: usize| S::from_f64(i as f64 / fine as f64);
-    let tangent = |t: S| -> GeopResult<V> { Ok(unit(plain(&curve.tangent(t)?))) };
+    let tangent = |t: S| -> GeopResult<P3> {
+        normalize(curve.tangent(t)?.to_f64_array())
+            .ok_or_else(|| GeopError::new(format!("path sweep: the path has no tangent at {t:?}")))
+    };
     let start = Plain::of(start);
-    let c0 = plain(&curve.evaluate(S::ZERO)?);
+    let c0 = curve.evaluate(S::ZERO)?.to_f64_array();
     // The rotation carrying the start frame along, as the images of the
     // axes, and where on the curve it has got to.
-    let mut axes: [V; 3] = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+    let mut axes: [P3; 3] = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
     let (mut x, mut t) = (c0, tangent(S::ZERO)?);
     let mut samples = Vec::with_capacity(fine + 1);
     for i in 0..=fine {
         if i > 0 {
-            let (x1, t1) = (plain(&curve.evaluate(at(i))?), tangent(at(i))?);
+            let (x1, t1) = (curve.evaluate(at(i))?.to_f64_array(), tangent(at(i))?);
             axes = axes.map(|a| reflect(a, x, x1, t, t1));
             (x, t) = (x1, t1);
         }
-        let turn = |v: V| {
+        let turn = |v: P3| {
             add(
                 add(scale(axes[0], v[0]), scale(axes[1], v[1])),
                 scale(axes[2], v[2]),
@@ -595,8 +574,8 @@ fn reflected<S: Scalar>(
             e1: turn(start.e1),
             e2: turn(start.e2),
         };
-        let d1 = plain(&curve.tangent(at(i))?);
-        let d2 = plain(&curve.second_derivative(at(i))?);
+        let d1 = curve.tangent(at(i))?.to_f64_array();
+        let d2 = curve.second_derivative(at(i))?.to_f64_array();
         let omega = scale(cross(t, d2), 1.0 / dot(d1, d1).sqrt());
         samples.push(Sample {
             frame,
@@ -675,8 +654,8 @@ fn spline_span<S: Scalar>(
 /// the rotation carrying a frame at the point `x0` with unit tangent `t0`
 /// on to `x1` and `t1` — a reflection in the plane bisecting `x0` and `x1`,
 /// then one taking the reflected tangent onto `t1`.
-fn reflect(v: V, x0: V, x1: V, t0: V, t1: V) -> V {
-    let reflect_in = |n: V, x: V| {
+fn reflect(v: P3, x0: P3, x1: P3, t0: P3, t1: P3) -> P3 {
+    let reflect_in = |n: P3, x: P3| {
         let c = dot(n, n);
         if c == 0.0 {
             x
@@ -757,7 +736,7 @@ fn compose_frame<S: Scalar>(frame: &Frame<S>, m: &Mat, c: [f64; 2]) -> Frame<S> 
 
 /// `x` in the coordinates of `frame`'s plane: the `(x, y)` whose point
 /// `origin + x e1 + y e2` is nearest to it.
-fn in_plane(frame: &Plain, x: V) -> [f64; 2] {
+fn in_plane(frame: &Plain, x: P3) -> [f64; 2] {
     let d = sub(x, frame.origin);
     let (g11, g12, g22) = (
         dot(frame.e1, frame.e1),
@@ -772,27 +751,22 @@ fn in_plane(frame: &Plain, x: V) -> [f64; 2] {
 /// A rail followed along the sweep: where along it the last section
 /// crossed it, as a parameter running `0..n` over its `n` curves.
 struct Tracked<'a, S: Scalar> {
-    rail: &'a Chain<S>,
-    chain: Chain<S>,
+    rail: &'a Chain<NurbCurve3D<S>>,
+    chain: Chain<NurbCurve3D<S>>,
     tau: f64,
 }
 
 impl<'a, S: Scalar> Tracked<'a, S> {
     /// `rail`, run from its end on the profile's `plane` — an error if
     /// neither end could be on it.
-    fn new(rail: &'a Chain<S>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
-        let joints = rail.joints()?;
-        let on_plane = |p: &Vector3<S>| plane.to_uvw(p)[2].could_be_equal(S::ZERO);
-        let chain = if rail.is_closed() {
+    fn new(rail: &'a Chain<NurbCurve3D<S>>, plane: &CoordinateSystem<S>) -> GeopResult<Self> {
+        if rail.is_closed() {
             return Err(GeopError::new(format!(
                 "path sweep: the rail {} is a closed loop: a rail is an open chain of curves, starting on the profile's plane",
                 rail.name
             )));
-        } else if on_plane(&joints[0]) {
-            rail.clone()
-        } else if on_plane(&joints[joints.len() - 1]) {
-            rail.reversed()
-        } else {
+        }
+        let Some(chain) = rail.starting_on(plane)? else {
             return Err(GeopError::new(format!(
                 "path sweep: the rail {} starts on the profile's plane at neither end: draw it from a point of the profile",
                 rail.name
@@ -816,11 +790,14 @@ impl<'a, S: Scalar> Tracked<'a, S> {
     }
 
     /// The rail at `tau`, and its derivative.
-    fn at(&self, tau: f64) -> GeopResult<(V, V)> {
+    fn at(&self, tau: f64) -> GeopResult<(P3, P3)> {
         let (i, t) = self.local(tau);
         let curve = &self.chain.curves[i];
         let t = S::from_f64(t);
-        Ok((plain(&curve.evaluate(t)?), plain(&curve.tangent(t)?)))
+        Ok((
+            curve.evaluate(t)?.to_f64_array(),
+            curve.tangent(t)?.to_f64_array(),
+        ))
     }
 
     /// Where the rail crosses the plane of `frame`, in its coordinates:
@@ -956,8 +933,12 @@ fn map_derivatives(maps: &[Mat]) -> Vec<Mat> {
 fn rough_length<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<f64> {
     let n = 64 * knot_spans(curve);
     let points = (0..=n)
-        .map(|i| Ok(plain(&curve.evaluate(S::from_f64(i as f64 / n as f64))?)))
-        .collect::<GeopResult<Vec<V>>>()?;
+        .map(|i| {
+            Ok(curve
+                .evaluate(S::from_f64(i as f64 / n as f64))?
+                .to_f64_array())
+        })
+        .collect::<GeopResult<Vec<P3>>>()?;
     Ok(points
         .windows(2)
         .map(|w| dot(sub(w[1], w[0]), sub(w[1], w[0])).sqrt())
@@ -978,7 +959,7 @@ fn carried_samples<S: Scalar>(
 ) -> GeopResult<Vec<Sample>> {
     let begin = Plain::of(start);
     let fraction = |i: usize| i as f64 / fine as f64;
-    let still = |frame: Plain, d_origin: V, point: V| Sample {
+    let still = |frame: Plain, d_origin: P3, point: P3| Sample {
         frame,
         derivative: Plain {
             origin: d_origin,
@@ -988,23 +969,23 @@ fn carried_samples<S: Scalar>(
         point,
     };
     if orientation == Orientation::FixedNormal {
-        let c0 = plain(&start_of(curve)?);
+        let c0 = curve.start()?.to_f64_array();
         return (0..=fine)
             .map(|i| {
                 let t = S::from_f64(fraction(i));
-                let point = plain(&curve.evaluate(t)?);
+                let point = curve.evaluate(t)?.to_f64_array();
                 let frame = Plain {
                     origin: add(begin.origin, sub(point, c0)),
                     ..begin
                 };
-                Ok(still(frame, plain(&curve.tangent(t)?), point))
+                Ok(still(frame, curve.tangent(t)?.to_f64_array(), point))
             })
             .collect();
     }
     match kind {
         Kind::Line => {
-            let c0 = plain(&start_of(curve)?);
-            let step = sub(plain(&end_of(curve)?), c0);
+            let c0 = curve.start()?.to_f64_array();
+            let step = sub(curve.end()?.to_f64_array(), c0);
             Ok((0..=fine)
                 .map(|i| {
                     let u = fraction(i);
@@ -1022,22 +1003,25 @@ fn carried_samples<S: Scalar>(
             rotation,
             ..
         } => {
-            let axis = plain(&rotation.axis);
+            let axis = rotation.axis.to_f64_array();
             let angle = rotation.sin.to_f64().atan2(rotation.cos.to_f64());
             // The centre lies square to the tangent at the start, towards
             // the turn (a velocity `axis x (p - centre)` points along the
             // tangent), a tangent leg's length over tan(angle / 2) away.
-            let (p0, tangent) = (plain(p0), sub(plain(corner), plain(p0)));
+            let (p0, tangent) = (
+                p0.to_f64_array(),
+                sub(corner.to_f64_array(), p0.to_f64_array()),
+            );
             let towards = cross(axis, tangent);
             let towards = scale(towards, 1.0 / dot(towards, towards).sqrt());
             let radius = dot(tangent, tangent).sqrt() / (angle / 2.0).tan();
             let center = add(p0, scale(towards, radius));
-            let c0 = plain(&start_of(curve)?);
+            let c0 = curve.start()?.to_f64_array();
             Ok((0..=fine)
                 .map(|i| {
                     let (sin, cos) = (angle * fraction(i)).sin_cos();
                     // Rodrigues, about the axis through the centre.
-                    let turn = |v: V| {
+                    let turn = |v: P3| {
                         add(
                             add(scale(v, cos), scale(cross(axis, v), sin)),
                             scale(axis, dot(axis, v) * (1.0 - cos)),
@@ -1048,7 +1032,7 @@ fn carried_samples<S: Scalar>(
                         e1: turn(begin.e1),
                         e2: turn(begin.e2),
                     };
-                    let spin = |v: V| scale(cross(axis, v), angle);
+                    let spin = |v: P3| scale(cross(axis, v), angle);
                     Sample {
                         frame,
                         derivative: Plain {
@@ -1084,7 +1068,7 @@ fn carried_samples<S: Scalar>(
 /// the frames along a spline: the swept body is defined by it, every edge
 /// and face built from the same frames.
 fn controlled<S: Scalar>(
-    chain: &Chain<S>,
+    chain: &Chain<NurbCurve3D<S>>,
     kinds: &[Kind<S>],
     plane: &CoordinateSystem<S>,
     rigid: &Path<S>,
@@ -1125,7 +1109,7 @@ fn controlled<S: Scalar>(
 
     // The profile turns and scales about the path's start, in its plane.
     let c = {
-        let p = plane.to_uvw(&start_of(&chain.curves[0])?);
+        let p = plane.to_uvw(&chain.curves[0].start()?);
         [p[0].to_f64(), p[1].to_f64()]
     };
     let mut rails = control
@@ -1143,8 +1127,8 @@ fn controlled<S: Scalar>(
         .iter()
         .map(|r| {
             Ok(plane
-                .to_uvw(&start_of(&r.chain.curves[0])?)
-                .sub(&plane.to_uvw(&start_of(&chain.curves[0])?)))
+                .to_uvw(&r.chain.curves[0].start()?)
+                .sub(&plane.to_uvw(&chain.curves[0].start()?)))
         })
         .collect::<GeopResult<_>>()?;
     let degenerate = match offsets.as_slice() {
@@ -1331,7 +1315,7 @@ fn controlled<S: Scalar>(
 /// enough that a profile is only refused where it comes within a hair of
 /// the axis.
 fn clear_of_bends<S: Scalar>(
-    chain: &Chain<S>,
+    chain: &Chain<NurbCurve3D<S>>,
     path: &Path<S>,
     loops: &[SweepLoop<S>],
 ) -> GeopResult<()> {
@@ -1357,7 +1341,7 @@ fn clear_of_bends<S: Scalar>(
                 .prod_scalar(radius),
         );
         let station = &path.stations[k];
-        let radial = start_of(curve)?.sub(&center);
+        let radial = curve.start()?.sub(&center);
         for profile in loops.iter().map(|l| &l.profile) {
             for (c, name) in profile.curves.iter().zip(&profile.curve_names) {
                 let (a, b) = c.split_mid()?;
@@ -1387,14 +1371,14 @@ fn clear_of_bends<S: Scalar>(
 /// out with its faces pointing outwards.
 ///
 /// Named after the profiles' curves `X` and joints `P` and the chain's
-/// curves `C` and joints `J` (see [`sweep`]): the walls `N(X,C)`, their
+/// curves `C` and joints `J` (see [`crate::sweep::sweep`]): the walls `N(X,C)`, their
 /// edges at the joints `N(X,J)`, the edges between `N(P,C)`, the vertices
 /// `N(P,J)`; for an open chain, the caps `N(start)` and `N(end)`.
 pub fn sweep_along<S: Scalar>(
     model: &mut NamedModel<S>,
     namer: &Namer,
     solid: Option<&str>,
-    chain: &Chain<S>,
+    chain: &Chain<NurbCurve3D<S>>,
     plane: &CoordinateSystem<S>,
     loops: &[SweepLoop<S>],
     control: &Control<S>,
@@ -1417,17 +1401,16 @@ mod tests {
     use crate::common::testing::{
         assert_valid, assert_valid_sheets, circle, plane, square, v2, v3,
     };
-    use crate::common::{Profile, arc3, line3, polyline, sqrt2_over_2};
-    use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D};
+    use crate::common::{Profile, polyline};
+    use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::vector::Vector4;
 
     /// The `yz` plane through `origin`: square to a path along `x`.
     fn yz<S: Scalar>(origin: Vector3<S>) -> CoordinateSystem<S> {
         plane(origin, v3(0., 1., 0.), v3(0., 0., 1.))
     }
 
-    fn chain<S: Scalar>(curves: Vec<NurbCurve3D<S>>, closed: bool) -> Chain<S> {
+    fn chain<S: Scalar>(curves: Vec<NurbCurve3D<S>>, closed: bool) -> Chain<NurbCurve3D<S>> {
         let n = curves.len();
         Chain {
             name: "path".to_string(),
@@ -1444,7 +1427,7 @@ mod tests {
     fn swept<S: Scalar>(
         outer: Vec<NurbCurve2D<S>>,
         plane: &CoordinateSystem<S>,
-        path: &Chain<S>,
+        path: &Chain<NurbCurve3D<S>>,
     ) -> NamedModel<S> {
         let mut model = NamedModel::<S>::new();
         let namer = Namer::new("sweep", "s").unwrap();
@@ -1466,7 +1449,7 @@ mod tests {
     /// Along a single line, a sweep is an extrude.
     fn check_sweep_along_a_line_is_a_box<S: Scalar>() {
         let path = chain(
-            vec![line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap()],
+            vec![NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap()],
             false,
         );
         let model = swept(square(0.5), &yz(Vector3::zero()), &path);
@@ -1491,8 +1474,8 @@ mod tests {
     fn check_sweep_round_a_corner_is_mitred<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                line3(v3::<S>(2., 0., 0.), v3(2., 2., 0.)).unwrap(),
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::line(v3::<S>(2., 0., 0.), v3(2., 2., 0.)).unwrap(),
             ],
             false,
         );
@@ -1520,15 +1503,15 @@ mod tests {
     fn check_sweep_a_pipe_through_a_bend<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                arc3(
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::arc(
                     v3(2., 0., 0.),
                     v3(3., 0., 0.),
                     v3(3., 1., 0.),
                     sqrt2_over_2(),
                 )
                 .unwrap(),
-                line3(v3::<S>(3., 1., 0.), v3(3., 3., 0.)).unwrap(),
+                NurbCurve3D::line(v3::<S>(3., 1., 0.), v3(3., 3., 0.)).unwrap(),
             ],
             false,
         );
@@ -1553,7 +1536,7 @@ mod tests {
         let arcs = (0..4)
             .map(|i| {
                 let (a, b) = (q[i], q[(i + 1) % 4]);
-                arc3(
+                NurbCurve3D::arc(
                     v3::<S>(a.0, a.1, 0.),
                     v3(a.0 + b.0, a.1 + b.1, 0.),
                     v3(b.0, b.1, 0.),
@@ -1588,7 +1571,7 @@ mod tests {
         let lines = (0..4)
             .map(|i| {
                 let (a, b) = (corners[i], corners[(i + 1) % 4]);
-                line3(v3::<S>(a.0, a.1, 0.), v3(b.0, b.1, 0.)).unwrap()
+                NurbCurve3D::line(v3::<S>(a.0, a.1, 0.), v3(b.0, b.1, 0.)).unwrap()
             })
             .collect();
         let path = chain(lines, true);
@@ -1634,8 +1617,8 @@ mod tests {
     fn check_open_profile_sweeps_into_a_sheet<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                arc3(
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::arc(
                     v3(2., 0., 0.),
                     v3(3., 0., 0.),
                     v3(3., 1., 0.),
@@ -1672,8 +1655,8 @@ mod tests {
     fn check_corner_at_an_arc_is_refused<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                arc3(
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::arc(
                     v3(2., 0., 0.),
                     v3(2., 1., 0.),
                     v3(1., 1., 0.),
@@ -1696,8 +1679,8 @@ mod tests {
     fn check_bend_tighter_than_the_profile_is_refused<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                arc3(
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::arc(
                     v3(2., 0., 0.),
                     v3(2.2, 0., 0.),
                     v3(2.2, 0.2, 0.),
@@ -1729,7 +1712,7 @@ mod tests {
     /// A profile in a plane the path runs along cannot be swept.
     fn check_profile_along_the_path_is_refused<S: Scalar>() {
         let path = chain(
-            vec![line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap()],
+            vec![NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap()],
             false,
         );
         let xy = plane(Vector3::<S>::zero(), v3(1., 0., 0.), v3(0., 1., 0.));
@@ -1747,7 +1730,7 @@ mod tests {
     fn swept_with<S: Scalar>(
         outer: Vec<NurbCurve2D<S>>,
         plane: &CoordinateSystem<S>,
-        path: &Chain<S>,
+        path: &Chain<NurbCurve3D<S>>,
         control: &Control<S>,
     ) -> NamedModel<S> {
         let mut model = NamedModel::<S>::new();
@@ -1767,14 +1750,14 @@ mod tests {
         model
     }
 
-    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Chain<S> {
+    fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Chain<NurbCurve3D<S>> {
         Chain {
             name: name.into(),
             ..chain(curves, false)
         }
     }
 
-    fn with_rails<S: Scalar>(rails: Vec<Chain<S>>) -> Control<S> {
+    fn with_rails<S: Scalar>(rails: Vec<Chain<NurbCurve3D<S>>>) -> Control<S> {
         Control {
             rails,
             ..Control::default()
@@ -1782,9 +1765,9 @@ mod tests {
     }
 
     /// The straight path along `x` from the origin to `(length, 0, 0)`.
-    fn along_x<S: Scalar>(length: f64) -> Chain<S> {
+    fn along_x<S: Scalar>(length: f64) -> Chain<NurbCurve3D<S>> {
         chain(
-            vec![line3(v3::<S>(0., 0., 0.), v3(length, 0., 0.)).unwrap()],
+            vec![NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(length, 0., 0.)).unwrap()],
             false,
         )
     }
@@ -1838,7 +1821,7 @@ mod tests {
     fn check_one_rail_sweeps_a_cone<S: Scalar>() {
         let rails = vec![rail(
             "r",
-            vec![line3(v3::<S>(0., 0.5, 0.), v3(2., 1., 0.)).unwrap()],
+            vec![NurbCurve3D::line(v3::<S>(0., 0.5, 0.), v3(2., 1., 0.)).unwrap()],
         )];
         let model = swept_with(
             circle(0.5),
@@ -1871,11 +1854,11 @@ mod tests {
         let rails = vec![
             rail(
                 "wide",
-                vec![line3(v3::<S>(0., 1., 0.), v3(2., 2., 0.)).unwrap()],
+                vec![NurbCurve3D::line(v3::<S>(0., 1., 0.), v3(2., 2., 0.)).unwrap()],
             ),
             rail(
                 "flat",
-                vec![line3(v3::<S>(0., 0., 1.), v3(2., 0., 0.5)).unwrap()],
+                vec![NurbCurve3D::line(v3::<S>(0., 0., 1.), v3(2., 0., 0.5)).unwrap()],
             ),
         ];
         let model = swept_with(
@@ -1987,8 +1970,8 @@ mod tests {
     fn check_twisted_and_scaled_through_a_bend<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                arc3(
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::arc(
                     v3(2., 0., 0.),
                     v3(3., 0., 0.),
                     v3(3., 1., 0.),
@@ -2025,8 +2008,8 @@ mod tests {
     fn check_fixed_normal_moves_the_profile<S: Scalar>() {
         let path = chain(
             vec![
-                line3(v3::<S>(0., 0., 0.), v3(1., 1., 0.)).unwrap(),
-                arc3(
+                NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(1., 1., 0.)).unwrap(),
+                NurbCurve3D::arc(
                     v3(1., 1., 0.),
                     v3(2., 2., 0.),
                     v3(3., 2., 0.),
@@ -2058,12 +2041,12 @@ mod tests {
 
     /// What a controlled sweep refuses, by name.
     fn check_controlled_sweeps_refuse_what_they_cannot_build<S: Scalar>() {
-        let refused = |path: &Chain<S>, control: Control<S>, says: &str| {
+        let refused = |path: &Chain<NurbCurve3D<S>>, control: Control<S>, says: &str| {
             let error = along_chain(path, &yz(Vector3::zero()), &control).unwrap_err();
             assert!(error.root_message().contains(says), "{error:?}");
         };
         let straight = |name: &str, from: Vector3<S>, to: Vector3<S>| {
-            rail(name, vec![line3(from, to).unwrap()])
+            rail(name, vec![NurbCurve3D::line(from, to).unwrap()])
         };
         // A rail off the profile's plane at both ends.
         refused(
@@ -2101,7 +2084,7 @@ mod tests {
             (0..4)
                 .map(|i| {
                     let (a, b) = (corners[i], corners[(i + 1) % 4]);
-                    line3(v3::<S>(a.0, a.1, 0.), v3(b.0, b.1, 0.)).unwrap()
+                    NurbCurve3D::line(v3::<S>(a.0, a.1, 0.), v3(b.0, b.1, 0.)).unwrap()
                 })
                 .collect(),
             true,
@@ -2117,7 +2100,7 @@ mod tests {
         // A path that turns parallel to the plane, with a fixed normal.
         let back = chain(
             vec![
-                arc3(
+                NurbCurve3D::arc(
                     v3::<S>(0., 0., 0.),
                     v3(1., 0., 0.),
                     v3(1., 1., 0.),
@@ -2157,25 +2140,29 @@ mod tests {
         let rails: Vec<(&str, Vec<NurbCurve3D<S>>)> = vec![
             (
                 "line",
-                vec![line3(v3(0., 0.5, 0.), v3(3., 0.8, 0.)).unwrap()],
+                vec![NurbCurve3D::line(v3(0., 0.5, 0.), v3(3., 0.8, 0.)).unwrap()],
             ),
             (
                 "arc",
-                vec![arc3(v3(0., 0.5, 0.), v3(1.5, 1.25, 0.), v3(3., 0.5, 0.), f(0.8)).unwrap()],
+                vec![
+                    NurbCurve3D::arc(v3(0., 0.5, 0.), v3(1.5, 1.25, 0.), v3(3., 0.5, 0.), f(0.8))
+                        .unwrap(),
+                ],
             ),
             ("spline", vec![spline]),
             (
                 "line_arc",
                 vec![
-                    line3(v3(0., 0.5, 0.), v3(1., 0.5, 0.)).unwrap(),
-                    arc3(v3(1., 0.5, 0.), v3(2., 0.5, 0.), v3(3., 1.0, 0.), f(0.9)).unwrap(),
+                    NurbCurve3D::line(v3(0., 0.5, 0.), v3(1., 0.5, 0.)).unwrap(),
+                    NurbCurve3D::arc(v3(1., 0.5, 0.), v3(2., 0.5, 0.), v3(3., 1.0, 0.), f(0.9))
+                        .unwrap(),
                 ],
             ),
         ];
         let partner = || {
             rail(
                 "z",
-                vec![line3(v3::<S>(0., 0., 0.5), v3(3., 0., 0.3)).unwrap()],
+                vec![NurbCurve3D::line(v3::<S>(0., 0., 0.5), v3(3., 0., 0.3)).unwrap()],
             )
         };
         for (name, curves) in rails {
@@ -2208,8 +2195,8 @@ mod tests {
             let turned = 2.0 * half;
             let path = chain(
                 vec![
-                    line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                    arc3(
+                    NurbCurve3D::line(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                    NurbCurve3D::arc(
                         v3(2., 0., 0.),
                         v3(2. + leg, 0., 0.),
                         v3(2. + leg * (1. + turned.cos()), leg * turned.sin(), 0.),

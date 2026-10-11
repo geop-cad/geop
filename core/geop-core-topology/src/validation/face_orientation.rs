@@ -1,5 +1,9 @@
 use geop_core_math::{
-    geop_error::GeopError, polygon::polygon_signed_area, scalars::Scalar, vector::Vector3,
+    geop_error::GeopError,
+    polygon::polygon_signed_area,
+    scalars::Scalar,
+    solvers::probe::{Probe, halve},
+    vector::Vector3,
 };
 
 use crate::{
@@ -220,9 +224,10 @@ pub fn normal_points_outward<S: Scalar>(
     // lobe*, which reads as an inverted normal on a face that is perfectly
     // correct. Every halving that still resolves is more local than the
     // one before, so the smallest one that resolves is the answer.
-    let mut step = shell_extent(model, shell_id);
-    let mut verdict = None;
-    for _ in 0..MAX_HALVINGS {
+    // Outward ends the probes; inward is only remembered, for a smaller
+    // probe to overrule.
+    let mut found_inward = false;
+    let outward = halve::<S, (), GeopError>(shell_extent(model, shell_id), MAX_HALVINGS, |&step| {
         let outward = point.add(&normal.prod_scalar(step));
         let inward = point.sub(&normal.prod_scalar(step));
         if let (Ok(out_class), Ok(in_class)) = (
@@ -261,11 +266,8 @@ pub fn normal_points_outward<S: Scalar>(
             // wrongly, and keeps the answer one-sided: it never calls a
             // face inward it has any evidence for.
             match resolved {
-                Some(true) => {
-                    verdict = Some(true);
-                    break;
-                }
-                Some(false) => verdict = Some(verdict != Some(true) && false),
+                Some(true) => return Ok(Probe::Found(())),
+                Some(false) => found_inward = true,
                 None => {}
             }
         }
@@ -275,22 +277,17 @@ pub fn normal_points_outward<S: Scalar>(
         // there is noise — and since the last decisive verdict wins,
         // letting the loop run past this floor would hand the answer to
         // exactly the least reliable probe.
-        let next = match step.div(S::TWO) {
-            Ok(s) => s,
-            Err(_) => break,
-        };
-        if !next.definitely_greater(params.min_subdivision_size) {
-            break;
-        }
-        step = next;
+        Ok(match step.div(S::TWO) {
+            Ok(next) if next.definitely_greater(params.min_subdivision_size) => Probe::Next,
+            _ => Probe::Stop,
+        })
+    });
+    // Halving by two cannot fail, so neither can the probes.
+    if matches!(outward, Ok(Some(()))) {
+        Some(Outward::Yes)
+    } else {
+        found_inward.then_some(Outward::No { point, normal })
     }
-    verdict.map(|out| {
-        if out {
-            Outward::Yes
-        } else {
-            Outward::No { point, normal }
-        }
-    })
 }
 
 /// A length comparable to the shell's own size, as a starting probe

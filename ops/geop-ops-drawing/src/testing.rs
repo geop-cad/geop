@@ -11,7 +11,7 @@ use geop_ops::{
     parameters::Parameters,
     placed::{Component, Instance, Placement, instance},
 };
-use geop_ops_hole::{Threads, threads};
+use geop_ops::{Threads, threads};
 
 /// A part's model, as the tests build it.
 pub(crate) type Part<S> = NamedModel<S>;

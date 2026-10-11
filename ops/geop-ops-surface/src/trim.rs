@@ -29,7 +29,8 @@ use geop_ops::{
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, min_subdivision_size, sheet_of};
+use crate::sheet_of;
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Which side of the cutting face a [`TrimSurface`] keeps, as its normal
 /// points.
@@ -93,7 +94,8 @@ impl Operation for TrimSurface {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::TRIM_SURFACE);
     type Args = TrimSurfaceArgs;
     type EditingState = ();
     type Input = Input;
@@ -116,9 +118,9 @@ impl Operation for TrimSurface {
     ) -> Form<Design> {
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        let face = EntityRef::of_name(EntityRef::face, &args.face);
         dialog.reference("face", "sheet", face, &[Role::Sheet], None, false);
-        let tool = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.tool));
+        let tool = EntityRef::of_name(EntityRef::face, &args.tool);
         dialog.reference("tool", "cut with", tool, &[Role::Face], None, false);
         let sides = vec![
             Choice::new("front", "in front of the face"),
@@ -136,7 +138,7 @@ impl Operation for TrimSurface {
     ) -> (TrimSurfaceArgs, ()) {
         let mut args = args.clone();
         let one = |picked: &[EntityRef]| {
-            (EntityRef::names_of(EntityRef::face, picked).pop()).unwrap_or_default()
+            EntityRef::last_name(EntityRef::face, picked).unwrap_or_default()
         };
         if let Event::Field { key, value } = event {
             match (key.as_str(), value) {

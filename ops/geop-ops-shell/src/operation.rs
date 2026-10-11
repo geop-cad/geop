@@ -73,7 +73,8 @@ impl Operation for Shell {
         "Hollow a solid out to walls of one thickness, open where faces are picked.",
         OperationGroup::Features,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::SHELL);
     type Args = ShellArgs;
     type EditingState = ();
     type Input = Input;
@@ -86,7 +87,10 @@ impl Operation for Shell {
     /// The newest solid, closed all round, a tenth thick.
     fn new_args(context: &Context<Input, ParamValue>) -> ShellArgs {
         ShellArgs {
-            solid: (Seen::new(context.before).model().solid_names().pop()).unwrap_or_default(),
+            solid: Seen::new(context.before)
+                .model()
+                .newest_solid()
+                .unwrap_or_default(),
             faces: Vec::new(),
             thickness: Formula::Plain(0.1),
         }
@@ -105,14 +109,14 @@ impl Operation for Shell {
         let mut seen = Seen::new(context.before);
         let mut form = Form::default();
         let dialog = &mut form.dialog;
-        let solid = (!args.solid.is_empty()).then(|| EntityRef::solid(args.solid.clone()));
-        let picked = solid.iter().cloned().collect();
-        dialog.reference("solid", "solid", picked, &[Role::Solid], None, false);
+        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
+        dialog.reference("solid", "solid", solid.clone(), &[Role::Solid], None, false);
         // A shell offsets planes and round faces: those are what can be
         // picked to open.
         let faces = EntityRef::of_names(EntityRef::face, &args.faces);
         let roles = [Role::Plane, Role::Round];
-        (dialog.reference("faces", "open faces", faces, &roles, solid, true)).optional("faces");
+        let scope = solid.first().cloned();
+        (dialog.reference("faces", "open faces", faces, &roles, scope, true)).optional("faces");
         let thickness = formula_number("thickness", &args.thickness, &mut seen, Unit::Length);
         dialog.number("thickness", thickness.range(0.0, 1.0));
         form
@@ -130,7 +134,7 @@ impl Operation for Shell {
         };
         match (key.as_str(), value) {
             ("solid", Value::Entities(picked)) => {
-                let solid = EntityRef::names_of(EntityRef::solid, &picked).pop();
+                let solid = EntityRef::last_name(EntityRef::solid, &picked);
                 // The faces opened were of the solid before.
                 if solid.as_ref() != Some(&args.solid) {
                     args.faces.clear();

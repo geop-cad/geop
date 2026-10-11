@@ -216,9 +216,8 @@ operations! {
 }
 
 /// The exporters and inspectors the editor offers (see [`geop_ops::output`]),
-/// in the order it offers them. Writing drawings, robots, bills
-/// of materials and flat patterns, and measuring, weighing and checking for
-/// interference, wait for their crates to come back into the workspace.
+/// in the order it offers them: the first exporter's first format is what
+/// a part is written in unless told otherwise.
 pub fn outputs() -> GeopResult<Outputs> {
     Outputs::default()
         .exporter(Stl)?

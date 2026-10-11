@@ -180,6 +180,55 @@ impl Namer {
         name.push(')');
         name
     }
+
+    /// `kind(operation,origin,at)`: a piece split off the entity named
+    /// `origin` at — or along — the entity named `at`. A piece is named
+    /// after what it was split off first of all, so that [`origin_of`]
+    /// traces it back however often it was split since.
+    pub fn piece(&self, origin: &str, at: &str) -> String {
+        self.name(&[origin, at])
+    }
+
+    /// Whether `name` is one of the [`Namer::piece`]s this namer named of
+    /// `origin`.
+    pub fn is_piece_of(&self, name: &str, origin: &str) -> bool {
+        // `kind(operation,origin,` — a piece's name without what it was
+        // split at, and its `)`.
+        let mut prefix = self.piece(origin, "");
+        prefix.pop();
+        name.starts_with(&prefix)
+    }
+}
+
+/// What the entity named `name` was split off (see [`Namer::piece`]): the
+/// first of the names among its arguments — an argument that is a name
+/// itself, `kind(...)`, or a long one's [`digest`]. None, if it has none.
+pub fn origin_of(name: &str) -> Option<&str> {
+    let open = name.find('(')?;
+    let inner = name[open + 1..].strip_suffix(')')?;
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    // The first argument is the step's id, never a name.
+    let mut first = true;
+    for (k, c) in inner
+        .char_indices()
+        .chain(std::iter::once((inner.len(), ',')))
+    {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                let argument = &inner[start..k];
+                if !first && (argument.contains('(') || argument.starts_with('#')) {
+                    return Some(argument);
+                }
+                first = false;
+                start = k + 1;
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The longest argument a name spells out (see [`Namer::name`]).
@@ -226,5 +275,34 @@ mod tests {
         assert_eq!(digest(""), "#6c62272e07bb014262b821756295c58d");
         let short = "x".repeat(LONGEST_ARGUMENT);
         assert_eq!(namer.name(&[&short]), format!("combine(teeth,{short})"));
+    }
+
+    #[test]
+    fn origin_is_the_first_name_among_the_arguments() {
+        assert_eq!(
+            origin_of(
+                "combine(holes,3,linear_pattern(holes,3,extrude(pin,c1)),extrude(plate,end))"
+            ),
+            Some("linear_pattern(holes,3,extrude(pin,c1))")
+        );
+        assert_eq!(origin_of("combine(e,#0123,x)"), Some("#0123"));
+        assert_eq!(origin_of("extrude(plate,end)"), None);
+        assert_eq!(origin_of("extrude(plate)"), None);
+    }
+
+    /// A piece is named after its origin, which [`origin_of`] finds again,
+    /// and which [`Namer::is_piece_of`] tells, as the namer named it.
+    #[test]
+    fn a_piece_is_named_after_its_origin() {
+        let namer = Namer::new("combine", "cut").unwrap().scoped("2");
+        let piece = namer.piece("extrude(box,end)", "combine(cut,2,x(a),y(b),0,1)");
+        assert_eq!(
+            piece,
+            "combine(cut,2,extrude(box,end),combine(cut,2,x(a),y(b),0,1))"
+        );
+        assert_eq!(origin_of(&piece), Some("extrude(box,end)"));
+        assert!(namer.is_piece_of(&piece, "extrude(box,end)"));
+        assert!(!namer.is_piece_of(&piece, "extrude(box)"));
+        assert!(!namer.scoped("3").is_piece_of(&piece, "extrude(box,end)"));
     }
 }

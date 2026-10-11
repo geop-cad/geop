@@ -47,9 +47,10 @@ pub struct Bracket<T> {
     pub undecided: Option<T>,
 }
 
-/// Bisects `(lo, hi)` at most `steps` times. `side(mid)` says whether the
-/// middle lies on `lo`'s side (`Some(true)`, it becomes `lo`), on `hi`'s
-/// (`Some(false)`), or cannot be told (`None`, which stops the bisection).
+/// Bisects `(lo, hi)` at most `steps` times. `side(lo, mid)` says whether
+/// the middle lies on the side of the bracket's current `lo` (`Some(true)`,
+/// it becomes `lo`), on `hi`'s (`Some(false)`), or cannot be told (`None`,
+/// which stops the bisection).
 /// With `until_collapsed`, it also stops once the middle no longer lies
 /// strictly inside the bracket. `side` may keep state of its own — a seed
 /// carried from one middle to the next — since every step asks it once.
@@ -58,7 +59,7 @@ pub fn bisect<T: Bisect, E: From<GeopError>>(
     hi: T,
     steps: usize,
     until_collapsed: bool,
-    mut side: impl FnMut(T) -> Result<Option<bool>, E>,
+    mut side: impl FnMut(T, T) -> Result<Option<bool>, E>,
 ) -> Result<Bracket<T>, E> {
     let (mut lo, mut hi) = (lo, hi);
     for _ in 0..steps {
@@ -66,7 +67,7 @@ pub fn bisect<T: Bisect, E: From<GeopError>>(
         if until_collapsed && !T::strictly_between(lo, mid, hi) {
             break;
         }
-        match side(mid)? {
+        match side(lo, mid)? {
             Some(true) => lo = mid,
             Some(false) => hi = mid,
             None => {
@@ -91,8 +92,20 @@ mod tests {
 
     #[test]
     fn bisects_to_the_last_bit() {
-        let b = bisect::<f64, GeopError>(1.0, 2.0, 200, true, |x| Ok(Some(x * x < 2.0))).unwrap();
+        let b =
+            bisect::<f64, GeopError>(1.0, 2.0, 200, true, |_, x| Ok(Some(x * x < 2.0))).unwrap();
         assert_eq!(b.hi, f64::from_bits(b.lo.to_bits() + 1));
         assert!(b.lo * b.lo < 2.0 && b.hi * b.hi >= 2.0);
+    }
+
+    /// A middle whose side cannot be told stops the bisection and is
+    /// reported, the bracket left as it was told.
+    #[test]
+    fn an_undecided_middle_is_reported() {
+        let b = bisect::<f64, GeopError>(0.0, 1.0, 50, false, |lo, mid| {
+            Ok((mid < 0.6).then_some(mid - lo > 0.0))
+        })
+        .unwrap();
+        assert_eq!((b.lo, b.hi, b.undecided), (0.5, 1.0, Some(0.75)));
     }
 }

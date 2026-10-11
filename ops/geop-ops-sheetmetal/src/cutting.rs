@@ -15,7 +15,9 @@ use geop_ops::{
     model::model,
     output::{
         Content, Export, Exporter, ExporterInfo, Output,
-        sheet::{Anchor, Format, Label, Layer, Shape, Sheet as Paper, strokes_of},
+        sheet::{
+            Anchor, Format, Label, Layer, LineType, Shape, Sheet as Paper, decimal, strokes_of,
+        },
     },
 };
 use serde::Deserialize;
@@ -25,15 +27,24 @@ use crate::{
     sheet::Sheet,
 };
 
+/// What a laser or a punch cuts: the flat pattern's outline and holes.
+pub const CUT: Layer = Layer {
+    name: "CUT",
+    width: 0.25,
+    line_type: LineType::Continuous,
+    color: 7,
+};
+
+/// Where the flat pattern is bent, and how.
+pub const BEND: Layer = Layer {
+    name: "BEND",
+    width: 0.25,
+    line_type: LineType::Center,
+    color: 5,
+};
+
 /// How high a bend's note is, as a share of the pattern's larger side.
 const NOTE_HEIGHT: f64 = 0.025;
-
-/// `x` to a thousandth, without trailing zeros.
-fn number(x: f64) -> String {
-    let s = format!("{x:.3}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".into() } else { s.into() }
-}
 
 /// The flat pattern of `sheet` on paper, one model unit a unit, its
 /// lower left corner at the origin, seen from its B side — the first
@@ -70,10 +81,11 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
         return Err(GeopError::new("the flat pattern has no outline")).with_context(ctx);
     }
     let place = |p: [f64; 2]| [p[0] - lo[0], p[1] - lo[1]];
-    let curves: Vec<(Layer, &NurbCurve2D<S>)> = boundary.iter().map(|&c| (Layer::Cut, c)).collect();
+    let curves: Vec<(Layer, &NurbCurve2D<S>)> = boundary.iter().map(|&c| (CUT, c)).collect();
     let mut paper = Paper {
         width: hi[0] - lo[0],
         height: hi[1] - lo[1],
+        layers: vec![CUT, BEND],
         strokes: strokes_of(&curves, &place, 1.0).with_context(ctx)?,
         labels: Vec::new(),
     };
@@ -83,7 +95,7 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
             place([a[0].to_f64(), a[1].to_f64()]),
             place([b[0].to_f64(), b[1].to_f64()]),
         );
-        paper.stroke(Layer::Bend, Shape::Line(a, b));
+        paper.stroke(BEND, Shape::Line(a, b));
         // Along the line, reading left to right.
         let mut angle = (b[1] - a[1]).atan2(b[0] - a[0]).to_degrees();
         if angle > 90.0 {
@@ -93,15 +105,15 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
         }
         let turn = if bend.toward_b { "UP" } else { "DOWN" };
         paper.labels.push(Label {
-            layer: Layer::Bend,
+            layer: BEND,
             at: [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0],
             height,
             angle,
             anchor: Anchor::Middle,
             text: format!(
                 "{turn} {}° R{}",
-                number(bend.angle.to_f64().to_degrees()),
-                number(bend.radius.to_f64())
+                decimal(bend.angle.to_f64().to_degrees(), 3),
+                decimal(bend.radius.to_f64(), 3)
             ),
         });
     }

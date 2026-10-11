@@ -27,7 +27,7 @@ pub use measure::{Measurement, measure};
 use geop_core_math::geop_error::GeopResult;
 use geop_ops::{
     Design, EntityRef,
-    output::{Inspector, InspectorInfo, Output, Picks},
+    output::{Answer, Inspector, InspectorInfo, Output, Picks},
     ui::Visual,
 };
 
@@ -39,6 +39,7 @@ impl Inspector for Measure {
         kind: "measure",
         label: "Measure",
         doc: "Measure picked entities: a point, a length, an area, a radius; the distance and angle between two.",
+        icon: Some(crate::icons::MEASURE),
         picks: Some(Picks {
             roles: measure::PICKS,
             most: 2,
@@ -56,6 +57,10 @@ impl Inspector for Measure {
         let visuals = measurement.visuals();
         Ok((measurement, visuals))
     }
+
+    fn show(measurement: &Measurement) -> Answer {
+        measurement.shown()
+    }
 }
 
 /// Weighs the part: every solid, each of its own part's material.
@@ -66,6 +71,7 @@ impl Inspector for MassProperties {
         kind: "mass_properties",
         label: "Mass",
         doc: "The volume, area, mass, centre of mass and inertia of every solid, and of all of them.",
+        icon: Some(crate::icons::MASS),
         picks: None,
     };
     type Options = ();
@@ -78,6 +84,10 @@ impl Inspector for MassProperties {
     ) -> GeopResult<(MassReport, Vec<Visual<Design>>)> {
         Ok((mass_report(output.part())?, Vec::new()))
     }
+
+    fn show(report: &MassReport) -> Answer {
+        report.shown()
+    }
 }
 
 /// Checks the part's solids for interference.
@@ -88,6 +98,7 @@ impl Inspector for Interference {
         kind: "interference",
         label: "Interference",
         doc: "Which solids overlap, and by how much, and which only touch.",
+        icon: Some(crate::icons::INTERFERENCE),
         picks: None,
     };
     type Options = ();
@@ -100,7 +111,12 @@ impl Inspector for Interference {
     ) -> GeopResult<(InterferenceReport, Vec<Visual<Design>>)> {
         Ok((interference_report(output.part())?, Vec::new()))
     }
+
+    fn show(report: &InterferenceReport) -> Answer {
+        report.shown()
+    }
 }
 
+mod icons;
 #[cfg(test)]
 mod tests;

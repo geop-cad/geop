@@ -4,7 +4,7 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::{Field, Scalar},
+    scalars::Scalar,
     vector::{Vector, Vector3},
 };
 use geop_core_topology::{
@@ -12,10 +12,11 @@ use geop_core_topology::{
     distance::{Feature, PlacedFace, closest_points},
 };
 use geop_ops::{
-    Design, NamedModel, Namer,
+    Design, EntityRef, NamedModel, Namer,
     operation::BuildView,
-    output::Bounded,
+    output::{Answer, Block, Bounded, Row},
     solids::{PlacedSolid, placed_solids},
+    ui::Tone,
 };
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
@@ -45,8 +46,7 @@ fn apart(a: &Box3, b: &Box3) -> bool {
 /// The control point `cp` of a surface of `solid`, as a point, where the
 /// solid is placed.
 fn place_control_point(solid: &PlacedSolid, cp: &Vector<Design, 4>) -> GeopResult<Box3> {
-    let w = cp[3];
-    let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
+    let p = cp.dehomogenized()?;
     Ok(match &solid.pose {
         Some(pose) => pose.apply(&p),
         None => p,
@@ -102,6 +102,49 @@ pub struct InterferenceReport {
     pub solids: usize,
     pub found: Vec<Interference>,
     pub unchecked: Vec<Unchecked>,
+}
+
+impl InterferenceReport {
+    /// As the inspect panel shows it: each pair that meets, lit while
+    /// pointed at, how — and each that could not be checked, why.
+    pub fn shown(&self) -> Answer {
+        let mut blocks = Vec::new();
+        if self.found.is_empty() && self.unchecked.is_empty() {
+            let plural = if self.solids == 1 { "" } else { "s" };
+            blocks.push(Block::Text {
+                text: format!("No interference among {} solid{plural}.", self.solids),
+                tone: Tone::Hint,
+            });
+        }
+        let mut items: Vec<Row> = (self.found.iter())
+            .map(|f| {
+                let (how, tone) = match f.contact {
+                    Contact::Overlap => {
+                        let volume = f.volume.map_or("?".into(), |v| v.show(3));
+                        (format!("overlap {volume} mm³"), Tone::Error)
+                    }
+                    Contact::Touch => ("touch".into(), Tone::Normal),
+                };
+                Row {
+                    light: vec![EntityRef::solid(f.a.clone()), EntityRef::solid(f.b.clone())],
+                    tone,
+                    ..Row::of(vec![format!("{} × {}: {how}", f.a, f.b)])
+                }
+            })
+            .collect();
+        items.extend(self.unchecked.iter().map(|u| Row {
+            detail: Some(u.error.clone()),
+            tone: Tone::Hint,
+            ..Row::of(vec![format!("{} × {}: could not be checked", u.a, u.b)])
+        }));
+        if !items.is_empty() {
+            blocks.push(Block::List { items });
+        }
+        Answer {
+            blocks,
+            plane: None,
+        }
+    }
 }
 
 /// Which solids of the part `view` shows — its own, and those of the parts

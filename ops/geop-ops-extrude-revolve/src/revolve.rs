@@ -12,15 +12,17 @@
 //! all, and through a partial turn into one whose two caps share that edge.
 
 use crate::{
-    common::{Profile, end_point, line2, sqrt2_over_2, start_point},
+    common::Profile,
     sweep::{Frame, Path, Span, SweepLoop, sweep, sweep_drawn},
 };
-use geop_core_geometry::nurb_curve::{Handedness, HelixRow, cos_sin, helix_rows};
+use geop_core_geometry::nurb_curve::{
+    Handedness, HelixRow, NurbCurve2D, arc_span, cos_sin, helix_rows,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::Vector3,
+    vector::{Vector2, Vector3},
 };
 use geop_core_topology::{SolidId, build::BuiltBody};
 use geop_ops::{NamedModel, Namer};
@@ -50,8 +52,7 @@ pub fn revolution<S: Scalar>(
     let (u, v, w) = (axes.u(), axes.v(), axes.w());
     let direction = |degrees: f64| {
         let (c, s) = cos_sin(degrees);
-        u.prod_scalar(S::from_f64(c))
-            .add(&v.prod_scalar(S::from_f64(s)))
+        axes.uv_direction(&Vector2::from_array([S::from_f64(c), S::from_f64(s)]))
     };
     let frame = |e1: Vector3<S>| Frame {
         origin: *axes.origin(),
@@ -70,25 +71,11 @@ pub fn revolution<S: Scalar>(
         .map(|k| from + k as f64 * step)
         .collect();
     let stations: Vec<Frame<S>> = angles.iter().map(|&a| frame(direction(a))).collect();
-    // The middle control point of an arc through `step` lies where the
-    // tangents at its ends meet, `1 / (1 + cos step)` along the sum of their
-    // directions, weighted `cos(step / 2)`.
-    let (cos_step, _) = cos_sin(step);
-    let weight = if step.abs() == 90.0 {
-        sqrt2_over_2()
-    } else {
-        S::from_f64((step / 2.0).to_radians().cos())
-    };
+    let (weight, outwards) = arc_span(step);
     let spans_of = (0..spans)
         .map(|j| {
             let (a, b) = (&stations[j], &stations[(j + 1) % stations.len()]);
-            Span::arc(
-                frame(
-                    a.e1.add(&b.e1)
-                        .prod_scalar(S::from_f64(1.0 / (1.0 + cos_step))),
-                ),
-                weight,
-            )
+            Span::arc(frame(a.e1.add(&b.e1).prod_scalar(outwards)), weight)
         })
         .collect();
     // Which way round the path runs, against the stations' `e1 x e2`: the
@@ -102,15 +89,9 @@ pub fn revolution<S: Scalar>(
         .prod_cross(w)
         .prod_dot(&tangent)
         .mul(S::from_f64(step));
-    let along_normal = if along.definitely_greater(S::ZERO) {
-        true
-    } else if along.definitely_less(S::ZERO) {
-        false
-    } else {
-        return Err(GeopError::new(format!(
-            "revolution: the axes {axes} are degenerate"
-        )));
-    };
+    let along_normal = along
+        .definite_sign()
+        .ok_or_else(|| GeopError::new(format!("revolution: the axes {axes} are degenerate")))?;
     let (station_names, span_names) = if full {
         (
             ["a0", "a3", "a2", "a1"].map(String::from).to_vec(),
@@ -249,7 +230,7 @@ pub fn revolve_at_oriented<S: Scalar>(
     profile.check_names()?;
     let lp = if profile.is_closed() {
         for (i, curve) in profile.curves.iter().enumerate() {
-            if start_point(curve)?[0].could_be_equal(S::ZERO) {
+            if curve.start()?[0].could_be_equal(S::ZERO) {
                 return Err(GeopError::new(format!(
                     "revolve: a closed profile must stay off the axis, but its point {i} could be on it"
                 )));
@@ -269,12 +250,12 @@ pub fn revolve_at_oriented<S: Scalar>(
         let mut closed = profile.clone();
         closed
             .curves
-            .push(line2(end_point(last)?, start_point(first)?)?);
+            .push(NurbCurve2D::line(last.end()?, first.start()?)?);
         closed.curve_names.push("axis".into());
         let poles = closed
             .curves
             .iter()
-            .map(|c| Ok(start_point(c)?[0].could_be_equal(S::ZERO)))
+            .map(|c| Ok(c.start()?[0].could_be_equal(S::ZERO)))
             .collect::<GeopResult<Vec<bool>>>()?;
         if !(poles[0] && poles[profile.curves.len()]) {
             return Err(GeopError::new(
@@ -306,9 +287,9 @@ pub fn revolve_at_oriented<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::polyline;
     use crate::common::testing::{assert_valid, assert_valid_sheets, v2};
-    use crate::common::{arc2, polyline};
-    use geop_core_geometry::nurb_curve::NurbCurve2D;
+    use geop_core_geometry::nurb_curve::sqrt2_over_2;
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector2;
 
@@ -336,8 +317,8 @@ mod tests {
     fn check_sphere_from_arcs_is_valid<S: Scalar>() {
         let w = sqrt2_over_2::<S>();
         let profile = vec![
-            arc2(v2(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), w).unwrap(),
-            arc2(v2(1.0, 0.0), v2(1.0, -1.0), v2(0.0, -1.0), w).unwrap(),
+            NurbCurve2D::arc(v2(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), w).unwrap(),
+            NurbCurve2D::arc(v2(1.0, 0.0), v2(1.0, -1.0), v2(0.0, -1.0), w).unwrap(),
         ];
         let model = revolved(profile);
         let topology = model.topology();
@@ -470,10 +451,10 @@ mod tests {
     fn check_torus_is_valid<S: Scalar>() {
         let w = sqrt2_over_2::<S>();
         let profile = vec![
-            arc2(v2(2.0, 1.0), v2(3.0, 1.0), v2(3.0, 0.0), w).unwrap(),
-            arc2(v2(3.0, 0.0), v2(3.0, -1.0), v2(2.0, -1.0), w).unwrap(),
-            arc2(v2(2.0, -1.0), v2(1.0, -1.0), v2(1.0, 0.0), w).unwrap(),
-            arc2(v2(1.0, 0.0), v2(1.0, 1.0), v2(2.0, 1.0), w).unwrap(),
+            NurbCurve2D::arc(v2(2.0, 1.0), v2(3.0, 1.0), v2(3.0, 0.0), w).unwrap(),
+            NurbCurve2D::arc(v2(3.0, 0.0), v2(3.0, -1.0), v2(2.0, -1.0), w).unwrap(),
+            NurbCurve2D::arc(v2(2.0, -1.0), v2(1.0, -1.0), v2(1.0, 0.0), w).unwrap(),
+            NurbCurve2D::arc(v2(1.0, 0.0), v2(1.0, 1.0), v2(2.0, 1.0), w).unwrap(),
         ];
         let model = revolved_ring(profile);
         let topology = model.topology();
@@ -644,7 +625,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, _)| {
-                    i == 0 && start_point(&profile.curves[0]).unwrap()[0].could_be_equal(S::ZERO)
+                    i == 0 && profile.curves[0].start().unwrap()[0].could_be_equal(S::ZERO)
                 })
                 .collect();
             let lp = SweepLoop {

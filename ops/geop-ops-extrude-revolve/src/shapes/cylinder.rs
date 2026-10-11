@@ -30,8 +30,7 @@ pub enum Axis {
 /// spans `z in [base_center.z, base_center.z + height]`), as an exact
 /// circular cross-section swept via [`revolve_at_oriented`].
 ///
-/// A thin wrapper around [`revolved_cylinder_along_axis`] with `axis =
-/// Axis::Z`, its own historical/default orientation.
+/// [`revolved_cylinder_along_axis`] with `axis = Axis::Z`.
 pub fn revolved_cylinder<S: Scalar>(
     model: &mut NamedModel<S>,
     name: &str,
@@ -98,9 +97,9 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
 /// z-axis through `base_center`, as a regular `segments`-gon prism
 /// approximating a circular cross-section, swept via `extrude`.
 ///
-/// The coordinate system is left-handed (`w` points the opposite way `u x
-/// v` would for a right-handed one) — `extrude` needs that for a CCW
-/// boundary's normals to face outward (see its own module doc).
+/// Its plane's `w` is `height` down along `z`, so the prism reaches down
+/// from `base_center`; [`extrude`] points its faces outwards whichever way
+/// `w` runs.
 ///
 /// Named as the operation `cylinder(name)`, after the polygon's corners
 /// `p0..` and sides `c0..` (see [`extrude`]).

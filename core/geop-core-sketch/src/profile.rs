@@ -20,11 +20,12 @@
 use crate::sketch::{CurveId, CurveKind, Enclosure, PointId, Sketch};
 use geop_core_geometry::{
     intersection::curve_curve_intersect,
-    nurb_curve::{NurbCurve, NurbCurve2D},
+    nurb_curve::{NurbCurve, NurbCurve2D, bezier_knots},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::probe::{Probe, attempts, halve},
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -647,13 +648,6 @@ fn hom<S: Scalar>(p: Vector2<S>, w: S) -> Vector3<S> {
     Vector3::from_array([p[0].mul(w), p[1].mul(w), w])
 }
 
-/// The knots `[0; n] ++ [1; n]` of a single Bézier span on `[0, 1]`.
-fn bezier_knots<S: Scalar>(n: usize) -> Vec<S> {
-    let mut knots = vec![S::ZERO; n];
-    knots.extend(std::iter::repeat_n(S::ONE, n));
-    knots
-}
-
 /// A rational quadratic from `p0` to `p2` through the tangent intersection
 /// `m`, with middle weight `w`.
 fn conic<S: Scalar>(
@@ -665,12 +659,12 @@ fn conic<S: Scalar>(
     NurbCurve::try_new(
         2,
         vec![hom(p0, S::ONE), hom(m, w), hom(p2, S::ONE)],
-        bezier_knots(3),
+        bezier_knots(2),
     )
 }
 
 fn line<S: Scalar>(p0: Vector2<S>, p1: Vector2<S>) -> GeopResult<NurbCurve2D<S>> {
-    NurbCurve::try_new(1, vec![hom(p0, S::ONE), hom(p1, S::ONE)], bezier_knots(2))
+    NurbCurve::try_new(1, vec![hom(p0, S::ONE), hom(p1, S::ONE)], bezier_knots(1))
 }
 
 /// `v` turned a quarter counter-clockwise — by `neg`, which is exact, where
@@ -865,7 +859,8 @@ fn loop_contains<S: Scalar>(
     // The golden angle, `π (3 - √5)`.
     let golden = S::PI.mul(S::from_i64(3).sub(S::from_i64(5).sqrt()?));
     let mut last_rejection = String::new();
-    'attempt: for k in 0..MAX_RAY_ATTEMPTS {
+    // Directions tried in turn until one is clear.
+    let found = attempts(MAX_RAY_ATTEMPTS, |&k| -> GeopResult<_> {
         let angle = golden.mul(S::from_i64(k as i64));
         let dir = Vector2::from_array([angle.cos(), angle.sin()]).sharpen();
         let ray = ray(probe, &dir, extent)?;
@@ -877,12 +872,12 @@ fn loop_contains<S: Scalar>(
                     Ok(hits) if !hits.is_coincident() => hits.into_vec(),
                     Ok(_) => {
                         last_rejection = format!("the ray runs along {curve:?}");
-                        continue 'attempt;
+                        return Ok(Probe::Next);
                     }
                     Err(e) => {
                         last_rejection =
                             format!("the ray against {curve:?} did not converge: {e:?}");
-                        continue 'attempt;
+                        return Ok(Probe::Next);
                     }
                 };
             let (t0, t1) = curve.domain();
@@ -900,12 +895,15 @@ fn loop_contains<S: Scalar>(
                 {
                     last_rejection =
                         format!("the ray grazes an end of {curve:?} at {along_curve:?}");
-                    continue 'attempt;
+                    return Ok(Probe::Next);
                 }
                 crossings += 1;
             }
         }
-        return Ok(!crossings.is_multiple_of(2));
+        Ok(Probe::Found(!crossings.is_multiple_of(2)))
+    })?;
+    if let Some(inside) = found {
+        return Ok(inside);
     }
     Err(GeopError::new(format!(
         "could not classify {probe:?} against a loop: every ray direction was ambiguous, \
@@ -928,17 +926,19 @@ fn turns_counter_clockwise<S: Scalar>(curves: &[NurbCurve2D<S>], extent: S) -> G
     let point = curve.evaluate(mid)?;
     let tangent = curve.tangent(mid)?;
     let left = Vector2::from_array([tangent[1].neg(), tangent[0]]);
-    let mut step = extent.div(S::from_i64(64))?;
-    for _ in 0..24 {
+    let found = halve(extent.div(S::from_i64(64))?, 24, |&step| -> GeopResult<_> {
         let at = |sign: S| point.add(&left.prod_scalar(step.mul(sign))).sharpen();
         let inside_left = loop_contains(curves, &at(S::ONE), extent)?;
         let inside_right = loop_contains(curves, &at(S::ONE.neg()), extent)?;
-        if inside_left != inside_right {
-            return Ok(inside_left);
-        }
-        step = step.div(S::TWO)?;
-    }
-    Err(GeopError::new(format!(
-        "could not tell which way {curve:?} winds: both sides of it classify the same way"
-    )))
+        Ok(if inside_left != inside_right {
+            Probe::Found(inside_left)
+        } else {
+            Probe::Next
+        })
+    })?;
+    found.ok_or_else(|| {
+        GeopError::new(format!(
+            "could not tell which way {curve:?} winds: both sides of it classify the same way"
+        ))
+    })
 }

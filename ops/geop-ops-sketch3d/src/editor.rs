@@ -37,9 +37,10 @@ use geop_ops::{
     Design,
     operation::{Aspects, EntityRef, Role, Seen},
     ui::{
-        Action, CanvasEvent, Control, Edit, EditForm, Gizmo, InHand, ListItem, Number, Pointer,
-        Shape, Style, Tone, Unit, Value, Visual, constraint_status,
+        Action, CanvasEvent, Edit, EditForm, Gizmo, InHand, ListItem, Number, Pointer, Shape,
+        Style, Tone, Unit, Value, Visual, constraint_status,
         hit::{hit_visuals, no_instances},
+        icons,
     },
 };
 
@@ -68,12 +69,20 @@ pub enum Tool {
 
 impl Tool {
     /// Every tool: how events name it, its label and its key.
-    const ALL: [(Tool, &'static str, &'static str, &'static str); 5] = [
-        (Tool::Select, "select", "Select", "Escape"),
-        (Tool::Point, "point", "Point", "p"),
-        (Tool::Line, "line", "Line", "l"),
-        (Tool::Arc, "arc", "3-point arc", "a"),
-        (Tool::Spline, "spline", "Spline", "s"),
+    /// Each tool, its name, its label, its key and its icon — the planar
+    /// sketch's; selecting has none, and shows its label.
+    const ALL: [(
+        Tool,
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+    ); 5] = [
+        (Tool::Select, "select", "Select", "Escape", None),
+        (Tool::Point, "point", "Point", "p", Some(icons::POINT)),
+        (Tool::Line, "line", "Line", "l", Some(icons::LINE)),
+        (Tool::Arc, "arc", "3-point arc", "a", Some(icons::ARC)),
+        (Tool::Spline, "spline", "Spline", "s", Some(icons::SPLINE)),
     ];
 
     fn draws(self) -> bool {
@@ -201,13 +210,6 @@ impl Located {
     }
 }
 
-/// The unit vector along `axis`.
-fn unit(axis: Coordinate) -> V3 {
-    let mut d = Vector3::zero();
-    d[axis.index()] = S::ONE;
-    d
-}
-
 /// Where `pointer` snaps onto a line along `x`, `y` or `z` through `from`,
 /// if it passes within [`AXIS_SNAP`] reaches of one: the axis it passes
 /// nearest on screen, and the point of it nearest the pointer's ray.
@@ -215,7 +217,7 @@ fn along_axis(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
     Coordinate::ALL
         .into_iter()
         .filter_map(|axis| {
-            let d = unit(axis);
+            let d = Vector3::axis(axis.index());
             let at = from.add(&d.prod_scalar(pointer.ray.line_parameter(from, &d)?));
             let (dist, t) = pointer.ray.distance_to_point(&at);
             // Which axis is nearer on screen is a free choice between
@@ -402,7 +404,7 @@ fn click(
                 if let Some(axis) = along {
                     args.sketch.constrain(Constraint3d::ParallelTo {
                         line,
-                        direction: unit(axis),
+                        direction: Vector3::axis(axis.index()),
                     });
                 }
                 smooth_joints(args, line);
@@ -718,9 +720,7 @@ fn constraints_for(
         ("along_y", "Along y", Coordinate::Y),
         ("along_z", "Along z", Coordinate::Z),
     ] {
-        let mut direction = V3::zero();
-        direction[axis.index()] = Design::ONE;
-        if let Some(c) = along(args, picks, direction) {
+        if let Some(c) = along(args, picks, V3::axis(axis.index())) {
             out.push((name, label, vec![c]));
         }
     }
@@ -884,8 +884,7 @@ fn visuals(
             "triad",
             Shape::Triad {
                 at,
-                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-                    .map(|axis| Vector3::from_array(axis.map(S::from_f64))),
+                axes: [0, 1, 2].map(Vector3::axis),
             },
             Style::Guide,
         ));
@@ -909,15 +908,11 @@ pub(crate) fn form<'a>(
     };
     let mut tools: Vec<Action> = Tool::ALL
         .iter()
-        .map(|&(t, name, label, _)| {
-            // The planar sketch's icons; selecting has none, and shows
-            // its label.
-            let action = Action::new(name, label).group("Draw").active(t == tool);
-            if t == Tool::Select {
-                action
-            } else {
-                action.icon(name)
-            }
+        .map(|&(t, name, label, _, icon)| {
+            Action::new(name, label)
+                .group("Draw")
+                .active(t == tool)
+                .icon(icon)
         })
         .collect();
     let finishing = if tool == Tool::Spline {
@@ -954,7 +949,7 @@ pub(crate) fn form<'a>(
                 f.number(
                     axis.name(),
                     Number::new(axis.name(), at[axis.index()].to_f64(), Unit::Length),
-                    move |args, v| {
+                    move |Edit { args, .. }, v| {
                         let mut to = args.sketch.points[&p].at;
                         to[axis.index()] = Design::from_f64(v);
                         solve(before, args, &[(p, to)]);
@@ -965,11 +960,8 @@ pub(crate) fn form<'a>(
         _ if tool.draws() => {
             for axis in Coordinate::ALL {
                 let number = Number::new(axis.name(), s.typed[axis.index()], Unit::Length);
-                f.form.dialog.push(axis.name(), Control::Number(number));
-                f.on(axis.name(), move |edit, value| {
-                    if let Value::Number(v) = value {
-                        edit.session.typed[axis.index()] = v;
-                    }
+                f.number(axis.name(), number, move |edit, v| {
+                    edit.session.typed[axis.index()] = v;
                 });
             }
             f.actions(

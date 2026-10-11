@@ -91,7 +91,8 @@ impl Operation for Mirror {
         "Mirror bodies in a plane.",
         OperationGroup::Bodies,
         OperationTier::Small,
-    );
+    )
+    .icon(geop_ops::ui::icons::MIRROR);
     type Args = MirrorArgs;
     type EditingState = ();
     type Input = Input;

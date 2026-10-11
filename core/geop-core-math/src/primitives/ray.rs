@@ -156,7 +156,7 @@ impl<S: Scalar> Ray<S> {
     /// or points away from it.
     pub fn intersect_uv_plane(&self, frame: &CoordinateSystem<S>) -> Option<(S, Vector2<S>)> {
         let (t, p) = self.intersect_plane(frame.origin(), frame.w())?;
-        Some((t, frame.to_uvw(&p).head()))
+        Some((t, frame.to_uv(&p)))
     }
 
     /// The parameter `s` of the point `at + s direction` of a line nearest

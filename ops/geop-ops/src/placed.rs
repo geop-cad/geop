@@ -28,8 +28,8 @@ use geop_core_program::{
 
 use crate::{
     Design,
-    model::{ParamValue, SolidMeshes, model},
-    operation::{Build, EntityRef, INSTANCE_SEPARATOR, Input, Seen},
+    model::{ParamValue, SolidMeshes, model_or_empty},
+    operation::{Build, EntityRef, INSTANCE_SEPARATOR, Input, Seen, instance_path},
     parameters::{Parameters, Values},
     ui::PartView,
 };
@@ -67,6 +67,26 @@ pub fn library<'a>(r: &mut impl Retrieve<'a, Input, ParamValue>) -> GeopResult<R
     }
 }
 
+/// What a field picking a file of the library offers: the files of it
+/// `kind` takes, sorted, and `current`, if a file is picked that is not
+/// among them. None, without a library.
+pub fn library_files<'a>(
+    r: &mut impl Retrieve<'a, Input, ParamValue>,
+    kind: impl Fn(&str) -> bool,
+    current: &str,
+) -> Vec<String> {
+    let mut files: Vec<String> = (library(r).map(|library| library.files()))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| kind(f))
+        .collect();
+    files.sort();
+    if !current.is_empty() && !files.iter().any(|f| f == current) {
+        files.push(current.to_string());
+    }
+    files
+}
+
 /// The name of the input a run finds its [`About`] under.
 pub const ABOUT: &str = "about";
 
@@ -81,7 +101,7 @@ pub struct About {
 
 /// What a part whose material is not given is weighed as: water, 1000
 /// kg/m³.
-pub const UNGIVEN_DENSITY: f64 = 1000.0;
+const UNGIVEN_DENSITY: f64 = 1000.0;
 
 /// What a part is made of, as it is weighed.
 #[derive(Clone, Debug, PartialEq)]
@@ -458,7 +478,7 @@ pub fn within<'a>(
         };
         let path = match &found {
             None => name,
-            Some((outer, _)) => format!("{outer}{INSTANCE_SEPARATOR}{name}"),
+            Some((outer, _)) => instance_path(outer, &name),
         };
         found = Some((path, placed));
         rest = inner;
@@ -533,11 +553,8 @@ pub fn solid_meshes(
     view: View<'_, Input, ParamValue>,
     quality: usize,
 ) -> GeopResult<SolidMeshes<Design>> {
-    // A part with no model has no solids.
-    let own = |view: View<'_, Input, ParamValue>| match view.retrieve_target(&model()) {
-        Ok(own) => own.solid_meshes(quality),
-        Err(_) => Ok(Vec::new()),
-    };
+    let own =
+        |mut view: View<'_, Input, ParamValue>| model_or_empty(&mut view).solid_meshes(quality);
     let mut out = own(view)?;
     let mut meshed: HashMap<*const Component, SolidMeshes<Design>> = HashMap::new();
     for placed in placed_parts(view)? {
@@ -557,7 +574,7 @@ pub fn solid_meshes(
                     vertex_normals: t.vertex_normals.map(|n| n.map(|v| motion.rotate(&v))),
                 })
                 .collect();
-            out.push((format!("{}{INSTANCE_SEPARATOR}{name}", placed.name), moved));
+            out.push((instance_path(&placed.name, name), moved));
         }
     }
     Ok(out)

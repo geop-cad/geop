@@ -223,8 +223,7 @@ fn draw(
 /// The curves of `sketch` its wire has an edge for — those drawn, but for
 /// construction curves — and their ends.
 fn drawn(sketch: &Sketch3d) -> GeopResult<Vec<(CurveId, (PointId, PointId))>> {
-    (sketch.curves.iter())
-        .filter(|(_, c)| c.is_drawn() && !c.construction)
+    (sketch.drawn_curves())
         .map(|(&id, c)| {
             let ends = (c.endpoints())
                 .ok_or_else(|| GeopError::new(format!("the drawn curve {id} has no ends")))?;
@@ -323,7 +322,8 @@ impl Operation for AddSketch3d {
         "Draw points, lines, arcs and splines in space: paths to sweep along.",
         OperationGroup::Sketch,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::ADD_SKETCH3D);
     type Args = AddSketch3dArgs;
     type EditingState = Sketch3dEditing;
     type Input = Input;

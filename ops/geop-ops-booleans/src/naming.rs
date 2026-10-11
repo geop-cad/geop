@@ -10,9 +10,9 @@
 //! | the result solid | `N` |
 //! | vertex where edges `E1 < E2` cross | `N(E1,E2,i,n)`: the `i`-th of their `n` crossings, counted along `E1` |
 //! | vertex where edge `E` pierces face `F` | `N(E,F,i,n)`: the `i`-th of the `n` piercings, counted along `E` |
-//! | piece of edge `E` starting at vertex `V` | `N(E,V)` — the piece at `E`'s own start keeps the name `E` |
+//! | piece of edge `E` starting at vertex `V` | `N(E,V)` ([`Namer::piece`]) — the piece at `E`'s own start keeps the name `E` |
 //! | edge traced along faces `F1 < F2` from vertex `P` to `Q` (`P < Q`) | `N(F1,F2,P,Q)`, with a trailing `,k` only if several such edges join the same `P` and `Q` |
-//! | piece of face `F` split off along edge `E` | `N(F,E)` — the other piece keeps the name `F` |
+//! | piece of face `F` split off along edge `E` | `N(F,E)` ([`Namer::piece`]) — the other piece keeps the name `F` |
 //!
 //! `<` is the order of the names as strings, so each name is independent of
 //! which operand came first and of the order the algorithm found things in.
@@ -274,7 +274,7 @@ impl<S: Scalar> BooleanNaming<S> {
             }
         }
 
-        let mut traces: BTreeMap<String, Vec<EdgeId>> = BTreeMap::new();
+        let mut traces: BTreeMap<[String; 4], Vec<EdgeId>> = BTreeMap::new();
         for recipe in &self.recipes {
             match recipe {
                 Recipe::EdgePiece {
@@ -283,9 +283,7 @@ impl<S: Scalar> BooleanNaming<S> {
                     start,
                 } if alive(model, (*edge).into()) => {
                     let start = name_of(model, (*start).into())?;
-                    model
-                        .rename(*edge, n.name(&[origin, &start]))
-                        .map_err(ctx)?;
+                    model.rename(*edge, n.piece(origin, &start)).map_err(ctx)?;
                 }
                 Recipe::Trace { edge, faces, ends } if alive(model, (*edge).into()) => {
                     let mut faces = faces.clone();
@@ -295,23 +293,21 @@ impl<S: Scalar> BooleanNaming<S> {
                         name_of(model, ends[1].into())?,
                     ];
                     ends.sort();
-                    traces
-                        .entry(n.name(&[&faces[0], &faces[1], &ends[0], &ends[1]]))
-                        .or_default()
-                        .push(*edge);
+                    let ([f, g], [p, q]) = (faces, ends);
+                    traces.entry([f, g, p, q]).or_default().push(*edge);
                 }
                 _ => {}
             }
         }
-        for (name, edges) in traces {
+        for (args, edges) in traces {
+            let args = args.each_ref().map(String::as_str);
             if let [edge] = edges[..] {
-                model.rename(edge, name).map_err(ctx)?;
+                model.rename(edge, n.name(&args)).map_err(ctx)?;
             } else {
                 for (k, edge) in edges.into_iter().enumerate() {
-                    // `name` ends in `)`: append the index as one more
-                    // argument.
-                    let indexed = format!("{},{k})", &name[..name.len() - 1]);
-                    model.rename(edge, indexed).map_err(ctx)?;
+                    let k = k.to_string();
+                    let [f, g, p, q] = args;
+                    model.rename(edge, n.name(&[f, g, p, q, &k])).map_err(ctx)?;
                 }
             }
         }
@@ -322,7 +318,7 @@ impl<S: Scalar> BooleanNaming<S> {
                 && alive(model, (*face).into())
             {
                 let edge = name_of(model, (*edge).into())?;
-                model.rename(*face, n.name(&[origin, &edge])).map_err(ctx)?;
+                model.rename(*face, n.piece(origin, &edge)).map_err(ctx)?;
             }
         }
         Ok(())

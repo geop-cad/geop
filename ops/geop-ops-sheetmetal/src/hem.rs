@@ -12,15 +12,13 @@ use geop_core_program::{
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     model::model_or_empty,
-    operation::{Build, BuildReader, Input, ModelStep},
+    operation::{Build, BuildReader, EntityRef, Input, ModelStep},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     body::{self, Made, Making, SheetStep, sheets_of, with_edge},
-    edge_flange::{
-        Corner, FlangeShape, add_flange, check_offsets, edge_field, offset_fields, picked_edge,
-    },
+    edge_flange::{Corner, FlangeShape, add_flange, check_offsets, edge_field, offset_fields},
     sheet::SheetMetalRules,
 };
 
@@ -147,7 +145,8 @@ impl Operation for Hem {
         "Fold the straight edge of a sheet-metal body right back on itself.",
         OperationGroup::SheetMetal,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::HEM);
     type Args = HemArgs;
     type EditingState = ();
     type Input = Input;
@@ -210,7 +209,9 @@ impl Operation for Hem {
             return (args, ());
         };
         match (key.as_str(), value) {
-            ("edge", Value::Entities(picked)) => args.edge = picked_edge(&picked),
+            ("edge", Value::Entities(picked)) => {
+                args.edge = EntityRef::last_name(EntityRef::edge, &picked).unwrap_or_default()
+            }
             ("kind", Value::Choice(choice)) => {
                 args.kind = match choice.as_str() {
                     "open" => HemKind::Open,

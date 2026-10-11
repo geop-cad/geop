@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, SolidId, VertexId,
+    Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, Sense, SolidId, VertexId,
     boundary::{BoundaryIndex, BoundaryType},
 };
 use geop_core_math::{
@@ -40,7 +40,7 @@ impl<S: Scalar> Model<S> {
     pub fn face_corners(&self, face_id: FaceId) -> GeopResult<Vec<Vec<[f64; 3]>>> {
         let at = |v: VertexId| -> GeopResult<[f64; 3]> {
             let p = self.get_vertex(v)?.point;
-            Ok([0, 1, 2].map(|k| p[k].to_f64()))
+            Ok(p.to_f64_array())
         };
         self.get_face(face_id)?
             .boundaries()
@@ -64,6 +64,56 @@ impl<S: Scalar> Model<S> {
                 BoundaryType::Vertex(_) => None,
             })
             .flat_map(|anchor| self.iterate_loop_coedges(anchor))
+    }
+
+    /// The edge of every edge-backed coedge of `face_id`'s boundaries, in
+    /// loop order, outer loop first: a seam the face runs along twice comes
+    /// twice.
+    pub fn face_edges(&self, face_id: FaceId) -> impl Iterator<Item = EdgeId> + '_ {
+        self.iterate_face_coedges(face_id)
+            .filter_map(|c| match self.coedges[&c].geometry {
+                CoedgeGeometry::Edge(edge) => Some(edge),
+                CoedgeGeometry::Vertex(_) => None,
+            })
+    }
+
+    /// The edges ending at `vertex`, sorted by id.
+    pub fn edges_at_vertex(&self, vertex: VertexId) -> Vec<EdgeId> {
+        self.edges
+            .iter()
+            .filter(|(_, e)| e.start_vertex == vertex || e.end_vertex == vertex)
+            .map(|(&id, _)| id)
+            .collect()
+    }
+
+    /// The faces whose boundaries run through `vertex` (along an edge
+    /// starting there), sorted by id.
+    pub fn faces_at_vertex(&self, vertex: VertexId) -> GeopResult<Vec<FaceId>> {
+        let mut faces = Vec::new();
+        for (&id, coedge) in &self.coedges {
+            if coedge.edge().is_ok() && self.coedge_start_vertex_id(id)? == vertex {
+                faces.push(coedge.face);
+            }
+        }
+        faces.sort();
+        faces.dedup();
+        Ok(faces)
+    }
+
+    /// The two faces of `edge`: the one its forward coedge bounds (on the
+    /// edge's left) first, the one running against it second. `None`
+    /// unless the edge joins two faces.
+    pub fn faces_of_edge(&self, edge: EdgeId) -> Option<[FaceId; 2]> {
+        let mut forward = None;
+        let mut reversed = None;
+        for c in self.coedges_of_edge(edge) {
+            let coedge = &self.coedges[&c];
+            match coedge.sense {
+                Sense::Forward => forward = Some(coedge.face),
+                Sense::Reversed => reversed = Some(coedge.face),
+            }
+        }
+        Some([forward?, reversed?])
     }
 
     /// The geometry of every coedge of `body`'s faces, in order.
@@ -188,6 +238,14 @@ impl<S: Scalar> Model<S> {
             faces.extend(self.get_shell(shell_id)?.faces.iter().copied());
         }
         Ok(faces)
+    }
+
+    /// The solid `face_id` is part of; `None` for a face of a sheet.
+    pub fn solid_of_face(&self, face_id: FaceId) -> GeopResult<Option<SolidId>> {
+        Ok(match self.body_of_face(face_id)? {
+            Body::Solid(solid) => Some(solid),
+            Body::Sheet(_) => None,
+        })
     }
 
     /// The body `face_id` is part of: its shell's solid, or its shell, if

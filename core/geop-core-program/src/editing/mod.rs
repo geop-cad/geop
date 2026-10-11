@@ -16,7 +16,7 @@ pub use dialog::{
     Action, Choice, Control, Dialog, Field, ListItem, Number, Picked, Reference, Tone, Track, Unit,
     is_formula,
 };
-pub use entity::{EntityRef, INSTANCE_SEPARATOR, Role, describe_roles};
+pub use entity::{EntityRef, INSTANCE_SEPARATOR, Role, describe_roles, instance_path};
 pub use event::{Button, CanvasEvent, Pointer, Reach, StepEditEvent, Value};
 pub use form::{Event, Form, InHand, Pull};
 pub use gizmo::{Axis, Change, Gizmo, GizmoDrag, GizmoPart, GizmoView, Orientation};

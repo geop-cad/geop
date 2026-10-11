@@ -31,7 +31,7 @@
 //! loop of four, or to a face that is not flat.
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D},
+    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, flatten_point},
     nurb_surface::NurbSurface3D,
     shape::Plane,
 };
@@ -39,7 +39,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     polygon::polygon_signed_area,
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::{Vector3, Vector4},
     with_context,
 };
 use geop_core_program::{
@@ -57,7 +57,6 @@ use geop_ops::{
         build_model,
     },
 };
-use geop_ops_extrude_revolve::common::{bilinear, line2, line3};
 use serde::{Deserialize, Serialize};
 
 use crate::SheetSpec;
@@ -119,7 +118,8 @@ impl Operation for BoundarySurface {
         OperationGroup::Surface,
         OperationTier::Small,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::BOUNDARY_SURFACE);
     type Args = BoundarySurfaceArgs;
     type EditingState = ();
     type Input = Input;
@@ -223,52 +223,13 @@ impl<S: Scalar> Side<S> {
 
     /// The curve, run the way the side runs.
     fn oriented(&self) -> Curve3<S> {
-        if self.forward {
-            self.curve.clone()
-        } else {
-            self.curve.reverse()
-        }
+        self.sense().orient(&self.curve)
     }
 
     /// How a coedge running the way the side runs uses its edge's copy.
     fn sense(&self) -> Sense {
-        if self.forward {
-            Sense::Forward
-        } else {
-            Sense::Reversed
-        }
+        Sense::from_forward(self.forward)
     }
-}
-
-/// A side of the unit square, as a pcurve, counter-clockwise from `(0, 0)`.
-fn square_side<S: Scalar>(k: usize) -> GeopResult<NurbCurve2D<S>> {
-    let corner = |k: usize| {
-        let (u, v) = [(0, 0), (1, 0), (1, 1), (0, 1)][k % 4];
-        Vector2::from_array([S::from_i64(u), S::from_i64(v)])
-    };
-    line2(corner(k), corner(k + 1))
-}
-
-/// A face on a patch over the unit square, bounded by `sides` — an edge
-/// and the sense it is run in — counter-clockwise from `(0, 0)`.
-pub(crate) fn patch_face<S: Scalar>(
-    surface: NurbSurface3D<S>,
-    sides: [(usize, Sense); 4],
-) -> GeopResult<FaceSpec<S>> {
-    Ok(FaceSpec {
-        surface,
-        outer: sides
-            .iter()
-            .enumerate()
-            .map(|(k, &(e, sense))| {
-                Ok(CoedgeSpec {
-                    on: CoedgeOn::Edge(e, sense),
-                    pcurve: square_side(k)?,
-                })
-            })
-            .collect::<GeopResult<_>>()?,
-        holes: Vec::new(),
-    })
 }
 
 /// A plain number to compare by: a free choice between candidates.
@@ -358,12 +319,12 @@ fn ruled<S: Scalar>(
         copy(a, 0, 1),
         copy(&b, 2, 3),
         EdgeSpec {
-            curve: line3(a.end, b.end)?,
+            curve: NurbCurve3D::line(a.end, b.end)?,
             start: 1,
             end: 3,
         },
         EdgeSpec {
-            curve: line3(b.start, a.start)?,
+            curve: NurbCurve3D::line(b.start, a.start)?,
             start: 2,
             end: 0,
         },
@@ -375,13 +336,13 @@ fn ruled<S: Scalar>(
         namer.name(&[&b.start_name, &a.start_name]),
     ];
     let surface = NurbSurface3D::ruled(&a.oriented(), &b.oriented())?;
-    let face = patch_face(
+    let face = FaceSpec::on_unit_square(
         surface,
         [
-            (0, a.sense()),
-            (2, Sense::Forward),
-            (1, b.sense().opposite()),
-            (3, Sense::Forward),
+            CoedgeOn::Edge(0, a.sense()),
+            CoedgeOn::Edge(2, Sense::Forward),
+            CoedgeOn::Edge(1, b.sense().opposite()),
+            CoedgeOn::Edge(3, Sense::Forward),
         ],
     )?;
     Ok((
@@ -579,9 +540,9 @@ fn fill<S: Scalar>(
             }
             surface = surface.tangent_to_planes(&at)?;
         }
-        spec.faces.push(patch_face(
+        spec.faces.push(FaceSpec::on_unit_square(
             surface,
-            [0, 1, 2, 3].map(|k| (k, sides[k].sense())),
+            [0, 1, 2, 3].map(|k| CoedgeOn::Edge(k, sides[k].sense())),
         )?);
         spec.shells.push(vec![0]);
         names.faces.push(namer.root());
@@ -610,13 +571,7 @@ fn flat<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Option<Plane<S>>> {
     let points: Vec<Vector3<S>> = sides
         .iter()
         .flat_map(|s| &s.curve.control_points)
-        .map(|cp| {
-            Ok(Vector3::from_array([
-                cp[0].div(cp[3])?,
-                cp[1].div(cp[3])?,
-                cp[2].div(cp[3])?,
-            ]))
-        })
+        .map(Vector4::dehomogenized)
         .collect::<GeopResult<_>>()?;
     // Which three is a free choice: far apart, so the plane through them is
     // well determined.
@@ -672,11 +627,7 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
         curve
             .control_points
             .iter()
-            .map(|cp| {
-                let w = cp[3];
-                let d = Vector3::from_array([cp[0], cp[1], cp[2]]).sub(&origin.prod_scalar(w));
-                Vector3::from_array([d.prod_dot(&e1), d.prod_dot(&e2), w])
-            })
+            .map(|cp| flatten_point(cp, &origin, &e1, &e2))
             .collect()
     };
     let oriented: Vec<Curve3<S>> = sides.iter().map(Side::oriented).collect();
@@ -735,9 +686,9 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
         origin.add(&e1.prod_scalar(x)).add(&e2.prod_scalar(y))
     };
     let surface = if swapped {
-        bilinear(corner(0, 0), corner(0, 1), corner(1, 1), corner(1, 0))?
+        NurbSurface3D::bilinear(corner(0, 0), corner(0, 1), corner(1, 1), corner(1, 0))?
     } else {
-        bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))?
+        NurbSurface3D::bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))?
     };
     let outer = sides
         .iter()
@@ -813,12 +764,12 @@ fn quads<S: Scalar>(
         });
         names.edges.push(namer.name(&[&s.name]));
         spec.edges.push(EdgeSpec {
-            curve: line3(s.start, inner[k])?,
+            curve: NurbCurve3D::line(s.start, inner[k])?,
             start: k,
             end: inner_at(k),
         });
         names.edges.push(namer.name(&[&s.start_name, "spoke"]));
-        let curve = line3(inner[k], inner[(k + 1) % n])?;
+        let curve = NurbCurve3D::line(inner[k], inner[(k + 1) % n])?;
         spec.edges.push(EdgeSpec {
             curve: curve.clone(),
             start: inner_at(k),
@@ -855,13 +806,13 @@ fn quads<S: Scalar>(
         }
         let surface = NurbSurface3D::coons([&curves[k], &spoke_out, &back, &spoke_in])?;
         faces.push(spec.faces.len());
-        spec.faces.push(patch_face(
+        spec.faces.push(FaceSpec::on_unit_square(
             surface,
             [
-                (3 * k, sides[k].sense()),
-                (3 * next + 1, Sense::Forward),
-                (3 * k + 2, Sense::Reversed),
-                (3 * k + 1, Sense::Reversed),
+                CoedgeOn::Edge(3 * k, sides[k].sense()),
+                CoedgeOn::Edge(3 * next + 1, Sense::Forward),
+                CoedgeOn::Edge(3 * k + 2, Sense::Reversed),
+                CoedgeOn::Edge(3 * k + 1, Sense::Reversed),
             ],
         )?);
         names.faces.push(namer.name(&[&sides[k].name, "patch"]));

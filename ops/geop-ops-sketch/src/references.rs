@@ -266,7 +266,7 @@ fn project<S: Scalar>(
         EntityRef::Vertex { name: vertex } => {
             let named = lookup.model();
             let point = named.topology().get_vertex(named.vertex_id(vertex)?)?.point;
-            (geometry.points).insert(vertex.clone(), of(&in_plane(plane, &point)));
+            (geometry.points).insert(vertex.clone(), of(&plane.to_uv(&point)));
         }
         EntityRef::Edge { .. } | EntityRef::SketchCurve { .. } => {
             curves.push(entity.resolve_curve(lookup)?)
@@ -284,8 +284,7 @@ fn project<S: Scalar>(
                     }
                     CoedgeGeometry::Vertex(vertex) => {
                         let point = topology.get_vertex(vertex)?.point;
-                        (geometry.points)
-                            .insert(name(vertex.into())?, of(&in_plane(plane, &point)));
+                        (geometry.points).insert(name(vertex.into())?, of(&plane.to_uv(&point)));
                     }
                 }
             }
@@ -304,9 +303,7 @@ fn project<S: Scalar>(
             end,
         } = curve;
         for (at, point) in [&start, &end] {
-            geometry
-                .points
-                .insert(at.clone(), of(&in_plane(plane, point)));
+            geometry.points.insert(at.clone(), of(&plane.to_uv(point)));
         }
         let ctx = with_context!("curve {key:?}");
         if let Some(shape) =
@@ -317,11 +314,6 @@ fn project<S: Scalar>(
         }
     }
     Ok(geometry)
-}
-
-/// `p` in `plane`'s `u`/`v` coordinates: projected along its normal.
-fn in_plane<S: Scalar>(plane: &CoordinateSystem<S>, p: &Vector3<S>) -> Vector2<S> {
-    plane.to_uvw(p).head()
 }
 
 /// The edge curve `curve` — from the vertex keyed `start` to the one keyed
@@ -342,8 +334,8 @@ fn project_curve<S: Scalar>(
 ) -> GeopResult<Option<Shape>> {
     let (t0, t1) = curve.domain();
     let (a, b) = (
-        in_plane(plane, &curve.evaluate(t0)?),
-        in_plane(plane, &curve.evaluate(t1)?),
+        plane.to_uv(&curve.evaluate(t0)?),
+        plane.to_uv(&curve.evaluate(t1)?),
     );
     if curve.as_line()?.is_some() {
         // Along the plane's normal, a line is only a point.
@@ -357,7 +349,7 @@ fn project_curve<S: Scalar>(
             .could_be_equal(&Vector3::zero())
         {
             let center = format!("{key}#center");
-            points.insert(center.clone(), of(&in_plane(plane, &arc.circle.center)));
+            points.insert(center.clone(), of(&plane.to_uv(&arc.circle.center)));
             let radius = arc.circle.radius.to_f64();
             if arc.could_be_closed() {
                 return Ok(Some(Shape::Circle { center, radius }));
@@ -382,11 +374,7 @@ fn project_curve<S: Scalar>(
     let projected: Vec<Vector2<S>> = curve
         .control_points
         .iter()
-        .map(|cp| {
-            let w = cp[3];
-            let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
-            Ok(in_plane(plane, &p))
-        })
+        .map(|cp| Ok(plane.to_uv(&cp.dehomogenized()?)))
         .collect::<GeopResult<_>>()?;
     let Some(far) = projected.iter().find(|p| !p.could_be_equal(&a)) else {
         // All of it at one spot: only a point.
@@ -404,10 +392,7 @@ fn project_curve<S: Scalar>(
         let candidates: Vec<Vector2<S>> = match &arc {
             Some(arc) => {
                 let (c, n) = (&arc.circle, &arc.circle.normal);
-                let u = plane
-                    .u()
-                    .prod_scalar(d[0])
-                    .add(&plane.v().prod_scalar(d[1]));
+                let u = plane.uv_direction(&d);
                 let reach = u
                     .sub(&n.prod_scalar(n.prod_dot(&u)))
                     .normalize()?
@@ -430,7 +415,7 @@ fn project_curve<S: Scalar>(
                 let mut candidates = vec![a, b];
                 for side in [reach, reach.neg()] {
                     if on_arc(&side) {
-                        candidates.push(in_plane(plane, &c.center.add(&side)));
+                        candidates.push(plane.to_uv(&c.center.add(&side)));
                     }
                 }
                 candidates
@@ -482,10 +467,8 @@ fn project_curve<S: Scalar>(
     }
     let mut control_points = vec![start];
     for (i, cp) in curve.control_points.iter().enumerate().take(n - 1).skip(1) {
-        let w = cp[3];
-        let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
         let inner = format!("{key}#{i}");
-        points.insert(inner.clone(), of(&in_plane(plane, &p)));
+        points.insert(inner.clone(), of(&plane.to_uv(&cp.dehomogenized()?)));
         control_points.push(inner);
     }
     control_points.push(end);

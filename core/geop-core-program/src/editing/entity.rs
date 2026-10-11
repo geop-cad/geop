@@ -14,6 +14,12 @@ use serde::{Deserialize, Serialize};
 /// first one always ends the instance's name.
 pub const INSTANCE_SEPARATOR: char = '/';
 
+/// What the part placed as `instance` names `name`, as the part it is
+/// placed in names it: `bolt/head`.
+pub fn instance_path(instance: &str, name: &str) -> String {
+    format!("{instance}{INSTANCE_SEPARATOR}{name}")
+}
+
 /// Something picked in the viewport, to build on or to use.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -185,7 +191,7 @@ impl EntityRef {
         }
         let mut outer = self.clone();
         if let Some(name) = outer.name_mut() {
-            *name = format!("{instance}{INSTANCE_SEPARATOR}{name}");
+            *name = instance_path(instance, name);
         }
         outer
     }
@@ -295,6 +301,18 @@ impl EntityRef {
             .filter(|e| std::mem::discriminant(*e) == kind)
             .filter_map(|e| e.plain_name().map(str::to_string))
             .collect()
+    }
+
+    /// `name` as the reference `kind` makes of it, as a field picking one
+    /// thing holds it: an empty name is none.
+    pub fn of_name(kind: fn(String) -> Self, name: &str) -> Vec<Self> {
+        Self::of_names(kind, std::slice::from_ref(&name.to_string()))
+    }
+
+    /// The name of the last of `picked` that is of the kind `kind` makes:
+    /// what a field picking one thing takes from a pick.
+    pub fn last_name(kind: fn(String) -> Self, picked: &[Self]) -> Option<String> {
+        Self::names_of(kind, picked).pop()
     }
 
     /// The sketch `name`.

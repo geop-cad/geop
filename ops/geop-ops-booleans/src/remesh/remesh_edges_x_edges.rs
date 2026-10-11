@@ -68,11 +68,8 @@ pub(super) fn find_vertex_at_point<S: Scalar>(
 ///
 /// Coincidence is detected by vertex identity — the two edges already share
 /// the same two endpoints (in either order) — checked *before* ever running
-/// an intersection search, rather than by that search hitting its own
-/// `max_edge_intersections` cap. Vertex identity is cheap, exact, and (post
-/// vertex/edge-vertex remesh) authoritative; the intersection-count
-/// heuristic has a real false-positive mode for two edges that already
-/// share *one* endpoint, which the search below avoids. Every found
+/// an intersection search. Vertex identity is cheap, exact, and (post
+/// vertex/edge-vertex remesh) authoritative. Every found
 /// crossing then just flows through the same per-solution split logic
 /// below, whose own endpoint check no-ops correctly on a solution that
 /// turns out to be a vertex the pair already shares.

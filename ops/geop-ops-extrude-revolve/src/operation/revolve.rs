@@ -24,12 +24,13 @@ use geop_ops::{
     operation::{
         Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
     },
-    ui::formula_number,
+    ui::{formula_number, sketch_field},
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Extents, Output, Sweeping, build_extents, extrude::sketch_profile, sketch_field};
+use super::{Extents, Output, Sweeping, build_extents};
 use crate::{
+    common::Profile,
     revolve::{revolution, revolve},
     sweep::SweepLoop,
 };
@@ -190,7 +191,8 @@ impl Operation for Revolve {
         "Sweep a sketch's area around one of its lines into a solid, or its curves into faces.",
         OperationGroup::Solid,
         OperationTier::Big,
-    );
+    )
+    .icon(crate::icons::REVOLVE);
     type Args = RevolveArgs;
     type EditingState = ();
     type Input = Input;
@@ -255,7 +257,7 @@ impl Operation for Revolve {
         let mut seen = Seen::new(context.before);
         match (key.as_str(), &value) {
             ("sketch", Value::Entities(picked)) => {
-                let picked = EntityRef::names_of(EntityRef::sketch, picked).pop();
+                let picked = EntityRef::last_name(EntityRef::sketch, picked);
                 let old = std::mem::replace(&mut args.sketch, picked.unwrap_or_default());
                 let of_old = match &args.axis {
                     None => true,
@@ -392,7 +394,7 @@ impl ModelStep for Revolve {
                         _ => false,
                     })
                     .collect();
-                let profile = sketch_profile(&args.sketch, pieces, closed);
+                let profile = Profile::of_pieces(&args.sketch, pieces, closed);
                 for (i, &is_pole) in poles.iter().enumerate() {
                     let at = profile.joint(i)?;
                     if !is_pole && at[0].could_be_equal(S::ZERO) {
@@ -412,15 +414,9 @@ impl ModelStep for Revolve {
             .with_context(ctx)?;
 
         let plane = &placed.plane;
-        let dir3 = |d: Vector2<S>| {
-            plane
-                .u()
-                .prod_scalar(d[0])
-                .add(&plane.v().prod_scalar(d[1]))
-        };
-        let (u, w) = (dir3(r_dir), dir3(z_dir));
+        let (u, w) = (plane.uv_direction(&r_dir), plane.uv_direction(&z_dir));
         let origin = plane.uv_to_xyz(&axis.point);
-        let axes = CoordinateSystem::try_new(origin, u, w.prod_cross(&u), w)?;
+        let axes = CoordinateSystem::try_from_xz(origin, u, w)?;
 
         let revolving = Revolving {
             axes: &axes,
@@ -507,7 +503,7 @@ fn turn_past<S: Scalar>(
     axes: &CoordinateSystem<S>,
     sign: f64,
 ) -> GeopResult<f64> {
-    let f = |v: &Vector3<S>| [0, 1, 2].map(|k| v[k].to_f64());
+    let f = |v: &Vector3<S>| v.to_f64_array();
     let (o, u, v) = (f(axes.origin()), f(axes.u()), f(axes.v()));
     // In `[0, 360)`: `rem_euclid` of the smallest negative angle rounds to
     // 360 itself, which is where the turn starts — 0.

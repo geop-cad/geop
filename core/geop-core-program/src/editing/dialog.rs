@@ -40,9 +40,10 @@ pub struct Action {
     pub enabled: bool,
     /// Shown pressed: the tool in hand, the way chosen.
     pub active: bool,
-    /// The name of the icon it is shown as, with its label as its tooltip;
-    /// none to show the label.
-    pub icon: Option<String>,
+    /// The icon it is shown as, with its label as its tooltip — SVG on a
+    /// 20 × 20 grid, drawn in the current colour (see
+    /// [`crate::operation::OperationInfo::icon`]); none to show the label.
+    pub icon: Option<&'static str>,
 }
 
 impl Action {
@@ -58,8 +59,9 @@ impl Action {
         }
     }
 
-    pub fn icon(mut self, icon: impl Into<String>) -> Self {
-        self.icon = Some(icon.into());
+    /// Shown as `icon`, if one is given (see [`Action::icon`]).
+    pub fn icon(mut self, icon: impl Into<Option<&'static str>>) -> Self {
+        self.icon = icon.into();
         self
     }
 

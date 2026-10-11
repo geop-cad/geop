@@ -5,8 +5,10 @@ import { DropdownArrow, Menu, type MenuEntry } from "./Menu";
 
 /** A button of the operations: an operation to start a step of, or a tool of the editor's. */
 export interface Tool {
-  /** Its icon's name, and what tells it from the others. */
+  /** What tells it from the others. */
   kind: string;
+  /** Its icon: the kernel's markup, or the app's own by name (see [[Icon]]). */
+  icon: string | null;
   label: string;
   /** What it does, at length: its tooltip. */
   doc: string;
@@ -33,7 +35,7 @@ function entries(tools: Tool[]): MenuEntry[] {
     {
       kind: "item",
       label: t.label,
-      icon: t.kind,
+      icon: t.icon ?? undefined,
       title: t.doc,
       disabled: t.disabled,
       active: t.active,
@@ -58,7 +60,7 @@ function ToolButton({ tool, big }: { tool: Tool; big: boolean }) {
       disabled={tool.disabled}
       onClick={tool.onSelect}
     >
-      <Icon name={tool.kind} />
+      {tool.icon && <Icon name={tool.icon} />}
       <span>{tool.label}</span>
     </button>
   );
@@ -91,10 +93,10 @@ function shown(tools: Tool[], level: Level): { big: Tool[]; rows: Tool[] } {
 }
 
 /** The label of a group collapsed to its menu: an icon over its name, with the menu's arrow after it. */
-function Collapsed({ icon, name }: { icon: string; name: string }) {
+function Collapsed({ icon, name }: { icon: string | null; name: string }) {
   return (
     <>
-      <Icon name={icon} />
+      {icon && <Icon name={icon} />}
       <span className="ribbon-caption-text">
         {name}
         <DropdownArrow />
@@ -112,7 +114,7 @@ function Group({ name, tools, level }: { name: string; tools: Tool[]; level: Lev
     return (
       <div className="ribbon-group collapsed" role="group" aria-label={name}>
         <Menu
-          label={<Collapsed icon={tools[0].kind} name={name} />}
+          label={<Collapsed icon={tools[0].icon} name={name} />}
           title={title}
           entries={entries(tools)}
           className="ribbon-menu"

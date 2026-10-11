@@ -1,11 +1,13 @@
+use geop_core_geometry::search;
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::Scalar,
+    vector::Vector3,
     with_context,
 };
 use std::collections::HashMap;
 
-use geop_core_topology::{Body, EdgeId, FaceId};
+use geop_core_topology::{Body, EdgeId, FaceId, VertexId};
 use geop_ops::{NamedModel, Namer};
 
 use crate::naming::BooleanNaming;
@@ -28,9 +30,10 @@ use crate::remesh::{
 #[derive(Clone, Copy, Debug)]
 pub struct RemeshParams<S: Scalar> {
     /// Solution cap for the pairwise `curve_curve_intersect` /
-    /// `curve_surface_intersect` searches. Hitting it is how coincidence
-    /// (an extended shared region, rather than finitely many crossings)
-    /// is detected.
+    /// `curve_surface_intersect` searches: how many points one returns at
+    /// most — its crossings, or, where the two coincide along an arc, that
+    /// overlap's ends and points spread over it. The searches find overlaps
+    /// directly, not by hitting the cap.
     pub max_edge_intersections: usize,
     /// Node budget for every subdivision search.
     pub max_nodes: usize,
@@ -56,12 +59,49 @@ impl<S: Scalar> Default for RemeshParams<S> {
     fn default() -> Self {
         Self {
             max_edge_intersections: 3,
-            max_nodes: 20000,
-            min_subdivision_size: S::from_f64(1e-7),
+            max_nodes: search::MAX_NODES,
+            min_subdivision_size: search::min_subdivision_size(),
             curve_curve_min_subdivision_size: S::from_f64(1e-4),
             max_trace_steps: 1_000,
         }
     }
+}
+
+/// Split `edge` at its parameter `t`, where it crosses `face` at `point`:
+/// at `vertex`, the vertex already there, or at a new one named as the
+/// piercing of `face`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn split_at_crossing<S: Scalar>(
+    model: &mut NamedModel<S>,
+    naming: &mut BooleanNaming<S>,
+    edge: EdgeId,
+    t: S,
+    vertex: Option<VertexId>,
+    point: Vector3<S>,
+    face: FaceId,
+    params: &RemeshParams<S>,
+) -> GeopResult<()> {
+    let vertex = match vertex {
+        Some(vertex) => vertex,
+        None => {
+            let vertex = model.insert_vertex(point, naming.provisional())?;
+            naming.piercing(vertex, edge, t, face)?;
+            vertex
+        }
+    };
+    let new_edge = model
+        .split_edge_at_vertex(
+            edge,
+            t,
+            vertex,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+            naming.provisional(),
+        )
+        .with_context(with_context!(
+            "edge={edge}, t={t:?}, vertex={vertex}, crossing face={face}"
+        ))?;
+    naming.edge_split(edge, new_edge, vertex)
 }
 
 /// Prepare `body_a` and `body_b`'s topology for a boolean operation or a

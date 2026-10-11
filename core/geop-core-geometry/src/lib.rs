@@ -5,5 +5,6 @@ pub mod intersection;
 mod knot_insertion;
 pub mod nurb_curve;
 pub mod nurb_surface;
+pub mod search;
 pub mod shape;
 mod spline;

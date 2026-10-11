@@ -1,7 +1,8 @@
 //! [`EditForm`]: a [`Form`] built together with what setting each of its
 //! fields does — for an operation with many fields, whose events are then
 //! answered by the setter of the field they set (see [`EditForm::set`])
-//! rather than by matching their keys.
+//! rather than by matching their keys. Every setter gets the whole
+//! [`Edit`]: a field may set the step's arguments or its session.
 //!
 //! An [`Operation`](geop_core_program::operation::Operation) only ever hands out the
 //! form ([`EditForm::into_form`]); the setters stay its own, built again for
@@ -144,12 +145,12 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         key: &str,
         label: impl Into<String>,
         value: bool,
-        set: impl Fn(&mut A, bool) + 'a,
+        set: impl Fn(Edit<'_, A, T>, bool) + 'a,
     ) -> &mut Self {
         self.form.dialog.checkbox(key, label, value);
         self.on(key, move |edit, value| {
             if let Value::Bool(b) = value {
-                set(edit.args, b);
+                set(edit, b);
             }
         });
         self
@@ -159,12 +160,12 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         &mut self,
         key: &str,
         number: Number<S>,
-        set: impl Fn(&mut A, f64) + 'a,
+        set: impl Fn(Edit<'_, A, T>, f64) + 'a,
     ) -> &mut Self {
         self.form.dialog.number(key, number);
         self.on(key, move |edit, value| {
             if let Value::Number(v) = value {
-                set(edit.args, v);
+                set(edit, v);
             }
         });
         self
@@ -180,12 +181,12 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         &mut self,
         key: &str,
         number: Number<S>,
-        set: impl Fn(&mut A, Formula) + 'a,
+        set: impl Fn(Edit<'_, A, T>, Formula) + 'a,
     ) -> &mut Self {
         self.form.dialog.number(key, number);
         self.on(key, move |edit, value| {
             if let Some(formula) = Formula::from_value(&value) {
-                set(edit.args, formula);
+                set(edit, formula);
             }
         });
         self
@@ -199,12 +200,12 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         value: impl Into<String>,
         options: Vec<Choice>,
         searchable: bool,
-        set: impl Fn(&mut A, &str) + 'a,
+        set: impl Fn(Edit<'_, A, T>, &str) + 'a,
     ) -> &mut Self {
         (self.form.dialog).select(key, label, value, options, searchable);
         self.on(key, move |edit, value| {
             if let Value::Choice(choice) = value {
-                set(edit.args, &choice);
+                set(edit, &choice);
             }
         });
         self
@@ -218,12 +219,12 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         value: impl Into<String>,
         files: Vec<String>,
         accept: &[&str],
-        set: impl Fn(&mut A, &str) + 'a,
+        set: impl Fn(Edit<'_, A, T>, &str) + 'a,
     ) -> &mut Self {
         self.form.dialog.file(key, label, value, files, accept);
         self.on(key, move |edit, value| {
             if let Value::Choice(choice) = value {
-                set(edit.args, &choice);
+                set(edit, &choice);
             }
         });
         self
@@ -235,12 +236,12 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         key: &str,
         label: impl Into<String>,
         value: impl Into<String>,
-        set: impl Fn(&mut A, &str) + 'a,
+        set: impl Fn(Edit<'_, A, T>, &str) + 'a,
     ) -> &mut Self {
         self.form.dialog.color(key, label, value);
         self.on(key, move |edit, value| {
             if let Value::Text(color) = value {
-                set(edit.args, &color);
+                set(edit, &color);
             }
         });
         self

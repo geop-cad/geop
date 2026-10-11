@@ -6,6 +6,7 @@ use crate::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::refine::{Refine, Refined, refine},
     vector::Vector2,
 };
 
@@ -162,9 +163,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
             let piece_seed = seed;
             // How many samples is a free choice: the piece's share of 48.
             let share = b.sub(a).to_f64() / length;
-            let mut intervals =
+            let first =
                 ((SAMPLES as f64 * share).ceil() as usize).clamp(MIN_PIECE_SAMPLES, SAMPLES);
-            loop {
+            // The cap ends it: `intervals` doubles each step, so it passes
+            // any cap within as many steps as it has bits.
+            let refined = refine(first, usize::BITS as usize, |intervals| -> GeopResult<_> {
                 // Each attempt walks the piece afresh, from its start.
                 seed = piece_seed;
                 // The samples the pcurve passes through, and — walking the
@@ -216,12 +219,17 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 let drifting = fitted_width.definitely_greater(target)
                     && fitted_width.definitely_greater(sampled.add(sampled));
                 if !drifting || intervals * 2 > MAX_PIECE_SAMPLES {
-                    start = uvs.last().copied();
-                    pieces.push(fitted);
-                    break;
+                    return Ok(Refine::Done((fitted, uvs.last().copied())));
                 }
-                intervals *= 2;
-            }
+                Ok(Refine::Finer(intervals * 2))
+            })?;
+            let Refined::Done((fitted, last)) = refined else {
+                return Err(ctx(GeopError::new(
+                    "the samples of a piece doubled past every cap",
+                )));
+            };
+            start = last;
+            pieces.push(fitted);
         }
         NurbCurve2D::join(&pieces).with_context(&ctx)
     }

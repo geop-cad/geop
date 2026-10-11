@@ -1,60 +1,36 @@
-//! Vectors and frames in plain numbers, for the choices a sweep or a loft
-//! is free to make — sections along a spline, twists, guide shapes: worked
-//! out in `f64`, and taken as sharp scalars once made, the way a
-//! subdivision point is.
+//! Frames in plain numbers, for the choices a sweep or a loft is free to
+//! make — sections along a spline, twists, guide shapes: worked out in
+//! `f64` (see [`geop_core_math::plain`]), and taken as sharp scalars once
+//! made, the way a subdivision point is.
 
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    plain::{P3, add, scale, sub},
+    scalars::Scalar,
+    vector::Vector3,
+};
 
 use crate::sweep::Frame;
-
-pub(crate) type V = [f64; 3];
-
-pub(crate) fn add(a: V, b: V) -> V {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-pub(crate) fn sub(a: V, b: V) -> V {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-pub(crate) fn scale(a: V, k: f64) -> V {
-    [a[0] * k, a[1] * k, a[2] * k]
-}
-pub(crate) fn dot(a: V, b: V) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-pub(crate) fn cross(a: V, b: V) -> V {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-pub(crate) fn unit(a: V) -> V {
-    scale(a, 1.0 / dot(a, a).sqrt())
-}
-pub(crate) fn plain<S: Scalar>(v: &Vector3<S>) -> V {
-    [v[0].to_f64(), v[1].to_f64(), v[2].to_f64()]
-}
 
 /// A [`Frame`] in plain numbers, or a frame's derivative.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Plain {
-    pub origin: V,
-    pub e1: V,
-    pub e2: V,
+    pub origin: P3,
+    pub e1: P3,
+    pub e2: P3,
 }
 
 impl Plain {
     pub(crate) fn of<S: Scalar>(frame: &Frame<S>) -> Self {
         Plain {
-            origin: plain(&frame.origin),
-            e1: plain(&frame.e1),
-            e2: plain(&frame.e2),
+            origin: frame.origin.to_f64_array(),
+            e1: frame.e1.to_f64_array(),
+            e2: frame.e2.to_f64_array(),
         }
     }
 
     /// The frame, taken as sharp: a free choice made in plain numbers.
     pub(crate) fn frame<S: Scalar>(&self) -> Frame<S> {
-        let v = |a: V| Vector3::from_array(a.map(S::from_f64));
+        let v = |a: P3| Vector3::from_array(a.map(S::from_f64));
         Frame {
             origin: v(self.origin),
             e1: v(self.e1),

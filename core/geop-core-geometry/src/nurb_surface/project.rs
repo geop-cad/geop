@@ -117,6 +117,22 @@ impl<S: Scalar> NurbSurface<S, 4> {
         })
     }
 
+    /// The foot point of `target` as [`Self::project`] finds it, within the
+    /// surface's domain: the foot point lies on the patch, so its `(u, v)`
+    /// are in the domain as much as where the projection says, and both
+    /// enclosures hold at once.
+    pub fn project_in_domain(
+        &self,
+        target: Vector3<S>,
+        u0: S,
+        v0: S,
+        iterations: usize,
+    ) -> GeopResult<(S, S)> {
+        let (u, v) = self.project(target, u0, v0, iterations)?;
+        let ((u_lo, u_hi), (v_lo, v_hi)) = (self.domain_u(), self.domain_v());
+        Ok((u.intersect(u_lo.union(u_hi)), v.intersect(v_lo.union(v_hi))))
+    }
+
     /// The step off a pole at `p` towards `target`. The collapsed parameter
     /// does not move the point there, so which meridian to leave along is a
     /// free choice — `collapsed` is its value now and its domain; `fixed`,

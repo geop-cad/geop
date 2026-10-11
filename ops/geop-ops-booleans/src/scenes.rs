@@ -25,8 +25,7 @@ use rayon::prelude::*;
 use crate::remesh::remesh::{RemeshParams, remesh};
 
 /// A named pair of solids, built together in one [`NamedModel`] as the
-/// operations `a` and `b`, ready for whatever a boolean-revival step wants
-/// to do with them.
+/// operations `a` and `b`, for a boolean sweep to combine.
 pub struct TestScene<S: Scalar> {
     pub name: String,
     pub model: NamedModel<S>,
@@ -505,11 +504,8 @@ mod topology_render_test {
 
     /// Render every scene's raw topology (no boolean/remesh operation at
     /// all — just the two solids as built) to `outputs/topology_tests/`,
-    /// `solid_a`'s faces in blue and `solid_b`'s in purple. This is
-    /// deliberately the *only* thing this first revival step does: confirm
-    /// every scene builds and rasterizes cleanly against the current
-    /// `Model`/`shapes` API before any tracing/remeshing logic gets
-    /// switched back on.
+    /// `solid_a`'s faces in blue and `solid_b`'s in purple: every scene
+    /// builds and rasterizes cleanly, before any boolean touches it.
     ///
     /// `ScalInF64` only, not `for_all_scalars!`: this sweeps 175 scenes (125
     /// box-grid + 26 sphere-grid + 24 hand-picked), and interval-arithmetic

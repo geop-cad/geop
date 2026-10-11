@@ -76,8 +76,9 @@
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
-    nurb_curve::NurbCurve3D,
+    nurb_curve::{NurbCurve2D, NurbCurve3D, bezier_knots},
     nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, min_subdivision_size},
     shape::{Axis, Circle},
 };
 use geop_core_math::{
@@ -88,7 +89,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, CoedgeId, EdgeId, FaceId, Model, Sense, SolidId, VertexId,
+    Body, EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
 use geop_ops::{NamedModel, Namer};
@@ -97,10 +98,7 @@ use geop_ops_booleans::{
     remesh::remesh::RemeshParams,
 };
 use geop_ops_extrude_revolve::{
-    common::{Profile, arc2, line2},
-    extrude::extrude,
-    revolve::revolve,
-    sweep::SweepLoop,
+    common::Profile, extrude::extrude, revolve::revolve, sweep::SweepLoop,
 };
 
 use crate::corner;
@@ -121,6 +119,7 @@ pub enum BlendShape {
 
 impl BlendShape {
     /// A round of `radius`, the same all along.
+    #[cfg(test)]
     pub fn round(radius: f64) -> Self {
         BlendShape::Fillet {
             radii: Radii::constant(radius),
@@ -149,6 +148,14 @@ pub(crate) enum Sweep<S: Scalar> {
         radial: Vector3<S>,
         axis: Vector3<S>,
     },
+}
+
+/// How far a tool `width` wide runs out past the end of its edge (see
+/// [`End::RunOut`]): as far again as it is wide, over how squarely the edge
+/// crosses the face it is run out past — a free choice, only ever rounded
+/// up.
+fn run_out_length<S: Scalar>(width: f64, squareness: &S) -> S {
+    S::from_f64(2.0 * width / squareness.lower().to_f64())
 }
 
 /// How a tool along a straight edge — or a rolling-ball blend's open chain
@@ -250,38 +257,13 @@ fn in_plane<S: Scalar>(v: &Vector3<S>, e1: &Vector3<S>, e2: &Vector3<S>) -> Vect
     Vector2::from_array([v.prod_dot(e1), v.prod_dot(e2)])
 }
 
-/// The point the homogeneous control point `p` stands for.
-pub(crate) fn point<S: Scalar>(p: &Vector4<S>) -> GeopResult<Vector3<S>> {
-    Ok(Vector3::from_array([
-        p[0].div(p[3])?,
-        p[1].div(p[3])?,
-        p[2].div(p[3])?,
-    ]))
-}
-
-/// The two coedges of `edge`: the one running along it (the face on its
-/// left) first, the one running against it second.
-fn coedges<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<[CoedgeId; 2]> {
-    let mut forward = None;
-    let mut reversed = None;
-    for c in model.coedges_of_edge(edge) {
-        match model.get_coedge(c)?.sense {
-            Sense::Forward => forward = Some(c),
-            Sense::Reversed => reversed = Some(c),
-        }
-    }
-    match (forward, reversed) {
-        (Some(f), Some(r)) => Ok([f, r]),
-        _ => Err(GeopError::new(format!(
-            "edge {edge} does not join two faces, so it has no corner to blend"
-        ))),
-    }
-}
-
-/// The two faces of `edge`, left first (see [`coedges`]).
+/// The two faces of `edge`, left first (see [`Model::faces_of_edge`]).
 pub(crate) fn faces<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<[FaceId; 2]> {
-    let [l, r] = coedges(model, edge)?;
-    Ok([model.get_coedge(l)?.face, model.get_coedge(r)?.face])
+    model.faces_of_edge(edge).ok_or_else(|| {
+        GeopError::new(format!(
+            "edge {edge} does not join two faces, so it has no corner to blend"
+        ))
+    })
 }
 
 /// The unit outward normal `n` of `face` at the edge, and the unit
@@ -388,6 +370,9 @@ pub(crate) fn tool_end<S: Scalar>(
             others.push(coedge.face);
         }
     }
+    // In id order, not the coedges' hash-map order: of two flush faces the
+    // first is the wall's, and it is what the end is measured against.
+    others.sort_by_key(|f| f.0);
     // A face a union left in two — a plate standing flush with the side of
     // what it stands on — is one wall: what is told of the third face is
     // told of the plane they share.
@@ -438,7 +423,7 @@ pub(crate) fn tool_end<S: Scalar>(
     };
     let why = if plane.is_none() {
         Some("the third face is not planar")
-    } else if !normal.prod_cross(leaving).norm_sq().could_be_equal(S::ZERO) {
+    } else if !normal.could_be_parallel(leaving) {
         Some(if leaves {
             "the edge is filled in up to the third face, which does not stand square to it"
         } else {
@@ -476,10 +461,7 @@ fn circle_of<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<Option<Circle<S>>>
 fn same_circle<S: Scalar>(a: &Circle<S>, b: &Circle<S>) -> bool {
     a.center.could_be_equal(&b.center)
         && a.radius.could_be_equal(b.radius)
-        && a.normal
-            .prod_cross(&b.normal)
-            .norm_sq()
-            .could_be_equal(S::ZERO)
+        && a.normal.could_be_parallel(&b.normal)
 }
 
 /// The outward normal of `surface` at the point `p` of `circle`, or none
@@ -499,23 +481,13 @@ fn round_face_normal<S: Scalar>(
 ) -> GeopResult<Option<Vector3<S>>> {
     let axis = &circle.normal;
     if let Some(plane) = surface.as_plane()? {
-        let across = plane
-            .normal
-            .prod_cross(axis)
-            .norm_sq()
-            .could_be_equal(S::ZERO);
+        let across = plane.normal.could_be_parallel(axis);
         return Ok(across.then_some(plane.normal));
     }
     let Some(turns) = surface.axis_of_revolution()? else {
         return Ok(None);
     };
-    if !turns
-        .direction
-        .prod_cross(axis)
-        .norm_sq()
-        .could_be_equal(S::ZERO)
-        || !turns.could_contain(&circle.center)
-    {
+    if !turns.direction.could_be_parallel(axis) || !turns.could_contain(&circle.center) {
         return Ok(None);
     }
     // The profile has to be the one straight direction, of two rows.
@@ -669,9 +641,9 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
             let apex = e.prod_scalar(S::TWO).sub(&center);
             (
                 vec![
-                    ("fillet", arc2(tangent_a, e, tangent_b, weight)?),
-                    ("b", line2(tangent_b, apex)?),
-                    ("a", line2(apex, tangent_a)?),
+                    ("fillet", NurbCurve2D::arc(tangent_a, e, tangent_b, weight)?),
+                    ("b", NurbCurve2D::line(tangent_b, apex)?),
+                    ("a", NurbCurve2D::line(apex, tangent_a)?),
                 ],
                 vec![tangent_a, e, tangent_b, apex],
                 [tangent_a, tangent_b],
@@ -695,9 +667,9 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
             let apex = e.prod_scalar(S::TWO).sub(&middle);
             (
                 vec![
-                    ("chamfer", line2(a_out, b_out)?),
-                    ("b", line2(b_out, apex)?),
-                    ("a", line2(apex, a_out)?),
+                    ("chamfer", NurbCurve2D::line(a_out, b_out)?),
+                    ("b", NurbCurve2D::line(b_out, apex)?),
+                    ("a", NurbCurve2D::line(apex, a_out)?),
                 ],
                 vec![a_out, b_out, apex],
                 [a, b],
@@ -706,6 +678,7 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
         }
     };
     let profile = Profile {
+        name: String::new(),
         curve_names: curves.iter().map(|(n, _)| n.to_string()).collect(),
         joint_names: ["ta", "tb", "q"].map(String::from).to_vec(),
         curves: curves.into_iter().map(|(_, c)| c).collect(),
@@ -764,8 +737,7 @@ pub(crate) fn check_touch<S: Scalar>(
     face: FaceId,
     p: &Vector3<S>,
 ) -> GeopResult<()> {
-    let params = RemeshParams::<S>::default();
-    let (max_nodes, size) = (params.max_nodes, params.min_subdivision_size);
+    let (max_nodes, size) = (MAX_NODES, min_subdivision_size());
     let surface = &model.get_face(face)?.surface;
     let Some((u, v)) = surface_could_contain(surface, p, max_nodes, size)? else {
         return Err(GeopError::new(format!(
@@ -783,8 +755,7 @@ pub(crate) fn check_touch_at<S: Scalar>(
     u: S,
     v: S,
 ) -> GeopResult<()> {
-    let params = RemeshParams::<S>::default();
-    let (max_nodes, size) = (params.max_nodes, params.min_subdivision_size);
+    let (max_nodes, size) = (MAX_NODES, min_subdivision_size());
     match face_contains(model, face, u, v, max_nodes, size, SEED)? {
         PointClassification::Inside => Ok(()),
         PointClassification::Outside => Err(GeopError::new(format!(
@@ -831,13 +802,9 @@ fn sweep_tool<S: Scalar>(
             let length = d.norm();
             let plane = CoordinateSystem::try_new(*start, *e1, *e2, d.normalize()?)?;
             let width = reach(&tool.control, &section.corner);
-            // As far again as the tool is wide, over how squarely the edge
-            // crosses the face it is run out past.
             let run_out = |end: &End<S>| -> GeopResult<Option<S>> {
                 match end {
-                    End::RunOut { squareness } => {
-                        Ok(Some(S::from_f64(2.0 * width / squareness.lower().to_f64())))
-                    }
+                    End::RunOut { squareness } => Ok(Some(run_out_length(width, squareness))),
                     End::Flush | End::Wall { .. } => Ok(None),
                     End::Mitre { .. } | End::Corner { .. } => Err(GeopError::new(
                         "a tool joined to another at a corner or a mitre is built whole, not swept",
@@ -862,7 +829,7 @@ fn sweep_tool<S: Scalar>(
                     "the blend is too large for the circle: its tool would reach across the axis",
                 ));
             }
-            let axes = CoordinateSystem::try_new(*center, *radial, axis.prod_cross(radial), *axis)?;
+            let axes = CoordinateSystem::try_from_xz(*center, *radial, *axis)?;
             revolve(model, namer, Some(&root), &axes, 0.0, 360.0, &loops)?
         }
     };
@@ -924,37 +891,35 @@ pub(crate) fn straight_tool<S: Scalar>(
     let (first, second) = if swapped { (tb, ta) } else { (ta, tb) };
     let w = tool.weight;
     let flat = [
-        Vector3::from_array([first[0], first[1], S::ONE]),
+        first.homogeneous(S::ONE),
         if chord {
-            Vector3::from_array([e[0], e[1], S::ONE])
+            e.homogeneous(S::ONE)
         } else {
             Vector3::from_array([e[0].mul(w), e[1].mul(w), w])
         },
-        Vector3::from_array([second[0], second[1], S::ONE]),
-        Vector3::from_array([q[0], q[1], S::ONE]),
+        second.homogeneous(S::ONE),
+        q.homogeneous(S::ONE),
     ];
     let mut stations = Vec::new();
     for (k, out) in [(0, along.neg()), (1, along)] {
         let name = format!("st{k}");
         let from = if k == 0 { start } else { end };
-        // As far again as the tool is wide, over how squarely the edge
-        // crosses the face it is run out past.
-        let run_out = |squareness: &S| S::from_f64(2.0 * width / squareness.lower().to_f64());
         let base = match &ends[k] {
             End::Flush | End::Wall { .. } => *from,
-            End::RunOut { squareness } => from.add(&out.prod_scalar(run_out(squareness))),
+            End::RunOut { squareness } => {
+                from.add(&out.prod_scalar(run_out_length(width, squareness)))
+            }
             End::Corner { setback } => {
                 // The section's corner is the edge's own point.
                 let base = start.add(&along.prod_scalar(*setback));
                 let at = |p: &Vector2<S>| base.add(&space(p));
-                let h = |p: Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
                 let (a, b, apex) = (at(&first), at(&second), at(&q));
                 stations.push(ToolStation {
                     points: [
-                        h(a),
+                        a.homogeneous(S::ONE),
                         Vector4::from_array([base[0].mul(w), base[1].mul(w), base[2].mul(w), w]),
-                        h(b),
-                        h(apex),
+                        b.homogeneous(S::ONE),
+                        apex.homogeneous(S::ONE),
                     ],
                     vertices: [a, b, apex],
                     name,
@@ -1028,7 +993,7 @@ pub(crate) fn straight_tool<S: Scalar>(
     }
     let span = ToolSpan {
         degree: 1,
-        knots: vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+        knots: bezier_knots(1),
         rows: vec![stations[0].points, stations[1].points],
         name: None,
     };
@@ -1145,10 +1110,11 @@ fn plan_edge<S: Scalar>(
 /// Gives the one face of `solid` left of each of the tool's faces named
 /// `tool_faces` that face's name back. The boolean `namer` names (see
 /// [`geop_ops_booleans::naming`]) names a piece split off a face `F` along
-/// an edge `X` `N(F,X)` — and a piece of that piece alike — while the piece
-/// keeping `F` may well be the one it drops. A blend keeps one piece of its
-/// tool, the blend face, which is better known by its own name. A face of
-/// which several pieces are left keeps the boolean's names.
+/// an edge `X` `N(F,X)` ([`Namer::piece`]) — and a piece of that piece
+/// alike — while the piece keeping `F` may well be the one it drops. A
+/// blend keeps one piece of its tool, the blend face, which is better known
+/// by its own name. A face of which several pieces are left keeps the
+/// boolean's names.
 fn name_blend_faces<S: Scalar>(
     model: &mut NamedModel<S>,
     namer: &Namer,
@@ -1160,13 +1126,10 @@ fn name_blend_faces<S: Scalar>(
         if model.id_of(name).is_some() {
             continue;
         }
-        // `N(F,` — the name of a piece of `F` without its edge and `)`.
-        let mut prefix = namer.name(&[name.as_str(), ""]);
-        prefix.pop();
         let pieces: Vec<FaceId> = faces
             .iter()
             .copied()
-            .filter(|&f| model.name_of(f).is_some_and(|n| n.starts_with(&prefix)))
+            .filter(|&f| model.name_of(f).is_some_and(|n| namer.is_piece_of(n, name)))
             .collect();
         if let [piece] = pieces.as_slice() {
             model.rename(*piece, name.clone())?;
@@ -1279,18 +1242,7 @@ fn corners_of<S: Scalar>(model: &NamedModel<S>, edge: EdgeId) -> String {
     [e.start_vertex, e.end_vertex]
         .into_iter()
         .map(|vertex| {
-            let mut faces: Vec<FaceId> = Vec::new();
-            for (&id, coedge) in &topology.coedges {
-                if coedge.edge().is_ok()
-                    && topology
-                        .coedge_start_vertex_id(id)
-                        .is_ok_and(|v| v == vertex)
-                    && !faces.contains(&coedge.face)
-                {
-                    faces.push(coedge.face);
-                }
-            }
-            faces.sort_by_key(|f| f.0);
+            let faces = topology.faces_at_vertex(vertex).unwrap_or_default();
             format!(
                 "vertex {} meets faces {}",
                 model

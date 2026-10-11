@@ -14,7 +14,7 @@ use geop_core_math::{
     solvers::iterate::{Repeat, Step, iterate},
 };
 
-use super::geometry::{P3, dot, norm, sub};
+use geop_core_math::plain::{P3, dot, norm, sub};
 
 /// A curve's midpoints in `f64`: its control points, weights and knots each
 /// at the middle of its enclosure. For searches whose answer is a free
@@ -280,7 +280,7 @@ mod tests {
     };
 
     use super::SurfaceMidpoints;
-    use crate::import::geometry::{distance, to_p3};
+    use geop_core_math::plain::distance;
 
     type S = ScalInF64;
 
@@ -317,9 +317,9 @@ mod tests {
                 let (u, v) = (S::from_f64(u), S::from_f64(v));
                 let (eu, ev) = surface.derivatives(u, v).unwrap();
                 for (got, want) in [
-                    (p, to_p3(&surface.evaluate(u, v).unwrap())),
-                    (su, to_p3(&eu)),
-                    (sv, to_p3(&ev)),
+                    (p, surface.evaluate(u, v).unwrap().to_f64_array()),
+                    (su, eu.to_f64_array()),
+                    (sv, ev.to_f64_array()),
                 ] {
                     assert!(
                         distance(got, want) < 1e-12,

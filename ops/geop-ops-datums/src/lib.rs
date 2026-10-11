@@ -5,6 +5,7 @@
 
 mod add_datum;
 mod editor;
+mod icons;
 
 pub use add_datum::{
     AddDatum, AddDatumArgs, CONSTRUCTIONS, Construction, ConstructionSchema, Param, ParamKind,

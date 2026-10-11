@@ -17,12 +17,14 @@
 //! point to classify, which is precisely what a boolean needs from every
 //! face. Both are asserted against in this module's own tests.
 
-use crate::common::{arc3, line2, pt3, sqrt2_over_2};
-use geop_core_geometry::nurb_surface::NurbSurface;
+use geop_core_geometry::{
+    nurb_curve::{NurbCurve2D, NurbCurve3D, sqrt2_over_2},
+    nurb_surface::NurbSurface,
+};
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::Scalar,
-    vector::{Vector2, Vector3, Vector4},
+    vector::{Vector2, Vector3},
 };
 use geop_core_topology::{CoedgeId, SolidId};
 use geop_ops::{NamedModel, Namer};
@@ -38,7 +40,7 @@ use geop_ops::{NamedModel, Namer};
 fn close_top_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> GeopResult<()> {
     let before = model.topology().get_coedge(at)?.prev;
     let pole = model.topology().coedge_end_vertex_id(before)?;
-    let pcurve = line2(
+    let pcurve = NurbCurve2D::line(
         Vector2::from_array([S::ZERO, S::ZERO]),
         Vector2::from_array([S::ONE, S::ZERO]),
     )?;
@@ -52,7 +54,7 @@ fn close_top_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> Geo
 /// the gap sits right *after* `at`, so the bridge grows from `at` itself.
 fn close_bottom_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> GeopResult<()> {
     let pole = model.topology().coedge_end_vertex_id(at)?;
-    let pcurve = line2(
+    let pcurve = NurbCurve2D::line(
         Vector2::from_array([S::ONE, S::ONE]),
         Vector2::from_array([S::ZERO, S::ONE]),
     )?;
@@ -78,7 +80,7 @@ fn close_bottom_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> 
 /// behind on the placeholder face as *next* quadrant's own anchor, needing
 /// this same role there too.
 fn meridian_pcurve<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>> {
-    line2(
+    NurbCurve2D::line(
         Vector2::from_array([S::ONE, S::ZERO]),
         Vector2::from_array([S::ONE, S::ONE]),
     )
@@ -87,7 +89,7 @@ fn meridian_pcurve<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::Nu
 /// edge (`u: 1 -> 0`, quadrant `k` to quadrant `k + 1`, swapped from the
 /// naive `u: 0 -> 1`).
 fn beam_pcurve_north<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>> {
-    line2(
+    NurbCurve2D::line(
         Vector2::from_array([S::ONE, S::ONE]),
         Vector2::from_array([S::ZERO, S::ONE]),
     )
@@ -96,7 +98,7 @@ fn beam_pcurve_north<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::
 /// `v = 0` edge (`u: 0 -> 1`, quadrant `k + 1` back to quadrant `k`,
 /// swapped from the naive `u: 1 -> 0`).
 fn beam_pcurve_south<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>> {
-    line2(
+    NurbCurve2D::line(
         Vector2::from_array([S::ZERO, S::ZERO]),
         Vector2::from_array([S::ONE, S::ZERO]),
     )
@@ -109,7 +111,7 @@ fn beam_pcurve_south<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::
 /// even though its top edge ran left-to-right.
 fn meridian_closing_pcurve<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>>
 {
-    line2(
+    NurbCurve2D::line(
         Vector2::from_array([S::ZERO, S::ONE]),
         Vector2::from_array([S::ZERO, S::ZERO]),
     )
@@ -143,9 +145,6 @@ fn sphere_quadrant_surface<S: Scalar>(
     let interior = pole.add(&eq0).add(&eq1).sub(&center).sub(&center);
     let m = w.mul(w);
 
-    let wpt =
-        |p: Vector3<S>, wt: S| Vector4::from_array([p[0].mul(wt), p[1].mul(wt), p[2].mul(wt), wt]);
-
     // Each triple is one `u`-slice, `[v = 0, v = 0.5, v = 1]`, assuming the
     // pole sits at `v = 0` — reversed below if it's actually at `v = 1`.
     // `u0`/`u2` (the true `u = 0`/`u = 1` boundary slices) hit the pole as
@@ -154,9 +153,21 @@ fn sphere_quadrant_surface<S: Scalar>(
     // which — like every other arc's own middle control point here — needs
     // weight `w`, not `1`, even though its position also happens to be the
     // pole.
-    let mut u0 = [pt3(pole), wpt(mer0_mid, w), pt3(eq0)];
-    let mut u1 = [wpt(pole, w), wpt(interior, m), wpt(eq_mid, w)];
-    let mut u2 = [pt3(pole), wpt(mer1_mid, w), pt3(eq1)];
+    let mut u0 = [
+        pole.homogeneous(S::ONE),
+        mer0_mid.homogeneous(w),
+        eq0.homogeneous(S::ONE),
+    ];
+    let mut u1 = [
+        pole.homogeneous(w),
+        interior.homogeneous(m),
+        eq_mid.homogeneous(w),
+    ];
+    let mut u2 = [
+        pole.homogeneous(S::ONE),
+        mer1_mid.homogeneous(w),
+        eq1.homogeneous(S::ONE),
+    ];
     if !pole_at_v0 {
         u0.reverse();
         u1.reverse();
@@ -227,7 +238,7 @@ pub fn sphere_solid<S: Scalar>(
     // An exact 90-degree arc between 2 points on the sphere, around `center`.
     let arc = |p0: Vector3<S>, p1: Vector3<S>| {
         let mid = p0.add(&p1).sub(&center);
-        arc3(p0, mid, p1, w)
+        NurbCurve3D::arc(p0, mid, p1, w)
     };
     let arc_beam = |k: usize, k1: usize| arc(equator(k), equator(k1));
     let north_quadrant = |k: usize, k1: usize| {
@@ -464,7 +475,7 @@ mod tests {
                 zero,
             ]))
         };
-        let w = crate::common::sqrt2_over_2::<S>();
+        let w = sqrt2_over_2::<S>();
         let radius_sq = radius.mul(radius);
 
         for k in 0..4 {

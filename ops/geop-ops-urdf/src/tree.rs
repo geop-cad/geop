@@ -13,7 +13,10 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    union_find::UnionFind,
+};
 use geop_ops_assembly::JointKind;
 
 use crate::Mechanism;
@@ -48,15 +51,13 @@ pub struct TreeJoint {
     pub forward: bool,
 }
 
-/// Which bodies move as one: a union-find over the ground (`0`) and every
-/// body (`b + 1`).
-struct Groups(Vec<usize>);
-
 /// The groups of `mechanism`'s bodies that move as one: those held to the
-/// ground, and those its constraints and fastened joints hold together.
-fn groups(mechanism: &Mechanism) -> Groups {
+/// ground, and those its constraints and fastened joints hold together —
+/// of the ground (`0`) and of every body (`b + 1`), the smallest of its
+/// group, so the ground's group is `0`.
+fn groups(mechanism: &Mechanism) -> Vec<usize> {
     let count = mechanism.bodies.len();
-    let mut groups = Groups((0..=count).collect());
+    let mut groups = UnionFind::new(count + 1);
     for (b, body) in mechanism.bodies.iter().enumerate() {
         if !body.free {
             groups.union(0, b + 1);
@@ -70,22 +71,7 @@ fn groups(mechanism: &Mechanism) -> Groups {
             groups.union(node(joint.a.body), node(joint.b.body));
         }
     }
-    groups
-}
-
-impl Groups {
-    fn find(&self, mut node: usize) -> usize {
-        while self.0[node] != node {
-            node = self.0[node];
-        }
-        node
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.find(a), self.find(b));
-        // The smaller node is the root: the ground roots its own group.
-        self.0[a.max(b)] = a.min(b);
-    }
+    (0..=count).map(|node| groups.find(node)).collect()
 }
 
 /// The node of an end attached to `body`, or to the ground.
@@ -103,11 +89,8 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
     }
 
     let part = |b: usize| mechanism.bodies[b].name.as_str();
-    let members = |group: usize| -> Vec<usize> {
-        (0..count)
-            .filter(|&b| groups.find(b + 1) == group)
-            .collect()
-    };
+    let members =
+        |group: usize| -> Vec<usize> { (0..count).filter(|&b| groups[b + 1] == group).collect() };
     let link_named = |group: usize| -> LinkBodies {
         let bodies = members(group);
         let fixed = bodies.iter().find(|&&b| !mechanism.bodies[b].free);
@@ -123,10 +106,7 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
         .collect();
     let ends = |j: usize| {
         let joint = &mechanism.joints[j];
-        (
-            groups.find(node(joint.a.body)),
-            groups.find(node(joint.b.body)),
-        )
+        (groups[node(joint.a.body)], groups[node(joint.b.body)])
     };
     let mut tree = Tree {
         links: vec![link_named(0)],
@@ -172,7 +152,7 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
     }
 
     let unreached: Vec<&str> = (0..count)
-        .filter(|&b| !link_of_group.contains_key(&groups.find(b + 1)))
+        .filter(|&b| !link_of_group.contains_key(&groups[b + 1]))
         .map(part)
         .collect();
     if !unreached.is_empty() {

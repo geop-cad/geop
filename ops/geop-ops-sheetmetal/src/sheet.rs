@@ -30,7 +30,6 @@ use geop_core_math::{
 };
 use geop_core_topology::Body;
 use geop_ops::{NamedModel, Namer};
-use geop_ops_extrude_revolve::common::{end_point, line2, start_point};
 use serde::{Deserialize, Serialize};
 
 use crate::thicken::thicken;
@@ -161,14 +160,6 @@ impl<S: Scalar> Placement<S> {
         }
     }
 
-    /// The same placement moved by the sheet vector `shift`.
-    pub fn shifted(&self, shift: &Vector2<S>) -> Self {
-        Self {
-            origin: self.point(shift),
-            ..self.clone()
-        }
-    }
-
     /// As a coordinate system: `u = e1`, `v = e2`, `w = n`.
     pub fn coordinate_system(&self) -> GeopResult<CoordinateSystem<S>> {
         CoordinateSystem::try_new(self.origin, self.e1, self.e2, self.n)
@@ -231,7 +222,7 @@ impl<S: Scalar> FlatEdge<S> {
     /// Its ends, in sheet coordinates, if it is straight.
     pub fn line(&self) -> Option<GeopResult<[Vector2<S>; 2]>> {
         (self.curve.degree == 1 && self.curve.control_points.len() == 2)
-            .then(|| Ok([start_point(&self.curve)?, end_point(&self.curve)?]))
+            .then(|| Ok([self.curve.start()?, self.curve.end()?]))
     }
 }
 
@@ -531,7 +522,7 @@ impl<S: Scalar> Sheet<S> {
 /// A straight flat edge from `a` to `b`, named `name`.
 pub fn straight<S: Scalar>(a: Vector2<S>, b: Vector2<S>, name: Namer) -> GeopResult<FlatEdge<S>> {
     Ok(FlatEdge {
-        curve: line2(a, b)?,
+        curve: NurbCurve2D::line(a, b)?,
         name,
     })
 }

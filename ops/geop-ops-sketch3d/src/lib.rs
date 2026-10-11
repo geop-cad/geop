@@ -7,6 +7,7 @@
 
 mod add_sketch3d;
 mod editor;
+mod icons;
 #[cfg(test)]
 mod tests;
 

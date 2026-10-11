@@ -14,25 +14,24 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_geometry::{
-    intersection::curve_curve_overlaps_and_crossings, nurb_curve::NurbCurve2D,
+    intersection::curve_curve_overlaps_and_crossings, nurb_curve::NurbCurve2D, search::MAX_NODES,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::probe::{Probe, attempts},
     vector::{Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::Sense;
 use geop_ops::Namer;
-use geop_ops_extrude_revolve::common::{arc2, end_point, line2, start_point};
 
-use crate::{sheet::Sheet, thicken::translate2};
+use crate::sheet::Sheet;
 
-/// Bounds how hard a crossing search between curves that are no lines or
-/// arcs tries: effort, not what an answer means.
-const MAX_NODES: usize = 20_000;
-
-/// Where that search hands over (see `AGENTS.md`).
+/// Where a crossing search between curves that are no lines or arcs hands
+/// over (see `AGENTS.md`): a value of its own, finer than the default
+/// [`geop_core_geometry::search::MIN_SUBDIVISION_SIZE`], with the default
+/// node budget [`MAX_NODES`].
 fn min_subdivision_size<S: Scalar>() -> S {
     S::from_f64(1e-9)
 }
@@ -130,11 +129,11 @@ impl<S: Scalar> Sheet<S> {
                 let n = lp.len();
                 let mut coedges = Vec::new();
                 for (k, e) in lp.iter().enumerate() {
-                    let curve = translate2(&e.curve, &shifts[f]).with_context(ctx)?;
+                    let curve = e.curve.translate(shifts[f]);
                     layout.vertices.push(LayoutVertex {
-                        at: start_point(&curve)?,
+                        at: curve.start()?,
                         name: Some(e.name.scoped("v")),
-                        own: Some((f, start_point(&e.curve)?)),
+                        own: Some((f, e.curve.start()?)),
                     });
                     layout.edges.push(LayoutEdge {
                         curve,
@@ -175,7 +174,7 @@ impl<S: Scalar> Sheet<S> {
             for (side, start, end) in [("s0", pa, ca), ("s1", pb, cb)] {
                 let name = bend.name.scoped(side);
                 layout.edges.push(LayoutEdge {
-                    curve: line2(layout.vertices[start].at, layout.vertices[end].at)?,
+                    curve: NurbCurve2D::line(layout.vertices[start].at, layout.vertices[end].at)?,
                     start,
                     end,
                     origin: Some(name.root()),
@@ -206,7 +205,7 @@ impl<S: Scalar> Sheet<S> {
                     lp.iter()
                         .map(|e| {
                             Ok(CutCurve {
-                                curve: translate2(&e.curve, &shifts[cut.flat])?,
+                                curve: e.curve.translate(shifts[cut.flat]),
                                 name: e.name.clone(),
                             })
                         })
@@ -354,7 +353,7 @@ impl<S: Scalar> Layout<S> {
                 .iter()
                 .map(|c| {
                     vertices.push(LayoutVertex {
-                        at: start_point(&c.curve)?,
+                        at: c.curve.start()?,
                         name: None,
                         own: None,
                     });
@@ -695,14 +694,10 @@ enum Along<S: Scalar> {
     Undecided,
 }
 
-fn cross2<S: Scalar>(a: &Vector2<S>, b: &Vector2<S>) -> S {
-    a.prod_cross(b)
-}
-
 impl<S: Scalar> Seg<S> {
     /// What `curve` is.
     pub fn of(curve: &NurbCurve2D<S>) -> GeopResult<Self> {
-        let (a, b) = (start_point(curve)?, end_point(curve)?);
+        let (a, b) = (curve.start()?, curve.end()?);
         if curve.degree == 1 && curve.control_points.len() == 2 {
             return Ok(Seg::Line { a, b });
         }
@@ -714,7 +709,7 @@ impl<S: Scalar> Seg<S> {
         let center = Vector2::from_array([arc.circle.center[0], arc.circle.center[1]]);
         let sigma = if ccw { S::ONE } else { S::ONE.neg() };
         // Less than half a turn: the center on the arc's left.
-        let turn = cross2(&a.sub(&center), &b.sub(&center)).mul(sigma);
+        let turn = a.sub(&center).prod_cross(&b.sub(&center)).mul(sigma);
         if !turn.definitely_greater(S::ZERO) {
             return Ok(Seg::Other);
         }
@@ -734,7 +729,7 @@ impl<S: Scalar> Seg<S> {
             Seg::Arc { a, b, ccw, .. } => {
                 // The arc lies right of its chord, seen turning
                 // counter-clockwise.
-                let side = cross2(&b.sub(a), &p.sub(a));
+                let side = b.sub(a).prod_cross(&p.sub(a));
                 (a, b, if *ccw { side } else { side.neg() })
             }
             Seg::Other => return Along::Undecided,
@@ -782,7 +777,7 @@ impl<S: Scalar> Seg<S> {
     fn swept_area(&self, curve: &NurbCurve2D<S>) -> GeopResult<S> {
         let half = S::ONE.div(S::TWO)?;
         Ok(match self {
-            Seg::Line { a, b } => cross2(a, b).mul(half),
+            Seg::Line { a, b } => a.prod_cross(b).mul(half),
             Seg::Arc {
                 center,
                 radius,
@@ -791,11 +786,11 @@ impl<S: Scalar> Seg<S> {
                 ccw,
             } => {
                 let (u, v) = (a.sub(center), b.sub(center));
-                let angle = cross2(&u, &v).abs().atan2(u.prod_dot(&v));
+                let angle = u.prod_cross(&v).abs().atan2(u.prod_dot(&v));
                 // The segment between the chord and the arc, outside the
                 // chord turning counter-clockwise.
                 let segment = radius.mul(*radius).mul(angle.sub(angle.sin())).mul(half);
-                let chord = cross2(a, b).mul(half);
+                let chord = a.prod_cross(b).mul(half);
                 if *ccw {
                     chord.add(segment)
                 } else {
@@ -814,10 +809,10 @@ impl<S: Scalar> Seg<S> {
                     let t = if k == n {
                         t1
                     } else {
-                        t0.add(t1.sub(t0).mul(S::from_ratio(k, n)?)).sharpen()
+                        S::fraction(t0, t1, S::from_ratio(k, n)?)
                     };
                     let p = curve.evaluate(t)?;
-                    area = area.add(cross2(&prev, &p).mul(half));
+                    area = area.add(prev.prod_cross(&p).mul(half));
                     prev = p;
                 }
                 area
@@ -831,7 +826,7 @@ impl<S: Scalar> Seg<S> {
         stops
             .windows(2)
             .map(|w| match self {
-                Seg::Line { .. } => line2(w[0], w[1]),
+                Seg::Line { .. } => NurbCurve2D::line(w[0], w[1]),
                 Seg::Arc { center, radius, .. } => arc_between(center, *radius, &w[0], &w[1]),
                 Seg::Other => Err(GeopError::new(
                     "a curve that is no line or arc cannot be split",
@@ -856,7 +851,7 @@ fn arc_between<S: Scalar>(
     let dot = u.prod_dot(&v);
     let apex = center.add(&u.add(&v).prod_scalar(r2.div(r2.add(dot))?));
     let weight = r2.add(dot).div(S::TWO.mul(r2))?.sqrt()?;
-    arc2(*p, apex, *q, weight)
+    NurbCurve2D::arc(*p, apex, *q, weight)
 }
 
 /// Where the line or arc `e` and the line or arc `c` cross: each crossing's
@@ -880,10 +875,10 @@ fn crossings<S: Scalar>(
     let candidates: Vec<(Vector2<S>, bool)> = match (e, c) {
         (Seg::Line { a, b }, Seg::Line { a: p, b: q }) => {
             let (d1, d2) = (b.sub(a), q.sub(p));
-            let den = cross2(&d1, &d2);
+            let den = d1.prod_cross(&d2);
             if den.could_be_equal(S::ZERO) {
                 // Parallel: apart, or along one line.
-                if !cross2(&p.sub(a), &d1).could_be_equal(S::ZERO) {
+                if !p.sub(a).prod_cross(&d1).could_be_equal(S::ZERO) {
                     return Ok(Vec::new());
                 }
                 let reach = |x: &Vector2<S>| x.sub(a).prod_dot(&d1);
@@ -893,7 +888,11 @@ fn crossings<S: Scalar>(
                 }
                 return Err("runs along".into());
             }
-            let s = cross2(&p.sub(a), &d2).div(den).map_err(|e| e.to_string())?;
+            let s = p
+                .sub(a)
+                .prod_cross(&d2)
+                .div(den)
+                .map_err(|e| e.to_string())?;
             vec![(a.add(&d1.prod_scalar(s)), false)]
         }
         (Seg::Line { a, b }, Seg::Arc { center, radius, .. })
@@ -1043,18 +1042,19 @@ fn contains<S: Scalar>(loops: &[Vec<Piece<'_, S>>], p: &Vector2<S>) -> Result<bo
                 .sum::<f64>()
         })
         .fold(1.0, f64::max);
-    'direction: for k in 0..RAY_ATTEMPTS {
+    // Directions tried in turn until one crosses every piece cleanly.
+    let found = attempts(RAY_ATTEMPTS, |&k| -> Result<_, String> {
         let d = ray_direction::<S>(k);
         let mut count = 0usize;
         for piece in loops.iter().flatten() {
             match ray_crossings(piece, p, &d, reach) {
                 Some(n) => count += n,
-                None => continue 'direction,
+                None => return Ok(Probe::Next),
             }
         }
-        return Ok(count % 2 == 1);
-    }
-    Err("cannot be told inside or outside, lying on the boundary of,".into())
+        Ok(Probe::Found(count % 2 == 1))
+    })?;
+    found.ok_or_else(|| "cannot be told inside or outside, lying on the boundary of,".into())
 }
 
 /// How many times the ray from `p` along `d` crosses the curve; `None` if
@@ -1079,20 +1079,20 @@ fn ray_crossings<S: Scalar>(
     let points: Vec<(Vector2<S>, bool)> = match piece.seg {
         Seg::Line { a, b } => {
             let e = b.sub(a);
-            let den = cross2(d, &e);
+            let den = d.prod_cross(&e);
             if den.could_be_equal(S::ZERO) {
-                return if cross2(&a.sub(p), d).could_be_equal(S::ZERO) {
+                return if a.sub(p).prod_cross(d).could_be_equal(S::ZERO) {
                     None
                 } else {
                     Some(0)
                 };
             }
-            let s = cross2(&p.sub(a), d).div(den).ok()?.neg();
+            let s = p.sub(a).prod_cross(d).div(den).ok()?.neg();
             vec![(a.add(&e.prod_scalar(s)), false)]
         }
         Seg::Arc { center, radius, .. } => line_circle(p, &far, center, *radius).ok()?,
         Seg::Other => {
-            let ray = line2(*p, far).ok()?;
+            let ray = NurbCurve2D::line(*p, far).ok()?;
             let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
                 &ray,
                 piece.curve,

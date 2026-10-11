@@ -440,7 +440,7 @@ impl Construction {
                 let arc = inputs[0].arc.clone().expect("assigned an arc");
                 let c = arc.circle;
                 let u = arc.start.sub(&c.center).normalize()?;
-                CoordinateSystem::try_new(c.center, u, c.normal.prod_cross(&u), c.normal)
+                CoordinateSystem::try_from_xz(c.center, u, c.normal)
             }
             Construction::ProjectOnPlane {} => {
                 let foot = plane(1).project(&point(0));
@@ -458,7 +458,7 @@ impl Construction {
                 let (a, b) = (line(0), line(1));
                 let at = a.nearest(&b)?;
                 let w = a.direction.prod_cross(&b.direction).normalize()?;
-                CoordinateSystem::try_new(at, a.direction, w.prod_cross(&a.direction), w)
+                CoordinateSystem::try_from_xz(at, a.direction, w)
             }
             Construction::ThreePlanes {} => {
                 let meet = plane(0).intersect_plane(&plane(1))?;
@@ -625,7 +625,7 @@ impl Construction {
                     ));
                 }
                 let (u, w) = (x.normalize()?, z.normalize()?);
-                CoordinateSystem::try_new(a, u, w.prod_cross(&u), w)
+                CoordinateSystem::try_from_xz(a, u, w)
             }
         }
     }
@@ -665,7 +665,8 @@ impl Operation for AddDatum {
         "Add a point, an axis, a plane or a coordinate system to build with, made from what is picked.",
         OperationGroup::Sketch,
         OperationTier::Small,
-    );
+    )
+    .icon(crate::icons::ADD_DATUM);
     type Args = AddDatumArgs;
     type EditingState = ();
     type Input = Input;

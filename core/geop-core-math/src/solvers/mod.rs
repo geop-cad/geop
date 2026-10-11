@@ -7,8 +7,14 @@
 //! - [`iterate`]: fixed-point iteration from sharp seeds, keeping the
 //!   honest answer beside the seed — the loop of every Newton-type method.
 //! - [`bisect`]: bisection of a bracket, in plain numbers or sharp scalars.
-//! - [`minimize`]: damped descent and golden-section search for a point
-//!   that is a free choice.
+//! - [`minimize`]: damped descent, golden-section search and alternating
+//!   projections for a point that is a free choice.
+//! - [`probe`]: a sequence of trial values — a step halved, a reach
+//!   doubled — probed until one decides.
+//! - [`refine`]: adaptive refinement, a resolution made finer until what is
+//!   built at it is good enough.
+//! - [`subdivide`]: subdivision search, the global method that finds every
+//!   solution in a region within a node budget.
 //! - [`newton`]: Newton refinement of a root a subdivision search has
 //!   isolated.
 //! - [`least_squares`]: constrained Levenberg–Marquardt over any scalar.
@@ -24,4 +30,7 @@ pub mod least_squares;
 pub mod linear;
 pub mod minimize;
 pub mod newton;
+pub mod probe;
+pub mod refine;
+pub mod subdivide;
 pub mod system;

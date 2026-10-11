@@ -50,7 +50,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let mut columns: Vec<Vec<Vector4<S>>> = Vec::with_capacity(num_v);
         for cp in &profile.control_points {
             let w = cp[3];
-            let q = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
+            let q = cp.dehomogenized()?;
             let center = axis.project(&q);
             let x = q.sub(&center);
             let y = axis.direction.prod_cross(&x);

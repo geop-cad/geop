@@ -23,17 +23,19 @@
 //! its own material (see [`geop_ops::solids`]). A part of no given
 //! material is weighed as water, and its line says so.
 //!
-//! **Wires.** A routed harness (see [`geop_ops_harness::Cable`]) is ordered as its
-//! wires: each is a line of its own under the part that routes it, with its
-//! gauge, colour and the length to cut it to. Its swept bundle is how it is
-//! drawn, not something ordered, so it is neither a part's body nor
-//! weighed.
+//! **Wires.** The wires noted on a solid (see
+//! [`geop_ops::solids::SolidNote::wires`]) — a routed harness' — are
+//! ordered: each is a line of its own under the part that routes it, with
+//! its gauge, colour and the length to cut it to. Its swept bundle is how
+//! it is drawn, not something ordered: a solid only drawn
+//! ([`geop_ops::solids::SolidNote::drawn_only`]) is neither a part's body
+//! nor weighed.
 //!
 //! [`Bom::to_csv`] writes the table for a spreadsheet. The bill is offered
 //! as an inspector ([`BillOfMaterials`]) and as a CSV file
 //! ([`BomCsv`]).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -41,15 +43,18 @@ use geop_core_math::{
 };
 use geop_ops::{
     Design, EntityRef, ParamValue,
-    operation::{BuildView, INSTANCE_SEPARATOR},
-    output::{Bounded, Content, Export, Exporter, ExporterInfo, Inspector, InspectorInfo, Output},
+    operation::{BuildView, instance_path},
+    output::{
+        Answer, AnswerAction, Block, Bounded, Content, Does, Export, Exporter, ExporterInfo,
+        Inspector, InspectorInfo, Output, Row,
+    },
     placed::{Instance, about, declared_values, designation, instance_name},
-    solids::{Shapes, own_solids},
-    ui::Visual,
+    solids::{Shapes, notes_of, own_solids},
+    ui::{Tone, Visual},
 };
-use geop_ops_harness::cables;
 use serde::{Deserialize, Serialize};
 
+mod icons;
 #[cfg(test)]
 mod tests;
 
@@ -231,7 +236,7 @@ fn placed_in(paths: &[String], names: &[&str]) -> Vec<String> {
         .flat_map(|path| {
             names.iter().map(move |name| match path.as_str() {
                 "" => name.to_string(),
-                _ => format!("{path}{INSTANCE_SEPARATOR}{name}"),
+                _ => instance_path(path, name),
             })
         })
         .collect()
@@ -265,14 +270,8 @@ impl Builder {
     fn work_out(&mut self, view: BuildView) -> GeopResult<Info> {
         let about = about(view);
         let material = about.material();
-        let cables = view.retrieve_target(&cables()).ok();
-        // Its own bodies: every solid but a harness' bundle.
-        let bodies: Vec<_> = (own_solids(view)?.into_iter())
-            .filter(|solid| cables.is_none_or(|cables| cables.get(&solid.name).is_err()))
-            .collect();
-        let mut thickness: Vec<f64> = (bodies.iter())
-            .filter_map(|solid| geop_ops_sheetmetal::thickness(view, &solid.name))
-            .collect();
+        let bodies = own_solids(view)?;
+        let mut thickness: Vec<f64> = bodies.iter().filter_map(|s| s.thickness()).collect();
         thickness.sort_by(f64::total_cmp);
         thickness.dedup();
         let mut own_mass = Ok(Design::ZERO);
@@ -441,32 +440,25 @@ fn add_quantity(line: &mut Line, more: u64) {
             unit_mass,
             total_mass,
             ..
-        } => *total_mass = unit_mass.map(|unit| scale_unit(unit, line.quantity)),
+        } => *total_mass = unit_mass.map(|unit| unit.times(line.quantity as f64)),
         LineKind::Wire {
             cut_length,
             total_length,
             ..
-        } => *total_length = scale_unit(*cut_length, line.quantity),
+        } => *total_length = cut_length.times(line.quantity as f64),
     }
 }
 
-/// `unit` times `quantity`, as shown.
-fn scale_unit(unit: Bounded, quantity: u64) -> Bounded {
-    Bounded {
-        value: unit.value * quantity as f64,
-        error: unit.error * quantity as f64,
-    }
-}
-
-/// The wires of every cable of the part `view` shows itself, each a line at
-/// `level` of `quantity` pieces, with the cable's name.
+/// The wires noted on the solids of the part `view` shows itself, each a
+/// line at `level` of `quantity` pieces, with the name of the solid — the
+/// cable — it is noted on.
 fn wire_lines(view: BuildView, level: usize, quantity: u64) -> Vec<(String, Line)> {
     let mut out = Vec::new();
-    let Ok(cables) = view.retrieve_target(&cables()) else {
+    let Some(notes) = notes_of(view) else {
         return out;
     };
-    for (cable_name, cable) in cables.iter() {
-        for wire in &cable.wires {
+    for (cable_name, note) in notes.iter() {
+        for wire in &note.wires {
             let cut_length = Bounded::of(wire.cut_length);
             let designation = match wire.gauge {
                 Some(gauge) => format!("AWG {gauge}"),
@@ -486,7 +478,7 @@ fn wire_lines(view: BuildView, level: usize, quantity: u64) -> Vec<(String, Line
                         diameter: wire.diameter,
                         colour: wire.colour.clone(),
                         cut_length,
-                        total_length: scale_unit(cut_length, quantity),
+                        total_length: cut_length.times(quantity as f64),
                     },
                     placements: Vec::new(),
                 },
@@ -553,6 +545,7 @@ impl Inspector for BillOfMaterials {
         kind: "bom",
         label: "Bill of materials",
         doc: "Every part with its quantity, designation, material and mass, and every wire cut to length.",
+        icon: Some(crate::icons::BOM),
         picks: None,
     };
     type Options = BomOptions;
@@ -564,6 +557,155 @@ impl Inspector for BillOfMaterials {
         options: BomOptions,
     ) -> GeopResult<(Bom, Vec<Visual<Design>>)> {
         Ok((bom(output.part(), options.structure)?, Vec::new()))
+    }
+
+    /// The structures to ask for, the file to save, and the table: per
+    /// line its item, quantity, name and designation, and its total mass
+    /// or length — in full while pointed at.
+    fn show(bom: &Bom) -> Answer {
+        let options = |structure: Structure| serde_json::json!({ "structure": structure });
+        let ask = |structure, label: &str, doc: &str| AnswerAction {
+            label: label.into(),
+            doc: doc.into(),
+            chosen: bom.structure == structure,
+            does: Does::Inspect {
+                options: options(structure),
+            },
+        };
+        let mut blocks = vec![Block::Actions {
+            actions: vec![
+                ask(
+                    Structure::Flat,
+                    "Flat",
+                    "Every part once, counted in the whole assembly",
+                ),
+                ask(
+                    Structure::Indented,
+                    "Indented",
+                    "By sub-assembly, counted per assembly",
+                ),
+                AnswerAction {
+                    label: "Save CSV".into(),
+                    doc: "Save the bill of materials as a CSV file".into(),
+                    chosen: false,
+                    does: Does::Export {
+                        exporter: BomCsv::INFO.kind,
+                        options: options(bom.structure),
+                    },
+                },
+            ],
+        }];
+        if bom.lines.is_empty() {
+            blocks.push(Block::Text {
+                text: "Nothing to list.".into(),
+                tone: Tone::Hint,
+            });
+            return Answer {
+                blocks,
+                plane: None,
+            };
+        }
+        let rows = (bom.lines.iter()).map(Line::shown).collect();
+        let foot = (bom.total_mass.iter())
+            .map(|mass| {
+                Row::labelled(
+                    "Total",
+                    vec![String::new(), String::new(), mass.show_mass()],
+                )
+            })
+            .collect();
+        blocks.push(Block::Table {
+            head: ["#", "Qty", "Part", "Total"].map(String::from).to_vec(),
+            rows,
+            foot,
+        });
+        Answer {
+            blocks,
+            plane: None,
+        }
+    }
+}
+
+impl Line {
+    /// The line as the table shows it: its item, quantity, name — indented
+    /// by its level, its designation under it — and its total mass or
+    /// length; all it says in full while pointed at.
+    fn shown(&self) -> Row {
+        let indent = "\u{2003}".repeat(self.level.saturating_sub(1));
+        let mut name = vec![format!("{indent}{}", self.name)];
+        name.extend(self.designation.iter().map(|d| format!("{indent}{d}")));
+        let (total, detail, tone) = match &self.kind {
+            LineKind::Wire {
+                cable,
+                diameter,
+                colour,
+                cut_length,
+                total_length,
+                ..
+            } => (
+                format!("{:.0} mm", total_length.value),
+                [
+                    format!("cable {cable}"),
+                    colour.clone(),
+                    format!("Ø{diameter} mm"),
+                    format!("cut to {:.1} mm", cut_length.value),
+                ]
+                .join("\n"),
+                Tone::Normal,
+            ),
+            LineKind::Part {
+                file,
+                parameters,
+                material,
+                assumed,
+                thickness,
+                unit_mass,
+                total_mass,
+                error,
+            } => {
+                if *assumed {
+                    name.push(format!("{indent}no material"));
+                }
+                let thickness = (!thickness.is_empty()).then(|| {
+                    let each: Vec<String> = thickness.iter().map(f64::to_string).collect();
+                    format!("sheet {} mm", each.join(", "))
+                });
+                let detail = [
+                    Some(file.clone()),
+                    Some(parameters.clone()),
+                    Some(match assumed {
+                        true => "No material given: weighed as water".into(),
+                        false => material.clone(),
+                    }),
+                    thickness,
+                    unit_mass.map(|m| format!("{} each", m.show_mass())),
+                    error.clone(),
+                ]
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+                let total = total_mass.map_or("?".into(), |m| m.show_mass());
+                let tone = match error {
+                    Some(_) => Tone::Error,
+                    None => Tone::Normal,
+                };
+                (total, detail, tone)
+            }
+        };
+        Row {
+            label: None,
+            cells: vec![
+                self.item.clone(),
+                self.quantity.to_string(),
+                name.join("\n"),
+                total,
+            ],
+            detail: Some(detail),
+            light: Vec::new(),
+            tone,
+        }
     }
 }
 
@@ -699,15 +841,5 @@ impl Bom {
     /// The line numbered `item`.
     pub fn line(&self, item: &str) -> Option<&Line> {
         self.lines.iter().find(|l| l.item == item)
-    }
-
-    /// How many of each thing there are, by name: the quantities of its
-    /// lines summed.
-    pub fn quantities(&self) -> BTreeMap<String, u64> {
-        let mut out = BTreeMap::new();
-        for line in &self.lines {
-            *out.entry(line.name.clone()).or_default() += line.quantity;
-        }
-        out
     }
 }

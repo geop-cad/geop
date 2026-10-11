@@ -13,7 +13,7 @@ use geop_core_program::{
 use geop_ops::{
     EntityRef, Namer, ORIGIN, ParamValue,
     model::pose_parameter,
-    operation::{Build, BuildReader, INSTANCE_SEPARATOR, Input},
+    operation::{Build, BuildReader, Input, instance_path},
     parameters::Values,
     placed::{Instance, Placement, instance, library},
     ui::{self, Listed, Listing, listing},
@@ -125,7 +125,8 @@ impl Operation for AddPart {
         OperationGroup::Assembly,
         OperationTier::Big,
     )
-    .picks_built();
+    .picks_built()
+    .icon(crate::icons::ADD_PART);
     type Args = AddPartArgs;
     type EditingState = PartEditing;
     type Input = Input;
@@ -158,7 +159,7 @@ impl Operation for AddPart {
         part.define_target(&instance(step), &placing, place)
             .with_context(ctx)?;
         let namer = Namer::new("add_part", step)?;
-        let own_frame = EntityRef::datum(format!("{step}{INSTANCE_SEPARATOR}{ORIGIN}"));
+        let own_frame = EntityRef::datum(instance_path(step, ORIGIN));
         let mut failed = Ok(());
         // What the structure lists: every mate the step defines.
         let mut mates = Vec::new();
@@ -176,8 +177,9 @@ impl Operation for AddPart {
                 name: name.clone(),
                 entities: mate.entities.clone(),
             });
+            let label = format!("{step} {id}");
             let defined = (part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve))
-                .and_then(|()| define(part, &name));
+                .and_then(|()| define(part, &name, &label));
             failed = failed.and(defined);
         }
         // The placed part's own mates, behind its name.
@@ -185,7 +187,7 @@ impl Operation for AddPart {
         {
             Ok(placed) => (mates_of(placed.component.view()).into_iter())
                 .filter_map(|(name, resolved)| {
-                    let name = format!("{step}{INSTANCE_SEPARATOR}{name}");
+                    let name = instance_path(step, name);
                     Some((name, resolved.behind(step)?))
                 })
                 .collect(),
@@ -198,7 +200,7 @@ impl Operation for AddPart {
                 entities: resolved.entities(),
             });
             let defined = (part.define_target(&mate(&name), &resolved, carry))
-                .and_then(|()| define(part, &name));
+                .and_then(|()| define(part, &name, &name));
             failed = failed.and(defined);
         }
         let listed = part.define_target(&listing(step), &Listing(mates), ui::listed);

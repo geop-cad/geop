@@ -7,6 +7,7 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::probe::{Probe, attempts, halve},
     vector::{Vector2, Vector3},
 };
 
@@ -123,7 +124,8 @@ pub fn loops_contain<S: Scalar>(
     // Why the most recent direction was given up on — reported if every one
     // is, since "no clear direction" alone says nothing about the cause.
     let mut last_rejection = String::new();
-    'attempt: for _ in 0..MAX_RAY_ATTEMPTS {
+    // Directions tried in turn until one is clear.
+    let found = attempts(MAX_RAY_ATTEMPTS, |_| -> GeopResult<_> {
         let dir = rng.next_direction2::<S>();
         let far = origin.add(&dir.prod_scalar(ray_length));
         let ray: NurbCurve2D<S> = NurbCurve::try_new(
@@ -142,7 +144,7 @@ pub fn loops_contain<S: Scalar>(
                 last_rejection = format!(
                     "ray {ray:?} could pass through coedge {coedge_id}'s start {vertex_pt:?}"
                 );
-                continue 'attempt;
+                return Ok(Probe::Next);
             }
         }
 
@@ -162,7 +164,7 @@ pub fn loops_contain<S: Scalar>(
                 Err(e) => {
                     last_rejection =
                         format!("ray {ray:?} x coedge {coedge_id} pcurve {pcurve:?}: {e:?}");
-                    continue 'attempt;
+                    return Ok(Probe::Next);
                 }
             };
             for (t, mid) in hits {
@@ -195,12 +197,12 @@ pub fn loops_contain<S: Scalar>(
                     // met its boundary so along every ray, and was never
                     // classified.
                     if refined || pcurve.evaluate(mid)?.could_be_equal(&query) {
-                        return Ok(PointClassification::OnCoedge);
+                        return Ok(Probe::Found(PointClassification::OnCoedge));
                     }
                     last_rejection = format!(
                         "ray {ray:?} meets coedge {coedge_id} at t={t:?}, which cannot be told from the query point"
                     );
-                    continue 'attempt;
+                    return Ok(Probe::Next);
                 }
                 // `curve_curve_intersect` honestly returns the whole
                 // surviving span of its converged leaf, not an arbitrarily
@@ -216,16 +218,19 @@ pub fn loops_contain<S: Scalar>(
                     last_rejection = format!(
                         "ray {ray:?} grazes coedge {coedge_id}'s end at t={mid:?} (domain {d0:?}..{d1:?})"
                     );
-                    continue 'attempt;
+                    return Ok(Probe::Next);
                 }
                 count += 1;
             }
         }
-        return Ok(if count % 2 == 1 {
+        Ok(Probe::Found(if count % 2 == 1 {
             PointClassification::Inside
         } else {
             PointClassification::Outside
-        });
+        }))
+    })?;
+    if let Some(classification) = found {
+        return Ok(classification);
     }
     Err(GeopError::new(format!(
         "loops_contain: could not find a ray direction clear of every vertex after many attempts; \
@@ -309,7 +314,7 @@ pub fn face_interior_point_where<S: Scalar>(
         .collect();
 
     let mut found_any = false;
-    'base: for &coedge_id in &coedges {
+    for &coedge_id in &coedges {
         let pcurve = &model.get_coedge(coedge_id)?.pcurve;
         let (t0, t1) = pcurve.domain();
         let t = t0.add(t1).div(S::TWO)?.sharpen();
@@ -329,70 +334,77 @@ pub fn face_interior_point_where<S: Scalar>(
             Vector2::from_array([tangent[1], tangent[0].neg()]),
         ];
 
-        let mut step = diagonal.div(S::TWO)?;
         let mut offered = 0;
-        for _ in 0..MAX_HALVINGS {
-            for inward in normals {
-                // Any point inside the face will do — a free choice — so the
-                // candidate is sharp: it doesn't inherit the width of the
-                // pcurve it was stepped from, and every later computation
-                // from it (a classification ray, say) starts from a point.
-                let u = base[0].add(inward[0].mul(step)).sharpen();
-                let v = base[1].add(inward[1].mul(step)).sharpen();
-                if u.definitely_less(u_lo)
-                    || u.definitely_greater(u_hi)
-                    || v.definitely_less(v_lo)
-                    || v.definitely_greater(v_hi)
-                {
-                    continue;
-                }
-                // Accepted only if the whole box of radius `epsilon` around it
-                // is inside, not just the point: the point is a free choice,
-                // and every later use of it (a classification ray, a surface
-                // evaluation compared against other solids) works at that
-                // resolution. A point merely strictly inside can sit 5e-16
-                // off the boundary — one inward step exactly the face's width
-                // lands there — and at `epsilon` it *is* on the boundary.
-                let neighbourhood = |t: S| t.sub(epsilon).union(t.add(epsilon));
-                if matches!(
-                    face_contains(
-                        model,
-                        face_id,
-                        neighbourhood(u),
-                        neighbourhood(v),
-                        max_nodes,
-                        epsilon,
-                        seed
-                    )?,
-                    PointClassification::Inside
-                ) {
-                    found_any = true;
-                    if accept(u, v)? {
-                        return Ok(Some((u, v)));
+        let found = halve(
+            diagonal.div(S::TWO)?,
+            MAX_HALVINGS,
+            |&step| -> GeopResult<_> {
+                for inward in normals {
+                    // Any point inside the face will do — a free choice — so the
+                    // candidate is sharp: it doesn't inherit the width of the
+                    // pcurve it was stepped from, and every later computation
+                    // from it (a classification ray, say) starts from a point.
+                    let u = base[0].add(inward[0].mul(step)).sharpen();
+                    let v = base[1].add(inward[1].mul(step)).sharpen();
+                    if u.definitely_less(u_lo)
+                        || u.definitely_greater(u_hi)
+                        || v.definitely_less(v_lo)
+                        || v.definitely_greater(v_hi)
+                    {
+                        continue;
                     }
-                    // Rejected: the next point comes from half this step, so
-                    // it differs from this one — stepping in from each side
-                    // of a symmetric face lands every base on the same
-                    // centre, so bases alone don't give distinct points. Two
-                    // points per base keep a caller that rejects everything
-                    // (every point it tries turns out alike) cheap.
-                    offered += 1;
-                    if offered == POINTS_PER_BASE {
-                        continue 'base;
+                    // Accepted only if the whole box of radius `epsilon` around it
+                    // is inside, not just the point: the point is a free choice,
+                    // and every later use of it (a classification ray, a surface
+                    // evaluation compared against other solids) works at that
+                    // resolution. A point merely strictly inside can sit 5e-16
+                    // off the boundary — one inward step exactly the face's width
+                    // lands there — and at `epsilon` it *is* on the boundary.
+                    let neighbourhood = |t: S| t.sub(epsilon).union(t.add(epsilon));
+                    if matches!(
+                        face_contains(
+                            model,
+                            face_id,
+                            neighbourhood(u),
+                            neighbourhood(v),
+                            max_nodes,
+                            epsilon,
+                            seed
+                        )?,
+                        PointClassification::Inside
+                    ) {
+                        found_any = true;
+                        if accept(u, v)? {
+                            return Ok(Probe::Found((u, v)));
+                        }
+                        // Rejected: the next point comes from half this step, so
+                        // it differs from this one — stepping in from each side
+                        // of a symmetric face lands every base on the same
+                        // centre, so bases alone don't give distinct points. Two
+                        // points per base keep a caller that rejects everything
+                        // (every point it tries turns out alike) cheap.
+                        offered += 1;
+                        if offered == POINTS_PER_BASE {
+                            return Ok(Probe::Stop);
+                        }
+                        // Leave the direction loop, reaching the halving below.
+                        break;
                     }
-                    // Leave the direction loop, reaching the halving below.
-                    break;
                 }
-            }
-            // Halving walks toward the boundary, and `face_contains` reports
-            // `OnCoedge` for anything within its own tolerance of it — so
-            // below that tolerance every step is `OnCoedge` and no amount of
-            // further halving can succeed. Stop and let the next base point
-            // try instead of burning the remaining budget here.
-            if !step.definitely_greater(epsilon) {
-                break;
-            }
-            step = step.div(S::TWO)?;
+                // Halving walks toward the boundary, and `face_contains` reports
+                // `OnCoedge` for anything within its own tolerance of it — so
+                // below that tolerance every step is `OnCoedge` and no amount of
+                // further halving can succeed. Stop and let the next base point
+                // try instead of burning the remaining budget here.
+                Ok(if step.definitely_greater(epsilon) {
+                    Probe::Next
+                } else {
+                    Probe::Stop
+                })
+            },
+        )?;
+        if found.is_some() {
+            return Ok(found);
         }
     }
 

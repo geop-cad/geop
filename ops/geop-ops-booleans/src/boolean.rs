@@ -29,7 +29,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
+    EdgeId, FaceId, Model, ShellId, SolidId,
     contains::{
         face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
         shell::{PointClassification as ShellPoint, shell_contains, shell_contains_from},
@@ -45,7 +45,7 @@ pub use geop_ops::BooleanOp;
 
 /// Where one solid's face sits relative to the *other* solid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FaceClassification {
+pub(crate) enum FaceClassification {
     /// Strictly inside the other solid.
     Inside,
     /// Strictly outside it.
@@ -402,10 +402,8 @@ fn reach_up_to_next<S: Scalar>(
 
     let mut users: HashMap<EdgeId, Vec<FaceId>> = HashMap::new();
     for &face in tool_faces.iter().chain(&between) {
-        for coedge in model.iterate_face_coedges(face) {
-            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
-                users.entry(edge).or_default().push(face);
-            }
+        for edge in model.face_edges(face) {
+            users.entry(edge).or_default().push(face);
         }
     }
     let mut pieces = UnionFind::new(n + 2 * m);
@@ -581,10 +579,8 @@ fn check_closed<S: Scalar>(
         if decision == Keep::Drop {
             continue;
         }
-        for coedge in topology.iterate_face_coedges(face_id) {
-            if let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry {
-                *uses.entry(edge).or_default() += 1;
-            }
+        for edge in topology.face_edges(face_id) {
+            *uses.entry(edge).or_default() += 1;
         }
     }
     let Some((&edge, &count)) = uses
@@ -647,7 +643,7 @@ fn check_closed<S: Scalar>(
 /// between them (see `shell_contains_from`), and added to it: one ray
 /// across the whole solid for the first point of a boolean, and short ones
 /// after it, instead of one across the solid for every point.
-pub fn classify_face<S: Scalar>(
+pub(crate) fn classify_face<S: Scalar>(
     model: &Model<S>,
     face_id: FaceId,
     other_solid: SolidId,
@@ -763,7 +759,7 @@ pub fn classify_face<S: Scalar>(
 
 /// Points already classified against shells, each strictly inside or
 /// outside: what [`classify_face`] classifies later points from.
-pub struct Classified<S: Scalar> {
+pub(crate) struct Classified<S: Scalar> {
     points: Vec<(ShellId, Vector3<S>, bool)>,
 }
 

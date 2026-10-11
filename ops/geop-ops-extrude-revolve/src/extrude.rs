@@ -24,15 +24,11 @@ pub fn extrusion<S: Scalar>(plane: &CoordinateSystem<S>, from: S, to: S) -> Geop
         .prod_cross(plane.v())
         .prod_dot(plane.w())
         .mul(to.sub(from));
-    let along_normal = if along.definitely_greater(S::ZERO) {
-        true
-    } else if along.definitely_less(S::ZERO) {
-        false
-    } else {
-        return Err(GeopError::new(format!(
+    let along_normal = along.definite_sign().ok_or_else(|| {
+        GeopError::new(format!(
             "extrusion: the distance from {from:?} to {to:?} could be zero"
-        )));
-    };
+        ))
+    })?;
     Ok(Path {
         stations: vec![station(from), station(to)],
         spans: vec![Span::Line],
@@ -72,8 +68,8 @@ pub fn extrude<S: Scalar>(
 mod tests {
     use super::*;
     use crate::common::testing::{self, assert_valid_sheets, circle, circle_at, v2};
-    use crate::common::{Profile, arc2, polygon, sqrt2_over_2};
-    use geop_core_geometry::nurb_curve::NurbCurve2D;
+    use crate::common::{Profile, polygon};
+    use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector3;
     use geop_core_topology::Model;
@@ -96,12 +92,9 @@ mod tests {
         .unwrap()
     }
 
-    /// Left-handed (`u x v = -w`), which is what `extrude` requires of a CCW
-    /// outer polygon for the resulting faces to point outward — see the
-    /// module doc. `figure8_profile` builds its own the same way. A
-    /// right-handed basis here produces a solid that is entirely inside-out:
-    /// structurally perfect, and rejected by
-    /// `validation::face_orientation::check_normals_point_outward`.
+    /// Left-handed (`u x v = -w`), as `figure8_profile` builds its own:
+    /// `extrude` points the faces outwards either way round, which
+    /// `validation::face_orientation::check_normals_point_outward` checks.
     fn axis_aligned_coordinate_system<S: Scalar>(origin: Vector3<S>) -> CoordinateSystem<S> {
         let u = Vector3::from_array([S::ONE, S::ZERO, S::ZERO]);
         let v = Vector3::from_array([S::ZERO, S::ONE, S::ZERO]);
@@ -241,7 +234,9 @@ mod tests {
         )
         .unwrap();
         let mut outer = polygon(&[v2(0.0, 0.0), v2(1.0, 0.0), v2(1.0, 1.0)]).unwrap();
-        outer.push(arc2(v2(1.0, 1.0), v2(0.0, 1.0), v2(0.0, 0.0), sqrt2_over_2()).unwrap());
+        outer.push(
+            NurbCurve2D::arc(v2(1.0, 1.0), v2(0.0, 1.0), v2(0.0, 0.0), sqrt2_over_2()).unwrap(),
+        );
         outer.remove(2);
         let namer = Namer::new("extrude", "e").unwrap();
         let outer = SweepLoop::plain(Profile::closed(outer));

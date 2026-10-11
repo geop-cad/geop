@@ -26,7 +26,8 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector3, Vector4},
+    solvers::probe::{Probe, attempts},
+    vector::Vector3,
 };
 
 use super::{
@@ -50,17 +51,6 @@ pub enum PointClassification {
 }
 
 const MAX_RAY_ATTEMPTS: usize = 64;
-
-fn line3<S: Scalar>(a: Vector3<S>, b: Vector3<S>) -> GeopResult<NurbCurve3D<S>> {
-    NurbCurve3D::try_new(
-        1,
-        vec![
-            Vector4::from_array([a[0], a[1], a[2], S::ONE]),
-            Vector4::from_array([b[0], b[1], b[2], S::ONE]),
-        ],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )
-}
 
 /// The distinct vertices and edges referenced by `shell_id`'s faces.
 pub(crate) fn shell_vertices_and_edges<S: Scalar>(
@@ -146,7 +136,7 @@ pub(crate) fn cast_ray<S: Scalar>(
 ) -> GeopResult<Result<PointClassification, String>> {
     let shell = &model.shells[&shell_id];
     let far = point.add(&direction.prod_scalar(ray_length));
-    let ray = line3(point, far)?;
+    let ray = NurbCurve3D::line(point, far)?;
 
     // A ray grazing a vertex is ambiguous (shared by several edges).
     for &vertex_id in vertex_ids {
@@ -465,7 +455,8 @@ fn classify<S: Scalar>(
     let ray_length = ray_length_for(model, &vertex_ids, &point)?;
 
     let mut rng = Rng::new(seed);
-    for attempt in 0..MAX_RAY_ATTEMPTS {
+    // Directions tried in turn until one is clear.
+    let found = attempts(MAX_RAY_ATTEMPTS, |&attempt| -> GeopResult<_> {
         let direction = rng.next_direction3::<S>();
         let attempt_seed = seed ^ (attempt as u64).wrapping_mul(0x9E3779B97F4A7C15);
         match cast_ray(
@@ -480,11 +471,15 @@ fn classify<S: Scalar>(
             epsilon,
             attempt_seed,
         )? {
-            Ok(classification) => return Ok(classification),
+            Ok(classification) => Ok(Probe::Found(classification)),
             Err(reason) => {
-                last_rejection = format!("the ray along {direction:?} was rejected: {reason}")
+                last_rejection = format!("the ray along {direction:?} was rejected: {reason}");
+                Ok(Probe::Next)
             }
         }
+    })?;
+    if let Some(classification) = found {
+        return Ok(classification);
     }
     Err(GeopError::new(format!(
         "shell_contains: could not find a ray direction clear of every vertex and edge after many \

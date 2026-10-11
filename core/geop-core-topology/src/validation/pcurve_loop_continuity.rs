@@ -50,11 +50,8 @@ pub fn check_pcurve_loop_continuity<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::check_pcurve_loop_continuity;
-    use crate::{
-        Model,
-        test_fixtures::{line2, test_cube_solid},
-        validation::ValidationParameters,
-    };
+    use crate::{Model, test_fixtures::test_cube_solid, validation::ValidationParameters};
+    use geop_core_geometry::nurb_curve::NurbCurve2D;
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector2};
 
     fn run<S: Scalar>(model: &Model<S>) -> Vec<geop_core_math::geop_error::GeopError> {
@@ -77,10 +74,11 @@ mod tests {
         let mut model = Model::<S>::new();
         test_cube_solid(&mut model);
         let coedge_id = *model.coedges.keys().next().unwrap();
-        model.coedges.get_mut(&coedge_id).unwrap().pcurve = line2(
+        model.coedges.get_mut(&coedge_id).unwrap().pcurve = NurbCurve2D::line(
             Vector2::from_array([S::from_f64(0.1), S::from_f64(0.1)]),
             Vector2::from_array([S::from_f64(0.9), S::from_f64(0.9)]),
-        );
+        )
+        .unwrap();
         assert!(!run(&model).is_empty());
     }
     #[test]

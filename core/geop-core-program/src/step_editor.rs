@@ -57,16 +57,22 @@ pub trait Scene<S: Scalar> {
     fn frame(&self, entity: &EntityRef) -> Option<CoordinateSystem<S>>;
 }
 
+/// The step's arguments and the operation's editing state, as a drag
+/// found them when it grabbed what it drags.
+type Start = (serde_json::Value, Rc<dyn Any>);
+
 /// What a drag holds, as it was grabbed.
 enum Grab<S: Scalar> {
     /// The handle of the number field `key`, and the value that had.
     Handle { key: String, value: f64 },
     /// A draggable visual of the operation's, dragged in the plane worked
     /// in — or, with none, in the plane through where it was grabbed,
-    /// facing the eye: `(point, normal)`.
+    /// facing the eye: `(point, normal)` — and, for one dragged from where
+    /// it was grabbed (see [`Visual::from_grab`]), the step as it was then.
     Visual {
         key: String,
         plane: Option<(Vector3<S>, Vector3<S>)>,
+        start: Option<Start>,
     },
     /// A stroke of the tool in hand, from where it went down.
     Stroke,
@@ -77,7 +83,7 @@ enum Grab<S: Scalar> {
     Gizmo {
         grab: GizmoGrab<S>,
         from: Gizmo<S>,
-        start: (serde_json::Value, Rc<dyn Any>),
+        start: Start,
         readout: Option<String>,
     },
 }
@@ -104,8 +110,10 @@ enum Grab<S: Scalar> {
 ///   form ([`Form::selection`]).
 /// - A draggable visual is dragged in the plane worked in — or, where there
 ///   is none, in the plane through where it was grabbed, facing the eye —
-///   as a [`CanvasEvent::Move`]. With a tool in hand that strokes, a drag
-///   from anywhere else is the tool's, as a [`CanvasEvent::Stroke`].
+///   as a [`CanvasEvent::Move`]; one dragged from where it was grabbed (see
+///   [`Visual::from_grab`]) is sent to the step as it was then, as the
+///   gizmo is. With a tool in hand that strokes, a drag from anywhere else
+///   is the tool's, as a [`CanvasEvent::Stroke`].
 /// - The form's gizmo, if it has one, is drawn over everything and grabbed
 ///   first: a drag of one of its parts is followed and snapped (see
 ///   [`crate::editing::gizmo`]) and sent as a [`CanvasEvent::Gizmo`], to
@@ -135,7 +143,8 @@ pub struct StepEditor<S: Scalar> {
     hover: Option<EntityRef>,
     /// Where the pointer last was, if over the viewport.
     pointer: Option<Pointer<S>>,
-    grab: Option<Grab<S>>,
+    /// Where the drag under way went down, and what it holds.
+    grab: Option<(Pointer<S>, Grab<S>)>,
     /// Which way the gizmo is turned, where it has a way of its own.
     orientation: Orientation,
 }
@@ -357,6 +366,29 @@ impl<S: Scalar> StepEditor<S> {
         }
     }
 
+    /// The step as it is now, for a drag to start from.
+    fn start<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+        &self,
+        e: &Editing<'_, I, St, Sc>,
+    ) -> Start {
+        let args = (e.program.step(&self.step))
+            .map(|s| s.args.clone())
+            .unwrap_or_default();
+        (args, self.editing.clone())
+    }
+
+    /// The step back as a drag found it, `start`.
+    fn restore<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+        &mut self,
+        e: &mut Editing<'_, I, St, Sc>,
+        start: &Start,
+    ) {
+        if let Ok(step) = e.program.step_mut(&self.step) {
+            step.args = start.0.clone();
+        }
+        self.editing = start.1.clone();
+    }
+
     /// The form's gizmo, turned as chosen.
     fn gizmo(&self, form: &Form<S>) -> Option<GizmoView<S>> {
         (form.gizmo.as_ref()).map(|gizmo| GizmoView::of(gizmo, self.orientation))
@@ -566,7 +598,9 @@ impl<S: Scalar> StepEditor<S> {
     ///
     /// What is dragged is hit-tested where the drag started, once: while
     /// dragged, it moves away from there. After that it is found by its key.
-    /// A drag that did not start on either is a stroke of the tool in hand,
+    /// A drag that went down somewhere else is a new one, even if the last
+    /// one's release never came. A drag that did not start on either is a
+    /// stroke of the tool in hand,
     /// if it strokes — else nothing, as for a pointer that cannot be
     /// followed (looking straight along a handle's track, or along the
     /// plane). With `handles_only` — while a field waits for a pick — only a
@@ -583,19 +617,20 @@ impl<S: Scalar> StepEditor<S> {
         handles_only: bool,
     ) -> GeopResult<()> {
         let handles = handles(&form.dialog);
+        if self.grab.as_ref().is_some_and(|(down, _)| down != from) {
+            self.grab = None;
+        }
         if self.grab.is_none()
             && let (Some(gizmo), Some(asked)) = (self.gizmo(form), &form.gizmo)
             && let Some(part) = gizmo.hit(from)
         {
-            let args = (e.program.step(&self.step))
-                .map(|s| s.args.clone())
-                .unwrap_or_default();
-            self.grab = Some(Grab::Gizmo {
+            let grab = Grab::Gizmo {
                 grab: GizmoGrab::new(gizmo, part, from),
                 from: asked.clone(),
-                start: (args, self.editing.clone()),
+                start: self.start(e),
                 readout: None,
-            });
+            };
+            self.grab = Some((*from, grab));
         }
         if self.grab.is_none() {
             let visuals: Vec<Visual<S>> = form.visuals.iter().chain(&handles).cloned().collect();
@@ -604,10 +639,10 @@ impl<S: Scalar> StepEditor<S> {
                 true => is_handle(v),
                 false => grabs(v, form.tool),
             });
-            self.grab = match hit {
+            let grab = match hit {
                 Some(hit) => {
                     let key = hit.visual.key.clone();
-                    Some(match form.dialog.get(&key) {
+                    match form.dialog.get(&key) {
                         Some(Control::Number(n)) if is_handle(hit.visual) => Grab::Handle {
                             key,
                             value: n.value,
@@ -616,20 +651,22 @@ impl<S: Scalar> StepEditor<S> {
                             key,
                             plane: (form.focus.is_none())
                                 .then(|| (from.ray.at(hit.t), *from.ray.dir())),
+                            start: hit.visual.from_grab.then(|| self.start(e)),
                         },
-                    })
+                    }
                 }
-                None if form.tool == InHand::Strokes && !handles_only => Some(Grab::Stroke),
+                None if form.tool == InHand::Strokes && !handles_only => Grab::Stroke,
                 None => return Ok(()),
             };
+            self.grab = Some((*from, grab));
         }
-        let Some(mut grab) = self.grab.take() else {
+        let Some((down, mut grab)) = self.grab.take() else {
             return Ok(());
         };
         let moved = self.drag_by(e, form, &handles, &mut grab, from, to, done, shift);
         // Released: the next drag grabs afresh.
         if !done {
-            self.grab = Some(grab);
+            self.grab = Some((down, grab));
         }
         moved
     }
@@ -670,7 +707,7 @@ impl<S: Scalar> StepEditor<S> {
                     None => Ok(()),
                 }
             }
-            Grab::Visual { key, plane } => {
+            Grab::Visual { key, plane, start } => {
                 let in_plane = |pointer: &Pointer<S>| -> Option<Vector3<S>> {
                     let (origin, normal) = match (&form.focus, &plane) {
                         (Some(focus), _) => (focus.origin(), focus.w()),
@@ -684,6 +721,9 @@ impl<S: Scalar> StepEditor<S> {
                 };
                 match (in_plane(from), in_plane(to)) {
                     (Some(from), Some(at)) => {
+                        if let Some(start) = start {
+                            self.restore(e, start);
+                        }
                         let event = CanvasEvent::Move {
                             key: key.clone(),
                             from,
@@ -706,10 +746,7 @@ impl<S: Scalar> StepEditor<S> {
                 let Some((drag, text)) = grab.drag(from, to, shift) else {
                     return Ok(());
                 };
-                if let Ok(step) = e.program.step_mut(&self.step) {
-                    step.args = start.0.clone();
-                }
-                self.editing = start.1.clone();
+                self.restore(e, start);
                 *readout = Some(text);
                 let from = asked.clone();
                 self.pass(e, CanvasEvent::Gizmo { drag, from, done })
@@ -782,7 +819,7 @@ impl<S: Scalar> StepEditor<S> {
         let waiting = self.armed.is_some();
         if let Some(gizmo) = &mut gizmo {
             match &self.grab {
-                Some(Grab::Gizmo { grab, readout, .. }) => {
+                Some((_, Grab::Gizmo { grab, readout, .. })) => {
                     gizmo.active = Some(grab.part);
                     gizmo.readout = readout.clone();
                 }

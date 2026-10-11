@@ -48,26 +48,26 @@ use std::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, Quaternion},
-    scalars::{Field, Ring, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_topology::mass::MassProperties;
 use geop_ops::{
     Design, ParamValue,
-    model::model,
-    operation::BuildView,
-    output::{Content, Export, Exporter, ExporterInfo, Output, STL_QUALITY},
+    model::model_or_empty,
+    operation::{BuildView, instance_path},
+    output::{Content, Export, Exporter, ExporterInfo, Output, STL_QUALITY, stl_bytes},
     placed::{Component, Instance, about, placed_parts},
-    solids::{Shapes, own_solids},
+    solids::{Shapes, own_solids_at},
     solving::check,
 };
 use geop_ops_assembly::{
     CouplingKind, JointKind, Motion, Resolved, joint_parameter,
     joints::{Connector, measure},
-    mate_name,
+    mechanism::mates_of,
     residuals::D,
 };
-use geop_ops_rasterize::stl::{StlFormat, outward, write_stl};
+use geop_ops_rasterize::stl::StlFormat;
 use serde::Deserialize;
 
 /// The URDF file's path in an export.
@@ -315,9 +315,7 @@ impl<'a> Mechanism<'a> {
     /// parts are.
     pub fn of(view: BuildView<'a>) -> GeopResult<Self> {
         let placed = placed_parts(view)?;
-        let resolved: Vec<(&str, &Resolved)> = (view.targets_of::<Resolved>().into_iter())
-            .filter_map(|(target, resolved)| Some((mate_name(target)?, resolved)))
-            .collect();
+        let resolved = mates_of(view);
         let fixed: BTreeSet<&str> = (resolved.iter())
             .filter_map(|(_, r)| match r {
                 Resolved::Fixed { body } => Some(body.as_str()),
@@ -451,7 +449,7 @@ fn frame(end: &End, bodies: &[Body]) -> GeopResult<Pose<Design>> {
 
 /// A turn by `degrees` about `z`.
 fn turn(degrees: Design) -> GeopResult<Pose<Design>> {
-    let radians = degrees.mul(Design::PI).div(Design::from_i64(180))?;
+    let radians = degrees.degrees_to_radians()?;
     Pose::rotation_about(&Vector3::zero(), &Vector3::axis(2), radians)
 }
 
@@ -482,13 +480,8 @@ impl Meshes {
         if let Some(path) = self.paths.get(&key) {
             return Ok(path.clone());
         }
-        let triangles: Vec<_> = match view.retrieve_target(&model()) {
-            Ok(model) => (model.solid_meshes(self.quality)?.into_iter())
-                .flat_map(|(_, triangles)| triangles)
-                .collect(),
-            // A part with no model has no solids.
-            Err(_) => Vec::new(),
-        };
+        let meshes = model_or_empty(&mut view.clone()).solid_meshes(self.quality)?;
+        let triangles: Vec<_> = meshes.iter().flat_map(|(_, triangles)| triangles).collect();
         let path = if triangles.is_empty() {
             None
         } else {
@@ -499,10 +492,7 @@ impl Meshes {
                 n += 1;
                 path = format!("meshes/{stem}_{n}.stl");
             }
-            let stl: Vec<_> = triangles.iter().map(outward).collect();
-            let mut bytes = Vec::new();
-            write_stl(&stl, stem.as_str(), StlFormat::Binary, &mut bytes)
-                .map_err(|e| GeopError::new(format!("writing {path}: {e}")))?;
+            let bytes = stl_bytes(triangles, &stem, StlFormat::Binary)?;
             self.files.push((path.clone(), bytes));
             Some(path)
         };
@@ -512,21 +502,17 @@ impl Meshes {
 }
 
 /// The mass properties of the solids of the part `view` shows itself,
-/// where `pose` puts them, each of its part's material; `name` the part's.
+/// named behind `prefix`, where `pose` puts them, each of its part's
+/// material (see [`own_solids_at`]).
 fn masses(
     view: BuildView,
-    name: &str,
-    pose: Option<&Pose<Design>>,
+    prefix: &str,
+    pose: Option<Pose<Design>>,
     shapes: &mut Shapes,
     out: &mut Vec<MassProperties<Design>>,
 ) -> GeopResult<()> {
-    for solid in own_solids(view)? {
-        let ctx = |e: GeopError| e.with_context(format!("the mass of {name}/{}", solid.name));
-        let own = solid.mass_properties(shapes).with_context(&ctx)?;
-        out.push(match pose {
-            Some(pose) => own.placed(pose).with_context(&ctx)?,
-            None => own,
-        });
+    for solid in own_solids_at(view, prefix, pose)? {
+        out.push(solid.mass_properties(shapes)?);
     }
     Ok(())
 }
@@ -622,7 +608,7 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
         let mut visuals = Vec::new();
         // The assembly's own solids are the ground's: the root's.
         if index == 0 {
-            masses(view, "base", None, &mut shapes, &mut masses_of).with_context(&ctx)?;
+            masses(view, "", None, &mut shapes, &mut masses_of).with_context(&ctx)?;
             if let Some(mesh) = meshes.of(None, "base", view)? {
                 visuals.push(Visual {
                     name: "base".into(),
@@ -636,14 +622,10 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
             let component = &body.instance.component;
             // A part placed is a body of its own solids: the parts placed
             // in it are bodies of their own.
-            masses(
-                component.view(),
-                &body.name,
-                Some(&body.world),
-                &mut shapes,
-                &mut masses_of,
-            )
-            .with_context(&ctx)?;
+            let prefix = instance_path(&body.name, "");
+            let view = component.view();
+            masses(view, &prefix, Some(body.world), &mut shapes, &mut masses_of)
+                .with_context(&ctx)?;
             let key = Some(Rc::as_ptr(component));
             if let Some(mesh) = meshes.of(key, about(component.view()).stem(), component.view())? {
                 visuals.push(Visual {

@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D},
-    nurb_surface::{NurbSurface, NurbSurface3D},
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -27,7 +27,6 @@ use geop_core_topology::{
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-use geop_ops_extrude_revolve::common::{line2, line3};
 
 /// A vertex of the A side, and where it is on the B side.
 #[derive(Clone, Debug)]
@@ -134,35 +133,6 @@ impl<S: Scalar> SheetSurface<S> {
     }
 }
 
-/// The wall between an edge's A curve and its B curve: `u` along the
-/// curve, `v` across the thickness. A ruled surface, exact for curves of
-/// one degree, knots and weights.
-fn wall<S: Scalar>(edge: &SheetEdge<S>) -> GeopResult<NurbSurface3D<S>> {
-    let (a, b) = (&edge.a, &edge.b);
-    if a.degree != b.degree
-        || a.control_points.len() != b.control_points.len()
-        || a.knot_vector.len() != b.knot_vector.len()
-    {
-        return Err(GeopError::new(format!(
-            "the two sides of edge {} are not alike: {a:?} and {b:?}",
-            edge.name.root()
-        )));
-    }
-    let control_points = a
-        .control_points
-        .iter()
-        .zip(&b.control_points)
-        .flat_map(|(p, q)| [*p, *q])
-        .collect();
-    NurbSurface::try_new(
-        a.degree,
-        1,
-        control_points,
-        a.knot_vector.clone(),
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )
-}
-
 /// Builds the solid sheet of metal `sheet` is the A side of — both sides of
 /// each of its faces, a wall on each edge of its boundary — named `solid`,
 /// and each of its entities as its [`SheetSurface`] entry says, through
@@ -185,13 +155,7 @@ pub fn thicken<S: Scalar>(
     );
     let boundary = sheet.boundary().with_context(ctx)?;
     let nv = sheet.vertices.len();
-    let mut spec = BodySpec {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        faces: Vec::new(),
-        shells: Vec::new(),
-        solid: true,
-    };
+    let mut spec = BodySpec::new(true);
     let mut names = BodyNames {
         solid: Some(solid.to_string()),
         ..BodyNames::default()
@@ -234,7 +198,7 @@ pub fn thicken<S: Scalar>(
             (0, _) => {}
             (2, _) => {
                 spec.edges.push(EdgeSpec {
-                    curve: line3(vertex.a, vertex.b).with_context(ctx)?,
+                    curve: NurbCurve3D::line(vertex.a, vertex.b).with_context(ctx)?,
                     start: v,
                     end: nv + v,
                 });
@@ -291,23 +255,27 @@ pub fn thicken<S: Scalar>(
         }
         let (t0, t1) = edge.a.domain();
         let face = FaceSpec {
-            surface: wall(edge).with_context(ctx)?,
+            // The ruled surface between its A and B curves, exact: the two
+            // are of one degree, knots and weights.
+            surface: NurbSurface3D::ruled_compatible(&edge.a, &edge.b)
+                .map_err(|err| err.with_context(format!("the wall of edge {}", edge.name.root())))
+                .with_context(ctx)?,
             outer: vec![
                 CoedgeSpec {
                     on: CoedgeOn::Edge(2 * e, Sense::Forward),
-                    pcurve: line2(point(t0, S::ZERO), point(t1, S::ZERO))?,
+                    pcurve: NurbCurve2D::line(point(t0, S::ZERO), point(t1, S::ZERO))?,
                 },
                 CoedgeSpec {
                     on: CoedgeOn::Edge(across[&edge.end], Sense::Forward),
-                    pcurve: line2(point(t1, S::ZERO), point(t1, S::ONE))?,
+                    pcurve: NurbCurve2D::line(point(t1, S::ZERO), point(t1, S::ONE))?,
                 },
                 CoedgeSpec {
                     on: CoedgeOn::Edge(2 * e + 1, Sense::Reversed),
-                    pcurve: line2(point(t1, S::ONE), point(t0, S::ONE))?,
+                    pcurve: NurbCurve2D::line(point(t1, S::ONE), point(t0, S::ONE))?,
                 },
                 CoedgeSpec {
                     on: CoedgeOn::Edge(across[&edge.start], Sense::Reversed),
-                    pcurve: line2(point(t0, S::ONE), point(t0, S::ZERO))?,
+                    pcurve: NurbCurve2D::line(point(t0, S::ONE), point(t0, S::ZERO))?,
                 },
             ],
             holes: Vec::new(),
@@ -320,32 +288,4 @@ pub fn thicken<S: Scalar>(
     }
     spec.shells = vec![(0..spec.faces.len()).collect()];
     model.build_body(spec, names).with_context(ctx)
-}
-
-/// `curve` moved by `shift` in its plane: every homogeneous control point
-/// by `shift` times its weight — exact for any NURBS. Moved by nothing, it
-/// is the curve itself, not widened by adding zeros.
-pub(crate) fn translate2<S: Scalar>(
-    curve: &NurbCurve2D<S>,
-    shift: &Vector2<S>,
-) -> GeopResult<NurbCurve2D<S>> {
-    let zero = |x: S| x.is_sharp() && x.could_be_equal(S::ZERO);
-    if zero(shift[0]) && zero(shift[1]) {
-        return Ok(curve.clone());
-    }
-    NurbCurve::try_new(
-        curve.degree,
-        curve
-            .control_points
-            .iter()
-            .map(|cp| {
-                Vector3::from_array([
-                    cp[0].add(shift[0].mul(cp[2])),
-                    cp[1].add(shift[1].mul(cp[2])),
-                    cp[2],
-                ])
-            })
-            .collect(),
-        curve.knot_vector.clone(),
-    )
 }

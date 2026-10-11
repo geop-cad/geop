@@ -139,7 +139,7 @@ pub(crate) fn samples<S: Scalar, P>(
         for j in 1..=n {
             // Free choices inside the overlap.
             let frac = S::from_ratio(j as i64, (n + 1) as i64)?;
-            let t = lo.add(hi.sub(lo).mul(frac)).sharpen();
+            let t = S::fraction(lo, hi, frac);
             if let Some(partner) = probe(t)? {
                 out.push(Hit { t, partner });
             }

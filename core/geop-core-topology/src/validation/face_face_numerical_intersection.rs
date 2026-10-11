@@ -1,6 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use std::convert::Infallible;
+
+use geop_core_math::{
+    geop_error::GeopError,
+    scalars::Scalar,
+    solvers::iterate::{End, Repeat, Step, iterate},
+};
 
 use crate::{
     CoedgeGeometry, FaceId, Model, VertexId,
@@ -133,49 +139,41 @@ fn check_faces_of_body<S: Scalar>(
             let mut rng = Rng::new(pair_seed);
 
             for sample in 0..params.face_face_sample_count {
-                let mut u1 = S::from_f64(rng.next_range(au_lo.to_f64(), au_hi.to_f64()));
-                let mut v1 = S::from_f64(rng.next_range(av_lo.to_f64(), av_hi.to_f64()));
-                let mut u2 = S::from_f64(rng.next_range(bu_lo.to_f64(), bu_hi.to_f64()));
-                let mut v2 = S::from_f64(rng.next_range(bv_lo.to_f64(), bv_hi.to_f64()));
-
-                for round in 0..params.face_face_newton_iterations {
-                    let Ok(p1) = face_a.surface.evaluate(u1, v1) else {
-                        break;
-                    };
-                    let Ok((nu2, nv2)) = face_b.surface.project(p1, u2, v2, 1) else {
-                        break;
-                    };
-                    let seeds = [u1, v1, u2, v2];
-                    u2 = nu2;
-                    v2 = nv2;
-
-                    let Ok(p2) = face_b.surface.evaluate(u2, v2) else {
-                        break;
-                    };
-                    let Ok((nu1, nv1)) = face_a.surface.project(p2, u1, v1, 1) else {
-                        break;
-                    };
-                    u1 = nu1;
-                    v1 = nv1;
-
-                    // Sharpen before the next round — except the last one,
-                    // whose (still-uncertain) result feeds the convergence
-                    // check right below the loop.
-                    if round + 1 < params.face_face_newton_iterations {
-                        let sharp = [u1, v1, u2, v2].map(Scalar::midpoint);
-                        // Seeded as this round was, every round left would
-                        // repeat it to the bit, the last one's unsharpened
-                        // result included: that result is this one's.
-                        if sharp
-                            .iter()
-                            .zip(&seeds)
-                            .all(|(a, b)| a.is_sharp() && b.is_sharp() && a.could_be_equal(*b))
-                        {
-                            break;
-                        }
-                        [u1, v1, u2, v2] = sharp;
-                    }
-                }
+                let start = [
+                    S::from_f64(rng.next_range(au_lo.to_f64(), au_hi.to_f64())),
+                    S::from_f64(rng.next_range(av_lo.to_f64(), av_hi.to_f64())),
+                    S::from_f64(rng.next_range(bu_lo.to_f64(), bu_hi.to_f64())),
+                    S::from_f64(rng.next_range(bv_lo.to_f64(), bv_hi.to_f64())),
+                ];
+                // Alternating projections, each round from sharp seeds; the
+                // last round's result is kept unsharpened for the check
+                // below. A round that cannot be taken leaves the seeds.
+                let Ok(run) = iterate::<_, Infallible>(
+                    start,
+                    start,
+                    params.face_face_newton_iterations,
+                    Repeat::FixedPoint,
+                    |x: &[S; 4]| (x.map(Scalar::midpoint), *x),
+                    |&[u1, v1, u2, v2]| {
+                        let Ok(p1) = face_a.surface.evaluate(u1, v1) else {
+                            return Ok(Step::Stuck);
+                        };
+                        let Ok((u2, v2)) = face_b.surface.project(p1, u2, v2, 1) else {
+                            return Ok(Step::Stuck);
+                        };
+                        let Ok(p2) = face_b.surface.evaluate(u2, v2) else {
+                            return Ok(Step::Stuck);
+                        };
+                        let Ok((u1, v1)) = face_a.surface.project(p2, u1, v1, 1) else {
+                            return Ok(Step::Stuck);
+                        };
+                        Ok(Step::Next([u1, v1, u2, v2]))
+                    },
+                );
+                let [u1, v1, u2, v2] = match run.end {
+                    End::Stuck => run.seed,
+                    End::Done | End::Exhausted => run.answer,
+                };
 
                 let (Ok(p1), Ok(p2)) = (
                     face_a.surface.evaluate(u1, v1),

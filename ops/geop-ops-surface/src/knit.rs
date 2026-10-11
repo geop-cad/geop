@@ -44,7 +44,8 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, min_subdivision_size, sheet_of};
+use crate::sheet_of;
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Joins the sheets the faces named `faces` stand in into one, along the
 /// edges where they meet, for the operation `K` — see the module docs.
@@ -92,7 +93,8 @@ impl Operation for Knit {
         OperationGroup::Surface,
         OperationTier::Menu,
     )
-    .experimental();
+    .experimental()
+    .icon(crate::icons::KNIT);
     type Args = KnitArgs;
     type EditingState = ();
     type Input = Input;

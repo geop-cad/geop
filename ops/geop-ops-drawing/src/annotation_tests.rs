@@ -2,16 +2,12 @@
 //! written out, and refused where a view cannot show what they measure.
 
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
-use geop_ops::{
-    RefId,
-    operation::BuildView,
-    output::sheet::{Layer, to_dxf},
-};
+use geop_ops::{RefId, operation::BuildView, output::sheet::to_dxf};
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
 
 use crate::{
     Along, Annotation, DrawingArgs, DrawnView, EdgeShape, Layout, Leader, Pickable, Target,
-    ViewKind, compose, layout,
+    ViewKind, compose, layer, layout,
     testing::{Part, built},
     writer_tests::read_dxf,
 };
@@ -194,7 +190,7 @@ fn every_annotation_measures_its_view() {
     let centre_lines = sheet
         .strokes
         .iter()
-        .filter(|s| s.layer == Layer::Center)
+        .filter(|s| s.layer == layer::CENTER)
         .count();
     assert!(centre_lines >= 4, "{centre_lines} centre lines");
 }

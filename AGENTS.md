@@ -905,5 +905,5 @@ a hair off it in `x` and in `y` alike, so which of the two is the least was
 decided by noise, differently for the two ends of a joint: a quarter turn
 or none. `across` takes the first axis that no other component is
 definitely less than. A frame put on a face or an edge gives the same
-direction as the joint would have chosen for it (`axis_frame`), so frames
+direction as the joint would have chosen for it (`frame_along`), so frames
 and the entities they are on are at a turn of zero alike.

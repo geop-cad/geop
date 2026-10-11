@@ -11,11 +11,27 @@ type FromPage =
   | { type: "save"; file: { name: string; text?: string; bytes?: string } }
   | { type: "add"; id: number; name: string; text: string };
 
-/** The files a program reads: other programs, and STEP files it imports. */
-const FILES = "**/*.{geop,step,stp,STEP,STP,Step,Stp}";
+/**
+ * The files a program reads: other programs, and the data files of the
+ * extensions `reads` the kernel's operations read (see
+ * `geop_core_program::operation::OperationInfo::reads`: a STEP file a
+ * program imports) — as a glob, and as a test of a path.
+ */
+function filesOf(reads: string[]) {
+  const extensions = ["geop", ...reads];
+  const spellings = extensions.flatMap((e) => [e, e.toUpperCase(), e[0].toUpperCase() + e.slice(1)]);
+  return {
+    glob: `**/*.{${[...new Set(spellings)].join(",")}}`,
+    matches: (p: string) => extensions.some((e) => p.toLowerCase().endsWith(`.${e}`)),
+  };
+}
 
-/** Whether `p` is a file a program reads. */
-const isWorkspaceFile = (p: string) => /\.(geop|step|stp)$/i.test(p);
+/** What the kernel `server`'s operations read beside programs: asked once, before anything else. */
+async function readsOf(server: GeopServer): Promise<string[]> {
+  const shown = JSON.parse(await server.request(JSON.stringify({ command: "show" })));
+  const operations: { reads: string[] }[] = shown.program?.operations ?? [];
+  return [...new Set(operations.flatMap((o) => o.reads))];
+}
 
 /**
  * A `.geop` file as the web editor: the page is the one `web/` builds, the
@@ -86,8 +102,10 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
     const folder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri ?? vscode.Uri.joinPath(document.uri, "..");
     /** `uri`'s path as the kernel names files: relative to the folder, `/`-separated. */
     const pathOf = (uri: vscode.Uri) => path.posix.relative(folder.path, uri.path);
+    /** The files a program reads, once the kernel has said which. */
+    let files = filesOf([]);
     const isOther = (uri: vscode.Uri) =>
-      isWorkspaceFile(uri.path) && uri.toString() !== document.uri.toString() && !pathOf(uri).startsWith("..");
+      files.matches(uri.path) && uri.toString() !== document.uri.toString() && !pathOf(uri).startsWith("..");
     /** The text of the program file `uri`: as edited, if it is open. */
     const textOf = async (uri: vscode.Uri): Promise<string> => {
       const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
@@ -99,16 +117,17 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
     };
     /** Every other program file of the folder, by path. */
     const allFiles = async () => {
-      const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, FILES), "**/node_modules/**");
-      const files: Record<string, string> = {};
+      await asked;
+      const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, files.glob), "**/node_modules/**");
+      const texts: Record<string, string> = {};
       for (const uri of uris.filter(isOther)) {
         try {
-          files[pathOf(uri)] = await textOf(uri);
+          texts[pathOf(uri)] = await textOf(uri);
         } catch (e) {
           this.log.appendLine(`could not read ${uri.fsPath}: ${e}`);
         }
       }
-      return files;
+      return texts;
     };
     const sendAllFiles = async () => sendFiles(await allFiles());
     const sendDocument = () => {
@@ -129,9 +148,18 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
       return;
     }
     const subscriptions: vscode.Disposable[] = [{ dispose: () => server.dispose() }];
-    panel.onDidDispose(() => subscriptions.forEach((s) => s.dispose()));
-
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, FILES));
+    let disposed = false;
+    panel.onDidDispose(() => {
+      disposed = true;
+      subscriptions.forEach((s) => s.dispose());
+    });
+    // Which files to send, the kernel says: asked before any are.
+    const asked = readsOf(server).then(
+      (reads) => {
+        files = filesOf(reads);
+      },
+      (e) => this.log.appendLine(`could not ask the kernel which files it reads: ${e}`),
+    );
     /** A file changed on disk: sent, unless it is open — then its edits are what counts, and were sent as made. */
     const onDisk = async (uri: vscode.Uri) => {
       if (!isOther(uri) || vscode.workspace.textDocuments.some((d) => d.uri.toString() === uri.toString() && d.isDirty)) return;
@@ -142,13 +170,19 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
       }
     };
 
+    void asked.then(() => {
+      if (disposed) return;
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, files.glob));
+      subscriptions.push(
+        watcher,
+        watcher.onDidCreate(onDisk),
+        watcher.onDidChange(onDisk),
+        watcher.onDidDelete((uri) => {
+          if (isOther(uri)) sendFiles({ [pathOf(uri)]: null });
+        }),
+      );
+    });
     subscriptions.push(
-      watcher,
-      watcher.onDidCreate(onDisk),
-      watcher.onDidChange(onDisk),
-      watcher.onDidDelete((uri) => {
-        if (isOther(uri)) sendFiles({ [pathOf(uri)]: null });
-      }),
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (isOther(e.document.uri) && e.contentChanges.length > 0) {
           sendFiles({ [pathOf(e.document.uri)]: e.document.getText() });

@@ -13,8 +13,6 @@
 //! transversal hit converges in a handful of clips instead of one
 //! bisection per bit of precision.
 
-use std::collections::VecDeque;
-
 use crate::{
     aabb::{aabb_could_contain, curve_could_meet_aabb},
     fat_line::{
@@ -25,6 +23,7 @@ use crate::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::subdivide::{Order, Searched, Split, subdivide},
     vector::Vector,
 };
 
@@ -104,10 +103,6 @@ where
     if !curve_could_meet_aabb(curve, &point_box, C) {
         return Ok(None);
     }
-    let mut queue: VecDeque<NurbCurve<S, D>> = VecDeque::new();
-    queue.push_back(curve.clone());
-
-    let mut explored = 0usize;
     let mut solution: Option<S> = None;
     let mut report = |t: S| {
         solution = Some(match solution {
@@ -116,59 +111,61 @@ where
         });
     };
 
-    while let Some(seg) = queue.pop_front() {
-        if explored >= max_nodes {
-            return Err(GeopError::new(format!(
-                "curve_could_contain (clipping): exhausted max_nodes={max_nodes} with {} \
-                 segments pending; the result would be incomplete",
-                queue.len() + 1
-            )));
-        }
-        explored += 1;
-
-        // Cheap prefilter against the cached bounding box.
-        if !aabb_could_contain(&seg.aabb, point) {
-            continue;
-        }
-
-        let Some(xi) = greville_abscissae(&seg.knot_vector, seg.degree, seg.control_points.len())?
-        else {
-            // Degree 0 has no graph polygon to clip; the box test above is
-            // all we can say.
-            report(seg.domain_as_scalar());
-            continue;
-        };
-        let Some(t_hat) = clip(&seg, &xi, point) else {
-            continue;
-        };
-
-        let ranges = [seg.domain()];
-        let sizes = [extent([seg.control_points.iter().copied()])];
-        // The query point's own width counts too, like a second object's.
-        let point_width = (0..C)
-            .map(|k| point[k].width().to_f64())
-            .fold(0.0, f64::max);
-        let carried = carried_width(&seg.control_points).max(point_width);
-        if let Some(bounds) = restriction(&[t_hat], &ranges, &sizes, carried)?
-            && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1)
-        {
-            queue.push_back(restricted);
-            continue;
-        }
-
-        let halves = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
-            Stalled::Converged => None,
-            Stalled::Bisect(order) if order.is_empty() => None,
-            // Cannot split (e.g. midpoint already at multiplicity p+1).
-            Stalled::Bisect(_) => seg.split_mid().ok(),
-        };
-        match halves {
-            Some((left, right)) => {
-                queue.push_back(left);
-                queue.push_back(right);
+    let searched = subdivide(
+        [curve.clone()],
+        Order::BreadthFirst,
+        max_nodes,
+        |seg, _| -> GeopResult<_> {
+            // Cheap prefilter against the cached bounding box.
+            if !aabb_could_contain(&seg.aabb, point) {
+                return Ok(Split::Done);
             }
-            None => report(t_hat),
-        }
+
+            let Some(xi) =
+                greville_abscissae(&seg.knot_vector, seg.degree, seg.control_points.len())?
+            else {
+                // Degree 0 has no graph polygon to clip; the box test above is
+                // all we can say.
+                report(seg.domain_as_scalar());
+                return Ok(Split::Done);
+            };
+            let Some(t_hat) = clip(&seg, &xi, point) else {
+                return Ok(Split::Done);
+            };
+
+            let ranges = [seg.domain()];
+            let sizes = [extent([seg.control_points.iter().copied()])];
+            // The query point's own width counts too, like a second object's.
+            let point_width = (0..C)
+                .map(|k| point[k].width().to_f64())
+                .fold(0.0, f64::max);
+            let carried = carried_width(&seg.control_points).max(point_width);
+            if let Some(bounds) = restriction(&[t_hat], &ranges, &sizes, carried)?
+                && let Ok(restricted) = seg.sub_curve(bounds[0].0, bounds[0].1)
+            {
+                return Ok(Split::Restrict(restricted));
+            }
+
+            let halves = match stalled(&ranges, &sizes, carried, min_subdivision_size) {
+                Stalled::Converged => None,
+                Stalled::Bisect(order) if order.is_empty() => None,
+                // Cannot split (e.g. midpoint already at multiplicity p+1).
+                Stalled::Bisect(_) => seg.split_mid().ok(),
+            };
+            Ok(match halves {
+                Some((left, right)) => Split::Halves(left, right),
+                None => {
+                    report(t_hat);
+                    Split::Done
+                }
+            })
+        },
+    )?;
+    if let Searched::Exhausted { pending } = searched {
+        return Err(GeopError::new(format!(
+            "curve_could_contain (clipping): exhausted max_nodes={max_nodes} with {pending} \
+             segments pending; the result would be incomplete"
+        )));
     }
 
     Ok(solution)

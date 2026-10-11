@@ -20,7 +20,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, CoedgeGeometry, EdgeId, FaceId, Model, ShellId, VertexId,
+    Body, EdgeId, FaceId, Model, ShellId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
 use geop_ops::{NamedModel, Namer};
@@ -42,11 +42,7 @@ const FACE_CONTAINS_SEED: u64 = 0x5DEE_CE66_D1CE_4E5B;
 fn body_edges<S: Scalar>(model: &Model<S>, body: Body) -> GeopResult<HashSet<EdgeId>> {
     let mut edges = HashSet::new();
     for face in model.body_faces(body)? {
-        for coedge in model.iterate_face_coedges(face) {
-            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
-                edges.insert(edge);
-            }
-        }
+        edges.extend(model.face_edges(face));
     }
     Ok(edges)
 }

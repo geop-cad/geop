@@ -82,8 +82,9 @@
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
-    nurb_curve::{NurbCurve, NurbCurve3D, true_point_fractions},
+    nurb_curve::{NurbCurve, NurbCurve3D, bezier_knots, true_point_fractions},
     nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -93,15 +94,16 @@ use geop_core_math::{
         bisect::{Bracket, bisect},
         iterate::{Repeat, Step, iterate},
         linear::solve_linear_system,
+        probe::{Probe, probe},
+        refine::{Refine, Refined, refine},
     },
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 use geop_ops::NamedModel;
-use geop_ops_booleans::remesh::remesh::RemeshParams;
 
-use crate::blend::{Bend, End, bend, check_touch_at, faces, point, tool_end};
+use crate::blend::{Bend, End, bend, check_touch_at, faces, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 
 /// Stations per edge of a chain to start with.
@@ -124,8 +126,10 @@ pub const DEVIATION: f64 = 1e-6;
 const TILT: f64 = DEVIATION;
 /// Newton iterations placing the ball at a station.
 const NEWTON_ITERATIONS: usize = 30;
-/// Newton iterations of each foot-point projection.
-const PROJECT_ITERATIONS: usize = 20;
+/// How often the reach for a bracket of where the ball rolls across an
+/// edge doubles, at most: `2^64` times the first reach is past any edge's
+/// domain, which ends the search first.
+const MOST_WIDENINGS: usize = 64;
 
 /// One edge of a chain, as the chain runs along it: along the edge's own
 /// direction, `forward`, or against it; with the faces on its left and
@@ -138,6 +142,30 @@ pub(crate) struct Link {
 }
 
 impl Link {
+    /// The unit tangent of the edge at `p`, where its faces' normals there
+    /// are `normals`: square to both, turned to run `along` the link. An
+    /// error where the faces could meet tangentially.
+    fn tangent<S: Scalar>(
+        &self,
+        normals: [Vector3<S>; 2],
+        along: &Vector3<S>,
+        p: &Vector3<S>,
+    ) -> GeopResult<Vector3<S>> {
+        let across = normals[0].prod_cross(&normals[1]);
+        if across.prod_dot(along).definitely_less(S::ZERO) {
+            across.neg()
+        } else {
+            across
+        }
+        .normalize()
+        .map_err(|_| {
+            GeopError::new(format!(
+                "faces {} and {} could meet tangentially at {p:?} on edge {}: there is no corner to blend there (normals {:?} and {:?})",
+                self.faces[0], self.faces[1], self.edge, normals[0], normals[1]
+            ))
+        })
+    }
+
     fn new<S: Scalar>(model: &Model<S>, edge: EdgeId, forward: bool) -> GeopResult<Self> {
         let [l, r] = faces(model, edge)?;
         Ok(Link {
@@ -236,7 +264,7 @@ impl Chain {
 
 /// Whether the unit vectors `a` and `b` could point the same way.
 fn same_direction<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> bool {
-    a.prod_cross(b).norm_sq().could_be_equal(S::ZERO) && a.prod_dot(b).definitely_greater(S::ZERO)
+    a.could_be_parallel(b) && a.prod_dot(b).definitely_greater(S::ZERO)
 }
 
 /// The `(u, v)` of `point` on `surface`, sharp — a seed — found globally
@@ -245,13 +273,7 @@ pub(crate) fn seed_on<S: Scalar>(
     surface: &NurbSurface3D<S>,
     point: &Vector3<S>,
 ) -> GeopResult<(S, S)> {
-    let params = RemeshParams::<S>::default();
-    let found = surface_could_contain(
-        surface,
-        point,
-        params.max_nodes,
-        params.min_subdivision_size,
-    )?;
+    let found = surface_could_contain(surface, point, MAX_NODES, min_subdivision_size())?;
     let (u, v) = match found {
         Some(uv) => uv,
         None => {
@@ -285,9 +307,7 @@ pub(crate) fn foot<S: Scalar>(
     target: &Vector3<S>,
     seed: (S, S),
 ) -> GeopResult<(S, S)> {
-    let (u, v) = surface.project(*target, seed.0, seed.1, PROJECT_ITERATIONS)?;
-    let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-    Ok((u.intersect(u0.union(u1)), v.intersect(v0.union(v1))))
+    surface.project_in_domain(*target, seed.0, seed.1, PROJECT_ITERATIONS)
 }
 
 /// `(u, v)` sharpened, within the domain of `surface`: a seed.
@@ -414,6 +434,7 @@ pub struct Radii {
 
 impl Radii {
     /// The same radius everywhere.
+    #[cfg(test)]
     pub fn constant(radius: f64) -> Self {
         Radii {
             radius,
@@ -710,19 +731,7 @@ fn place<S: Scalar>(
         let (u, v) = foot(surface, &p, seed)?;
         normals[k] = surface.normal(u, v)?;
     }
-    let across = normals[0].prod_cross(&normals[1]);
-    let tangent = if across.prod_dot(&along).definitely_less(S::ZERO) {
-        across.neg()
-    } else {
-        across
-    }
-    .normalize()
-    .map_err(|_| {
-        GeopError::new(format!(
-            "faces {} and {} could meet tangentially at {p:?} on edge {}: there is no corner to blend there (normals {:?} and {:?})",
-            own.faces[0], own.faces[1], own.edge, normals[0], normals[1]
-        ))
-    })?;
+    let tangent = own.tangent(normals, &along, &p)?;
     let sides = sides(chain);
     // The pairs of faces to try: the link's own first.
     let mut pairs = vec![own.faces];
@@ -877,18 +886,17 @@ fn section<S: Scalar>(
 /// the middle (weighted — a chord's of weight one, taken as it is), the
 /// contact on the right, the apex.
 fn section_points<S: Scalar>(station: &Station<S>) -> [Vector4<S>; 4] {
-    let h = |p: &Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
     let w = station.weight;
     let e = station.corner;
     [
-        h(&station.contact[0].sharpen()),
+        station.contact[0].sharpen().homogeneous(S::ONE),
         if station.chord {
-            h(&e)
+            e.homogeneous(S::ONE)
         } else {
             Vector4::from_array([e[0].mul(w), e[1].mul(w), e[2].mul(w), w])
         },
-        h(&station.contact[1].sharpen()),
-        h(&station.apex),
+        station.contact[1].sharpen().homogeneous(S::ONE),
+        station.apex.homogeneous(S::ONE),
     ]
 }
 
@@ -926,19 +934,7 @@ fn chamfer_frame<S: Scalar>(
     let [n0, n1] = normals[..] else {
         return Ok((p, along.normalize()?, feet));
     };
-    let across = n0.prod_cross(&n1);
-    let tangent = if across.prod_dot(&along).definitely_less(S::ZERO) {
-        across.neg()
-    } else {
-        across
-    }
-    .normalize()
-    .map_err(|_| {
-        GeopError::new(format!(
-            "faces {} and {} could meet tangentially at {p:?} on edge {}: there is no corner to blend there",
-            own.faces[0], own.faces[1], own.edge
-        ))
-    })?;
+    let tangent = own.tangent([n0, n1], &along, &p)?;
     Ok((p, tangent, feet))
 }
 
@@ -1138,7 +1134,7 @@ fn chamfer_crossing<S: Scalar>(
     }
     // Bisection: where along the chain is a free choice up to where the
     // chamfer's point lies on the edge, and the halves only close in on it.
-    let bracket = bisect(lo_c, hi_c, 60, false, |mid| -> GeopResult<_> {
+    let bracket = bisect(lo_c, hi_c, 60, false, |_, mid| -> GeopResult<_> {
         let (g, tm, ..) = at(mid, t)?;
         t = tm;
         Ok(Some(g.signum() == g_lo.signum()))
@@ -1419,27 +1415,36 @@ fn crossing<S: Scalar>(
     let (domain_lo, domain_hi) = (domain_lo.midpoint().to_f64(), domain_hi.midpoint().to_f64());
     let speed = curve.tangent(t0)?.norm().midpoint().to_f64();
     let middle = 0.5 * (f0 + f1);
-    let mut reach = (0.5 * (f1 - f0).abs()).max(0.01 * radius.abs().midpoint().to_f64() / speed);
-    let (mut lo, mut hi, mut g_lo);
-    loop {
-        lo = (middle - reach).max(domain_lo);
-        hi = (middle + reach).min(domain_hi);
-        g_lo = ball(lo)?.0;
-        let g_hi = ball(hi)?.0;
-        if g_lo.signum() != g_hi.signum() {
-            break;
-        }
-        if lo <= domain_lo && hi >= domain_hi {
-            return Err(GeopError::new(format!(
-                "cannot find where the ball rolls from face {from} onto face {onto} across edge {edge}: it is {g_lo:e} and {g_hi:e} off touching face {} at either end of it",
-                before.faces[o]
-            )));
-        }
-        reach *= 2.0;
-    }
+    let first_reach = (0.5 * (f1 - f0).abs()).max(0.01 * radius.abs().midpoint().to_f64() / speed);
+    let bracket = probe(
+        first_reach,
+        MOST_WIDENINGS,
+        |reach| Ok(reach * 2.0),
+        |&reach| -> GeopResult<_> {
+            let lo = (middle - reach).max(domain_lo);
+            let hi = (middle + reach).min(domain_hi);
+            let g_lo = ball(lo)?.0;
+            let g_hi = ball(hi)?.0;
+            if g_lo.signum() != g_hi.signum() {
+                return Ok(Probe::Found((lo, hi, g_lo)));
+            }
+            if lo <= domain_lo && hi >= domain_hi {
+                return Err(GeopError::new(format!(
+                    "cannot find where the ball rolls from face {from} onto face {onto} across edge {edge}: it is {g_lo:e} and {g_hi:e} off touching face {} at either end of it",
+                    before.faces[o]
+                )));
+            }
+            Ok(Probe::Next)
+        },
+    )?;
+    let Some((lo, hi, g_lo)) = bracket else {
+        return Err(GeopError::new(format!(
+            "cannot find where the ball rolls from face {from} onto face {onto} across edge {edge}: a reach of {first_reach:e} doubled {MOST_WIDENINGS} times brackets no crossing"
+        )));
+    };
     // Bisection: where along the edge is a free choice up to where the
     // ball touches both, and the halves only ever close in on that.
-    let bracket = bisect(lo, hi, 60, true, |mid| -> GeopResult<_> {
+    let bracket = bisect(lo, hi, 60, true, |_, mid| -> GeopResult<_> {
         Ok(Some(ball(mid)?.0.signum() == g_lo.signum()))
     })?;
     let t = 0.5 * (bracket.lo + bracket.hi);
@@ -1448,7 +1453,7 @@ fn crossing<S: Scalar>(
     let onto_surface = &model.get_face(onto)?.surface;
     let (u2, v2) = foot(onto_surface, &contact[k], after.uv[k])?;
     let n2 = onto_surface.normal(u2, v2)?.normalize()?;
-    if !normals[k].prod_cross(&n2).norm_sq().could_be_equal(S::ZERO) {
+    if !normals[k].could_be_parallel(&n2) {
         return Err(GeopError::new(format!(
             "faces {from} and {onto} meet at a crease along edge {edge} where the ball rolls across it: a rolling-ball blend only rolls from one face onto another tangent to it"
         )));
@@ -1684,7 +1689,7 @@ fn fillet_placing<'a, S: Scalar>(
             if off_lo.signum() == off(cb)?.signum() {
                 return Ok(0.5);
             }
-            let Bracket { lo, hi, .. } = bisect(ca, cb, 60, false, |mid| -> GeopResult<_> {
+            let Bracket { lo, hi, .. } = bisect(ca, cb, 60, false, |_, mid| -> GeopResult<_> {
                 Ok(Some(off(mid)?.signum() == off_lo.signum()))
             })?;
             Ok((0.5 * (lo + hi) - ca) / (cb - ca))
@@ -1828,7 +1833,7 @@ fn span_deviation<S: Scalar>(
         let mut worst = (0.0f64, String::new());
         for (s, station) in between.iter().flatten() {
             for (k, truth) in section_points(station).iter().enumerate() {
-                let (got, truth) = (curves[k].evaluate(*s)?, point(truth)?);
+                let (got, truth) = (curves[k].evaluate(*s)?, truth.dehomogenized()?);
                 let d = distance(&got, &truth);
                 if d > worst.0 {
                     worst = (
@@ -1886,7 +1891,10 @@ fn span_deviation<S: Scalar>(
             }
         }
         let truth = section_points(station);
-        let middle = point(&truth[0].add(&truth[1].prod_scalar(S::TWO)).add(&truth[2]))?;
+        let middle = truth[0]
+            .add(&truth[1].prod_scalar(S::TWO))
+            .add(&truth[2])
+            .dehomogenized()?;
         let (u, v) = foot(&blend, &middle, (*s, half))?;
         let got = blend.evaluate(u, v)?;
         note(
@@ -2013,7 +2021,7 @@ pub(crate) fn chain_bend<S: Scalar>(model: &Model<S>, chain: &Chain) -> GeopResu
         let (p, t) = link.at(model, fraction)?;
         let n_l = normal_at(model, link.faces[0], &p)?;
         let n_r = normal_at(model, link.faces[1], &p)?;
-        if n_l.prod_cross(&n_r).norm_sq().could_be_equal(S::ZERO) {
+        if n_l.could_be_parallel(&n_r) {
             return Err(GeopError::new(format!(
                 "faces {} and {} could meet tangentially at edge {}: there is no corner to blend",
                 link.faces[0], link.faces[1], link.edge
@@ -2057,21 +2065,31 @@ fn corner_position<S: Scalar>(
     let end = if k == 0 { 0.0 } else { links };
     let inward = if k == 0 { 1.0 } else { -1.0 };
     let step = 1.0 / 32.0;
+    // Marched on from the end until the center is no longer ahead: a
+    // bracket, the step before and the one there.
+    let missed = || {
+        GeopError::new(format!(
+            "the corner's ball, centered at {center:?}, meets no section of the blend along its chain"
+        ))
+    };
     let mut near = end;
-    let mut far = end;
-    loop {
-        far += inward * step;
-        if (far - end).abs() > links {
-            return Err(GeopError::new(format!(
-                "the corner's ball, centered at {center:?}, meets no section of the blend along its chain"
-            )));
-        }
-        if ahead(far)? <= 0.0 {
-            break;
-        }
-        near = far;
-    }
-    let Bracket { lo, hi, .. } = bisect(near, far, 60, false, |mid| -> GeopResult<_> {
+    let far = probe(
+        end + inward * step,
+        (links / step) as usize + 2,
+        |far| Ok(far + inward * step),
+        |&far| -> GeopResult<_> {
+            if (far - end).abs() > links {
+                return Err(missed());
+            }
+            if ahead(far)? <= 0.0 {
+                return Ok(Probe::Found(far));
+            }
+            near = far;
+            Ok(Probe::Next)
+        },
+    )?
+    .ok_or_else(missed)?;
+    let Bracket { lo, hi, .. } = bisect(near, far, 60, false, |_, mid| -> GeopResult<_> {
         Ok(Some(ahead(mid)? > 0.0))
     })?;
     Ok(0.5 * (lo + hi))
@@ -2184,9 +2202,10 @@ fn refined<S: Scalar>(
     roll: impl Fn(usize) -> GeopResult<Rolling<S>>,
 ) -> GeopResult<(Rolling<S>, Vec<[NurbCurve3D<S>; 4]>)> {
     let smallest = size;
-    let mut n = FIRST_STATIONS;
     let mut before = f64::INFINITY;
-    loop {
+    // The cap ends it, with an error: `n` doubles each step, so it passes
+    // any cap within as many steps as it has bits.
+    let refined = refine(FIRST_STATIONS, usize::BITS as usize, |n| -> GeopResult<_> {
         let rolling = roll(n)?;
         let mut curves = Vec::new();
         let mut deviation = 0.0f64;
@@ -2201,7 +2220,7 @@ fn refined<S: Scalar>(
             curves.push(c);
         }
         if deviation <= DEVIATION * smallest {
-            return Ok((rolling, curves));
+            return Ok(Refine::Done((rolling, curves)));
         }
         // Doubling the stations of a cubic shrinks its deviation sixteen
         // times over; one that does not even halve is not converging, and
@@ -2216,7 +2235,13 @@ fn refined<S: Scalar>(
             )));
         }
         before = deviation;
-        n *= 2;
+        Ok(Refine::Finer(n * 2))
+    })?;
+    match refined {
+        Refined::Done(done) => Ok(done),
+        Refined::Exhausted(n) => Err(GeopError::new(format!(
+            "the blend's stations doubled to {n} per edge past every cap"
+        ))),
     }
 }
 
@@ -2400,7 +2425,7 @@ fn assemble<S: Scalar>(
                     };
                     let line = |a: [Vector4<S>; 4], b: [Vector4<S>; 4]| ToolSpan {
                         degree: 1,
-                        knots: vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                        knots: bezier_knots(1),
                         rows: vec![a, b],
                         name: Some(name.to_string()),
                     };

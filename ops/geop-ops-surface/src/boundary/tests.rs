@@ -96,7 +96,13 @@ pub(crate) fn coons_sheet(part: &mut NamedModel<S>, name: &str, sides: [Curve3<S
                 end: (k + 1) % 4,
             })
             .collect(),
-        faces: vec![patch_face(surface, [0, 1, 2, 3].map(|k| (k, Sense::Forward))).unwrap()],
+        faces: vec![
+            FaceSpec::on_unit_square(
+                surface,
+                [0, 1, 2, 3].map(|k| CoedgeOn::Edge(k, Sense::Forward)),
+            )
+            .unwrap(),
+        ],
         shells: vec![vec![0]],
         solid: false,
     };
@@ -110,7 +116,7 @@ pub(crate) fn coons_sheet(part: &mut NamedModel<S>, name: &str, sides: [Curve3<S
 }
 
 pub(crate) fn line(a: [f64; 3], b: [f64; 3]) -> Curve3<S> {
-    line3(v3(a[0], a[1], a[2]), v3(b[0], b[1], b[2])).unwrap()
+    NurbCurve3D::line(v3(a[0], a[1], a[2]), v3(b[0], b[1], b[2])).unwrap()
 }
 
 /// The quarter circle in the plane `x = x0` from `(x0, 0, 0)` round the

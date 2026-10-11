@@ -22,21 +22,25 @@ mod feature;
 mod ids;
 mod mesh;
 mod names;
+mod records;
 mod resolve;
 mod sketch;
 mod state;
+mod threads;
 
 pub use datum::{datum, datum_name};
 pub use describe::{EdgeDescription, FaceDescription, PartDescription};
 pub use edit::BodyNames;
-pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool};
+pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool, ToolReach};
 pub use ids::RefId;
 pub use mesh::SolidMeshes;
 pub use names::{
-    LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, validate_operation_id,
+    LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, origin_of, validate_operation_id,
 };
+pub use records::Records;
 pub use sketch::{PlacedSketch, PlacedSketch3d, sketch, sketch_name, sketch3d, sketch3d_name};
 pub use state::{ParamValue, pose_parameter};
+pub use threads::{CosmeticThread, Threads, draw_threads, threads};
 
 use crate::{Design, operation::Input};
 
@@ -137,6 +141,45 @@ impl<S: Scalar> NamedModel<S> {
 
     pub fn id_of(&self, name: &str) -> Option<RefId> {
         self.names.id_of(name)
+    }
+
+    /// The vertices, edges and faces `text` — a validation report, which
+    /// knows only ids — mentions, as `id = name`, sorted.
+    pub fn names_mentioned(&self, text: &str) -> Vec<String> {
+        let model = &self.topology;
+        let mentioned = |forms: [String; 3]| forms.iter().any(|f| text.contains(f.as_str()));
+        let mut names = Vec::new();
+        let mut name =
+            |id: RefId| names.push(format!("{id} = {}", self.name_of(id).unwrap_or("?")));
+        for &id in model.vertices.keys() {
+            if mentioned([
+                format!("{id}"),
+                format!("vertex {} ", id.0),
+                format!("vertex {}'", id.0),
+            ]) {
+                name(id.into());
+            }
+        }
+        for &id in model.edges.keys() {
+            if mentioned([
+                format!("{id}"),
+                format!("edge {} ", id.0),
+                format!("edge {}'", id.0),
+            ]) {
+                name(id.into());
+            }
+        }
+        for &id in model.faces.keys() {
+            if mentioned([
+                format!("{id}"),
+                format!("face {} ", id.0),
+                format!("face {},", id.0),
+            ]) {
+                name(id.into());
+            }
+        }
+        names.sort();
+        names
     }
 
     /// Gives `id` the name `new_name` instead — see [`NameRegistry::rename`]

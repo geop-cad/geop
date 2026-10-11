@@ -31,10 +31,10 @@ use geop_core_math::{
 use geop_core_sketch::{Shape, Sketch};
 use geop_core_topology::{SolidId, build::BuiltBody};
 use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, BuildView, EntityRef, Lookup, Role, Scope, Seen},
+    Design, NamedModel, Namer, ToolReach,
+    operation::{BuildReader, EntityRef, Lookup, Scope},
     parameters::{Formula, expressions},
-    ui::{Dialog, Number, Tone, Value},
+    ui::{Dialog, Number, Value},
 };
 use geop_ops_booleans::{
     Combine, Extent, Tool,
@@ -46,23 +46,6 @@ use geop_ops_booleans::{
 use serde::{Deserialize, Serialize};
 
 use crate::sweep::SweepLoop;
-
-/// The field `key` of a dialog, labelled the same, picking `sketches` —
-/// one, unless `many` — or, before there is any sketch, a hint to draw one.
-fn sketch_field<S: Scalar>(
-    dialog: &mut Dialog<S>,
-    view: &BuildView,
-    key: &str,
-    sketches: &[String],
-    many: bool,
-) {
-    if Seen::new(*view).sketch_names().is_empty() {
-        dialog.text(key, "No sketch yet — add one first.", Tone::Hint);
-        return;
-    }
-    let value = EntityRef::of_names(EntityRef::sketch, sketches);
-    dialog.reference(key, key, value, &[Role::Sketch], None, many);
-}
 
 /// What a step sweeping a profile makes of it: a solid — kept as a new
 /// body, or combined with another solid as [`Combine`] says — or faces
@@ -167,7 +150,7 @@ impl Output {
             ("face", Value::Bool(_), _) => true,
             (key, value, Output::Solid(combine)) => combine.set(key, value, before),
             ("combine_target", Value::Entities(picked), Output::Faces { up_to }) => {
-                *up_to = EntityRef::names_of(EntityRef::solid, picked).pop();
+                *up_to = EntityRef::last_name(EntityRef::solid, picked);
                 true
             }
             _ => false,
@@ -477,10 +460,12 @@ fn build_extents(
                 // `start`, and its far one `end`.
                 tools.push(Tool {
                     solid: built.solid.expect("swept as a solid"),
-                    up_to_next: side
-                        .up_to_next
-                        .then(|| (named.name(&["start"]), named.name(&["end"]))),
-                    scope: (k > 0).then(|| format!("side{}", k + 1)),
+                    reach: ToolReach {
+                        up_to_next: side
+                            .up_to_next
+                            .then(|| (named.name(&["start"]), named.name(&["end"]))),
+                        scope: (k > 0).then(|| format!("side{}", k + 1)),
+                    },
                 });
             }
             combine_sides(model, namer, step, combine, tools, &sides, &stops, sweeping)
@@ -580,7 +565,7 @@ fn combine_sides(
         Ok::<_, GeopError>(built.solid.expect("swept as a solid"))
     };
     for k in 0..tools.len() {
-        let Some(caps) = tools[k].up_to_next.take() else {
+        let Some(caps) = tools[k].reach.up_to_next.take() else {
             continue;
         };
         let solid = tools[k].solid;
@@ -603,8 +588,10 @@ fn combine_sides(
                 // tool starting there would: ending on the faces it meets.
                 let rest = Tool {
                     solid: rebuild(model, k, contact, far)?,
-                    up_to_next: Some(caps),
-                    scope: tools[k].scope.clone(),
+                    reach: ToolReach {
+                        up_to_next: Some(caps),
+                        scope: tools[k].reach.scope.clone(),
+                    },
                 };
                 let mut trial = model.clone();
                 let alone = std::slice::from_ref(&rest);

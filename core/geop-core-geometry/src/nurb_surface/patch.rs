@@ -15,7 +15,7 @@ use geop_core_math::{
 
 use super::NurbSurface3D;
 use crate::{
-    nurb_curve::{NurbCurve, NurbCurve3D},
+    nurb_curve::{NurbCurve, NurbCurve3D, bezier_knots},
     shape::Plane,
 };
 
@@ -33,29 +33,6 @@ fn greville<S: Scalar>(knots: &[S], degree: usize, n: usize) -> GeopResult<Vec<S
                 .div(p)
         })
         .collect()
-}
-
-fn exactly_one<S: Scalar>(w: S) -> bool {
-    w.is_subset_of(S::ONE) && S::ONE.is_subset_of(w)
-}
-
-/// The point the homogeneous control point `p` stands for.
-fn point<S: Scalar>(p: &Vector4<S>) -> GeopResult<Vector3<S>> {
-    Ok(Vector3::from_array([
-        p[0].div(p[3])?,
-        p[1].div(p[3])?,
-        p[2].div(p[3])?,
-    ]))
-}
-
-/// `p` with weight `w`, homogeneous — taken as it is where the weight is
-/// exactly one: multiplying by it would only widen it by rounding.
-fn weighted<S: Scalar>(p: &Vector3<S>, w: S) -> Vector4<S> {
-    if exactly_one(w) {
-        Vector4::from_array([p[0], p[1], p[2], w])
-    } else {
-        Vector4::from_array([p[0].mul(w), p[1].mul(w), p[2].mul(w), w])
-    }
 }
 
 /// `a` and `b` on the domain `[0, 1]`, made compatible (see
@@ -82,6 +59,23 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// the two curves exactly.
     pub fn ruled(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) -> GeopResult<Self> {
         let (a, b) = compatible_pair(a, b)?;
+        Self::ruled_compatible(&a, &b)
+    }
+
+    /// The ruled surface between `a`, at `v = 0`, and `b`, at `v = 1`, which
+    /// are already alike — of one degree, as many control points and knots —
+    /// taken as they are: its `u` runs over `a`'s knots, not brought onto
+    /// `[0, 1]`. Exact, since its sides along `u` are the curves' own control
+    /// points.
+    pub fn ruled_compatible(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) -> GeopResult<Self> {
+        if a.degree != b.degree
+            || a.control_points.len() != b.control_points.len()
+            || a.knot_vector.len() != b.knot_vector.len()
+        {
+            return Err(GeopError::new(format!(
+                "NurbSurface::ruled_compatible: the curves are not alike: {a:?} and {b:?}"
+            )));
+        }
         let control_points = a
             .control_points
             .iter()
@@ -93,7 +87,25 @@ impl<S: Scalar> NurbSurface3D<S> {
             1,
             control_points,
             a.knot_vector.clone(),
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            bezier_knots(1),
+        )
+    }
+
+    /// The bilinear patch with corners `p00` at `(u, v) = (0, 0)`, `p10` at
+    /// `(1, 0)`, `p11` at `(1, 1)` and `p01` at `(0, 1)`, over `[0, 1]²` —
+    /// a plane's, where the four lie in one.
+    pub fn bilinear(
+        p00: Vector3<S>,
+        p10: Vector3<S>,
+        p11: Vector3<S>,
+        p01: Vector3<S>,
+    ) -> GeopResult<Self> {
+        NurbSurface3D::try_new(
+            1,
+            1,
+            [p00, p01, p10, p11].map(|p| p.homogeneous(S::ONE)).to_vec(),
+            bezier_knots(1),
+            bezier_knots(1),
         )
     }
 
@@ -123,8 +135,8 @@ impl<S: Scalar> NurbSurface3D<S> {
         let right = unit(sides[1])?;
         let top = unit(&sides[2].reverse())?;
         let left = unit(&sides[3].reverse())?;
-        let first = |c: &NurbCurve3D<S>| point(&c.control_points[0]);
-        let last = |c: &NurbCurve3D<S>| point(&c.control_points[c.control_points.len() - 1]);
+        let first = |c: &NurbCurve3D<S>| c.start();
+        let last = |c: &NurbCurve3D<S>| c.end();
         for (k, (end, start)) in [
             (last(&bottom)?, first(&right)?),
             (last(&right)?, last(&top)?),
@@ -154,7 +166,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         let p11 = t[nu - 1].union(&r[nv - 1]);
         let rational = [b, t, l, r]
             .iter()
-            .any(|row| row.iter().any(|p| !exactly_one(p[3])));
+            .any(|row| row.iter().any(|p| !p[3].is_exactly(S::ONE)));
 
         let mut control_points = Vec::with_capacity(nu * nv);
         for i in 0..nu {
@@ -370,7 +382,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                     _ => i == 0,
                 });
             for (i, j) in on_side {
-                let p = point(&original[at(i, j)])?;
+                let p = original[at(i, j)].dehomogenized()?;
                 if !plane.signed_distance(&p).could_be_equal(S::ZERO) {
                     return Err(GeopError::new(format!(
                         "NurbSurface::tangent_to_planes: side {k} leaves its plane at control point {p:?}"
@@ -394,7 +406,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                 }
                 let on_border = i == 0 || j == 0 || i == nu - 1 || j == nv - 1;
                 let cp = original[at(i, j)];
-                let p = point(&cp)?;
+                let p = cp.dehomogenized()?;
                 let moved = if on_border {
                     // The second control point of a side meeting this one:
                     // kept, and so it must be in the plane already.
@@ -430,7 +442,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                     }
                 };
                 for &(k, _, away, (bi, bj)) in &constraints {
-                    let base = point(&original[at(bi, bj)])?;
+                    let base = original[at(bi, bj)].dehomogenized()?;
                     if !moved.sub(&base).prod_dot(away).definitely_greater(S::ZERO) {
                         return Err(GeopError::new(format!(
                             "NurbSurface::tangent_to_planes: at control point ({i}, {j}) the patch does not leave side {k} away from the face it continues: it would fold back over it"
@@ -438,7 +450,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                     }
                 }
                 if !on_border {
-                    surface.control_points[at(i, j)] = weighted(&moved, cp[3]);
+                    surface.control_points[at(i, j)] = moved.homogeneous(cp[3]);
                 }
             }
         }
@@ -470,12 +482,7 @@ mod tests {
     }
 
     fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve3D<S> {
-        NurbCurve::try_new(
-            1,
-            vec![pt(a[0], a[1], a[2], 1.0), pt(b[0], b[1], b[2], 1.0)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        )
-        .unwrap()
+        NurbCurve3D::line(v(a[0], a[1], a[2]), v(b[0], b[1], b[2])).unwrap()
     }
 
     /// The quarter circle in the plane `x = x0` from `(x0, 0, 0)` round
@@ -688,5 +695,26 @@ mod tests {
     #[test]
     fn tangent_to_a_plane() {
         for_all_scalars!(check_tangent_to_a_plane);
+    }
+
+    /// A bilinear patch through four corners, not in one plane, has them
+    /// at the corners of its domain.
+    fn check_bilinear_has_its_corners<S: Scalar>() {
+        let corners = [
+            v::<S>(0.3, -1.2, 2.5),
+            v(4.1, 0.7, -0.3),
+            v(2.2, 3.3, 1.1),
+            v(-1.5, 2.0, 0.6),
+        ];
+        let surface =
+            NurbSurface3D::bilinear(corners[0], corners[1], corners[2], corners[3]).unwrap();
+        for (p, (u, w)) in corners.iter().zip([(0, 0), (1, 0), (1, 1), (0, 1)]) {
+            let at = surface.evaluate(S::from_i64(u), S::from_i64(w)).unwrap();
+            assert!(at.could_be_equal(p), "at ({u}, {w}): {at:?}, not {p:?}");
+        }
+    }
+    #[test]
+    fn bilinear_has_its_corners() {
+        for_all_scalars!(check_bilinear_has_its_corners);
     }
 }

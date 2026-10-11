@@ -16,7 +16,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector3, Vector4},
+    vector::Vector3,
 };
 
 use crate::{
@@ -27,11 +27,6 @@ use crate::{
 /// Whether `v` could be the zero vector.
 fn could_be_zero<S: Scalar>(v: &Vector3<S>) -> bool {
     v.norm_sq().could_be_equal(S::ZERO)
-}
-
-/// Whether the unit vectors `a` and `b` could be parallel, in either sense.
-fn could_be_parallel<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> bool {
-    could_be_zero(&a.prod_cross(b))
 }
 
 /// A straight line: through `point`, along the unit vector `direction`.
@@ -65,7 +60,7 @@ impl<S: Scalar> Axis<S> {
 
     /// Whether `other` could run parallel to this line, either way.
     pub fn could_be_parallel(&self, other: &Axis<S>) -> bool {
-        could_be_parallel(&self.direction, &other.direction)
+        self.direction.could_be_parallel(&other.direction)
     }
 
     /// Where the two lines come closest: halfway between the point of each
@@ -236,20 +231,15 @@ impl<S: Scalar> Arc<S> {
         points.push(self.end);
         let c = &self.circle.center;
         let r2 = self.circle.radius.mul(self.circle.radius);
-        // The ends of the pieces weigh one: taken as they are, not
-        // multiplied by it, which would only widen them by rounding.
-        let end = |p: &Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
-        let middle_point =
-            |p: &Vector3<S>, w: S| Vector4::from_array([p[0].mul(w), p[1].mul(w), p[2].mul(w), w]);
-        let mut control_points = vec![end(&points[0])];
+        let mut control_points = vec![points[0].homogeneous(S::ONE)];
         let mut knots = vec![S::ZERO; 3];
         for k in 0..pieces {
             let (a, b) = (points[k].sub(c), points[k + 1].sub(c));
             let one_plus_cos = S::ONE.add(a.prod_dot(&b).div(r2)?);
             let middle = c.add(&a.add(&b).prod_scalar(S::ONE.div(one_plus_cos)?));
             let weight = one_plus_cos.div(S::TWO)?.sqrt()?;
-            control_points.push(middle_point(&middle, weight));
-            control_points.push(end(&points[k + 1]));
+            control_points.push(middle.homogeneous(weight));
+            control_points.push(points[k + 1].homogeneous(S::ONE));
             if k + 1 < pieces {
                 let knot = S::from_ratio(k as i64 + 1, pieces as i64)?;
                 knots.extend([knot, knot]);
@@ -784,7 +774,7 @@ mod tests {
         let cylinder = quarter_cylinder::<S>();
         let axis = cylinder.axis_of_revolution().unwrap().expect("a cylinder");
         assert!(axis.could_contain(&v(0., 0., 7.)));
-        assert!(could_be_parallel(&axis.direction, &v(0., 0., 1.)));
+        assert!(axis.direction.could_be_parallel(&v(0., 0., 1.)));
         assert!(cylinder.as_plane().unwrap().is_none());
 
         // Twisted: the top ring starts a little further round.
@@ -848,7 +838,7 @@ mod tests {
         assert!(z.project(&v(4., 5., 6.)).could_be_equal(&v(4., 5., 2.)));
         let line = z.intersect_plane(&x).unwrap();
         assert!(line.could_contain(&v(1., 7., 2.)));
-        assert!(could_be_parallel(&line.direction, &v(0., 1., 0.)));
+        assert!(line.direction.could_be_parallel(&v(0., 1., 0.)));
         let slanted = Axis::try_new(v(0., 0., 0.), v(1., 1., 1.)).unwrap();
         assert!(
             z.intersect_axis(&slanted)

@@ -334,9 +334,8 @@ dependencies = [
  "geop-core-math",
  "geop-ops",
  "geop-ops-extrude-revolve",
- "geop-ops-harness",
- "geop-ops-sheetmetal",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -379,7 +378,6 @@ dependencies = [
  "geop-ops-bom",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",
- "geop-ops-hole",
  "serde",
  "serde_json",
 ]
@@ -482,7 +480,6 @@ dependencies = [
  "geop-ops",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",
- "geop-ops-hole",
  "geop-ops-rasterize",
  "serde",
 ]

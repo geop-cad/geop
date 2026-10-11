@@ -40,6 +40,7 @@ use geop_core_math::{
     solvers::{
         iterate::{Repeat, Step, iterate},
         linear::solve_linear_system,
+        refine::{Refine, Refined, refine},
     },
     vector::{Vector, Vector3},
     with_context,
@@ -51,7 +52,10 @@ use geop_core_topology::{
 use geop_ops::NamedModel;
 
 use crate::naming::BooleanNaming;
-use crate::remesh::{remesh::RemeshParams, remesh_edges_x_edges::find_vertex_at_point};
+use crate::remesh::{
+    remesh::{RemeshParams, split_at_crossing},
+    remesh_edges_x_edges::find_vertex_at_point,
+};
 
 /// A vertex where an edge of one solid meets a face of the other without
 /// running along it — where the edge pierces the face, or ends on it —
@@ -425,28 +429,8 @@ fn split_piercing_crossings<S: Scalar>(
     )
     .with_context(&ctx)?
     {
-        let vertex_id = match vertex {
-            Some(vertex) => vertex,
-            None => {
-                let vertex = model.insert_vertex(point, naming.provisional())?;
-                naming.piercing(vertex, edge_id, t, face_id)?;
-                vertex
-            }
-        };
-        let new_edge = model
-            .split_edge_at_vertex(
-                edge_id,
-                t,
-                vertex_id,
-                params.max_nodes,
-                params.curve_curve_min_subdivision_size,
-                naming.provisional(),
-            )
-            .with_context(with_context!(
-                "edge={edge_id}, t={t:?}, vertex={vertex_id}, piercing face={face_id}"
-            ))
+        split_at_crossing(model, naming, edge_id, t, vertex, point, face_id, params)
             .with_context(&ctx)?;
-        naming.edge_split(edge_id, new_edge, vertex_id)?;
     }
     Ok(())
 }
@@ -549,10 +533,10 @@ fn seam_plane<S: Scalar>(
     Ok(faces_are_coplanar(model, f1, f2, params)?.then_some(f1))
 }
 
-/// The first `(edge, face)` pair found where `edge`'s whole curve is
-/// coincident with `face`'s surface (`curve_surface_intersect` hitting its
-/// `max_edge_intersections` cap), and `edge` isn't already a boundary coedge of
-/// `face`.
+/// The first `(edge, face)` pair found where `edge`'s curve coincides with
+/// `face`'s surface (`curve_surface_intersect` finds an overlap:
+/// [`Intersections::Coincident`]) and enters the face's interior, and `edge`
+/// isn't already a boundary coedge of `face`.
 fn find_coincident_pair<S: Scalar>(
     model: &Model<S>,
     edge_solid: Body,
@@ -1657,67 +1641,79 @@ fn trace_one_side<S: Scalar>(
             // usual. So the legs are split finer, each time in two, while the
             // drift enclosed is more than `TRACE_DRIFT`.
             let strides = points.len() - 1;
-            let mut pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
+            let first = MIN_TRACED_LEGS.div_ceil(strides).max(2);
             let marched = (&points, &uvs);
-            let mut best: Option<(NurbCurve<S, 4>, S)> = None;
-            let curve = loop {
-                let (points, uvs) = marched;
-                let mut dense = vec![points[0]];
-                let mut dense_params = vec![uvs[0]];
-                for i in 0..strides {
-                    for k in 1..pieces {
-                        let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
-                        let (p, p_params) =
-                            on_branch(points[i], uvs[i], points[i + 1], frac).with_context(&ctx)?;
-                        dense.push(p);
-                        dense_params.push(p_params);
-                    }
-                    dense.push(points[i + 1]);
-                    dense_params.push(uvs[i + 1]);
-                }
-                let (points, uvs) = (dense, dense_params);
-                // Then the branch inside each of the new legs, which
-                // `interpolate_enclosing` widens the curve to hold.
-                let legs = points.len() - 1;
-                let mut between = Vec::with_capacity(legs);
-                for i in 0..legs {
-                    let fractions = true_point_fractions(i, legs);
-                    let mut inside = Vec::with_capacity(fractions.len());
-                    for (k, &(a, b)) in fractions.iter().enumerate() {
-                        let frac = S::from_ratio(a, b).with_context(&ctx)?;
-                        let (p, _) =
-                            on_branch(points[i], uvs[i], points[i + 1], frac).with_context(&ctx)?;
-                        let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
-                        if widest_between.as_ref().is_none_or(|w| width > w.3) {
-                            widest_between = Some((i, k, p, width));
+            // With each step the legs it was split into and the fit before,
+            // to tell whether halving them still halved its width. The cap
+            // ends it: `pieces` doubles each step, so it passes any cap
+            // within as many steps as it has bits.
+            let first: (usize, Option<(NurbCurve<S, 4>, S)>) = (first, None);
+            let refined = refine(
+                first,
+                usize::BITS as usize,
+                |(pieces, best)| -> GeopResult<_> {
+                    let (points, uvs) = marched;
+                    let mut dense = vec![points[0]];
+                    let mut dense_params = vec![uvs[0]];
+                    for i in 0..strides {
+                        for k in 1..pieces {
+                            let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                            let (p, p_params) = on_branch(points[i], uvs[i], points[i + 1], frac)
+                                .with_context(&ctx)?;
+                            dense.push(p);
+                            dense_params.push(p_params);
                         }
-                        inside.push(p);
+                        dense.push(points[i + 1]);
+                        dense_params.push(uvs[i + 1]);
                     }
-                    between.push(inside);
-                }
-                let curve = NurbCurve::<S, 4>::interpolate_enclosing(&points, &between, 3)
-                    .with_context(&ctx)?;
-                let width = curve
-                    .control_points
-                    .iter()
-                    .flat_map(|p| (0..3).map(move |k| p[k].width()))
-                    .fold(S::ZERO, |a, w| if w.definitely_greater(a) { w } else { a });
-                // Finer legs only help while the drift is what makes the
-                // curve wide: once halving them no longer halves the width,
-                // the width is the points' own, and the coarser fit is kept.
-                let halved = best
-                    .as_ref()
-                    .is_none_or(|(_, before)| before.definitely_greater(width.mul(S::TWO)));
-                if !halved {
-                    break best.expect("a fit to compare with").0;
-                }
-                if 2 * legs > MAX_REFINED_LEGS
-                    || !width.definitely_greater(S::from_f64(TRACE_DRIFT))
-                {
-                    break curve;
-                }
-                best = Some((curve, width));
-                pieces *= 2;
+                    let (points, uvs) = (dense, dense_params);
+                    // Then the branch inside each of the new legs, which
+                    // `interpolate_enclosing` widens the curve to hold.
+                    let legs = points.len() - 1;
+                    let mut between = Vec::with_capacity(legs);
+                    for i in 0..legs {
+                        let fractions = true_point_fractions(i, legs);
+                        let mut inside = Vec::with_capacity(fractions.len());
+                        for (k, &(a, b)) in fractions.iter().enumerate() {
+                            let frac = S::from_ratio(a, b).with_context(&ctx)?;
+                            let (p, _) = on_branch(points[i], uvs[i], points[i + 1], frac)
+                                .with_context(&ctx)?;
+                            let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
+                            if widest_between.as_ref().is_none_or(|w| width > w.3) {
+                                widest_between = Some((i, k, p, width));
+                            }
+                            inside.push(p);
+                        }
+                        between.push(inside);
+                    }
+                    let curve = NurbCurve::<S, 4>::interpolate_enclosing(&points, &between, 3)
+                        .with_context(&ctx)?;
+                    let width = curve
+                        .control_points
+                        .iter()
+                        .flat_map(|p| (0..3).map(move |k| p[k].width()))
+                        .fold(S::ZERO, |a, w| if w.definitely_greater(a) { w } else { a });
+                    // Finer legs only help while the drift is what makes the
+                    // curve wide: once halving them no longer halves the width,
+                    // the width is the points' own, and the coarser fit is kept.
+                    let halved = best
+                        .as_ref()
+                        .is_none_or(|(_, before)| before.definitely_greater(width.mul(S::TWO)));
+                    if !halved {
+                        return Ok(Refine::Done(best.expect("a fit to compare with").0));
+                    }
+                    if 2 * legs > MAX_REFINED_LEGS
+                        || !width.definitely_greater(S::from_f64(TRACE_DRIFT))
+                    {
+                        return Ok(Refine::Done(curve));
+                    }
+                    Ok(Refine::Finer((pieces * 2, Some((curve, width)))))
+                },
+            )?;
+            let Refined::Done(curve) = refined else {
+                return Err(ctx(GeopError::new(
+                    "the traced curve's legs were split past every cap",
+                )));
             };
             let widest = curve
                 .control_points

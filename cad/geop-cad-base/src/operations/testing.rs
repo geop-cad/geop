@@ -308,43 +308,6 @@ pub(crate) fn check_valid(part: &NamedModel<Design>) -> Result<(), String> {
     Err(format!(
         "{} validation error(s):\n{all}\nwhere {}",
         errors.len(),
-        names_mentioned(part, &all).join(", ")
+        part.names_mentioned(&all).join(", ")
     ))
-}
-
-/// The names of the vertices, edges and faces of `part` that `text` — a
-/// validation report, which knows only ids — mentions, as `id = name`.
-pub(crate) fn names_mentioned(part: &NamedModel<Design>, text: &str) -> Vec<String> {
-    let model = part.topology();
-    let mentioned = |forms: [String; 3]| forms.iter().any(|f| text.contains(f.as_str()));
-    let mut names = Vec::new();
-    for &id in model.vertices.keys() {
-        if mentioned([
-            format!("{id}"),
-            format!("vertex {} ", id.0),
-            format!("vertex {}'", id.0),
-        ]) {
-            names.push(format!("{id} = {}", part.name_of(id).unwrap_or("?")));
-        }
-    }
-    for &id in model.edges.keys() {
-        if mentioned([
-            format!("{id}"),
-            format!("edge {} ", id.0),
-            format!("edge {}'", id.0),
-        ]) {
-            names.push(format!("{id} = {}", part.name_of(id).unwrap_or("?")));
-        }
-    }
-    for &id in model.faces.keys() {
-        if mentioned([
-            format!("{id}"),
-            format!("face {} ", id.0),
-            format!("face {},", id.0),
-        ]) {
-            names.push(format!("{id} = {}", part.name_of(id).unwrap_or("?")));
-        }
-    }
-    names.sort();
-    names
 }

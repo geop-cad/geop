@@ -29,7 +29,7 @@
 //!
 //!    Three earlier versions of this step turned out wrong. The first
 //!    globally merged outer+holes into one ring (via a zero-width "slit"
-//!    bridge — see `polygon_triangulate::merge_outer_and_holes`) and
+//!    bridge, since removed) and
 //!    clipped *that* per cell: a slit is one specific pair of edges,
 //!    traversed in each direction once, and if a grid cell boundary
 //!    happened to cross it the two traversals could clip to slightly
@@ -59,7 +59,9 @@ use std::collections::HashMap;
 
 use geop_core_math::{
     geop_error::GeopResult,
+    plain::{distance, dot, sub},
     scalars::Scalar,
+    solvers::refine::{Refine, refine},
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
@@ -73,36 +75,26 @@ use crate::clip::{Point, clip_to_rect, ear_clip, is_convex, subtract_convex};
 /// approximate it exactly and the trim is clipped against them exactly.
 const MIN_GRID_N: usize = 2;
 /// Grid resolution never grows past this (in either direction), how ever
-/// far short of tolerance a face's curvature would otherwise ask for — a
-/// point budget, same role as `adaptive`'s old `MAX_STEINER_POINTS`.
+/// far short of tolerance a face's curvature would otherwise ask for: a
+/// point budget.
 const MAX_GRID_N: usize = 128;
 /// How many times resolution may double while searching for one that
 /// meets tolerance.
-const MAX_DOUBLINGS: u32 = 7;
-
-fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-pub(crate) fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
-    dot3(sub3(a, b), sub3(a, b)).sqrt()
-}
+const MAX_DOUBLINGS: usize = 7;
 
 /// Perpendicular distance from `p` to segment `a..b` — see `grid`'s
 /// module doc comment on why curvature is measured this way (immune to a
 /// merely non-uniformly parametrized but still flat surface).
 pub(crate) fn dist_point_to_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
-    let ab = sub3(b, a);
-    let len2 = dot3(ab, ab);
+    let ab = sub(b, a);
+    let len2 = dot(ab, ab);
     let t = if len2 > 1e-18 {
-        (dot3(sub3(p, a), ab) / len2).clamp(0.0, 1.0)
+        (dot(sub(p, a), ab) / len2).clamp(0.0, 1.0)
     } else {
         0.0
     };
     let closest = [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t];
-    dist3(p, closest)
+    distance(p, closest)
 }
 
 fn dist_point_to_segment2(p: Point, a: Point, b: Point) -> f64 {
@@ -197,7 +189,7 @@ impl<'a, S: Scalar> Samples<'a, S> {
 
     fn point_f64(&mut self, uv: Point) -> GeopResult<[f64; 3]> {
         let p = self.point(uv)?;
-        Ok([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
+        Ok(p.to_f64_array())
     }
 
     /// The surface's normal at `uv`: none where it has none (a pole, where
@@ -347,30 +339,51 @@ pub(crate) fn triangulate_face<S: Scalar>(
             bbox_max[i] = bbox_max[i].max(e[i]);
         }
     }
-    let face_size = dist3(bbox_min, bbox_max).max(1e-9);
+    let face_size = distance(bbox_min, bbox_max).max(1e-9);
     let quality = n.max(2) as f64;
     let max_sagitta = (face_size / (4.0 * quality * quality)).max(1e-9);
 
     // `u` and `v` are refined independently: a cylinder wall curves in one
     // direction only, and a square grid would spend as many triangles along
     // its straight direction as along its round one.
-    let mut cells = [MIN_GRID_N; 2];
-    for _ in 0..MAX_DOUBLINGS {
+    let cells = refine([MIN_GRID_N; 2], MAX_DOUBLINGS, |cells| -> GeopResult<_> {
         let worst = worst_grid_deviation(samples, min, max, cells[0], cells[1])?;
-        let mut refined = false;
+        let mut finer = cells;
         for k in 0..2 {
             if worst[k] > max_sagitta && cells[k] < MAX_GRID_N {
-                cells[k] = (cells[k] * 2).min(MAX_GRID_N);
-                refined = true;
+                finer[k] = (cells[k] * 2).min(MAX_GRID_N);
             }
         }
-        if !refined {
-            break;
-        }
-    }
+        Ok(if finer == cells {
+            Refine::Done(cells)
+        } else {
+            Refine::Finer(finer)
+        })
+    })?
+    .either();
     let (nu, nv) = (cells[0], cells[1]);
 
     Ok(triangulate_region(&outer_f64, &holes_f64, min, max, nu, nv))
+}
+
+/// The region inside the simple polygon `outer` and outside every one of
+/// `holes`, as triangles: the grid's own clipping on one cell, the
+/// polygon's bounding box — no bridge joins a hole to the outline (see the
+/// module doc). None for a polygon that encloses nothing.
+pub fn triangulate_polygon(outer: &[Point], holes: &[Vec<Point>]) -> Vec<[Point; 3]> {
+    let Some(&first) = outer.first() else {
+        return Vec::new();
+    };
+    let (min, max) = outer.iter().fold((first, first), |(lo, hi), p| {
+        (
+            [lo[0].min(p[0]), lo[1].min(p[1])],
+            [hi[0].max(p[0]), hi[1].max(p[1])],
+        )
+    });
+    if outer.len() < 3 || max[0] <= min[0] || max[1] <= min[1] {
+        return Vec::new();
+    }
+    triangulate_region(outer, holes, min, max, 1, 1)
 }
 
 /// The region inside `outer` and outside every one of `holes`, cut along a
@@ -794,7 +807,7 @@ mod tests {
                 .collect();
             let centroid = [0, 1, 2].map(|k| corners.iter().map(|p| p[k]).sum::<f64>() / 3.0);
             let _ = mid;
-            worst = worst.max((1.0 - dist3(centroid, [0.0; 3])).abs());
+            worst = worst.max((1.0 - distance(centroid, [0.0; 3])).abs());
         }
         // `n = 24` asks for a sagitta under `face_size / (4 n²)`, which for
         // this patch (size ≈ 1.7) is about 7e-4.
@@ -831,8 +844,9 @@ mod tests {
     /// hole: the hole's area is missing from the triangulation, and no
     /// triangle's centroid falls in it.
     fn check_hole_is_not_triangulated<S: Scalar>() {
+        use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
         use geop_core_math::primitives::CoordinateSystem;
-        use geop_ops_extrude_revolve::common::{arc2, polygon, sqrt2_over_2};
+        use geop_ops_extrude_revolve::common::polygon;
 
         let mut model = NamedModel::<S>::new();
         let v2 = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
@@ -849,7 +863,7 @@ mod tests {
         let ccw: Vec<_> = (0..4)
             .map(|i| {
                 let (a, b) = (q[i], q[(i + 1) % 4]);
-                arc2(
+                NurbCurve2D::arc(
                     v2(2.0 + a.0, 2.0 + a.1),
                     v2(2.0 + a.0 + b.0, 2.0 + a.1 + b.1),
                     v2(2.0 + b.0, 2.0 + b.1),
